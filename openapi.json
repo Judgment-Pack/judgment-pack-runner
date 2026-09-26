@@ -1,0 +1,911 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Judgment Pack Runner local pilot",
+    "version": "0.1.0",
+    "description": "Single local installation owner, one fixed pack release per job. Experimental evaluator; no external actions or schedules. Direct runner prefix /v1; authenticated Desk proxy /api/operations."
+  },
+  "servers": [
+    {
+      "url": "/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/status": {
+      "get": {
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/previews": {
+      "post": {
+        "operationId": "previewRelease",
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Cursor from the previous response. Omit for the newest page."
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createJob",
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJob"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job}": {
+      "get": {
+        "operationId": "getJob",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/jobs/{job}/runs": {
+      "get": {
+        "operationId": "listRuns",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Cursor from the previous response. Omit for the newest page."
+          }
+        ]
+      },
+      "post": {
+        "operationId": "submitRun",
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Input"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/runs/{run}": {
+      "get": {
+        "operationId": "getRun",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/inputs/preview": {
+      "post": {
+        "operationId": "previewInputMapping",
+        "description": "Project one caller-selected retained JSON file into inputs, without AI, network access, persistence or execution. Preserves missing values as omitted and false/zero/null as supplied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Input"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mapped inputs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Rejected input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "Input": {
+        "type": "object",
+        "properties": {
+          "facts": {},
+          "evidence": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "present",
+                "absent",
+                "unknown"
+              ]
+            }
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceInput"
+          }
+        },
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "facts"
+            ]
+          },
+          {
+            "required": [
+              "source"
+            ]
+          }
+        ],
+        "description": "Manual facts/evidence, or a retained source snapshot with deterministic mapping. For source submissions, omit facts/evidence; supplied values must exactly match projection."
+      },
+      "PreviewRequest": {
+        "type": "object",
+        "properties": {
+          "pack": {
+            "type": "string",
+            "maxLength": 1048576
+          },
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "matrix": {
+            "type": "string",
+            "maxLength": 1048576,
+            "description": "Optional serialized Runtime matrix with saved expectations. Omit only when no saved tests exist. It is evaluated afresh against the frozen pack and Runtime."
+          },
+          "testSource": {
+            "$ref": "#/components/schemas/TestSource"
+          }
+        },
+        "required": [
+          "pack",
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "CreateJob": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "releaseId": {
+            "type": "string"
+          },
+          "reviewed": {
+            "const": true
+          }
+        },
+        "required": [
+          "name",
+          "releaseId",
+          "reviewed"
+        ],
+        "additionalProperties": false,
+        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. Coverage never gates. Reusing an immutable release and name is idempotent."
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "const": "1"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "releaseId": {
+            "type": "string"
+          },
+          "revision": {
+            "const": 1
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "id",
+          "name",
+          "releaseId",
+          "revision",
+          "createdAt",
+          "workspace",
+          "owner"
+        ],
+        "additionalProperties": false
+      },
+      "Release": {
+        "type": "object",
+        "required": [
+          "id",
+          "pack",
+          "packDigest",
+          "runtimeDigest",
+          "validation",
+          "preview",
+          "sample",
+          "tests"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "pack": {
+            "type": "string"
+          },
+          "packDigest": {
+            "type": "string"
+          },
+          "runtimeDigest": {
+            "type": "string"
+          },
+          "validation": {
+            "type": "object"
+          },
+          "preview": {
+            "type": "object"
+          },
+          "sample": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "tests": {
+            "enum": [
+              "not-run",
+              "passed",
+              "failed",
+              "error"
+            ]
+          },
+          "testEvidence": {
+            "$ref": "#/components/schemas/ReleaseTests"
+          },
+          "inputMapping": {
+            "$ref": "#/components/schemas/InputMapping"
+          }
+        }
+      },
+      "Run": {
+        "type": "object",
+        "required": [
+          "id",
+          "jobId",
+          "releaseId",
+          "revision",
+          "state",
+          "input",
+          "createdAt",
+          "attempt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "releaseId": {
+            "type": "string"
+          },
+          "revision": {
+            "const": 1
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "interrupted"
+            ]
+          },
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "result": {
+            "type": "object"
+          },
+          "audit": {
+            "type": "object"
+          },
+          "problem": {
+            "type": "string"
+          }
+        }
+      },
+      "JobDetail": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/Job"
+          },
+          "release": {
+            "$ref": "#/components/schemas/Release"
+          }
+        },
+        "required": [
+          "job",
+          "release"
+        ],
+        "additionalProperties": false
+      },
+      "Page": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object"
+            }
+          },
+          "next": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "next"
+        ],
+        "additionalProperties": false
+      },
+      "Status": {
+        "type": "object"
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "TestSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "packKey": {
+            "type": "string"
+          },
+          "suiteRevision": {
+            "type": "integer"
+          },
+          "caseNames": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "exploratoryCount": {
+            "type": "integer"
+          }
+        }
+      },
+      "ReleaseTests": {
+        "type": "object",
+        "required": [
+          "status",
+          "matrix",
+          "matrixDigest",
+          "packDigest",
+          "runtimeDigest",
+          "checkedAt"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "error"
+            ]
+          },
+          "matrix": {
+            "type": "string"
+          },
+          "matrixDigest": {
+            "type": "string"
+          },
+          "packDigest": {
+            "type": "string"
+          },
+          "runtimeDigest": {
+            "type": "string"
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TestSource"
+          },
+          "report": {
+            "type": "object",
+            "description": "Retained Runtime packs test outputVersion 2, including rows and advisory coverage. Incomplete invocations may retain a diagnostic report."
+          },
+          "problem": {
+            "type": "string"
+          }
+        }
+      },
+      "InputMapping": {
+        "type": "object",
+        "required": [
+          "version",
+          "provider",
+          "facts",
+          "evidence"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "provider": {
+            "enum": [
+              "local-file",
+              "google-drive"
+            ]
+          },
+          "facts": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "source"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "description": "Non-root JSON Pointer destination. Targets must not overlap."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "JSON Pointer in the input object, or empty for the root."
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "required": [
+                "requirement",
+                "source"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "requirement": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "source": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "SourceInput": {
+        "type": "object",
+        "required": [
+          "mapping",
+          "snapshot"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "mapping": {
+            "$ref": "#/components/schemas/InputMapping"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/SourceSnapshot"
+          },
+          "mappingDigest": {
+            "type": "string",
+            "description": "Runner-computed mapping digest; if supplied it must match."
+          }
+        }
+      },
+      "SourceSnapshot": {
+        "type": "object",
+        "required": [
+          "version",
+          "original"
+        ],
+        "description": "Retained JSON file (200,000 decoded bytes maximum). local-file requires selectedAt and forbids proof. google-drive requires the existing Desk DocumentObject proof with Drive selection, receipt response and sealed registry. Runner checks structural/byte binding, not cryptographic authenticity; consumers verify with their configured pin. No provider credentials. Snapshot max 1 MiB.",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "selectedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "original": {
+            "type": "object",
+            "required": [
+              "name",
+              "mediaType",
+              "bytes",
+              "sha256"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "mediaType": {
+                "enum": [
+                  "application/json",
+                  "text/plain"
+                ],
+                "description": "text/plain requires a .json filename."
+              },
+              "bytes": {
+                "type": "string",
+                "contentEncoding": "base64"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            }
+          },
+          "proof": {
+            "type": "object",
+            "description": "Existing signed document acquisition and sealed registry contract; required for Google Drive."
+          }
+        }
+      },
+      "InputPreview": {
+        "type": "object",
+        "required": [
+          "input",
+          "factsText",
+          "evidenceText"
+        ],
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "factsText": {
+            "type": "string",
+            "description": "Exact mapped facts JSON for consumers that cannot represent all JSON numbers losslessly."
+          },
+          "evidenceText": {
+            "type": "string",
+            "description": "Exact availability JSON; empty if omitted."
+          }
+        }
+      }
+    }
+  }
+}
