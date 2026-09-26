@@ -19,8 +19,15 @@ func testConfig(t *testing.T) Config {
 	if bin == "" {
 		t.Skip("set JPACK_TEST_BIN to exercise the real Runtime contract")
 	}
-	dir := t.TempDir()
-	os.Chmod(dir, 0700)
+	// macOS commonly exposes temporary directories through /var -> /private/var.
+	// Give the fixture its physical path without relaxing Runner's state guard.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	return Config{Dir: dir, Runtime: bin, Workspace: "test-workspace", Owner: "local-owner"}
 }
 func sample() Input {
