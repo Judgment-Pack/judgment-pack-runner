@@ -17,9 +17,10 @@ const maxOutput = 8 << 20
 const queueLimit = 100
 
 type Input struct {
-	Facts    json.RawMessage `json:"facts,omitempty"`
-	Evidence json.RawMessage `json:"evidence,omitempty"`
-	Source   *SourceInput    `json:"source,omitempty"`
+	Preparation *Preparation    `json:"preparation,omitempty"`
+	Facts       json.RawMessage `json:"facts,omitempty"`
+	Evidence    json.RawMessage `json:"evidence,omitempty"`
+	Source      *SourceInput    `json:"source,omitempty"`
 }
 type PreviewRequest struct {
 	Pack       string      `json:"pack"`
@@ -28,23 +29,25 @@ type PreviewRequest struct {
 	TestSource *TestSource `json:"testSource,omitempty"`
 }
 type Release struct {
-	SchemaVersion string          `json:"schemaVersion"`
-	ID            string          `json:"id"`
-	Pack          string          `json:"pack"`
-	PackDigest    string          `json:"packDigest"`
-	PackID        string          `json:"packId"`
-	PackVersion   string          `json:"packVersion"`
-	Title         string          `json:"title"`
-	RuntimeDigest string          `json:"runtimeDigest"`
-	CreatedAt     string          `json:"createdAt"`
-	Config        string          `json:"config"`
-	Lock          string          `json:"lock"`
-	Validation    json.RawMessage `json:"validation"`
-	Sample        Input           `json:"sample"`
-	Preview       json.RawMessage `json:"preview"`
-	Tests         string          `json:"tests"`
-	TestEvidence  *ReleaseTests   `json:"testEvidence,omitempty"`
-	InputMapping  *InputMapping   `json:"inputMapping,omitempty"`
+	InputProfiles   []InputProfile  `json:"inputProfiles,omitempty"`
+	MappingWarnings []string        `json:"mappingWarnings,omitempty"`
+	SchemaVersion   string          `json:"schemaVersion"`
+	ID              string          `json:"id"`
+	Pack            string          `json:"pack"`
+	PackDigest      string          `json:"packDigest"`
+	PackID          string          `json:"packId"`
+	PackVersion     string          `json:"packVersion"`
+	Title           string          `json:"title"`
+	RuntimeDigest   string          `json:"runtimeDigest"`
+	CreatedAt       string          `json:"createdAt"`
+	Config          string          `json:"config"`
+	Lock            string          `json:"lock"`
+	Validation      json.RawMessage `json:"validation"`
+	Sample          Input           `json:"sample"`
+	Preview         json.RawMessage `json:"preview"`
+	Tests           string          `json:"tests"`
+	TestEvidence    *ReleaseTests   `json:"testEvidence,omitempty"`
+	InputMapping    *InputMapping   `json:"inputMapping,omitempty"`
 }
 type Job struct {
 	SchemaVersion string `json:"schemaVersion"`

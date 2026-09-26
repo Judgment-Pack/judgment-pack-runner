@@ -1,0 +1,25 @@
+{
+  "artifact": {
+    "checkedSuccessfully": false,
+    "screenedLegalName": "Northwind Analytics Ltd",
+    "status": "not_found"
+  },
+  "expected": {
+    "acquisitionStatus": "unknown",
+    "basis": [
+      "/checkedSuccessfully",
+      "/status"
+    ],
+    "evidenceAvailability": {
+      "screening-record": "unknown"
+    },
+    "facts": {},
+    "reason": "unknown"
+  },
+  "params": {
+    "asOf": "2026-07-30T12:00:00Z",
+    "maxAgeSeconds": 86400,
+    "subject": "Northwind Analytics Ltd"
+  },
+  "rule": "rules/screening.rule.json"
+}

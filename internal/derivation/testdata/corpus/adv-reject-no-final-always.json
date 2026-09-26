@@ -1,0 +1,21 @@
+{
+  "artifact": {},
+  "reject": true,
+  "rule": {
+    "clauses": [
+      {
+        "claim": {
+          "acquisitionStatus": "unknown",
+          "evidence": {},
+          "facts": []
+        },
+        "reason": "x",
+        "when": {
+          "field": "/x",
+          "op": "exists"
+        }
+      }
+    ],
+    "ruleVersion": "1"
+  }
+}

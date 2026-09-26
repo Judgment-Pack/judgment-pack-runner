@@ -27,15 +27,22 @@ type EvidenceMapping struct {
 	Source      string `json:"source"`
 }
 type InputMapping struct {
-	Version  int               `json:"version"`
-	Provider string            `json:"provider"`
-	Facts    []FactMapping     `json:"facts"`
-	Evidence []EvidenceMapping `json:"evidence"`
+	Case             *CaseMapping      `json:"case,omitempty"`
+	Sources          []MappingSource   `json:"sources,omitempty"`
+	Admits           *Admission        `json:"admits,omitempty"`
+	Unmapped         []string          `json:"unmapped,omitempty"`
+	UnmappedEvidence []string          `json:"unmappedEvidence,omitempty"`
+	Version          int               `json:"version"`
+	Provider         string            `json:"provider"`
+	Facts            []FactMapping     `json:"facts"`
+	Evidence         []EvidenceMapping `json:"evidence"`
 }
 type SourceInput struct {
-	Mapping       InputMapping    `json:"mapping"`
-	Snapshot      json.RawMessage `json:"snapshot"`
-	MappingDigest string          `json:"mappingDigest,omitempty"`
+	Case          json.RawMessage        `json:"case,omitempty"`
+	Sources       map[string]SourceValue `json:"sources,omitempty"`
+	Mapping       InputMapping           `json:"mapping"`
+	Snapshot      json.RawMessage        `json:"snapshot,omitempty"`
+	MappingDigest string                 `json:"mappingDigest,omitempty"`
 }
 type sourceSnapshot struct {
 	Version    int    `json:"version"`
@@ -125,7 +132,9 @@ func validInputEscapes(data []byte) bool {
 	}
 	return true
 }
-func readInputJSON(data []byte) (any, error) {
+func readInputJSON(data []byte) (any, error) { return readInputJSONDepth(data, 32) }
+
+func readInputJSONDepth(data []byte, maxDepth int) (any, error) {
 	if !utf8.Valid(data) || !validInputEscapes(data) {
 		return nil, errors.New("invalid UTF-8")
 	}
@@ -133,7 +142,7 @@ func readInputJSON(data []byte) (any, error) {
 	d.UseNumber()
 	var value func(int) (any, error)
 	value = func(depth int) (any, error) {
-		if depth > 32 {
+		if depth > maxDepth {
 			return nil, errors.New("input nesting exceeds limit")
 		}
 		t, e := d.Token()
@@ -238,6 +247,12 @@ func pointerRead(v any, parts []string) (any, bool) {
 	return v, true
 }
 func (m InputMapping) validate() error {
+	if m.Version == 2 {
+		return validateMappingV2(m)
+	}
+	if m.Case != nil || m.Sources != nil || m.Admits != nil || m.Unmapped != nil || m.UnmappedEvidence != nil {
+		return inputProblem("Version 2 fields require mapping version 2.")
+	}
 	if m.Version != 1 || (m.Provider != "google-drive" && m.Provider != "local-file") || m.Facts == nil || m.Evidence == nil || len(m.Facts) > 256 || len(m.Evidence) > 128 {
 		return inputProblem("Use a supported file input mapping.")
 	}
@@ -268,8 +283,16 @@ func (m InputMapping) validate() error {
 	}
 	return nil
 }
-func mappingHash(m InputMapping) string { return digest(encode(m)) }
+func mappingHash(m InputMapping) string {
+	if m.Version == 2 {
+		return mappingV2Hash(m)
+	}
+	return digest(encode(m))
+}
 func sourceDocument(c *SourceInput) (any, sourceSnapshot, sourceRecord, error) {
+	return readSourceDocument(c, true)
+}
+func readSourceDocument(c *SourceInput, requireRegistry bool) (any, sourceSnapshot, sourceRecord, error) {
 	var s sourceSnapshot
 	var r sourceRecord
 	fail := func() (any, sourceSnapshot, sourceRecord, error) {
@@ -304,7 +327,7 @@ func sourceDocument(c *SourceInput) (any, sourceSnapshot, sourceRecord, error) {
 		r.Provenance.Source.Kind = "local-file"
 		r.Provenance.Source.Version = s.Original.SHA256
 	} else {
-		if s.Proof.Source != "drive" || s.Proof.Drive.FileID == "" || len(s.Proof.Drive.FileID) > 256 || s.Proof.Session == "" || len(s.Proof.PublicKey) != 64 || s.Proof.Registry == "" || s.Proof.Authority == "" {
+		if s.Proof.Source != "drive" || s.Proof.Drive.FileID == "" || len(s.Proof.Drive.FileID) > 256 || s.Proof.Session == "" || len(s.Proof.PublicKey) != 64 || (requireRegistry && s.Proof.Registry == "") || s.Proof.Authority == "" {
 			return fail()
 		}
 		var response struct {
@@ -335,6 +358,12 @@ func sourceDocument(c *SourceInput) (any, sourceSnapshot, sourceRecord, error) {
 	return data, s, r, nil
 }
 func normalizeInput(i Input) (Input, error) {
+	if i.Source != nil && (i.Source.Mapping.Version == 2 || len(i.Source.Case) > 0 || i.Source.Sources != nil) {
+		return i, inputProblem("Mapping v2 requires the trusted Runner service.")
+	}
+	if i.Preparation != nil {
+		return i, inputProblem("Unexpected preparation metadata.")
+	}
 	if i.Source == nil {
 		return i, i.validate()
 	}
@@ -409,6 +438,9 @@ func mappingMatchesRelease(r Release, i Input) bool {
 // Briefs expose facts and provenance metadata, not base64 originals or consumed
 // selection grants. The complete proof remains available in the retained record.
 func briefInput(i Input) any {
+	if i.Preparation != nil {
+		return map[string]any{"facts": i.Facts, "evidence": i.Evidence, "mappingDigest": i.Preparation.MappingDigest, "lineage": i.Preparation.Lineage, "verification": i.Preparation.Verification}
+	}
 	if i.Source == nil {
 		return i
 	}

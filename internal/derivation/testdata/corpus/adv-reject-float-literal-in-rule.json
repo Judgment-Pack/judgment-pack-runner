@@ -1,0 +1,35 @@
+{
+  "artifact": {
+    "x": 1
+  },
+  "reject": true,
+  "rule": {
+    "clauses": [
+      {
+        "claim": {
+          "acquisitionStatus": "unknown",
+          "evidence": {},
+          "facts": []
+        },
+        "reason": "f",
+        "when": {
+          "field": "/x",
+          "op": "equals",
+          "to": 1.5
+        }
+      },
+      {
+        "claim": {
+          "acquisitionStatus": "unknown",
+          "evidence": {},
+          "facts": []
+        },
+        "reason": "u",
+        "when": {
+          "op": "always"
+        }
+      }
+    ],
+    "ruleVersion": "1"
+  }
+}

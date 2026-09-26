@@ -1,0 +1,20 @@
+{
+  "artifact": {},
+  "reject": true,
+  "rule": {
+    "clauses": [
+      {
+        "claim": {
+          "acquisitionStatus": "maybe",
+          "evidence": {},
+          "facts": []
+        },
+        "reason": "x",
+        "when": {
+          "op": "always"
+        }
+      }
+    ],
+    "ruleVersion": "1"
+  }
+}

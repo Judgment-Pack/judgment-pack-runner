@@ -342,7 +342,7 @@
     "/inputs/preview": {
       "post": {
         "operationId": "previewInputMapping",
-        "description": "Project one caller-selected retained JSON file into inputs, without AI, network access, persistence or execution. Preserves missing values as omitted and false/zero/null as supplied.",
+        "description": "Project a retained v1 file or verify/derive a v2 ordered mapping, without network acquisition, persistence or evaluation. Invalid proof and derivation errors refuse preparation; valid rule unknowns remain policy data.",
         "requestBody": {
           "required": true,
           "content": {
@@ -360,6 +360,127 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InputPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Rejected input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/input-profiles": {
+      "get": {
+        "operationId": "listInputProfiles",
+        "description": "Trusted installation profiles and canonical digests. Read-only; profile installation is host configuration.",
+        "responses": {
+          "200": {
+            "description": "Profiles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "profile": {
+                        "$ref": "#/components/schemas/InputProfile"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": [
+                      "profile",
+                      "digest"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{run}/verification": {
+      "get": {
+        "operationId": "exportInputVerification",
+        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth.",
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationBundle"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/inputs/next": {
+      "post": {
+        "operationId": "planNextInputSource",
+        "description": "Verify and derive a mapping v2 prefix. Returns the next instantiated acquisition request, or complete prepared input. Accepts source-only partial input; checks every trusted profile and class admission before returning any request. Performs no network calls, evaluation or persistence.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Input"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Next source or complete preparation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputPlan"
                 }
               }
             }
@@ -402,6 +523,11 @@
           },
           "source": {
             "$ref": "#/components/schemas/SourceInput"
+          },
+          "preparation": {
+            "$ref": "#/components/schemas/Preparation",
+            "readOnly": true,
+            "description": "Server-computed for v2; never trusted from a caller."
           }
         },
         "additionalProperties": false,
@@ -417,7 +543,7 @@
             ]
           }
         ],
-        "description": "Manual facts/evidence, or a retained source snapshot with deterministic mapping. For source submissions, omit facts/evidence; supplied values must exactly match projection."
+        "description": "Manual facts/evidence, v1 selected file, or ordered v2 case/file/MCP mapping. Omit facts/evidence to use projection; supplied values must match. V2 verification requires installation profiles."
       },
       "PreviewRequest": {
         "type": "object",
@@ -554,6 +680,18 @@
           },
           "inputMapping": {
             "$ref": "#/components/schemas/InputMapping"
+          },
+          "inputProfiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputProfile"
+            }
+          },
+          "mappingWarnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -750,75 +888,19 @@
         }
       },
       "InputMapping": {
-        "type": "object",
-        "required": [
-          "version",
-          "provider",
-          "facts",
-          "evidence"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "const": 1
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/InputMappingV1"
           },
-          "provider": {
-            "enum": [
-              "local-file",
-              "google-drive"
-            ]
-          },
-          "facts": {
-            "type": "array",
-            "maxItems": 256,
-            "items": {
-              "type": "object",
-              "required": [
-                "target",
-                "source"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "target": {
-                  "type": "string",
-                  "description": "Non-root JSON Pointer destination. Targets must not overlap."
-                },
-                "source": {
-                  "type": "string",
-                  "description": "JSON Pointer in the input object, or empty for the root."
-                }
-              }
-            }
-          },
-          "evidence": {
-            "type": "array",
-            "maxItems": 128,
-            "items": {
-              "type": "object",
-              "required": [
-                "requirement",
-                "source"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "requirement": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 256
-                },
-                "source": {
-                  "type": "string"
-                }
-              }
-            }
+          {
+            "$ref": "#/components/schemas/InputMappingV2"
           }
-        }
+        ]
       },
       "SourceInput": {
         "type": "object",
         "required": [
-          "mapping",
-          "snapshot"
+          "mapping"
         ],
         "additionalProperties": false,
         "properties": {
@@ -831,6 +913,20 @@
           "mappingDigest": {
             "type": "string",
             "description": "Runner-computed mapping digest; if supplied it must match."
+          },
+          "case": {
+            "type": "object"
+          },
+          "sources": {
+            "type": "object",
+            "maxProperties": 16,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SourceValue"
+            }
           }
         }
       },
@@ -905,6 +1001,1208 @@
             "description": "Exact availability JSON; empty if omitted."
           }
         }
+      },
+      "InputMappingV1": {
+        "type": "object",
+        "required": [
+          "version",
+          "provider",
+          "facts",
+          "evidence"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "provider": {
+            "enum": [
+              "local-file",
+              "google-drive"
+            ]
+          },
+          "facts": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "source"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "description": "Non-root JSON Pointer destination. Targets must not overlap."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "JSON Pointer in the input object, or empty for the root."
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "required": [
+                "requirement",
+                "source"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "requirement": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "source": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CopyMapping": {
+        "type": "object",
+        "properties": {
+          "facts": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "source"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "description": "Non-root JSON Pointer destination. Targets must not overlap."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "JSON Pointer in the input object, or empty for the root."
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "required": [
+                "requirement",
+                "source"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "requirement": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "source": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "facts",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "Parameter": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+          },
+          "pointer": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "integer",
+              "timestamp"
+            ]
+          }
+        },
+        "required": [
+          "pointer",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "CaseMapping": {
+        "type": "object",
+        "properties": {
+          "parameters": {
+            "type": "object",
+            "maxProperties": 64,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Parameter"
+            }
+          },
+          "facts": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "source"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "description": "Non-root JSON Pointer destination. Targets must not overlap."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "JSON Pointer in the input object, or empty for the root."
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "required": [
+                "requirement",
+                "source"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "requirement": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "source": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "facts",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "RuleCondition": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "always"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "exists"
+              },
+              "field": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "field"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "isTrue"
+              },
+              "field": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "field"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "isDecimalString"
+              },
+              "field": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "field"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "equals"
+              },
+              "field": {
+                "type": "string"
+              },
+              "to": {}
+            },
+            "required": [
+              "op",
+              "field",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "equalsParam"
+              },
+              "field": {
+                "type": "string"
+              },
+              "param": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+              }
+            },
+            "required": [
+              "op",
+              "field",
+              "param"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "freshWithin"
+              },
+              "field": {
+                "type": "string"
+              },
+              "asOf": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+              },
+              "maxAge": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+              }
+            },
+            "required": [
+              "op",
+              "field",
+              "asOf",
+              "maxAge"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "not"
+              },
+              "of": {
+                "$ref": "#/components/schemas/RuleCondition"
+              }
+            },
+            "required": [
+              "op",
+              "of"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "all"
+              },
+              "of": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RuleCondition"
+                },
+                "maxItems": 64
+              }
+            },
+            "required": [
+              "op",
+              "of"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "any"
+              },
+              "of": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RuleCondition"
+                },
+                "maxItems": 64
+              }
+            },
+            "required": [
+              "op",
+              "of"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DerivationRule": {
+        "type": "object",
+        "properties": {
+          "ruleVersion": {
+            "const": "1"
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "string",
+                "integer",
+                "timestamp"
+              ]
+            }
+          },
+          "clauses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "when": {
+                  "$ref": "#/components/schemas/RuleCondition"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "object",
+                  "properties": {
+                    "facts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "from": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "pointer",
+                          "from"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 256
+                    },
+                    "evidence": {
+                      "type": "object",
+                      "maxProperties": 128,
+                      "additionalProperties": {
+                        "enum": [
+                          "present",
+                          "absent",
+                          "unknown"
+                        ]
+                      }
+                    },
+                    "acquisitionStatus": {
+                      "enum": [
+                        "resolved",
+                        "absent",
+                        "unknown"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "facts",
+                    "evidence",
+                    "acquisitionStatus"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "when",
+                "claim",
+                "reason"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 64
+          }
+        },
+        "required": [
+          "ruleVersion",
+          "parameters",
+          "clauses"
+        ],
+        "additionalProperties": false
+      },
+      "SourceRead": {
+        "type": "object",
+        "properties": {
+          "unwrap": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4
+          },
+          "copy": {
+            "$ref": "#/components/schemas/CopyMapping"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DerivationRule"
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "copy"
+            ],
+            "not": {
+              "required": [
+                "rule"
+              ]
+            }
+          },
+          {
+            "required": [
+              "rule"
+            ],
+            "not": {
+              "required": [
+                "copy"
+              ]
+            }
+          }
+        ]
+      },
+      "MappingSource": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+          },
+          "kind": {
+            "enum": [
+              "operation",
+              "selected-file"
+            ]
+          },
+          "provider": {
+            "enum": [
+              "local-file",
+              "google-drive"
+            ]
+          },
+          "profile": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+          },
+          "profileDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "maxAge": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400
+          },
+          "parameters": {
+            "type": "object",
+            "maxProperties": 64,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Parameter"
+            }
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Frozen template; whole-value $param and integer-only $text. runAt is derivation-only."
+          },
+          "read": {
+            "$ref": "#/components/schemas/SourceRead"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "read"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "operation"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "profile",
+                "profileDigest",
+                "maxAge",
+                "arguments"
+              ],
+              "not": {
+                "required": [
+                  "provider"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "selected-file"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "provider"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "provider": {
+                  "const": "google-drive"
+                }
+              },
+              "required": [
+                "provider"
+              ]
+            },
+            "then": {
+              "required": [
+                "profile",
+                "profileDigest",
+                "maxAge",
+                "arguments"
+              ]
+            }
+          }
+        ]
+      },
+      "Admission": {
+        "type": "object",
+        "properties": {
+          "facts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "asserted",
+                  "record",
+                  "generated"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 3,
+              "uniqueItems": true
+            }
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "asserted",
+                  "record",
+                  "generated"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 3,
+              "uniqueItems": true
+            }
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "InputMappingV2": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 2
+          },
+          "case": {
+            "$ref": "#/components/schemas/CaseMapping"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MappingSource"
+            },
+            "maxItems": 16
+          },
+          "admits": {
+            "$ref": "#/components/schemas/Admission"
+          },
+          "unmapped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "unmappedEvidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+          },
+          "provider": {
+            "const": ""
+          },
+          "facts": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 0
+          },
+          "evidence": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "case"
+            ]
+          },
+          {
+            "required": [
+              "sources"
+            ],
+            "properties": {
+              "sources": {
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      },
+      "AdapterPin": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "digest"
+        ],
+        "additionalProperties": false
+      },
+      "InputProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+          },
+          "publicKey": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "class": {
+            "enum": [
+              "record",
+              "generated"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "authority": {
+            "type": "string"
+          },
+          "shape": {
+            "enum": [
+              "mcp",
+              "http",
+              "command"
+            ]
+          },
+          "adapter": {
+            "$ref": "#/components/schemas/AdapterPin"
+          },
+          "endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "publicKey",
+          "class",
+          "source",
+          "authority",
+          "shape",
+          "adapter",
+          "endpoint"
+        ],
+        "additionalProperties": false
+      },
+      "SourceValue": {
+        "type": "object",
+        "properties": {
+          "snapshot": {
+            "$ref": "#/components/schemas/SourceSnapshot"
+          },
+          "response": {
+            "type": "object",
+            "properties": {
+              "result": {},
+              "receipt": {
+                "type": "object",
+                "description": "Complete signed Gateway v3 acquisition receipt; Runner verifies the signed fields, profile and canonical result."
+              },
+              "salts": {
+                "type": "object",
+                "properties": {
+                  "args": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "statement": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "args"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "result",
+              "receipt",
+              "salts"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "snapshot"
+            ],
+            "not": {
+              "required": [
+                "response"
+              ]
+            }
+          },
+          {
+            "required": [
+              "response"
+            ],
+            "not": {
+              "required": [
+                "snapshot"
+              ]
+            }
+          }
+        ]
+      },
+      "Citation": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "callIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{128}$"
+          }
+        },
+        "required": [
+          "sessionId",
+          "callIndex",
+          "signature"
+        ],
+        "additionalProperties": false
+      },
+      "Dependency": {
+        "type": "object",
+        "properties": {
+          "parameter": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "parameter",
+          "source",
+          "pointer"
+        ],
+        "additionalProperties": false
+      },
+      "TargetLineage": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "fact",
+              "evidence"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "class": {
+            "enum": [
+              "asserted",
+              "record",
+              "generated"
+            ]
+          },
+          "generatedInfluence": {
+            "type": "boolean"
+          },
+          "present": {
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "resolved",
+              "absent",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "readDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "basis": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "candidateFrom": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Dependency"
+            }
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/Citation"
+          }
+        },
+        "required": [
+          "target",
+          "kind",
+          "source",
+          "class",
+          "generatedInfluence",
+          "present",
+          "status",
+          "reason",
+          "readDigest",
+          "basis"
+        ],
+        "additionalProperties": false
+      },
+      "SourceOutcome": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "object"
+          },
+          "arguments": {
+            "type": "object"
+          },
+          "claim": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "reason",
+          "parameters",
+          "claim"
+        ],
+        "additionalProperties": false
+      },
+      "Preparation": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 2
+          },
+          "verifiedAt": {
+            "type": "string"
+          },
+          "mappingDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "verification": {
+            "type": "string"
+          },
+          "cites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            }
+          },
+          "lineage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TargetLineage"
+            }
+          },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceOutcome"
+            }
+          }
+        },
+        "required": [
+          "version",
+          "verifiedAt",
+          "mappingDigest",
+          "verification",
+          "cites",
+          "lineage",
+          "outcomes"
+        ],
+        "additionalProperties": false
+      },
+      "VerificationBundle": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 2
+          },
+          "releaseDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "release": {
+            "$ref": "#/components/schemas/Release"
+          },
+          "run": {
+            "$ref": "#/components/schemas/Run"
+          }
+        },
+        "required": [
+          "version",
+          "releaseDigest",
+          "release",
+          "run"
+        ],
+        "additionalProperties": false
+      },
+      "PlannedSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "operation",
+              "selected-file"
+            ]
+          },
+          "provider": {
+            "enum": [
+              "local-file",
+              "google-drive"
+            ]
+          },
+          "profile": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "arguments": {
+            "type": "object"
+          }
+        }
+      },
+      "InputPlan": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "next"
+            ],
+            "properties": {
+              "next": {
+                "$ref": "#/components/schemas/PlannedSource"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "input"
+            ],
+            "properties": {
+              "input": {
+                "$ref": "#/components/schemas/Input"
+              },
+              "factsText": {
+                "type": "string"
+              },
+              "evidenceText": {
+                "type": "string"
+              }
+            }
+          }
+        ]
       }
     }
   }

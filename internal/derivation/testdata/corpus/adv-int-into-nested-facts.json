@@ -1,0 +1,42 @@
+{
+  "artifact": {
+    "x": 7
+  },
+  "expected": {
+    "acquisitionStatus": "resolved",
+    "basis": [],
+    "evidenceAvailability": {
+      "e": "present"
+    },
+    "facts": {
+      "f": {
+        "g": 7
+      }
+    },
+    "reason": "r"
+  },
+  "params": {},
+  "rule": {
+    "clauses": [
+      {
+        "claim": {
+          "acquisitionStatus": "resolved",
+          "evidence": {
+            "e": "present"
+          },
+          "facts": [
+            {
+              "from": "/x",
+              "pointer": "/f/g"
+            }
+          ]
+        },
+        "reason": "r",
+        "when": {
+          "op": "always"
+        }
+      }
+    ],
+    "ruleVersion": "1"
+  }
+}

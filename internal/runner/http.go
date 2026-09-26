@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func write(w http.ResponseWriter, status int, v any) {
@@ -28,21 +29,57 @@ func failure(w http.ResponseWriter, err error) {
 	write(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "retryable": status == 429 || status == 503}})
 }
 func decode(w http.ResponseWriter, r *http.Request, dst any) error {
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBody))
-	d.DisallowUnknownFields()
-	if d.Decode(dst) != nil || d.Decode(new(any)) != io.EOF {
-		return &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields."}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBody))
+	if err != nil || strictJSON(raw, dst) != nil {
+		return &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
 	}
 	return nil
 }
 func (s *Service) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/input-profiles", func(w http.ResponseWriter, r *http.Request) {
+		profiles := []any{}
+		for _, p := range s.cfg.InputProfiles {
+			profiles = append(profiles, map[string]any{"profile": p, "digest": profileHash(p)})
+		}
+		write(w, 200, profiles)
+	})
+	mux.HandleFunc("GET /v1/runs/{run}/verification", func(w http.ResponseWriter, r *http.Request) {
+		run, err := s.run(r.PathValue("run"))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		release, err := s.release(run.ReleaseID)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		if run.Input.Preparation == nil {
+			failure(w, bad("not_verified_mapping", "This run does not use mapping v2."))
+			return
+		}
+		write(w, 200, VerificationBundle{Version: 2, Release: release, Run: run, ReleaseDigest: releaseDigest(release)})
+	})
 	mux.HandleFunc("GET /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("POST /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs"}})
+		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage"}})
+	})
+	mux.HandleFunc("POST /v1/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		var input Input
+		if err := decode(w, r, &input); err != nil {
+			failure(w, err)
+			return
+		}
+		plan, err := nextInput(input, s.cfg.InputProfiles, time.Now().UTC().Truncate(time.Second))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		write(w, 200, plan)
 	})
 	mux.HandleFunc("POST /v1/inputs/preview", func(w http.ResponseWriter, r *http.Request) {
 		var input Input
@@ -50,7 +87,7 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
-		mapped, err := normalizeInput(input)
+		mapped, err := s.normalizeInput(input)
 		if err != nil {
 			failure(w, err)
 			return

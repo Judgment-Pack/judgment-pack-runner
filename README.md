@@ -65,7 +65,7 @@ Desk resumes queued work and marks previously running work interrupted. A shut d
 computer does not execute jobs. This is not a hosted scheduler or a Vercel function.
 
 The executable receives one bounded JSON boot line on stdin with `dir`, `runtime`,
-`workspace`, `owner`, and a random `token`. It binds an ephemeral IPv4 loopback port,
+`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2. It binds an ephemeral IPv4 loopback port,
 prints `{"protocol":"jobs/1","url":"http://127.0.0.1:..."}`, and stays alive until
 stdin closes. The bearer is never printed, passed in argv, read from a project file,
 or sent to the browser. Desk selects the workspace and stable installation owner.
@@ -90,7 +90,7 @@ cannot change an existing job. Create and review a new job for changed policy.
 The evaluator is Runtime's **experimental JPS 0.2.0-draft** contract, outputVersion 2;
 this package does not expand Runtime's conformance claim or approve external action.
 
-Evidence is a caller-declared map of requirement IDs to `present`, `absent`, or
+For manual inputs and version 1 file mappings, evidence is a caller-declared map of requirement IDs to `present`, `absent`, or
 `unknown`. It is not verified source acquisition. Omitted evidence is preserved as
 omitted; an empty supplied object remains a supplied object. Omitted facts and false
 values remain distinct. Use the explicit file-input path below to map selected JSON into these inputs;
@@ -154,7 +154,7 @@ remote URLs on a caller's behalf.
 Desk independently verifies Drive receipts against the **current configured pin**
 on acquisition and before release checks, creation and run submission. A retained
 run's receipt is rechecked when viewed. Runner validates original hashes and
-receipt-to-document bindings but does **not** cryptographically authenticate an
+receipt-to-document bindings for **version 1**, but does **not** cryptographically authenticate an
 API caller's receipt. API consumers must perform that verification themselves;
 there is no runner-issued authenticity badge. Even a valid receipt attests to
 acquisition, not the truth of supplied evidence. Brief inputs include compact
@@ -162,6 +162,25 @@ provenance and mapped facts, excluding raw file bytes and consumed picker grants
 
 This is explicit file selection per run. Background acquisition, recurring
 schedules, batch records, CSV mapping, and standing source grants are not included.
+
+## Verified mapping v2 (Runner and Desk)
+
+Runner now supports ordered case/file/MCP input mappings with cryptographic v3
+receipt verification, exact request commitments, trusted source classifications,
+validated dependency chaining and per-target lineage. Releases freeze the mapping
+and operator profiles; operational evaluations retain matching Runtime citations.
+An offline `verify-run` command checks retained inputs against independently trusted
+profiles and a release digest. V1 behavior and records remain unchanged.
+
+Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
+mapping edits, explicit acquisition and fixed-release runs through the
+`/v1/inputs/next` planner. Supply trusted installation profiles with Desk's
+`--runner-input-profiles /absolute/file.json` flag. The original v1 file picker
+remains available. This integration requires the matching local working-tree
+builds; the revision table above identifies the previously published v1 baseline.
+HTTP SQL/model adapters, sealed-session verification and scheduling remain later work.
+The [v2 contract and API flow](docs/MAPPING-V2.md) states the supported scope,
+trust assumptions, numeric limits and receipt-only verification guarantees.
 
 ## Saved one-page briefs
 
@@ -261,3 +280,7 @@ and pull requests. Include a reproduction and relevant verification results. Use
 `git commit -s` to add a DCO sign-off, consistent with the Judgment-Pack repositories.
 Do not include real credentials, customer evidence or private operational records
 in public issues, examples or test fixtures.
+
+CI runs formatting, vet, race tests and real-Runtime integration on Linux and
+macOS. The workflow pins Runtime revision `6842494` so release, audit, mapping
+and offline verification tests run against a reproducible evaluator contract.
