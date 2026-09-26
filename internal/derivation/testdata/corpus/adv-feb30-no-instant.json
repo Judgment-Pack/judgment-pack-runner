@@ -1,0 +1,48 @@
+{
+  "artifact": {
+    "t": "2026-02-30T00:00:00Z"
+  },
+  "expected": {
+    "acquisitionStatus": "unknown",
+    "basis": [
+      "/t"
+    ],
+    "evidenceAvailability": {},
+    "facts": {},
+    "reason": "u"
+  },
+  "params": {
+    "asOf": "2026-03-05T00:00:00Z",
+    "maxAgeSeconds": 8640000
+  },
+  "rule": {
+    "clauses": [
+      {
+        "claim": {
+          "acquisitionStatus": "resolved",
+          "evidence": {},
+          "facts": []
+        },
+        "reason": "fresh",
+        "when": {
+          "asOf": "asOf",
+          "field": "/t",
+          "maxAge": "maxAgeSeconds",
+          "op": "freshWithin"
+        }
+      },
+      {
+        "claim": {
+          "acquisitionStatus": "unknown",
+          "evidence": {},
+          "facts": []
+        },
+        "reason": "u",
+        "when": {
+          "op": "always"
+        }
+      }
+    ],
+    "ruleVersion": "1"
+  }
+}

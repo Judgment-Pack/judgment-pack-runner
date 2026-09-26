@@ -168,7 +168,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	if len(req.Matrix) > 1<<20 {
 		return Release{}, bad("invalid_matrix", "Choose a test matrix smaller than 1 MiB.")
 	}
-	normalized, err := normalizeInput(req.Input)
+	normalized, err := s.normalizeInput(req.Input)
 	if err != nil {
 		return Release{}, err
 	}
@@ -192,6 +192,9 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	if req.Input.Source != nil {
 		mapping := req.Input.Source.Mapping
 		r.InputMapping = &mapping
+		if mapping.Version == 2 {
+			r.InputProfiles = profilesUsed(mapping, s.cfg.InputProfiles)
+		}
 	}
 	r.Config = `{"configVersion":"3","packs":{"target":{"path":"pack.json"}},"audit":{"dir":"audit"}}`
 	dir := filepath.Join(s.cfg.Dir, "releases", r.ID)
@@ -221,6 +224,12 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		return r, err
 	}
 	r.Lock = string(lock)
+	if r.InputMapping != nil && r.InputMapping.Version == 2 {
+		r.MappingWarnings, err = s.checkMappingCoverage(ctx, r, dir)
+		if err != nil {
+			return r, err
+		}
+	}
 	result, _, err := s.evaluate(ctx, r, req.Input, filepath.Join(dir, "preview"), true)
 	if err != nil {
 		return r, bad("preview_failed", "The sample input could not be evaluated. Check its facts and evidence values.")
@@ -234,6 +243,22 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	return r, err
 }
 func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, error) {
+	if input.Source != nil && input.Source.Mapping.Version == 2 {
+		if input.Preparation == nil || !mappingMatchesRelease(r, input) {
+			return nil, nil, errors.New("missing or mismatched verified preparation")
+		}
+		at, e := time.Parse("2006-01-02T15:04:05Z", input.Preparation.VerifiedAt)
+		if e != nil {
+			return nil, nil, e
+		}
+		prepared, e := normalizeV2(input, r.InputProfiles, at)
+		if e != nil {
+			return nil, nil, e
+		}
+		if !sameJSON(encode(prepared.Preparation), encode(input.Preparation)) {
+			return nil, nil, errors.New("retained preparation failed recomputation")
+		}
+	}
 	if digest([]byte(r.Pack)) != r.PackDigest {
 		return nil, nil, errors.New("release pack digest mismatch")
 	}
@@ -257,6 +282,12 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 			return nil, nil, err
 		}
 		args = append(args, "--evidence", "evidence.json")
+	}
+	if input.Preparation != nil && len(input.Preparation.Cites) > 0 && !rehearsal {
+		if err = saveFile(filepath.Join(dir, "cites.json"), encode(input.Preparation.Cites), 0600); err != nil {
+			return nil, nil, err
+		}
+		args = append(args, "--cites", "cites.json")
 	}
 	if rehearsal {
 		args = append(args, "--rehearsal")
@@ -298,6 +329,7 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 		} `json:"inputs"`
 		Disposition json.RawMessage `json:"disposition"`
 		Reviewed    bool            `json:"reviewed"`
+		Cites       json.RawMessage `json:"cites"`
 	}
 	same := func(a, b []byte) bool {
 		ac, e := canonical(a)
@@ -309,6 +341,9 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 	}
 	if json.Unmarshal(audit, &record) != nil || record.Version != "1" || record.Kind != "evaluation" || record.Run == "" || !record.Reviewed || record.Pack.Digest != r.PackDigest || !same(record.Inputs.Facts, input.Facts) || record.Inputs.Supplied != (len(input.Evidence) > 0) || !same(record.Disposition, result.Disposition) || (len(input.Evidence) > 0 && !same(record.Inputs.Evidence, input.Evidence)) {
 		return nil, nil, errors.New("operational audit does not match this invocation")
+	}
+	if input.Preparation != nil && !auditCitesMatch(record.Cites, input.Preparation.Cites) {
+		return nil, nil, errors.New("operational audit citations do not match verified input")
 	}
 	return out, bytes.TrimSpace(audit), nil
 }

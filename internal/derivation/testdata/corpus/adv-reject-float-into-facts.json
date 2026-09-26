@@ -1,0 +1,29 @@
+{
+  "artifact": {
+    "x": 1.5
+  },
+  "reject": true,
+  "rule": {
+    "clauses": [
+      {
+        "claim": {
+          "acquisitionStatus": "resolved",
+          "evidence": {
+            "e": "present"
+          },
+          "facts": [
+            {
+              "from": "/x",
+              "pointer": "/f/g"
+            }
+          ]
+        },
+        "reason": "r",
+        "when": {
+          "op": "always"
+        }
+      }
+    ],
+    "ruleVersion": "1"
+  }
+}

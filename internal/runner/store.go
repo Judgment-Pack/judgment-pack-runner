@@ -15,7 +15,10 @@ import (
 	"time"
 )
 
-type Config struct{ Dir, Runtime, Workspace, Owner string }
+type Config struct {
+	Dir, Runtime, Workspace, Owner string
+	InputProfiles                  []InputProfile
+}
 type Service struct {
 	unhealthy              atomic.Bool
 	cfg                    Config
@@ -30,6 +33,13 @@ type Service struct {
 }
 
 func Open(cfg Config) (_ *Service, err error) {
+	if err = validateProfiles(cfg.InputProfiles); err != nil {
+		return nil, err
+	}
+	// Snapshot trusted host settings; callers cannot mutate a running service.
+	if err = json.Unmarshal(encode(cfg.InputProfiles), &cfg.InputProfiles); err != nil {
+		return nil, err
+	}
 	if cfg.Workspace == "" || cfg.Owner == "" || !filepath.IsAbs(cfg.Dir) || !filepath.IsAbs(cfg.Runtime) {
 		return nil, errors.New("absolute paths and workspace owner required")
 	}
@@ -200,7 +210,45 @@ func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
 	if s.unhealthy.Load() {
 		return Run{}, false, &apiError{503, "dispatcher_stopped", "The dispatcher stopped after a storage error. Restart Desk after checking the runner storage."}
 	}
-	normalized, err := normalizeInput(input)
+	v2 := input.Source != nil && input.Source.Mapping.Version == 2
+	var requestHash string
+	if v2 {
+		input.Preparation = nil
+		raw, e := canonical(encode(input))
+		if e != nil {
+			return Run{}, false, e
+		}
+		requestHash = digest(raw)
+		// Identical retries return their original acceptance, even after freshness expires.
+		var held, before string
+		e = s.db.QueryRow("SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, s.cfg.Owner, key).Scan(&held, &before)
+		if e == nil {
+			if held != requestHash {
+				return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
+			}
+			var r Run
+			e = json.Unmarshal([]byte(before), &r)
+			return r, true, e
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return Run{}, false, e
+		}
+		job, e := s.job(jobID)
+		if e != nil {
+			return Run{}, false, e
+		}
+		release, e := s.release(job.ReleaseID)
+		if e != nil {
+			return Run{}, false, e
+		}
+		if !mappingMatchesRelease(release, input) {
+			return Run{}, false, bad("mapping_mismatch", "Use this job’s reviewed input mapping.")
+		}
+		if e = s.checkReleaseProfiles(release); e != nil {
+			return Run{}, false, e
+		}
+	}
+	normalized, err := s.normalizeInput(input)
 	if err != nil {
 		return Run{}, false, err
 	}
@@ -210,6 +258,9 @@ func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
 		return Run{}, false, err
 	}
 	hash := digest(b)
+	if v2 {
+		hash = requestHash
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Run{}, false, err

@@ -1,0 +1,44 @@
+{
+  "artifact": {
+    "x": 1.0
+  },
+  "expected": {
+    "acquisitionStatus": "resolved",
+    "basis": [
+      "/x"
+    ],
+    "evidenceAvailability": {},
+    "facts": {},
+    "reason": "m"
+  },
+  "params": {},
+  "rule": {
+    "clauses": [
+      {
+        "claim": {
+          "acquisitionStatus": "resolved",
+          "evidence": {},
+          "facts": []
+        },
+        "reason": "m",
+        "when": {
+          "field": "/x",
+          "op": "equals",
+          "to": 1
+        }
+      },
+      {
+        "claim": {
+          "acquisitionStatus": "unknown",
+          "evidence": {},
+          "facts": []
+        },
+        "reason": "u",
+        "when": {
+          "op": "always"
+        }
+      }
+    ],
+    "ruleVersion": "1"
+  }
+}

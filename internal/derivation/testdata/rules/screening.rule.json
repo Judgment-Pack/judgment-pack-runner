@@ -1,0 +1,80 @@
+{
+  "ruleVersion": "1",
+  "parameters": {
+    "subject": "string",
+    "asOf": "timestamp",
+    "maxAgeSeconds": "integer"
+  },
+  "clauses": [
+    {
+      "when": {"op": "all", "of": [
+        {"op": "equals", "field": "/status", "to": "found"},
+        {"op": "not", "of": {"op": "equalsParam", "field": "/screenedLegalName", "param": "subject"}}
+      ]},
+      "claim": {
+        "facts": [],
+        "evidence": {"screening-record": "unknown"},
+        "acquisitionStatus": "unknown"
+      },
+      "reason": "subject"
+    },
+    {
+      "when": {"op": "all", "of": [
+        {"op": "equals", "field": "/status", "to": "found"},
+        {"op": "not", "of": {"op": "freshWithin", "field": "/observedAt", "asOf": "asOf", "maxAge": "maxAgeSeconds"}}
+      ]},
+      "claim": {
+        "facts": [],
+        "evidence": {"screening-record": "unknown"},
+        "acquisitionStatus": "unknown"
+      },
+      "reason": "freshness"
+    },
+    {
+      "when": {"op": "all", "of": [
+        {"op": "equals", "field": "/status", "to": "found"},
+        {"op": "not", "of": {"op": "all", "of": [
+          {"op": "isTrue", "field": "/datedRecord"},
+          {"op": "isDecimalString", "field": "/matchCount"}
+        ]}}
+      ]},
+      "claim": {
+        "facts": [],
+        "evidence": {"screening-record": "unknown"},
+        "acquisitionStatus": "unknown"
+      },
+      "reason": "type"
+    },
+    {
+      "when": {"op": "equals", "field": "/status", "to": "found"},
+      "claim": {
+        "facts": [{"pointer": "/screening/matchCount", "from": "/matchCount"}],
+        "evidence": {"screening-record": "present"},
+        "acquisitionStatus": "resolved"
+      },
+      "reason": "resolved"
+    },
+    {
+      "when": {"op": "all", "of": [
+        {"op": "equals", "field": "/status", "to": "not_found"},
+        {"op": "isTrue", "field": "/checkedSuccessfully"},
+        {"op": "equalsParam", "field": "/screenedLegalName", "param": "subject"}
+      ]},
+      "claim": {
+        "facts": [],
+        "evidence": {"screening-record": "absent"},
+        "acquisitionStatus": "absent"
+      },
+      "reason": "absent"
+    },
+    {
+      "when": {"op": "always"},
+      "claim": {
+        "facts": [],
+        "evidence": {"screening-record": "unknown"},
+        "acquisitionStatus": "unknown"
+      },
+      "reason": "unknown"
+    }
+  ]
+}

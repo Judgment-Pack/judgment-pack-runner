@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Runner (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - name: Check formatting
+        run: |
+          go fmt ./...
+          git diff --exit-code
+      - name: Vet
+        run: go vet ./...
+      # Real-Runtime tests must run in CI, not silently skip behind an unset
+      # JPACK_TEST_BIN. Pin the independently versioned evaluator contract.
+      - name: Check out tested Runtime
+        uses: actions/checkout@v4
+        with:
+          repository: Judgment-Pack/judgment-pack-runtime
+          ref: 6842494ff0492c4f1a3bd185451d7d9c21a8e97e
+          path: .ci-runtime
+          persist-credentials: false
+      - name: Build Runtime
+        working-directory: .ci-runtime
+        run: go build -trimpath -o "$RUNNER_TEMP/jpack" ./cmd/jpack
+      - name: Unit, conformance and real-Runtime tests
+        run: JPACK_TEST_BIN="$RUNNER_TEMP/jpack" go test -race ./...
+      - name: Check API document
+        run: python3 -m json.tool openapi.json > /dev/null
+      - name: Build Runner
+        run: go build -trimpath -o "$RUNNER_TEMP/jpack-runner" ./cmd/jpack-runner
