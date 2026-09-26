@@ -1,10 +1,49 @@
-# Judgment Pack Runner — local Jobs pilot
+# Judgment Pack Runner
 
-A durable, single-owner operational runner for Judgment Pack Runtime. Desk supplies
-its UI and authenticated proxy; this repository owns release snapshots, admission,
-queueing, execution and history. Runtime remains the evaluator. Gateway is not called
-by this pilot. There are no external actions, schedules, source polling, graphs,
-shared-user permissions or AI agent loops here.
+An open-source, local Jobs runner for [Judgment Packs](https://github.com/Judgment-Pack/judgment-pack-spec),
+published at [Judgment-Pack/judgment-pack-runner](https://github.com/Judgment-Pack/judgment-pack-runner)
+under the [Apache License 2.0](LICENSE).
+
+Runner turns a reviewed pack snapshot into a durable job: check a release, submit
+facts and evidence availability, run the pinned evaluator, and retain the result
+and audit history. It also stores on-demand job and run briefs. All job artifacts
+remain on the local filesystem, with SQLite holding the queue and records.
+
+**Research preview — single-owner local Jobs pilot.** External actions, recurring
+schedules, source polling, graph execution, shared-user permissions and AI agent
+loops are not implemented in Runner. Closing a browser does not stop accepted work;
+Desk and its runner companion must stay running on the host.
+
+## Repository responsibilities
+
+| Repository | Responsibility |
+| --- | --- |
+| [Specification](https://github.com/Judgment-Pack/judgment-pack-spec) | Pack format and JPS semantics. |
+| [Runtime](https://github.com/Judgment-Pack/judgment-pack-runtime) | Pack validation, test evaluation, decisions and audit records. |
+| **Runner** | Frozen releases, admission, durable queue, execution, input snapshots, history and saved job/run briefs. |
+| [Desk](https://github.com/Judgment-Pack/judgment-pack-desk) | Jobs UI, authenticated proxy, source selection and explicit AI brief generation. |
+| [Gateway](https://github.com/Judgment-Pack/judgment-pack-gateway) | Optional connected-source acquisition, such as a selected Google Drive JSON file, through Desk. |
+
+Runner does not contact Gateway or an identity provider itself. Manual inputs and
+local JSON uploads need no Gateway. Google Drive supplies input bytes through Desk;
+it is not an artifact store. Runner uses Runtime's public CLI rather than embedding
+a second evaluator.
+
+## Compatibility and versions
+
+The initial local pilot was verified with these source revisions:
+
+| Component | Verified revision |
+| --- | --- |
+| Desk | [`e36244e`](https://github.com/Judgment-Pack/judgment-pack-desk/commit/e36244eb172a69b84175ca85c85150eaaa5aec82) |
+| Runtime | [`6842494`](https://github.com/Judgment-Pack/judgment-pack-runtime/commit/6842494ff0492c4f1a3bd185451d7d9c21a8e97e) |
+| Gateway, for connected inputs | [`v0.3.1`](https://github.com/Judgment-Pack/judgment-pack-gateway/releases/tag/v0.3.1), as pinned by Desk |
+
+These are a reproducible baseline, not a promise that every earlier release supports
+the Jobs contract. Build matching Desk and Runtime revisions when using this pilot.
+Runner's companion protocol is `jobs/1`; its HTTP contract is in [openapi.json](openapi.json).
+Repository release versions, a pack's `version`, and its JPS `specVersion` are separate.
+GitHub topic tags describe the repository; they do not indicate release compatibility.
 
 ## Build and run
 
@@ -13,6 +52,8 @@ implemented on these hosts). SQLite is embedded via `modernc.org/sqlite`; no dat
 server or CGO is required.
 
 ```sh
+git clone https://github.com/Judgment-Pack/judgment-pack-runner.git
+cd judgment-pack-runner
 go build -trimpath -o bin/jpack-runner ./cmd/jpack-runner
 /path/to/jpack-desk --runner "$PWD/bin/jpack-runner" --jpack /absolute/path/to/jpack /path/to/project
 ```
@@ -52,7 +93,8 @@ this package does not expand Runtime's conformance claim or approve external act
 Evidence is a caller-declared map of requirement IDs to `present`, `absent`, or
 `unknown`. It is not verified source acquisition. Omitted evidence is preserved as
 omitted; an empty supplied object remains a supplied object. Omitted facts and false
-values remain distinct. There is no document/provider ingestion in this pilot.
+values remain distinct. Use the explicit file-input path below to map selected JSON into these inputs;
+Runner does not fetch or interpret evidence documents itself.
 
 ## Release readiness
 
@@ -120,6 +162,22 @@ provenance and mapped facts, excluding raw file bytes and consumed picker grants
 
 This is explicit file selection per run. Background acquisition, recurring
 schedules, batch records, CSV mapping, and standing source grants are not included.
+
+## Saved one-page briefs
+
+In Desk, open a job or a finished run, select **Brief** on the right rail, and choose
+**Generate brief**. Desk sends the frozen source snapshot to the configured Assistant;
+Runner persists the resulting brief, source snapshot and revision history. Reopening
+the brief reads that saved version without another model call. **Regenerate brief**
+creates a new revision and retains the previous one.
+
+The brief combines context, findings, uncertainty and next action with required
+evidence and recorded results. Evidence availability and evaluation results come
+from the retained record, separately from AI prose. A sample result remains labeled
+as a sample; a brief is not an approval, new evaluation or verification of evidence.
+Saved briefs are shared by views of the same local workspace and installation;
+this pilot does not add multi-user sharing or access control. Test-case briefs are
+stored by Desk, outside Runner's job/run records.
 
 ## API
 
@@ -194,3 +252,12 @@ exclusive dispatcher ownership, Runtime drift, HTTP authority, and forced exit a
 a real audit append but before the runner records completion. Integration tests require
 `JPACK_TEST_BIN`; without it they report skipped rather than claim a real evaluation.
 The fixture is a synthetic Apache-2.0 Runtime specification example, not business policy.
+
+## License and contributions
+
+This repository is public and licensed under [Apache-2.0](LICENSE). Report bugs or
+propose changes through [GitHub issues](https://github.com/Judgment-Pack/judgment-pack-runner/issues)
+and pull requests. Include a reproduction and relevant verification results. Use
+`git commit -s` to add a DCO sign-off, consistent with the Judgment-Pack repositories.
+Do not include real credentials, customer evidence or private operational records
+in public issues, examples or test fixtures.
