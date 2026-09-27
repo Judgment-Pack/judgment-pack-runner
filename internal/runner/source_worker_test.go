@@ -14,6 +14,17 @@ import (
 	"time"
 )
 
+func sourceWorkerTempDir(t *testing.T) string {
+	t.Helper()
+	// macOS exposes the temporary directory through /var -> /private/var.
+	// Preserve production's symlink refusal by using its resolved test path.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func workerFixture(t *testing.T) (*SourceWorker, sourceRequest, chan struct{}, *atomic.Int32) {
 	t.Helper()
 	barrier := make(chan struct{})
@@ -33,7 +44,7 @@ func workerFixture(t *testing.T) (*SourceWorker, sourceRequest, chan struct{}, *
 		write(w, 200, map[string]any{"result": map[string]string{"value": "retained"}, "receipt": map[string]any{"sessionId": "async." + strings.Repeat("a", 32), "callIndex": 0}, "salts": map[string]string{"args": strings.Repeat("b", 64)}})
 	}))
 	t.Cleanup(gateway.Close)
-	worker, e := OpenSourceWorker(SourceWorkerConfig{Dir: filepath.Join(t.TempDir(), "caller"), Gateway: gateway.URL})
+	worker, e := OpenSourceWorker(SourceWorkerConfig{Dir: filepath.Join(sourceWorkerTempDir(t), "caller"), Gateway: gateway.URL})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -171,13 +182,13 @@ func TestSourceWorkerRejectsInvalidAdmissionWithoutState(t *testing.T) {
 	}
 }
 func TestSourceWorkerRefusesSignerStoreAndPublicToken(t *testing.T) {
-	dir := t.TempDir()
+	dir := sourceWorkerTempDir(t)
 	os.Mkdir(filepath.Join(dir, "receipts"), 0700)
 	if s, e := OpenSourceWorker(SourceWorkerConfig{Dir: filepath.Join(dir, "operations"), Gateway: "http://127.0.0.1:1"}); e == nil {
 		s.Close()
 		t.Fatal("caller state placed in signer store")
 	}
-	p := filepath.Join(t.TempDir(), "token")
+	p := filepath.Join(sourceWorkerTempDir(t), "token")
 	os.WriteFile(p, []byte(strings.Repeat("a", 64)), 0644)
 	if _, e := readPrivateToken(p); e == nil {
 		t.Fatal("non-private token accepted")
@@ -221,7 +232,7 @@ func TestSourceWorkerSessionCollisionRequiresAttention(t *testing.T) {
 		write(w, 200, map[string]any{"receipt": map[string]any{"sessionId": "async." + strings.Repeat("c", 32), "callIndex": 1}, "result": map[string]any{}, "salts": map[string]any{}})
 	}))
 	defer gateway.Close()
-	s, e := OpenSourceWorker(SourceWorkerConfig{Dir: filepath.Join(t.TempDir(), "caller"), Gateway: gateway.URL})
+	s, e := OpenSourceWorker(SourceWorkerConfig{Dir: filepath.Join(sourceWorkerTempDir(t), "caller"), Gateway: gateway.URL})
 	if e != nil {
 		t.Fatal(e)
 	}

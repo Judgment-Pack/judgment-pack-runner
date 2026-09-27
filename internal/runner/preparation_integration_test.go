@@ -26,7 +26,7 @@ func TestDurablePreparationRealGatewayMCPAndRunnerRestart(t *testing.T) {
 	}
 	cfg := testConfig(t)
 	cfg.disableAutomation = true
-	dir := t.TempDir()
+	dir := sourceWorkerTempDir(t)
 	source := filepath.Join(dir, "mcp-source")
 	build := exec.Command("go", "build", "-o", source, "./testdata/async-mcp")
 	if out, e := build.CombinedOutput(); e != nil {
