@@ -10,16 +10,17 @@ type AutomaticInput struct {
 	Files map[string]string `json:"files,omitempty"` // named local mapping sources
 }
 type TriggerConfig struct {
-	Name          string          `json:"name"`
-	Kind          string          `json:"kind"` // schedule, event, file
-	Cloud         *CloudBinding   `json:"cloud,omitempty"`
-	Schedule      *Schedule       `json:"schedule,omitempty"`
-	Input         *AutomaticInput `json:"input,omitempty"`
-	Missed        string          `json:"missed"`  // skip, latest
-	Overlap       string          `json:"overlap"` // skip, queue
-	QueueSeconds  int             `json:"queueSeconds"`
-	WatchPath     string          `json:"watchPath,omitempty"`
-	StableSeconds int             `json:"stableSeconds,omitempty"`
+	Name               string          `json:"name"`
+	Kind               string          `json:"kind"` // schedule, event, file
+	Cloud              *CloudBinding   `json:"cloud,omitempty"`
+	Schedule           *Schedule       `json:"schedule,omitempty"`
+	Input              *AutomaticInput `json:"input,omitempty"`
+	Missed             string          `json:"missed"`  // skip, latest
+	Overlap            string          `json:"overlap"` // skip, queue
+	PreparationSeconds int             `json:"preparationSeconds,omitempty"`
+	QueueSeconds       int             `json:"queueSeconds"`
+	WatchPath          string          `json:"watchPath,omitempty"`
+	StableSeconds      int             `json:"stableSeconds,omitempty"`
 }
 type Trigger struct {
 	ID        string        `json:"id"`
@@ -47,25 +48,29 @@ type TriggerOrigin struct {
 	ExpiresAt       string `json:"expiresAt,omitempty"`
 }
 type Occurrence struct {
-	ID              string          `json:"id"`
-	JobID           string          `json:"jobId"`
-	ReleaseID       string          `json:"releaseId"`
-	JobRevision     int             `json:"jobRevision"`
-	TriggerID       string          `json:"triggerId"`
-	TriggerRevision int             `json:"triggerRevision"`
-	Kind            string          `json:"kind"`
-	EventID         string          `json:"eventId,omitempty"`
-	ScheduledAt     string          `json:"scheduledAt,omitempty"`
-	ReceivedAt      string          `json:"receivedAt"`
-	ExpiresAt       string          `json:"expiresAt"`
-	InputDigest     string          `json:"inputDigest,omitempty"`
-	State           string          `json:"state"` // accepted, submitted, skipped, failed, expired
-	RunID           string          `json:"runId,omitempty"`
-	Reason          string          `json:"reason,omitempty"`
-	MissedFrom      string          `json:"missedFrom,omitempty"`
-	MissedThrough   string          `json:"missedThrough,omitempty"`
-	PendingInput    *AutomaticInput `json:"pendingInput,omitempty"`
-	Input           *Input          `json:"input,omitempty"`
+	Preparation        *SourcePreparation `json:"preparation,omitempty"`
+	PreparationSeconds int                `json:"preparationSeconds,omitempty"`
+	QueueSeconds       int                `json:"queueSeconds,omitempty"`
+	ReadyUntil         string             `json:"readyUntil,omitempty"`
+	ID                 string             `json:"id"`
+	JobID              string             `json:"jobId"`
+	ReleaseID          string             `json:"releaseId"`
+	JobRevision        int                `json:"jobRevision"`
+	TriggerID          string             `json:"triggerId"`
+	TriggerRevision    int                `json:"triggerRevision"`
+	Kind               string             `json:"kind"`
+	EventID            string             `json:"eventId,omitempty"`
+	ScheduledAt        string             `json:"scheduledAt,omitempty"`
+	ReceivedAt         string             `json:"receivedAt"`
+	ExpiresAt          string             `json:"expiresAt"`
+	InputDigest        string             `json:"inputDigest,omitempty"`
+	State              string             `json:"state"` // accepted, submitted, skipped, failed, expired
+	RunID              string             `json:"runId,omitempty"`
+	Reason             string             `json:"reason,omitempty"`
+	MissedFrom         string             `json:"missedFrom,omitempty"`
+	MissedThrough      string             `json:"missedThrough,omitempty"`
+	PendingInput       *AutomaticInput    `json:"pendingInput,omitempty"`
+	Input              *Input             `json:"input,omitempty"`
 }
 type EventDelivery struct {
 	ID         string `json:"id"`

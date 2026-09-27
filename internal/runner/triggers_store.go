@@ -302,7 +302,7 @@ func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrenc
 	return o, false, e
 }
 func newOccurrence(t Trigger, j Job, at time.Time) Occurrence {
-	return Occurrence{ID: id("occ_"), JobID: j.ID, ReleaseID: j.ReleaseID, JobRevision: j.Revision, TriggerID: t.ID, TriggerRevision: t.Revision, Kind: t.Config.Kind, ReceivedAt: at.UTC().Format(time.RFC3339Nano), ExpiresAt: at.Add(time.Duration(t.Config.QueueSeconds) * time.Second).UTC().Format(time.RFC3339Nano), State: "accepted"}
+	return Occurrence{PreparationSeconds: t.Config.PreparationSeconds, QueueSeconds: t.Config.QueueSeconds, ID: id("occ_"), JobID: j.ID, ReleaseID: j.ReleaseID, JobRevision: j.Revision, TriggerID: t.ID, TriggerRevision: t.Revision, Kind: t.Config.Kind, ReceivedAt: at.UTC().Format(time.RFC3339Nano), ExpiresAt: at.Add(time.Duration(t.Config.QueueSeconds) * time.Second).UTC().Format(time.RFC3339Nano), State: "accepted"}
 }
 func (s *Service) findOccurrence(trigger, identity string) (Occurrence, string, error) {
 	var o Occurrence
@@ -316,10 +316,10 @@ func (s *Service) findOccurrence(trigger, identity string) (Occurrence, string, 
 func (s *Service) admitOccurrence(tx *sql.Tx, t Trigger, o *Occurrence, identity, payload string) error {
 	if o.State == "accepted" {
 		var pending, active int
-		if e := tx.QueryRow("SELECT count(*) FROM occurrences WHERE state IN ('accepted','preparing')").Scan(&pending); e != nil {
+		if e := tx.QueryRow("SELECT count(*) FROM occurrences WHERE state IN ('accepted','preparing','waiting')").Scan(&pending); e != nil {
 			return e
 		}
-		if e := tx.QueryRow("SELECT (SELECT count(*) FROM runs WHERE job_id=? AND state IN ('queued','running'))+(SELECT count(*) FROM occurrences WHERE job_id=? AND state IN ('accepted','preparing'))", o.JobID, o.JobID).Scan(&active); e != nil {
+		if e := tx.QueryRow("SELECT (SELECT count(*) FROM runs WHERE job_id=? AND state IN ('queued','running'))+(SELECT count(*) FROM occurrences WHERE job_id=? AND state IN ('accepted','preparing','waiting','needs-attention'))", o.JobID, o.JobID).Scan(&active); e != nil {
 			return e
 		}
 		if pending >= queueLimit {

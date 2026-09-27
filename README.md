@@ -436,7 +436,8 @@ permissions, calls each operation once, verifies its receipt and exact arguments
 and derives facts/evidence through the existing mapping contract. Never reuse a
 release sample or retained response as a scheduled input.
 
-An occurrence is durably marked `preparing` before network acquisition. A crash
+For legacy connections (without `durable: true`), an occurrence is durably marked
+`preparing` before network acquisition. A crash
 in that state becomes a visible failure on restart and is **not** retried.
 Acquisition has a 120-second overall budget, bounded by occurrence expiry, plus
 existing source and combined input limits. Preview makes real provider calls.
@@ -456,3 +457,43 @@ Example additional trusted boot fields:
 These additions retain protocol `jobs/1`. See [OpenAPI](openapi.json) and the
 [design note](docs/design/google-cloud-triggers.md). The Google template is prepared
 and locally validated; live cloud IAM and account delivery need deployment testing.
+
+### Durable source waiting
+
+Set `"durable": true` on each installed Gateway connection used by a mapping to
+use the Gateway `/operations` control plane. This requires the matching Gateway
+implementation; it is not available in the released v0.3.1 pin. Example:
+
+```json
+{"gatewayConnections":[{"profile":"vendor-registry","url":"http://127.0.0.1:8787","durable":true}]}
+```
+
+Schedule and Google Cloud triggers then checkpoint the case, selected local file
+bytes, original operation requests and verified source responses in SQLite.
+Runner restarts resume the same operation IDs. Waiting releases a preparation
+worker; four workers advance independent occurrences with three-second control
+requests. There is no automatic second provider attempt. Source order and typed
+parameter dependencies remain those in the frozen mapping.
+
+`preparationSeconds` sets the overall source wait (60–604800 seconds; default
+3600). The original `queueSeconds` admits work before preparation and gives the
+ready input a separate bounded evaluation queue window. Gateway's operator-set
+source timeout and the MCP adapter timeout still apply independently; increase
+both deliberately for long calls. Mapping `maxAge` is unchanged and is checked
+again before evaluation. Stale or unverifiable evidence requires review, never
+an invented `absent` value or an automatic refresh.
+
+Desk shows **Waiting for sources** under the job's Runs tab and keeps full source
+history under Triggers. Cancellation prevents a decision from late results;
+provider cancellation is best effort. **Check status** reconciles the original
+operation after an interruption, without another operation ID or a longer deadline.
+Trigger preview checks configuration without invoking durable sources; it does
+not claim that live inputs have already been verified.
+
+This first implementation supports process-backed Gateway reads, including MCP.
+A Gateway restart returns retained completions; a call interrupted before its
+response was persisted needs attention and is never replayed. Provider-native
+asynchronous handles/callbacks, automatic freshness refresh and manual browser
+acquisition recovery are subsequent adapters/workflows, not implied guarantees.
+Runtime evaluation remains unchanged and uncertain evaluation attempts are never
+repeated automatically. See [the recovery contract](docs/design/durable-sources.md).

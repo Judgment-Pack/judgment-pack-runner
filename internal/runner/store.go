@@ -27,6 +27,7 @@ type Service struct {
 	cloudMu                sync.Mutex
 	cloudProblems          map[string]string
 	cloudFactory           func(context.Context, CloudConnection) (cloudTransport, error)
+	preparing              map[string]bool
 	automationMu           sync.Mutex
 	automationDone         chan struct{}
 	cfg                    Config
@@ -454,6 +455,14 @@ func (s *Service) worker(ctx context.Context) {
 			return
 		}
 		release, err := s.release(r.ReleaseID)
+		if err == nil && r.Trigger != nil && r.Input.Source != nil && r.Input.Source.Mapping.Version == 2 {
+			// Queue time must not silently outlive source freshness. Verify now,
+			// while retaining the exact input snapshot frozen at admission.
+			err = s.checkReleaseProfiles(release)
+			if err == nil {
+				_, err = s.normalizeInput(r.Input)
+			}
+		}
 		if err == nil {
 			r.Result, r.Audit, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
 		}

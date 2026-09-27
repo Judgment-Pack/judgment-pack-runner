@@ -1003,6 +1003,16 @@
             "type": "integer",
             "minimum": 0
           }
+        },
+        {
+          "name": "preparations",
+          "in": "query",
+          "schema": {
+            "enum": [
+              "1"
+            ]
+          },
+          "description": "Only source preparations that have not produced an evaluation run; applied before pagination."
         }
       ],
       "get": {
@@ -1070,6 +1080,12 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "durableGatewayProfiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
                   "required": [
@@ -1077,6 +1093,82 @@
                     "gatewayProfiles"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/occurrences/{occurrence}/cancel": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^occ_[a-f0-9]{32}$"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Stop waiting and fence late results; provider cancellation is best effort.",
+        "responses": {
+          "200": {
+            "description": "Updated occurrence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Occurrence"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/occurrences/{occurrence}/reconcile": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^occ_[a-f0-9]{32}$"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Check the original source operation IDs again, without extending deadlines or replaying uncertain provider calls.",
+        "responses": {
+          "200": {
+            "description": "Updated occurrence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Occurrence"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -2979,6 +3071,19 @@
           },
           "cloud": {
             "$ref": "#/components/schemas/CloudBinding"
+          },
+          "preparationSeconds": {
+            "description": "Omit or use 0 for one hour on durable connections. Explicit waits require mapped-sources and all operation profiles installed as durable.",
+            "oneOf": [
+              {
+                "const": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 60,
+                "maximum": 604800
+              }
+            ]
           }
         },
         "required": [
@@ -3138,7 +3243,10 @@
               "skipped",
               "failed",
               "expired",
-              "preparing"
+              "preparing",
+              "waiting",
+              "needs-attention",
+              "cancelled"
             ]
           },
           "runId": {
@@ -3154,6 +3262,19 @@
           "missedThrough": {
             "type": "string",
             "format": "date-time"
+          },
+          "preparationSeconds": {
+            "type": "integer"
+          },
+          "queueSeconds": {
+            "type": "integer"
+          },
+          "readyUntil": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "preparation": {
+            "$ref": "#/components/schemas/SourcePreparation"
           }
         },
         "required": [
@@ -3214,6 +3335,12 @@
           },
           "evidenceText": {
             "type": "string"
+          },
+          "configurationReady": {
+            "type": "boolean"
+          },
+          "deferred": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -3279,6 +3406,70 @@
             "type": "string"
           }
         }
+      },
+      "SourceTask": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "id",
+          "state",
+          "startedAt",
+          "checks"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "checks": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SourcePreparation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "startedAt",
+          "deadline",
+          "tasks"
+        ],
+        "properties": {
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "nextCheck": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceTask"
+            }
+          }
+        },
+        "description": "Public progress only. Checkpoint bytes, frozen operation requests and installed Gateway URLs remain private."
       }
     }
   }

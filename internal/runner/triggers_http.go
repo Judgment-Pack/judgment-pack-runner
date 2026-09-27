@@ -9,6 +9,22 @@ import (
 )
 
 func (s *Service) triggerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/occurrences/{occurrence}/reconcile", func(w http.ResponseWriter, r *http.Request) {
+		o, e := s.reconcileOccurrence(r.PathValue("occurrence"))
+		if e != nil {
+			failure(w, e)
+			return
+		}
+		write(w, 200, publicOccurrence(o))
+	})
+	mux.HandleFunc("POST /v1/occurrences/{occurrence}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		o, e := s.cancelOccurrence(r.Context(), r.PathValue("occurrence"))
+		if e != nil {
+			failure(w, e)
+			return
+		}
+		write(w, 200, publicOccurrence(o))
+	})
 	mux.HandleFunc("GET /v1/jobs/{job}/triggers", func(w http.ResponseWriter, r *http.Request) {
 		if _, e := s.job(r.PathValue("job")); e != nil {
 			failure(w, e)
@@ -90,7 +106,20 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 		if c.Schedule != nil {
 			result["next"] = c.Schedule.preview(time.Now())
 		}
-		if c.Input != nil {
+		if c.Input != nil && c.Input.Kind == "mapped-sources" && s.durableMapping(release) {
+			// Enabling must not wait for (or start) a multi-hour provider call.
+			seed, e := s.automaticInputSeed(c.Input, release, nil)
+			if e != nil {
+				failure(w, e)
+				return
+			}
+			if _, e = nextInput(seed, s.cfg.InputProfiles, time.Now()); e != nil {
+				failure(w, e)
+				return
+			}
+			result["configurationReady"] = true
+			result["deferred"] = true
+		} else if c.Input != nil {
 			input, e := s.automaticInputContext(r.Context(), c.Input, release, nil)
 			if e != nil {
 				failure(w, e)
@@ -170,7 +199,7 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 			}
 			after = n
 		}
-		rows, e := s.db.Query("SELECT seq,record FROM occurrences WHERE job_id=? AND seq<? ORDER BY seq DESC LIMIT 51", r.PathValue("job"), after)
+		rows, e := s.db.Query("SELECT seq,record FROM occurrences WHERE job_id=? AND seq<? AND (?=0 OR (json_extract(record,'$.preparation') IS NOT NULL AND state<>'submitted')) ORDER BY seq DESC LIMIT 51", r.PathValue("job"), after, r.URL.Query().Get("preparations") == "1")
 		if e != nil {
 			failure(w, e)
 			return
@@ -194,8 +223,7 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 				failure(w, e)
 				return
 			}
-			o.Input = nil
-			o.PendingInput = nil
+			o = publicOccurrence(o)
 			items = append(items, o)
 			last = seq
 		}
