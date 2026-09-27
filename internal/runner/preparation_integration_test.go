@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,7 +78,14 @@ func TestDurablePreparationRealGatewayMCPAndRunnerRestart(t *testing.T) {
 		t.Fatal(e)
 	}
 	cfg.InputProfiles = []InputProfile{profile}
-	cfg.GatewayConnections = []GatewayConnection{{Profile: profile.ID, URL: origin, Durable: true}}
+	worker, e := OpenSourceWorker(SourceWorkerConfig{Dir: filepath.Join(dir, "caller-state"), Gateway: origin})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer worker.Close()
+	server := httptest.NewServer(worker.Handler())
+	defer server.Close()
+	cfg.GatewayConnections = []GatewayConnection{{Profile: profile.ID, URL: origin, Durable: true, OperationsURL: server.URL, OperationsTokenFile: worker.TokenFile()}}
 	s, e := Open(cfg)
 	if e != nil {
 		t.Fatal(e)
@@ -155,6 +163,35 @@ func TestDurablePreparationRealGatewayMCPAndRunnerRestart(t *testing.T) {
 	calls, _ := os.ReadFile(filepath.Join(dir, "calls"))
 	if string(calls) != "call\ncall\n" {
 		t.Fatal("expected one preview and one operational acquisition", string(calls))
+	}
+	// The caller may retain salts; the signer store must not retain any.
+	response := run.Input.Source.Sources["input"].Response
+	var proof struct {
+		Salts map[string]string `json:"salts"`
+	}
+	json.Unmarshal(response, &proof)
+	if len(proof.Salts) == 0 {
+		t.Fatal("caller did not retain proof secrets")
+	}
+	if err := filepath.WalkDir(filepath.Join(dir, "gateway"), func(path string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, e := os.ReadFile(path)
+		if e != nil {
+			return e
+		}
+		for _, salt := range proof.Salts {
+			if bytes.Contains(data, []byte(salt)) {
+				t.Errorf("signer retained caller salt in %s", path)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if run.Input.Preparation == nil || len(run.Input.Preparation.Cites) != 1 {
 		t.Fatal("verified lineage was lost")

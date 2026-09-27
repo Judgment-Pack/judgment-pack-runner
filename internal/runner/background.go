@@ -15,9 +15,11 @@ import (
 )
 
 type GatewayConnection struct {
-	Durable bool   `json:"durable,omitempty"`
-	Profile string `json:"profile"`
-	URL     string `json:"url"`
+	Durable             bool   `json:"durable,omitempty"`
+	OperationsURL       string `json:"operationsUrl,omitempty"`
+	OperationsTokenFile string `json:"operationsTokenFile,omitempty"`
+	Profile             string `json:"profile"`
+	URL                 string `json:"url"`
 }
 
 var connectionID = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
@@ -39,6 +41,16 @@ func validateBackgroundConfig(c Config) error {
 		u, e := url.Parse(v.URL)
 		if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || u.ForceQuery || u.Opaque != "" || !(u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")) || seen[v.Profile] {
 			return errors.New("invalid Gateway connection")
+		}
+		if v.Durable {
+			if !validGatewayOrigin(v.OperationsURL) || v.OperationsURL == v.URL {
+				return errors.New("durable acquisition requires a separate caller-owned source worker")
+			}
+			if _, err := readPrivateToken(v.OperationsTokenFile); err != nil {
+				return err
+			}
+		} else if v.OperationsURL != "" || v.OperationsTokenFile != "" {
+			return errors.New("source worker settings require durable acquisition")
 		}
 		found := false
 		for _, p := range c.InputProfiles {

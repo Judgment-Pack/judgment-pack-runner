@@ -23,14 +23,16 @@ type SourcePreparation struct {
 	Input     *Input       `json:"input,omitempty"` // private checkpoint, removed from API
 }
 type SourceTask struct {
-	Name        string          `json:"name"`
-	ID          string          `json:"id"`
-	State       string          `json:"state"`
-	StartedAt   string          `json:"startedAt"`
-	CompletedAt string          `json:"completedAt,omitempty"`
-	Checks      int             `json:"checks"`
-	Gateway     string          `json:"gateway,omitempty"` // installation binding, private
-	Request     json.RawMessage `json:"request,omitempty"` // frozen, private
+	Name          string          `json:"name"`
+	ID            string          `json:"id"`
+	State         string          `json:"state"`
+	StartedAt     string          `json:"startedAt"`
+	CompletedAt   string          `json:"completedAt,omitempty"`
+	Checks        int             `json:"checks"`
+	OperationsURL string          `json:"operationsUrl,omitempty"` // caller-worker binding, private
+	Profile       string          `json:"profile,omitempty"`       // installation binding, private
+	Gateway       string          `json:"gateway,omitempty"`       // installation binding, private
+	Request       json.RawMessage `json:"request,omitempty"`       // frozen, private
 }
 
 func publicOccurrence(o Occurrence) Occurrence {
@@ -42,6 +44,8 @@ func publicOccurrence(o Occurrence) Occurrence {
 		p.Tasks = append([]SourceTask(nil), p.Tasks...)
 		for i := range p.Tasks {
 			p.Tasks[i].Gateway = ""
+			p.Tasks[i].OperationsURL = ""
+			p.Tasks[i].Profile = ""
 			p.Tasks[i].Request = nil
 		}
 		o.Preparation = &p
@@ -254,17 +258,18 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 		}
 	}
 	if task == nil {
-		gateway := ""
+		gateway, operationsURL := "", ""
 		for _, g := range s.cfg.GatewayConnections {
 			if g.Profile == next.Profile && g.Durable {
 				gateway = g.URL
+				operationsURL = g.OperationsURL
 			}
 		}
 		if gateway == "" {
 			return s.stopPreparation(o, "needs-attention", "The durable Gateway connection is no longer installed.")
 		}
 		operation := id("")
-		p.Tasks = append(p.Tasks, SourceTask{Name: next.Name, ID: operation, State: "waiting", StartedAt: now(), Gateway: gateway, Request: encode(map[string]any{"id": operation, "source": next.Source, "arguments": next.Arguments, "deadline": p.Deadline})})
+		p.Tasks = append(p.Tasks, SourceTask{Name: next.Name, ID: operation, State: "waiting", StartedAt: now(), Gateway: gateway, OperationsURL: operationsURL, Profile: next.Profile, Request: encode(map[string]any{"gateway": gateway, "id": operation, "source": next.Source, "arguments": next.Arguments, "deadline": p.Deadline})})
 		task = &p.Tasks[len(p.Tasks)-1]
 		if e = s.savePreparation(o); e != nil {
 			return e
@@ -272,8 +277,12 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 	}
 	// An installation rebind cannot silently move an in-flight acquisition.
 	installed := false
+	tokenFile := ""
 	for _, g := range s.cfg.GatewayConnections {
-		installed = installed || (g.Durable && g.Profile == next.Profile && g.URL == task.Gateway)
+		if g.Durable && g.Profile == next.Profile && g.URL == task.Gateway && g.OperationsURL == task.OperationsURL && g.OperationsURL != "" {
+			installed = true
+			tokenFile = g.OperationsTokenFile
+		}
 	}
 	if !installed {
 		return s.stopPreparation(o, "needs-attention", "The acquisition connection changed. Restore it to reconcile this operation.")
@@ -285,13 +294,13 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 		Response json.RawMessage `json:"response,omitempty"`
 		Reason   string          `json:"reason,omitempty"`
 	}
-	raw, code, e := operationCall(ctx, task.Gateway+"/operations", task.Request)
+	raw, code, e := operationCall(ctx, task.OperationsURL+"/operations", task.Request, tokenFile)
 	task.Checks++
 	if e != nil || code == 429 || code >= 500 {
 		if ctx.Err() != nil {
 			return nil
 		} // shutdown preserves the checkpoint
-		o.Reason = "Waiting for the Gateway connection. The same operation will be checked again."
+		o.Reason = "Waiting for the source worker connection. The same operation will be checked again."
 		delay := time.Duration(3+task.Checks*2) * time.Second
 		if delay > 30*time.Second {
 			delay = 30 * time.Second
@@ -300,10 +309,10 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 		return s.savePreparation(o)
 	}
 	if code != 200 && code != 202 {
-		return s.stopPreparation(o, "needs-attention", "The Gateway refused the durable operation. It was not repeated with a new ID.")
+		return s.stopPreparation(o, "needs-attention", "The source worker refused the durable operation. It was not repeated with a new ID.")
 	}
 	if strictJSON(raw, &result) != nil || result.ID != task.ID || result.Deadline != p.Deadline {
-		return s.stopPreparation(o, "needs-attention", "The Gateway operation response does not match this request.")
+		return s.stopPreparation(o, "needs-attention", "The source worker response does not match this request.")
 	}
 	o.Reason = ""
 	if result.State == "queued" || result.State == "running" {
@@ -346,13 +355,18 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 
 // Requests only exchange control-plane state. They never hold a worker for
 // the duration of an acquisition. Retries always carry identical intent.
-func operationCall(parent context.Context, target string, body []byte) ([]byte, int, error) {
+func operationCall(parent context.Context, target string, body []byte, tokenFile string) ([]byte, int, error) {
 	ctx, stop := context.WithTimeout(parent, 3*time.Second)
 	defer stop()
 	req, e := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if e != nil {
 		return nil, 0, e
 	}
+	token, e := readPrivateToken(tokenFile)
+	if e != nil {
+		return nil, 0, e
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	res, e := automaticHTTP.Do(req)
 	if e != nil {
@@ -371,7 +385,11 @@ func (s *Service) cancelSource(ctx context.Context, o Occurrence) {
 	}
 	for _, task := range o.Preparation.Tasks {
 		if task.State != "completed" {
-			_, _, _ = operationCall(ctx, task.Gateway+"/operations/"+task.ID+"/cancel", []byte("{}"))
+			for _, g := range s.cfg.GatewayConnections {
+				if g.Durable && g.URL == task.Gateway && g.OperationsURL == task.OperationsURL && g.Profile == task.Profile {
+					_, _, _ = operationCall(ctx, task.OperationsURL+"/operations/"+task.ID+"/cancel", []byte("{}"), g.OperationsTokenFile)
+				}
+			}
 		}
 	}
 }

@@ -460,40 +460,56 @@ and locally validated; live cloud IAM and account delivery need deployment testi
 
 ### Durable source waiting
 
-Set `"durable": true` on each installed Gateway connection used by a mapping to
-use the Gateway `/operations` control plane. This requires the matching Gateway
-implementation; it is not available in the released v0.3.1 pin. Example:
+Durable acquisition is owned by **Runner's caller-side source worker**, not by
+Gateway's signer. Build `./cmd/jpack-source-worker` and run it independently of
+Desk/Runner, using a persistent private directory outside the Gateway store:
 
-```json
-{"gatewayConnections":[{"profile":"vendor-registry","url":"http://127.0.0.1:8787","durable":true}]}
+```sh
+jpack-source-worker --store /absolute/private/source-worker --gateway http://127.0.0.1:8787 --port 8792
 ```
 
-Schedule and Google Cloud triggers then checkpoint the case, selected local file
-bytes, original operation requests and verified source responses in SQLite.
-Runner restarts resume the same operation IDs. Waiting releases a preparation
-worker; four workers advance independent occurrences with three-second control
-requests. There is no automatic second provider attempt. Source order and typed
-parameter dependencies remain those in the frozen mapping.
+The worker creates `source-worker.token` with owner-only permissions. Configure
+an installed Gateway connection with its original Gateway URL, the separate
+worker URL and token file:
 
-`preparationSeconds` sets the overall source wait (60–604800 seconds; default
-3600). The original `queueSeconds` admits work before preparation and gives the
-ready input a separate bounded evaluation queue window. Gateway's operator-set
-source timeout and the MCP adapter timeout still apply independently; increase
-both deliberately for long calls. Mapping `maxAge` is unchanged and is checked
-again before evaluation. Stale or unverifiable evidence requires review, never
-an invented `absent` value or an automatic refresh.
+```json
+{"gatewayConnections":[{"profile":"vendor-registry","url":"http://127.0.0.1:8787","durable":true,"operationsUrl":"http://127.0.0.1:8792","operationsTokenFile":"/absolute/private/source-worker/source-worker.token"}]}
+```
 
-Desk shows **Waiting for sources** under the job's Runs tab and keeps full source
-history under Triggers. Cancellation prevents a decision from late results;
-provider cancellation is best effort. **Check status** reconciles the original
-operation after an interruption, without another operation ID or a longer deadline.
-Trigger preview checks configuration without invoking durable sources; it does
-not claim that live inputs have already been verified.
+Desk uses the same entries under `gateway` in its installation-owned
+`--runner-connections` file. Matching input trust profiles are still required.
+Never put token bytes in browser settings, project files or URLs. An authenticated
+Gateway can be configured on the worker with `--gateway-token-file`.
 
-This first implementation supports process-backed Gateway reads, including MCP.
-A Gateway restart returns retained completions; a call interrupted before its
-response was persisted needs attention and is never replayed. Provider-native
-asynchronous handles/callbacks, automatic freshness refresh and manual browser
-acquisition recovery are subsequent adapters/workflows, not implied guarantees.
-Runtime evaluation remains unchanged and uncertain evaluation attempts are never
-repeated automatically. See [the recovery contract](docs/design/durable-sources.md).
+The worker calls the normal Gateway `/acquire` API once, and retains the returned
+proof in **caller custody**. Gateway never retains commitment salts or replayable
+requests. The worker requires its private bearer credential and refuses browser
+Origins. Its database is bound to one Gateway origin and one OS process owner.
+The worker supports Linux/macOS/FreeBSD process locks, as Runner does.
+
+Schedule and Google Cloud triggers checkpoint case/local-file inputs and their
+immutable operations. Runner can restart while the worker continues acquiring;
+it resumes the same operation IDs. Completed worker responses survive its own
+restart. If the worker or Gateway stops before a response is retained, the call
+needs attention and is **never replayed automatically**. Four acquisitions per
+worker and bounded three-second Runner polling keep independent jobs moving.
+
+`preparationSeconds` is the overall source wait (60–604800 seconds; default 3600).
+`queueSeconds` independently bounds admission and the subsequent evaluation queue.
+Gateway and adapter timeouts still apply; configure both for long calls. The
+Gateway timeout defaults to 30 seconds. The updated Gateway build permits up to
+seven days, while earlier builds retain their smaller configurable ceiling.
+Mapping freshness and signed argument commitments are checked before evaluation.
+
+Desk shows **Waiting for sources** in Runs and keeps preparation history in
+Triggers. Cancellation fences late results locally; it does not promise to stop
+a remote provider. **Check status** retains the operation ID and original deadline.
+Configuration preview does not claim that live inputs have already been verified.
+
+Keep the worker running as a separate local service. Its private SQLite store
+contains requests and proof secrets and needs a separate backup; never distribute
+it with the Gateway receipt corpus. Capacity is 10,000 retained operations; no
+automatic pruning is provided. Do not delete records whose IDs can still be
+retried. Native provider handles/callbacks, automatic refresh and browser-initiated
+acquisition recovery remain outside this implementation. Runtime behavior is
+unchanged. See [the recovery contract](docs/design/durable-sources.md).

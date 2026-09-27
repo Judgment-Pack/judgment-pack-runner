@@ -1,6 +1,6 @@
 # Durable source preparation
 
-Status: implemented locally; cross-repository release/review pending.
+Status: implemented; independent review of caller custody pending.
 
 Runner owns the occurrence and its preparation. Gateway owns the source process,
 credentials and ordinary signed acquisition response. Runtime sees one frozen,
@@ -27,11 +27,14 @@ have no expiring lease that could reassign an uncertain provider invocation.
 Scaling to multiple Runner owners would require database leases and fencing
 before this ownership assumption could change.
 
-Gateway's immutable file claim is the admission fence across processes. A claim
-is never reclaimed. It returns the retained acquisition response on an identical
-request and rejects a changed request or principal. A Gateway owner disappearance
-is uncertain, not evidence of failure at the provider. Fresh processes may claim
-unstarted intents; a previously claimed operation cannot execute again.
+Runner's independent `jpack-source-worker` is the Gateway's caller. A SQLite
+FULL/WAL transaction commits each operation claim before the worker calls the
+ordinary `/acquire` endpoint. It retains the original response, including salts,
+in caller-owned storage outside the signer store. Only its installation-owned
+bearer can submit, inspect or cancel operations; browser Origins are refused.
+Its store is bound to one Gateway origin and held by one OS process lock. Changed
+requests cannot reuse an ID. Previously running work becomes uncertain after a
+worker restart and is never replayed. Completed responses remain available.
 
 Operation IDs do not prove input correctness. The final response must verify its
 signature, result bytes, original argument commitment, source/adapter/endpoint
@@ -46,27 +49,28 @@ the owner reconciles or cancels it.
 
 ## Limits and operator configuration
 
-The Gateway operations API currently requires Linux/macOS (Unix directory sync).
-Other Gateway platforms refuse durable admission rather than weaken its claim.
+Install the source worker separately from an individual Runner, with a stable
+loopback port and private directory. It owns no signing key. Runner connects using
+`operationsUrl` and `operationsTokenFile` alongside the original Gateway `url`.
+Only mappings whose operation profiles all have durable worker connections use
+this path. Legacy synchronous configurations remain bounded and non-retrying.
 
-Only mappings whose operation profiles all have `durable: true` use this path.
-Existing synchronous configurations retain the bounded, non-retry behavior.
-Four Runner preparation workers and four active async reads per Gateway process
-bound local concurrency. Control requests last at most three seconds, with
-bounded backoff for unavailable/throttled connections; identical operation POSTs
-never repeat a claimed source. Provider call attempts are not retried by Runner.
+Four preparations per Runner and four acquisitions per worker bound concurrency.
+Control requests last at most three seconds and reuse identical operation intent.
+The worker's HTTP connection to Gateway remains open during the read; browser and
+Runner requests do not. Source and adapter timeouts remain independent policy.
+Cancellation/expiry persists before cancellation of the worker HTTP wait, and a
+conditional completion update cannot overwrite terminal state. A remote provider
+may continue after cancellation. Uncertainty never becomes negative evidence.
 
-One Gateway instance should own the async store. Other instances sharing it can
-read completed results but report another instance's active claim as uncertain.
-Source and adapter timeouts remain operator policy; the seven-day preparation
-ceiling does not override them. No HTTP request stays open for that duration.
-
-The operations directory is private: request arguments, result bytes and
-commitment salts are sensitive. Back it up with the Gateway private store, not
-just its public receipt corpus. Runner's original input checkpoints live in its
-private SQLite store. Public progress responses omit them and Gateway addresses.
-There is no automatic operation/occurrence deletion or retention policy yet.
-Do not delete operation claims while clients could still retry those IDs.
+Gateway retains only its ordinary artifacts, receipts and seals, without caller
+salts. The worker's SQLite database retains private requests and proof responses;
+back it up separately with owner-only access. Public Runner progress omits private
+inputs, worker/Gateway URLs and profile bindings. The worker admits at most 10,000
+retained operations. No automated deletion is provided; retain claims while an ID
+could be retried. Moving custody into this caller process resolves the clean-room
+finding against the initial signer's `/operations` implementation without changing
+SPEC.md or the receipt format.
 
 ## Verification
 
@@ -77,7 +81,7 @@ path also set `JPACK_GATEWAY_TEST_BIN` and `JPACK_MCP_ADAPTER_TEST_BIN`, then ru
 go test -race -run TestDurablePreparation ./internal/runner
 ```
 
-The integration test builds a controllable MCP service, uses real Gateway and
+The integration test builds a controllable MCP service, uses a separate caller worker, real Gateway and
 adapter binaries, pins their actual identity, reviews a real Runtime release,
 restarts Runner while the MCP call waits and checks that one source invocation
 produces one auditable evaluation. Other tests cover checkpoint recovery,

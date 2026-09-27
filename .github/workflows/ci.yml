@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-gateway
-          ref: 27763047b3b329c9b44267379c7cb2aafd7298a9
+          ref: ec03dc0e1e68bc2adf5d50735bc0fb95788c108c
           path: .ci-gateway
           persist-credentials: false
       - name: Build Gateway and MCP adapter
@@ -63,4 +63,6 @@ jobs:
       - name: Check API document
         run: python3 -m json.tool openapi.json > /dev/null
       - name: Build Runner
-        run: go build -trimpath -o "$RUNNER_TEMP/jpack-runner" ./cmd/jpack-runner
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/jpack-runner" ./cmd/jpack-runner
+          go build -trimpath -o "$RUNNER_TEMP/jpack-source-worker" ./cmd/jpack-source-worker
