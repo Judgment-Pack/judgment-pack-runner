@@ -37,6 +37,10 @@ func decode(w http.ResponseWriter, r *http.Request, dst any) error {
 }
 func (s *Service) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
+	s.triggerRoutes(mux)
+	mux.HandleFunc("GET /v1/background-connections", func(w http.ResponseWriter, r *http.Request) {
+		write(w, 200, map[string]any{"cloudConnections": s.cloudStatus(), "gatewayProfiles": s.gatewayProfiles()})
+	})
 	mux.HandleFunc("GET /v1/input-profiles", func(w http.ResponseWriter, r *http.Request) {
 		profiles := []any{}
 		for _, p := range s.cfg.InputProfiles {
@@ -66,7 +70,7 @@ func (s *Service) Handler(token string) http.Handler {
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage"}})
+		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs"}})
 	})
 	mux.HandleFunc("POST /v1/inputs/next", func(w http.ResponseWriter, r *http.Request) {
 		var input Input
@@ -109,9 +113,10 @@ func (s *Service) Handler(token string) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/jobs", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Name      string `json:"name"`
-			ReleaseID string `json:"releaseId"`
-			Reviewed  bool   `json:"reviewed"`
+			Name      string         `json:"name"`
+			ReleaseID string         `json:"releaseId"`
+			Reviewed  bool           `json:"reviewed"`
+			Trigger   *TriggerConfig `json:"trigger,omitempty"`
 		}
 		if err := decode(w, r, &req); err != nil {
 			failure(w, err)
@@ -122,13 +127,14 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, bad("review_required", "Enter a job name and review its fixed release and sample result."))
 			return
 		}
-		j, err := s.createJob(req.Name, req.ReleaseID)
+		j, err := s.createJobConfigured(req.Name, req.ReleaseID, req.Trigger)
 		if err != nil {
 			failure(w, err)
 			return
 		}
 		write(w, 201, j)
 	})
+	mux.HandleFunc("GET /v1/runs", func(w http.ResponseWriter, r *http.Request) { s.list(w, r, "runs", "") })
 	mux.HandleFunc("GET /v1/jobs", func(w http.ResponseWriter, r *http.Request) { s.list(w, r, "jobs", "") })
 	mux.HandleFunc("GET /v1/jobs/{job}", func(w http.ResponseWriter, r *http.Request) {
 		j, err := s.job(r.PathValue("job"))
@@ -205,7 +211,12 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string)
 		failure(w, &apiError{400, "invalid_cursor", "Invalid page cursor."})
 		return
 	}
-	items, next, err := s.records(kind, job, after)
+	filter := recordFilter{Search: strings.TrimSpace(r.URL.Query().Get("q")), State: r.URL.Query().Get("state"), Review: r.URL.Query().Get("review") == "true"}
+	if len(filter.Search) > 200 || (filter.State != "" && !validRunState(filter.State)) || (r.URL.Query().Get("review") != "" && r.URL.Query().Get("review") != "true" && r.URL.Query().Get("review") != "false") || (kind == "jobs" && (filter.State != "" || filter.Review)) {
+		failure(w, &apiError{400, "invalid_filter", "Use a search up to 200 bytes and supported run filters."})
+		return
+	}
+	items, next, err := s.filteredRecords(kind, job, after, filter)
 	if err != nil {
 		failure(w, err)
 		return

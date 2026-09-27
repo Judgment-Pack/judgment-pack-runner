@@ -30,23 +30,26 @@ func main() {
 	}
 }
 func serve() error {
-	input := bufio.NewReaderSize(os.Stdin, 64<<10)
+	input := bufio.NewReaderSize(os.Stdin, 128<<10)
 	line, err := input.ReadSlice('\n')
-	if err != nil || len(line) > 64<<10 {
+	if err != nil || len(line) > 128<<10 {
 		return fmt.Errorf("bounded boot configuration required")
 	}
 	var boot struct {
-		Dir           string                `json:"dir"`
-		Runtime       string                `json:"runtime"`
-		Workspace     string                `json:"workspace"`
-		Owner         string                `json:"owner"`
-		Token         string                `json:"token"`
-		InputProfiles []runner.InputProfile `json:"inputProfiles,omitempty"`
+		Dir                string                     `json:"dir"`
+		Runtime            string                     `json:"runtime"`
+		Workspace          string                     `json:"workspace"`
+		Owner              string                     `json:"owner"`
+		Token              string                     `json:"token"`
+		CloudConnections   []runner.CloudConnection   `json:"cloudConnections,omitempty"`
+		GatewayConnections []runner.GatewayConnection `json:"gatewayConnections,omitempty"`
+		InputRoot          string                     `json:"inputRoot,omitempty"`
+		InputProfiles      []runner.InputProfile      `json:"inputProfiles,omitempty"`
 	}
 	if json.Unmarshal([]byte(line), &boot) != nil || len(boot.Token) < 32 {
 		return fmt.Errorf("invalid boot configuration")
 	}
-	service, err := runner.Open(runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles})
+	service, err := runner.Open(runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections})
 	if err != nil {
 		return err
 	}
