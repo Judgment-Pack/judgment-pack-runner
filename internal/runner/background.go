@@ -15,6 +15,7 @@ import (
 )
 
 type GatewayConnection struct {
+	Durable bool   `json:"durable,omitempty"`
 	Profile string `json:"profile"`
 	URL     string `json:"url"`
 }
@@ -163,39 +164,41 @@ func automaticCall(ctx context.Context, target string, body []byte, limit int64)
 	return raw, nil
 }
 func (s *Service) startBackground(ctx context.Context) {
-	s.background.Add(1)
-	go func() {
-		defer s.background.Done()
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			if ctx.Err() != nil {
-				return
+	for worker := 0; worker < 4; worker++ {
+		s.background.Add(1)
+		go func() {
+			defer s.background.Done()
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				if e := s.prepareOccurrence(ctx); e != nil {
+					s.unhealthy.Store(true)
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
 			}
-			if e := s.prepareOccurrence(ctx); e != nil {
-				s.unhealthy.Store(true)
-				return
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
+		}()
+	}
 	for _, c := range s.cfg.CloudConnections {
 		s.background.Add(1)
 		go func() { defer s.background.Done(); s.cloudWorker(ctx, c) }()
 	}
 }
-func (s *Service) prepareOccurrence(ctx context.Context) error {
+func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID string) error {
 	s.automationMu.Lock()
 	if s.unhealthy.Load() {
 		s.automationMu.Unlock()
 		return nil
 	}
 	var raw string
-	e := s.db.QueryRow(`SELECT record FROM occurrences WHERE state='accepted' AND json_extract(record,'$.pendingInput') IS NOT NULL ORDER BY seq LIMIT 1`).Scan(&raw)
+	e := s.db.QueryRow(`SELECT record FROM occurrences WHERE id=? AND state='accepted'`, occurrenceID).Scan(&raw)
 	if errors.Is(e, sql.ErrNoRows) {
 		s.automationMu.Unlock()
 		return nil
@@ -251,4 +254,14 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 		o.InputDigest = digest(encode(input))
 	}
 	return s.saveOccurrence(o)
+}
+
+func (s *Service) durableGatewayProfiles() []string {
+	out := []string{}
+	for _, g := range s.cfg.GatewayConnections {
+		if g.Durable {
+			out = append(out, g.Profile)
+		}
+	}
+	return out
 }

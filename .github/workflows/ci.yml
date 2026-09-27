@@ -35,14 +35,31 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-runtime
-          ref: 6842494ff0492c4f1a3bd185451d7d9c21a8e97e
+          ref: 87d9880824944981dfeed9a8907509138c751ca0
           path: .ci-runtime
           persist-credentials: false
       - name: Build Runtime
         working-directory: .ci-runtime
         run: go build -trimpath -o "$RUNNER_TEMP/jpack" ./cmd/jpack
-      - name: Unit, conformance and real-Runtime tests
-        run: JPACK_TEST_BIN="$RUNNER_TEMP/jpack" go test -race ./...
+      - name: Check out durable Gateway contract
+        uses: actions/checkout@v4
+        with:
+          repository: Judgment-Pack/judgment-pack-gateway
+          ref: 27763047b3b329c9b44267379c7cb2aafd7298a9
+          path: .ci-gateway
+          persist-credentials: false
+      - name: Build Gateway and MCP adapter
+        run: |
+          cd .ci-gateway/go
+          go build -trimpath -o "$RUNNER_TEMP/gateway" .
+          cd ../adapters
+          go build -trimpath -o "$RUNNER_TEMP/adapter-mcp" ./cmd/adapter-mcp
+      - name: Unit, conformance and cross-process recovery tests
+        run: |
+          JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
+          JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
+          JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
+          go test -race ./...
       - name: Check API document
         run: python3 -m json.tool openapi.json > /dev/null
       - name: Build Runner

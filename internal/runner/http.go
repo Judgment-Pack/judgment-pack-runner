@@ -39,7 +39,7 @@ func (s *Service) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
 	s.triggerRoutes(mux)
 	mux.HandleFunc("GET /v1/background-connections", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"cloudConnections": s.cloudStatus(), "gatewayProfiles": s.gatewayProfiles()})
+		write(w, 200, map[string]any{"cloudConnections": s.cloudStatus(), "gatewayProfiles": s.gatewayProfiles(), "durableGatewayProfiles": s.durableGatewayProfiles()})
 	})
 	mux.HandleFunc("GET /v1/input-profiles", func(w http.ResponseWriter, r *http.Request) {
 		profiles := []any{}

@@ -250,7 +250,11 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 	if !errors.Is(e, sql.ErrNoRows) {
 		return e
 	}
-	expiry, e := time.Parse(time.RFC3339Nano, o.ExpiresAt)
+	expires := o.ExpiresAt
+	if o.ReadyUntil != "" {
+		expires = o.ReadyUntil
+	}
+	expiry, e := time.Parse(time.RFC3339Nano, expires)
 	if e != nil {
 		return e
 	}
@@ -273,7 +277,7 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 		o.Input = nil
 		return s.saveOccurrence(o)
 	}
-	origin := &TriggerOrigin{OccurrenceID: o.ID, TriggerID: o.TriggerID, TriggerRevision: o.TriggerRevision, Kind: o.Kind, ScheduledAt: o.ScheduledAt, EventID: o.EventID, InputDigest: o.InputDigest, ExpiresAt: o.ExpiresAt}
+	origin := &TriggerOrigin{OccurrenceID: o.ID, TriggerID: o.TriggerID, TriggerRevision: o.TriggerRevision, Kind: o.Kind, ScheduledAt: o.ScheduledAt, EventID: o.EventID, InputDigest: o.InputDigest, ExpiresAt: expires}
 	run, _, e := s.submitInternal(o.JobID, o.ID, *o.Input, origin)
 	if e != nil {
 		var api *apiError

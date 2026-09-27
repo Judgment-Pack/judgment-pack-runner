@@ -126,6 +126,31 @@ func (s *Service) automaticInputSnapshot(c *AutomaticInput, r Release, snapshots
 	return s.automaticInputContext(context.Background(), c, r, snapshots)
 }
 func (s *Service) automaticInputContext(ctx context.Context, c *AutomaticInput, r Release, snapshots map[string][]byte) (Input, error) {
+	input, e := s.automaticInputSeed(c, r, snapshots)
+	if e != nil {
+		return input, e
+	}
+	if c.Kind == "mapped-sources" {
+		var e error
+		input, e = s.acquireAutomatic(ctx, input)
+		if e != nil {
+			return input, e
+		}
+	}
+	// Validate now, but retain the original source request. Admission recomputes
+	// verification; caller-provided preparation is never trusted.
+	if _, e := s.normalizeInput(input); e != nil {
+		return input, e
+	}
+	if len(encode(input)) > MaxBody {
+		return input, bad("invalid_automatic_input", "Combined inputs exceed the request limit.")
+	}
+	return input, nil
+}
+
+// automaticInputSeed snapshots local files and case parameters once, without
+// invoking any external operation or treating a pending source as evidence.
+func (s *Service) automaticInputSeed(c *AutomaticInput, r Release, snapshots map[string][]byte) (Input, error) {
 	read := func(name string) ([]byte, error) {
 		if raw, ok := snapshots[name]; ok {
 			return raw, nil
@@ -178,24 +203,15 @@ func (s *Service) automaticInputContext(ctx context.Context, c *AutomaticInput, 
 	if !mappingMatchesRelease(r, input) {
 		return input, bad("mapping_mismatch", "Automatic inputs do not match this job's release.")
 	}
-	if c.Kind == "mapped-sources" {
-		var e error
-		input, e = s.acquireAutomatic(ctx, input)
-		if e != nil {
-			return input, e
-		}
-	}
-	// Validate now, but retain the original source request. Admission recomputes
-	// verification; caller-provided preparation is never trusted.
-	if _, e := s.normalizeInput(input); e != nil {
-		return input, e
-	}
-	if len(encode(input)) > MaxBody {
-		return input, bad("invalid_automatic_input", "Combined inputs exceed the request limit.")
-	}
 	return input, nil
 }
 func (s *Service) validateTrigger(c *TriggerConfig, r Release, at time.Time) error {
+	if c.PreparationSeconds == 0 && c.Input != nil && c.Input.Kind == "mapped-sources" && s.durableMapping(r) {
+		c.PreparationSeconds = 3600
+	}
+	if c.PreparationSeconds != 0 && (c.PreparationSeconds < 60 || c.PreparationSeconds > 604800 || c.Input == nil || c.Input.Kind != "mapped-sources" || !s.durableMapping(r)) {
+		return bad("invalid_preparation_policy", "A source wait of 1 minute to 7 days requires durable Gateway connections for every operation.")
+	}
 	c.Name = strings.TrimSpace(c.Name)
 	if c.Name == "" || len(c.Name) > 160 {
 		return bad("invalid_trigger", "Enter a trigger name up to 160 bytes.")
