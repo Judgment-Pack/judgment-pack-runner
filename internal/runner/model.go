@@ -50,16 +50,19 @@ type Release struct {
 	InputMapping    *InputMapping   `json:"inputMapping,omitempty"`
 }
 type Job struct {
-	SchemaVersion string `json:"schemaVersion"`
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	ReleaseID     string `json:"releaseId"`
-	Revision      int    `json:"revision"`
-	CreatedAt     string `json:"createdAt"`
-	Workspace     string `json:"workspace"`
-	Owner         string `json:"owner"`
+	InitialTriggerID     string `json:"initialTriggerId,omitempty"`
+	InitialTriggerDigest string `json:"initialTriggerDigest,omitempty"`
+	SchemaVersion        string `json:"schemaVersion"`
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	ReleaseID            string `json:"releaseId"`
+	Revision             int    `json:"revision"`
+	CreatedAt            string `json:"createdAt"`
+	Workspace            string `json:"workspace"`
+	Owner                string `json:"owner"`
 }
 type Run struct {
+	Trigger       *TriggerOrigin  `json:"trigger,omitempty"`
 	SchemaVersion string          `json:"schemaVersion"`
 	ID            string          `json:"id"`
 	JobID         string          `json:"jobId"`

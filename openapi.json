@@ -3,7 +3,7 @@
   "info": {
     "title": "Judgment Pack Runner local pilot",
     "version": "0.1.0",
-    "description": "Single local installation owner, one fixed pack release per job. Experimental evaluator; no external actions or schedules. Direct runner prefix /v1; authenticated Desk proxy /api/operations."
+    "description": "Single local installation owner, one fixed pack release per job. Durable local schedules, file changes and authenticated event admission. Experimental evaluator; no external actions. Direct runner prefix /v1; owner-authenticated Desk proxy /api/operations."
   },
   "servers": [
     {
@@ -114,8 +114,18 @@
               "minimum": 0
             },
             "description": "Cursor from the previous response. Omit for the newest page."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Literal case-insensitive substring search; ASCII case folding. Applied before pagination.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
           }
-        ]
+        ],
+        "description": "Paginated jobs include packTitle, packVersion and up to five recentRuns with id, state and createdAt."
       },
       "post": {
         "operationId": "createJob",
@@ -232,6 +242,37 @@
               "minimum": 0
             },
             "description": "Cursor from the previous response. Omit for the newest page."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Literal case-insensitive substring search; ASCII case folding. Applied before pagination.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "interrupted"
+              ]
+            }
+          },
+          {
+            "name": "review",
+            "in": "query",
+            "description": "Only failed/interrupted runs or completed runs with unresolved decisions or requested handoff.",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ]
       },
@@ -497,6 +538,551 @@
           }
         }
       }
+    },
+    "/runs": {
+      "get": {
+        "operationId": "listRuns",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Cursor from the previous response. Omit for the newest page."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Literal case-insensitive substring search; ASCII case folding. Applied before pagination.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "interrupted"
+              ]
+            }
+          },
+          {
+            "name": "review",
+            "in": "query",
+            "description": "Only failed/interrupted runs or completed runs with unresolved decisions or requested handoff.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "summary": "List runs across all jobs",
+        "description": "Paginated run summaries include jobName, disposition and handoff, but omit input snapshots and audit bodies."
+      }
+    },
+    "/jobs/{job}/triggers": {
+      "parameters": [
+        {
+          "name": "job",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "listTriggers",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Trigger"
+                      }
+                    },
+                    "localFiles": {
+                      "type": "boolean"
+                    },
+                    "cloudConnections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CloudConnectionStatus"
+                      }
+                    },
+                    "gatewayProfiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "localFiles"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "savePausedTrigger",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trigger"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "config": {
+                    "$ref": "#/components/schemas/TriggerConfig"
+                  }
+                },
+                "required": [
+                  "config"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job}/triggers/preview": {
+      "parameters": [
+        {
+          "name": "job",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "previewTrigger",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerConfig"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/triggers/{trigger}/state": {
+      "parameters": [
+        {
+          "name": "trigger",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "setTriggerState",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "paused": {
+                    "type": "boolean"
+                  },
+                  "reviewed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "paused"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/triggers/{trigger}/rotate-key": {
+      "parameters": [
+        {
+          "name": "trigger",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "rotateEventToken",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "revision"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/triggers/{trigger}/events": {
+      "parameters": [
+        {
+          "name": "trigger",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "X-Trigger-Token",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "deliverEvent",
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "occurrence": {
+                      "$ref": "#/components/schemas/Occurrence"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "occurrence",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "occurrence": {
+                      "$ref": "#/components/schemas/Occurrence"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "occurrence",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventDelivery"
+              }
+            }
+          }
+        },
+        "description": "Direct Runner requires owner bearer plus X-Trigger-Token. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap/queue policy: inspect occurrence.state."
+      }
+    },
+    "/jobs/{job}/occurrences": {
+      "parameters": [
+        {
+          "name": "job",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      ],
+      "get": {
+        "operationId": "listOccurrences",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Occurrence"
+                      }
+                    },
+                    "next": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "next"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/background-connections": {
+      "get": {
+        "summary": "List public installed background connections; never credentials or Gateway addresses",
+        "responses": {
+          "200": {
+            "description": "Configured connections, not remote scheduler status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cloudConnections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CloudConnectionStatus"
+                      }
+                    },
+                    "gatewayProfiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "cloudConnections",
+                    "gatewayProfiles"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -583,6 +1169,9 @@
           },
           "reviewed": {
             "const": true
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/TriggerConfig"
           }
         },
         "required": [
@@ -619,6 +1208,60 @@
           },
           "owner": {
             "type": "string"
+          },
+          "initialTriggerId": {
+            "type": "string"
+          },
+          "initialTriggerDigest": {
+            "type": "string"
+          },
+          "packTitle": {
+            "type": "string"
+          },
+          "packVersion": {
+            "type": "string"
+          },
+          "recentRuns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "paused": {
+                  "type": "boolean"
+                },
+                "nextAt": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
@@ -748,6 +1391,9 @@
           },
           "problem": {
             "type": "string"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/TriggerOrigin"
           }
         }
       },
@@ -2203,6 +2849,436 @@
             }
           }
         ]
+      },
+      "Schedule": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "interval",
+              "daily",
+              "weekly",
+              "once"
+            ]
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "startAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "everySeconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 2592000
+          },
+          "time": {
+            "type": "string",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          },
+          "weekday": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          }
+        },
+        "required": [
+          "kind",
+          "timezone",
+          "startAt"
+        ],
+        "additionalProperties": false,
+        "description": "Intervals use elapsed time. Calendar schedules skip nonexistent local times and choose the first repeated time. End is exclusive. Kind-specific fields are mutually exclusive."
+      },
+      "AutomaticInput": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "constant",
+              "input-file",
+              "mapped-files",
+              "mapped-sources"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "Exact JSON Input envelope; constants only. Source responses and computed preparation are forbidden."
+          },
+          "path": {
+            "type": "string",
+            "description": "Project-relative JSON input envelope or v2 case file."
+          },
+          "case": {
+            "type": "object"
+          },
+          "files": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false,
+        "description": "mapped-sources supports v2 local files and installed Gateway operations. Retained source responses and interactive file grants are never reused."
+      },
+      "TriggerConfig": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "kind": {
+            "enum": [
+              "schedule",
+              "file",
+              "event",
+              "cloud"
+            ]
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/Schedule"
+          },
+          "input": {
+            "$ref": "#/components/schemas/AutomaticInput"
+          },
+          "missed": {
+            "enum": [
+              "skip",
+              "latest"
+            ]
+          },
+          "overlap": {
+            "enum": [
+              "skip",
+              "queue"
+            ]
+          },
+          "queueSeconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 86400
+          },
+          "watchPath": {
+            "type": "string"
+          },
+          "stableSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "cloud": {
+            "$ref": "#/components/schemas/CloudBinding"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "missed",
+          "overlap",
+          "queueSeconds"
+        ],
+        "additionalProperties": false,
+        "description": "Event triggers take inputs from each delivery and forbid schedule/input/watch fields. Schedules require schedule and input. File triggers require a watched path used by their file inputs and a stability delay. Cloud triggers require cloud and input and forbid schedule/watch fields. For cloud, missed=latest delivers every signal before expiry; expiry starts at scheduledAt."
+      },
+      "Trigger": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "authority": {
+            "enum": [
+              "local",
+              "google-cloud"
+            ]
+          },
+          "config": {
+            "$ref": "#/components/schemas/TriggerConfig"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "nextAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "hasKey": {
+            "type": "boolean"
+          },
+          "problem": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "jobId",
+          "revision",
+          "authority",
+          "config",
+          "paused",
+          "createdAt",
+          "updatedAt",
+          "hasKey"
+        ],
+        "additionalProperties": false
+      },
+      "TriggerOrigin": {
+        "type": "object",
+        "properties": {
+          "occurrenceId": {
+            "type": "string"
+          },
+          "triggerId": {
+            "type": "string"
+          },
+          "triggerRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "type": "string"
+          },
+          "scheduledAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "triggerId",
+          "triggerRevision",
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "Occurrence": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "releaseId": {
+            "type": "string"
+          },
+          "jobRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "triggerId": {
+            "type": "string"
+          },
+          "triggerRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "type": "string"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "scheduledAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "accepted",
+              "submitted",
+              "skipped",
+              "failed",
+              "expired",
+              "preparing"
+            ]
+          },
+          "runId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "missedFrom": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "missedThrough": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "jobId",
+          "releaseId",
+          "jobRevision",
+          "triggerId",
+          "triggerRevision",
+          "kind",
+          "receivedAt",
+          "expiresAt",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "EventDelivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          }
+        },
+        "required": [
+          "id",
+          "occurredAt",
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "TriggerPreview": {
+        "type": "object",
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/TriggerConfig"
+          },
+          "next": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "inputReady": {
+            "type": "boolean"
+          },
+          "factsText": {
+            "type": "string"
+          },
+          "evidenceText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "config",
+          "next",
+          "inputReady"
+        ],
+        "additionalProperties": false
+      },
+      "TriggerMutation": {
+        "type": "object",
+        "properties": {
+          "trigger": {
+            "$ref": "#/components/schemas/Trigger"
+          },
+          "token": {
+            "type": "string",
+            "description": "Plaintext only when first enabling an event or rotating its credential; otherwise empty. Never retrievable later."
+          }
+        },
+        "required": [
+          "trigger",
+          "token"
+        ],
+        "additionalProperties": false
+      },
+      "CloudBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "connection",
+          "subscription",
+          "job"
+        ],
+        "properties": {
+          "connection": {
+            "type": "string"
+          },
+          "subscription": {
+            "type": "string"
+          },
+          "job": {
+            "type": "string"
+          }
+        }
+      },
+      "CloudConnectionStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "subscription",
+          "problem"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "subscription": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string"
+          }
+        }
       }
     }
   }

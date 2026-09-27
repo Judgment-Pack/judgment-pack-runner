@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"math"
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
@@ -18,9 +16,19 @@ import (
 type Config struct {
 	Dir, Runtime, Workspace, Owner string
 	InputProfiles                  []InputProfile
+	InputRoot                      string
+	CloudConnections               []CloudConnection
+	GatewayConnections             []GatewayConnection
+	disableAutomation              bool
 }
 type Service struct {
 	unhealthy              atomic.Bool
+	background             sync.WaitGroup
+	cloudMu                sync.Mutex
+	cloudProblems          map[string]string
+	cloudFactory           func(context.Context, CloudConnection) (cloudTransport, error)
+	automationMu           sync.Mutex
+	automationDone         chan struct{}
 	cfg                    Config
 	db                     *sql.DB
 	lock                   *os.File
@@ -36,9 +44,21 @@ func Open(cfg Config) (_ *Service, err error) {
 	if err = validateProfiles(cfg.InputProfiles); err != nil {
 		return nil, err
 	}
+	if err = validateBackgroundConfig(cfg); err != nil {
+		return nil, err
+	}
+	if err = json.Unmarshal(encode(cfg.CloudConnections), &cfg.CloudConnections); err != nil {
+		return nil, err
+	}
+	if err = json.Unmarshal(encode(cfg.GatewayConnections), &cfg.GatewayConnections); err != nil {
+		return nil, err
+	}
 	// Snapshot trusted host settings; callers cannot mutate a running service.
 	if err = json.Unmarshal(encode(cfg.InputProfiles), &cfg.InputProfiles); err != nil {
 		return nil, err
+	}
+	if cfg.InputRoot != "" && !filepath.IsAbs(cfg.InputRoot) {
+		return nil, errors.New("absolute input root required")
 	}
 	if cfg.Workspace == "" || cfg.Owner == "" || !filepath.IsAbs(cfg.Dir) || !filepath.IsAbs(cfg.Runtime) {
 		return nil, errors.New("absolute paths and workspace owner required")
@@ -46,7 +66,7 @@ func Open(cfg Config) (_ *Service, err error) {
 	if err = privateDir(cfg.Dir); err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
+	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
 	defer func() {
 		if err != nil {
 			if s.db != nil {
@@ -91,7 +111,10 @@ func Open(cfg Config) (_ *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
-	for k, v := range map[string]string{"schema": "1", "workspace": cfg.Workspace, "owner": cfg.Owner} {
+	if _, err = s.db.Exec(triggerSchema); err != nil {
+		return nil, err
+	}
+	for k, v := range map[string]string{"schema": "1", "workspace": cfg.Workspace, "owner": cfg.Owner, "inputRoot": cfg.InputRoot} {
 		if _, err = s.db.Exec("INSERT OR IGNORE INTO metadata VALUES (?,?)", k, v); err != nil {
 			return nil, err
 		}
@@ -140,13 +163,29 @@ func Open(cfg Config) (_ *Service, err error) {
 			return nil, err
 		}
 	}
+	if _, err = s.db.Exec(`UPDATE occurrences SET state='failed',record=json_set(record,'$.state','failed','$.reason','Source acquisition was interrupted. It was not repeated automatically.','$.pendingInput',NULL) WHERE state='preparing'`); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	go s.worker(ctx)
+	if cfg.disableAutomation {
+		close(s.automationDone)
+	} else {
+		go s.automation(ctx)
+		s.startBackground(ctx)
+	}
 	return s, nil
 }
 func (s *Service) Close() {
-	s.closeOnce.Do(func() { s.cancel(); <-s.done; s.db.Close(); s.lock.Close() })
+	s.closeOnce.Do(func() {
+		s.cancel()
+		<-s.done
+		<-s.automationDone
+		s.background.Wait()
+		s.db.Close()
+		s.lock.Close()
+	})
 }
 func (s *Service) saveRun(r Run) error {
 	_, err := s.db.Exec("UPDATE runs SET state=?,record=? WHERE id=?", r.State, string(encode(r)), r.ID)
@@ -180,6 +219,11 @@ func (s *Service) run(id string) (Run, error) {
 	return r, e
 }
 func (s *Service) createJob(name, releaseID string) (Job, error) {
+	return s.createJobConfigured(name, releaseID, nil)
+}
+func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) (Job, error) {
+	s.automationMu.Lock()
+	defer s.automationMu.Unlock()
 	r, err := s.release(releaseID)
 	if err != nil {
 		return Job{}, err
@@ -187,26 +231,67 @@ func (s *Service) createJob(name, releaseID string) (Job, error) {
 	if !releaseReady(r) {
 		return Job{}, &apiError{409, "release_not_ready", "Saved tests failed or could not complete. Correct the pack or cases and check a new release before creating a job."}
 	}
-	// One immutable revision in this pilot. Pack edits never change this pointer.
-	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner}
-	_, err = s.db.Exec("INSERT OR IGNORE INTO jobs(id,release_id,record) VALUES (?,?,?)", j.ID, j.ReleaseID, string(encode(j)))
+	initialDigest := ""
+	if c != nil {
+		initialDigest = digest(encode(c))
+		if err = s.validateTrigger(c, r, time.Now()); err != nil {
+			return Job{}, err
+		}
+	}
+	tx, err := s.db.Begin()
 	if err != nil {
 		return Job{}, err
 	}
+	defer tx.Rollback()
 	var held []byte
-	if err = s.db.QueryRow("SELECT record FROM jobs WHERE release_id=?", j.ReleaseID).Scan(&held); err != nil {
+	err = tx.QueryRow("SELECT record FROM jobs WHERE release_id=?", releaseID).Scan(&held)
+	if err == nil {
+		var stored Job
+		if err = json.Unmarshal(held, &stored); err != nil {
+			return stored, err
+		}
+		if stored.Name != name || stored.InitialTriggerDigest != initialDigest {
+			return Job{}, &apiError{409, "release_already_used", "This preview already created a different job. Preview again to create another job."}
+		}
+		return stored, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return Job{}, err
 	}
-	var stored Job
-	if err = json.Unmarshal(held, &stored); err != nil {
+	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest}
+	if c != nil {
+		var count int
+		if err = tx.QueryRow("SELECT count(*) FROM triggers").Scan(&count); err != nil {
+			return Job{}, err
+		}
+		if count >= 128 {
+			return Job{}, bad("trigger_limit", "This local runner supports up to 128 triggers.")
+		}
+		t := Trigger{ID: id("trg_"), JobID: j.ID, Revision: 1, Authority: "local", Config: *c, Paused: true, CreatedAt: now(), UpdatedAt: now()}
+		if c.Kind == "cloud" {
+			t.Authority = "google-cloud"
+		}
+		j.InitialTriggerID = t.ID
+		if _, err = tx.Exec("INSERT INTO triggers(id,job_id,record)VALUES(?,?,?)", t.ID, j.ID, string(encode(t))); err != nil {
+			return Job{}, err
+		}
+		if err = saveTrigger(tx, t, "", true); err != nil {
+			return Job{}, err
+		}
+	}
+	if _, err = tx.Exec("INSERT INTO jobs(id,release_id,record)VALUES(?,?,?)", j.ID, j.ReleaseID, string(encode(j))); err != nil {
 		return Job{}, err
 	}
-	if stored.Name != name {
-		return Job{}, &apiError{409, "release_already_used", "This preview already created a different job. Preview again to create another job."}
-	}
-	return stored, nil
+	return j, tx.Commit()
 }
 func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
+	return s.submitInternal(jobID, key, input, nil)
+}
+func (s *Service) submitInternal(jobID, key string, input Input, origin *TriggerOrigin) (Run, bool, error) {
+	caller := s.cfg.Owner
+	if origin != nil {
+		caller = "trigger:" + origin.TriggerID
+	}
 	if s.unhealthy.Load() {
 		return Run{}, false, &apiError{503, "dispatcher_stopped", "The dispatcher stopped after a storage error. Restart Desk after checking the runner storage."}
 	}
@@ -221,7 +306,7 @@ func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
 		requestHash = digest(raw)
 		// Identical retries return their original acceptance, even after freshness expires.
 		var held, before string
-		e = s.db.QueryRow("SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, s.cfg.Owner, key).Scan(&held, &before)
+		e = s.db.QueryRow("SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, caller, key).Scan(&held, &before)
 		if e == nil {
 			if held != requestHash {
 				return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
@@ -267,7 +352,7 @@ func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
 	}
 	defer tx.Rollback()
 	var held, before string
-	err = tx.QueryRow("SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, s.cfg.Owner, key).Scan(&held, &before)
+	err = tx.QueryRow("SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, caller, key).Scan(&held, &before)
 	if err == nil {
 		if held != hash {
 			return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
@@ -305,8 +390,8 @@ func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
 	if count >= queueLimit {
 		return Run{}, false, &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 	}
-	r := Run{SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: s.cfg.Owner}
-	_, err = tx.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, s.cfg.Owner, key, hash, r.State, string(encode(r)))
+	r := Run{Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller}
+	_, err = tx.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, caller, key, hash, r.State, string(encode(r)))
 	if err != nil {
 		return Run{}, false, err
 	}
@@ -350,6 +435,18 @@ func (s *Service) worker(ctx context.Context) {
 		if json.Unmarshal(b, &r) != nil {
 			return
 		}
+		if r.Trigger != nil && r.Trigger.ExpiresAt != "" {
+			deadline, e := time.Parse(time.RFC3339Nano, r.Trigger.ExpiresAt)
+			if e != nil || !time.Now().Before(deadline) {
+				r.State = "failed"
+				r.FinishedAt = now()
+				r.Problem = "The automatic run expired in the queue before evaluation."
+				if s.saveRun(r) != nil {
+					return
+				}
+				continue
+			}
+		}
 		r.State = "running"
 		r.StartedAt = now()
 		r.Attempt = 1
@@ -377,52 +474,5 @@ func (s *Service) worker(ctx context.Context) {
 	}
 }
 func (s *Service) records(kind, jobID string, after int64) ([]json.RawMessage, int64, error) {
-	table := "jobs"
-	if after == 0 {
-		after = math.MaxInt64
-	}
-	where := "seq<?"
-	args := []any{after}
-	if kind == "runs" {
-		table = "runs"
-		where += " AND job_id=?"
-		args = append(args, jobID)
-	}
-	rows, e := s.db.Query(fmt.Sprintf("SELECT seq,record FROM %s WHERE %s ORDER BY seq DESC LIMIT 51", table, where), args...)
-	if e != nil {
-		return nil, 0, e
-	}
-	defer rows.Close()
-	result := []json.RawMessage{}
-	var last, next int64
-	for rows.Next() {
-		var seq int64
-		var b []byte
-		if e = rows.Scan(&seq, &b); e != nil {
-			return nil, 0, e
-		}
-		if len(result) == 50 {
-			next = last
-			break
-		}
-		if kind == "runs" {
-			var summary map[string]json.RawMessage
-			if e = json.Unmarshal(b, &summary); e != nil {
-				return nil, 0, e
-			}
-			delete(summary, "input")
-			delete(summary, "audit")
-			if raw := summary["result"]; len(raw) > 0 {
-				var result map[string]json.RawMessage
-				if e = json.Unmarshal(raw, &result); e != nil {
-					return nil, 0, e
-				}
-				summary["result"] = encode(map[string]json.RawMessage{"disposition": result["disposition"], "handoffTarget": result["handoffTarget"]})
-			}
-			b = encode(summary)
-		}
-		result = append(result, json.RawMessage(b))
-		last = seq
-	}
-	return result, next, rows.Err()
+	return s.filteredRecords(kind, jobID, after, recordFilter{})
 }

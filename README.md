@@ -9,9 +9,10 @@ facts and evidence availability, run the pinned evaluator, and retain the result
 and audit history. It also stores on-demand job and run briefs. All job artifacts
 remain on the local filesystem, with SQLite holding the queue and records.
 
-**Research preview — single-owner local Jobs pilot.** External actions, recurring
-schedules, source polling, graph execution, shared-user permissions and AI agent
-loops are not implemented in Runner. Closing a browser does not stop accepted work;
+**Research preview — single-owner local Jobs pilot.** Runner supports durable local
+schedules, stable JSON file changes, authenticated events, Google Cloud Scheduler
+delivery and unattended Gateway operation mappings. AWS/Azure adapters, external
+actions, graph execution, shared-user permissions and AI agent loops are not implemented. Closing a browser does not stop work;
 Desk and its runner companion must stay running on the host.
 
 ## Repository responsibilities
@@ -20,12 +21,13 @@ Desk and its runner companion must stay running on the host.
 | --- | --- |
 | [Specification](https://github.com/Judgment-Pack/judgment-pack-spec) | Pack format and JPS semantics. |
 | [Runtime](https://github.com/Judgment-Pack/judgment-pack-runtime) | Pack validation, test evaluation, decisions and audit records. |
-| **Runner** | Frozen releases, admission, durable queue, execution, input snapshots, history and saved job/run briefs. |
+| **Runner** | Frozen releases, schedules, file observation, authenticated occurrences, durable queue, execution, input snapshots, history and saved job/run briefs. |
 | [Desk](https://github.com/Judgment-Pack/judgment-pack-desk) | Jobs UI, authenticated proxy, source selection and explicit AI brief generation. |
 | [Gateway](https://github.com/Judgment-Pack/judgment-pack-gateway) | Optional connected-source acquisition, such as a selected Google Drive JSON file, through Desk. |
 
-Runner does not contact Gateway or an identity provider itself. Manual inputs and
-local JSON uploads need no Gateway. Google Drive supplies input bytes through Desk;
+Runner contacts installation-authorized Gateway operation endpoints and Google
+Pub/Sub using explicit local ADC credentials. Manual inputs and local JSON uploads
+need no Gateway. Google Drive supplies input bytes through Desk;
 it is not an artifact store. Runner uses Runtime's public CLI rather than embedding
 a second evaluator.
 
@@ -65,7 +67,7 @@ Desk resumes queued work and marks previously running work interrupted. A shut d
 computer does not execute jobs. This is not a hosted scheduler or a Vercel function.
 
 The executable receives one bounded JSON boot line on stdin with `dir`, `runtime`,
-`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2. It binds an ephemeral IPv4 loopback port,
+`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2 and an absolute `inputRoot` for file automation. It binds an ephemeral IPv4 loopback port,
 prints `{"protocol":"jobs/1","url":"http://127.0.0.1:..."}`, and stays alive until
 stdin closes. The bearer is never printed, passed in argv, read from a project file,
 or sent to the browser. Desk selects the workspace and stable installation owner.
@@ -81,7 +83,7 @@ bearer and origin guards. The pilot has one local owner, not delegated machine r
 4. Review the fixed release, test report and advisory coverage, then create the job.
    Failed/incomplete tests block creation; releases without tests require explicit
    review as untested. A sample preview is not a passing test suite.
-5. Use **Run job** for a new operational input, or submit through the API.
+5. Use **Run job** for a new operational input, or configure **Triggers**. Automatic triggers are saved paused and require separate review before enabling.
 
 A release retains the exact pack text, pack digest, generated config and lock,
 validation output, sample inputs/output, and a digest-pinned copy of the Runtime
@@ -284,3 +286,173 @@ in public issues, examples or test fixtures.
 CI runs formatting, vet, race tests and real-Runtime integration on Linux and
 macOS. The workflow pins Runtime revision `6842494` so release, audit, mapping
 and offline verification tests run against a reproducible evaluator contract.
+
+
+### Job and run lists
+
+`GET /v1/jobs?q=...` searches job names. Jobs include `packTitle`, `packVersion`
+and up to five `recentRuns` (ID, execution state, creation time).
+`GET /v1/runs` lists all jobs' runs; `GET /v1/jobs/{job}/runs` remains scoped to
+one job. Run lists accept `q` (run ID or job name), `state` and `review=true`.
+Search uses literal substrings with SQLite ASCII case folding. Filters apply
+before the existing 50-record cursor pagination; combine them with `after`.
+
+Attention includes failed or interrupted execution, unresolved decisions and
+requested handoffs. Rejection alone is not an execution failure. Summaries include
+`jobName`, disposition and handoff but omit input snapshots, audit bodies and
+other result details. Use the individual run endpoint to inspect retained inputs.
+These are additive list APIs; stored releases, jobs and runs do not change.
+
+## Local schedules and events
+
+Choose a trigger during job creation, or open **Job → Triggers → Add trigger**.
+Creating a job with its first trigger is atomic. Saving or editing a trigger always
+pauses it; **Preview trigger** reads configured inputs explicitly, and **Enable**
+requires review. The UI shows the next three schedule occurrences with UTC offsets.
+The installation's Runner remains the sole scheduling authority.
+
+| Trigger | Behavior |
+| --- | --- |
+| Interval | Elapsed time, from 1 minute to 30 days, anchored to `startAt`. |
+| Daily / weekly | Local wall-clock time in an IANA zone. Missing DST times are skipped; repeated times run once, at the first occurrence. |
+| One time | One future RFC3339 timestamp. |
+| File changes | A project-relative JSON file; changed content must remain stable for 1–3600 seconds. Enabling uses existing content as the baseline. A missing file may arrive later. |
+| Authenticated event | A caller supplies a unique event ID, timestamp, and complete fresh input. |
+
+Schedules have an optional exclusive end timestamp. Enabling begins with future
+occurrences; paused time is not backfilled. If an active schedule is over 30 seconds
+late (including restart or host sleep), **Skip missed runs** records one skipped
+range, while **Run latest once** admits only its latest occurrence. Neither option
+creates an unbounded catch-up burst. This is a best-effort local scheduler, not a
+real-time timer. The computer must be awake and Desk running.
+
+Overlap defaults to **Skip this occurrence**; **Queue this occurrence** uses a
+bounded queue. Up to 100 occurrences can await admission, alongside the existing
+bounded run queue. Queue expiry is explicit, from 1 minute to 24 hours, and is
+checked again before evaluation. Pausing does not cancel previously accepted work.
+Execution still uses the single durable worker. No automatic evaluation retry is
+introduced. A previously running invocation becomes interrupted after a crash;
+its audit may already exist and it is never replayed automatically.
+
+An occurrence keeps the trigger/revision, frozen job/release, event or scheduled
+identity, received time, input digest, admission outcome, and linked run. Cursor
+advancement and occurrence storage are transactional. Run admission uses the
+occurrence ID as its idempotency key. After a crash between admission and linkage,
+Runner reconciles the existing run rather than evaluating twice. This is durable
+local deduplication, not an end-to-end exactly-once claim about external systems.
+
+### Inputs and file authority
+
+Automatic runs never reuse a release sample. Choose explicit constant inputs, an
+input-envelope file (`{"facts":{...},"evidence":{...}}`), or fresh project files for
+each local source in the fixed v1/v2 mapping. V2 case parameters can be constants
+or a separate case file. Files must be regular JSON files within the installation's
+`inputRoot`, up to 200 KB each and 2 MiB total. `os.Root` prevents symlink/path escape.
+The watched file must participate in the input. Its retained bytes match the
+observed change digest. Files are read independently; multiple files are not an
+atomic filesystem snapshot. An atomic rename is recommended when publishing inputs.
+
+Desk supplies its authorized project root at boot. Runner binds this root to its
+store identity so a restart cannot silently redirect existing triggers to a different
+project. Missing files, invalid JSON, and unsupported numeric values cause visible
+input failures; they never fall back to samples or previous values. Local values
+remain asserted inputs, not authenticated external records. Manual and v1 exact
+JSON values remain exact; mapping v2 retains its stricter numeric domain.
+
+Interactive Google Drive grants and retained operation responses cannot power
+unattended schedules. Such mappings may use manual runs or authenticated event
+inputs acquired by an authorized sender. Persistent picker file grants remain unsupported. Installed Gateway operation
+connections support fresh scheduled acquisition, as described below. Receipt freshness is checked at event
+acceptance and run admission under the existing mapping contract; retained evaluation
+recomputes verification at that recorded time. Queue expiry bounds the delay.
+
+### Event delivery
+
+Enable an event trigger to receive a scoped random token, shown once. Runner stores
+only its SHA-256 digest. **Rotate token** invalidates the previous credential
+immediately. Tokens cannot list jobs, inspect records, edit triggers, or choose
+another release. Desk exposes a dedicated non-browser endpoint:
+
+```http
+POST /api/job-events/trg_<id>
+Authorization: Bearer <trigger-token>
+Content-Type: application/json
+
+{"id":"source-delivery-123","occurredAt":"2026-09-26T13:00:00Z","input":{"facts":{}}}
+```
+
+Use the event's current RFC3339 timestamp: new deliveries may be at most five
+minutes old or 30 seconds in the future. The same ID and canonical payload return
+the original occurrence, even if paused or aged since acceptance. A different
+payload with the same ID returns 409. Rotation revokes old credentials even for
+retries. New deliveries to a paused trigger return 409 without acceptance.
+A 202 acknowledges the occurrence, not a completed decision: inspect its state,
+including `skipped` for overlap or queue limits. No input is exposed in the receipt.
+
+Direct Runner callers need the private owner bearer plus `X-Trigger-Token`.
+Desk's scoped route refuses browser Origin headers and does not forward arbitrary
+paths. It does not provide public ingress, cloud credentials, or a tunnel. Google Cloud uses an authenticated relay and an outbound pull subscription.
+Future AWS/Azure adapters can reuse the same occurrence admission boundary.
+
+There are at most 128 configured triggers per local store. Trigger revisions and
+occurrences are retained in `runs.sqlite`; backups must include the entire stopped
+Runner state directory, including releases, runtimes and attempts. Desk chat backups
+still exclude Jobs. Automatic retention, archive/delete controls, managed services
+and AWS/Azure adapters remain future work.
+
+
+### Google Cloud Scheduler
+
+[Setup and deployment](deploy/google-cloud/README.md) provides an authenticated
+relay, a paused Terraform deployment and the local ADC configuration. Runner pulls
+only occurrence signals over outbound HTTPS. Timing stays in Google Cloud;
+execution, input facts, source responses, results and audit files remain local.
+The relay preserves Scheduler's original job name and scheduled time across retries.
+
+Trusted stdin boot accepts `cloudConnections` (up to 8): `id`, full `subscription`,
+and absolute `credentialsFile`. The boot envelope is bounded to 128 KiB. These
+are installation settings, not browser or release fields. The public
+`GET /v1/background-connections` endpoint exposes IDs, subscription names and
+bounded diagnostics, never credential paths or contents.
+
+A `cloud` trigger pins `{connection, subscription, job}` and automatic inputs.
+It is created paused and enabled after review. A committed occurrence precedes
+acknowledgement. Expiry is measured from the scheduled instant. Cloud `missed: skip`
+ignores signals over 30 seconds late; `missed: latest` delivers **each** unexpired
+signal, unlike local schedule catch-up. A paused trigger records new signals as
+skipped. Unknown or malformed signals are discarded with a connection diagnostic.
+One dedicated subscription must belong to only one local installation.
+
+### Persistent Gateway operation inputs
+
+Trusted boot `gatewayConnections` (up to 32) binds an installed input `profile`
+to a Gateway origin `url`: HTTPS or explicit loopback HTTP. Addresses are installation
+authority; the browser receives profile IDs only. Gateway keeps provider credentials.
+
+Use `input.kind: mapped-sources` for v2 operation mappings on schedule or cloud
+triggers. `files` names local-file sources; `case` or a relative `path` supplies
+fresh typed parameters. The sequential planner preflights all source profiles and
+permissions, calls each operation once, verifies its receipt and exact arguments,
+and derives facts/evidence through the existing mapping contract. Never reuse a
+release sample or retained response as a scheduled input.
+
+An occurrence is durably marked `preparing` before network acquisition. A crash
+in that state becomes a visible failure on restart and is **not** retried.
+Acquisition has a 120-second overall budget, bounded by occurrence expiry, plus
+existing source and combined input limits. Preview makes real provider calls.
+Enabling a trigger authorizes future operation calls, including provider charges.
+Interactive Drive grants, background picker file access, HTTP-shaped v2 profiles
+and connected file-change triggers remain unsupported.
+
+Example additional trusted boot fields:
+
+```json
+{
+  "gatewayConnections": [{"profile":"vendor-registry","url":"https://gateway.example.com"}],
+  "cloudConnections": [{"id":"google-production","subscription":"projects/example-project/subscriptions/desk-schedule-desk","credentialsFile":"/absolute/path/to/adc.json"}]
+}
+```
+
+These additions retain protocol `jobs/1`. See [OpenAPI](openapi.json) and the
+[design note](docs/design/google-cloud-triggers.md). The Google template is prepared
+and locally validated; live cloud IAM and account delivery need deployment testing.
