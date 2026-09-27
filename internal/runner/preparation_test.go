@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -73,7 +75,9 @@ func preparationFixture(t *testing.T) (*Service, Config, Occurrence, *asyncFixtu
 	t.Cleanup(server.Close)
 	s, cfg, j, r := automaticFixture(t)
 	cfg.InputProfiles = []InputProfile{p}
-	cfg.GatewayConnections = []GatewayConnection{{Profile: p.ID, URL: server.URL, Durable: true}}
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	os.WriteFile(tokenFile, []byte(strings.Repeat("a", 64)), 0600)
+	cfg.GatewayConnections = []GatewayConnection{{Profile: p.ID, URL: "http://127.0.0.1:1", Durable: true, OperationsURL: server.URL, OperationsTokenFile: tokenFile}}
 	s.cfg = cfg
 	r.InputMapping = &input.Source.Mapping
 	r.InputProfiles = []InputProfile{p}
