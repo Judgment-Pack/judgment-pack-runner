@@ -1,6 +1,6 @@
 # Durable source preparation
 
-Status: implemented; independent review of caller custody pending.
+Status: implemented. Independent review and dispositions: [Runner PR #4](https://github.com/Judgment-Pack/judgment-pack-runner/pull/4).
 
 Runner owns the occurrence and its preparation. Gateway owns the source process,
 credentials and ordinary signed acquisition response. Runtime sees one frozen,
