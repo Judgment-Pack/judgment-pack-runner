@@ -4,7 +4,9 @@ version: 2
 project_name: judgment-pack-runner
 
 # Linux and macOS only: those are the hosts CI tests. Windows compiles and is
-# not released, because nothing runs it.
+# not released, because nothing runs it. CI compares the names below with the
+# directories under cmd as an early warning; the release workflow checks the
+# archives themselves.
 builds:
   - &program
     id: jpack-runner
