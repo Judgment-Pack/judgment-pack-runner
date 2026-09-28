@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The release workflow calls this one at a tag (release.yml).
+  workflow_call:
 
 permissions:
   contents: read
@@ -62,6 +64,17 @@ jobs:
           go test -race ./...
       - name: Check API document
         run: python3 -m json.tool openapi.json > /dev/null
+      # What a repository release carries (docs/releasing.md), checked on every
+      # commit so a tag is never the first to find a gap.
+      - name: Check third-party notices against linked modules
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 tools/third_party_notices.py --check
+      - name: Check every program has a release build
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          want="$(ls cmd | sort)"
+          have="$(sed -n 's/^    binary: //p' .goreleaser.yml | sort)"
+          [ "$want" = "$have" ] || { echo "cmd and .goreleaser.yml name different programs:"; diff <(echo "$want") <(echo "$have"); exit 1; }
       - name: Build Runner
         run: |
           go build -trimpath -o "$RUNNER_TEMP/jpack-runner" ./cmd/jpack-runner

@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/goreleaser/goreleaser/v2.17.0/www/docs/static/schema.json
+version: 2
+
+project_name: judgment-pack-runner
+
+# Linux and macOS only: those are the hosts CI tests. Windows compiles and is
+# not released, because nothing runs it.
+builds:
+  - &program
+    id: jpack-runner
+    main: ./cmd/jpack-runner
+    binary: jpack-runner
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/Judgment-Pack/judgment-pack-runner/internal/buildinfo.releaseVersion={{ if .IsSnapshot }}v{{ .Version }}{{ else }}{{ .Tag }}{{ end }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    goamd64:
+      - v1
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  - <<: *program
+    id: jpack-source-worker
+    main: ./cmd/jpack-source-worker
+    binary: jpack-source-worker
+  - <<: *program
+    id: jpack-google-relay
+    main: ./cmd/jpack-google-relay
+    binary: jpack-google-relay
+
+archives:
+  - id: judgment-pack-runner-archives
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+      - THIRD_PARTY_NOTICES
+      - openapi.json
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# Release notes are written by a person and reviewed with the release
+# (docs/releases/<tag>.md); none are generated.
+changelog:
+  disable: true
+
+release:
+  draft: true
+  prerelease: auto
+  name_template: "runner {{ .Tag }}"

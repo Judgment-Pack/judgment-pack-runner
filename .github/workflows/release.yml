@@ -1,0 +1,289 @@
+name: Release
+
+# Publishes a release of this repository: four archives (Linux and macOS,
+# amd64 and arm64), their checksums and a build-provenance attestation, from
+# a tag a person pushes on a commit already on main (docs/releasing.md).
+# "Release" here is a repository release. It is not a frozen pack release,
+# which is Runner's own record and is unaffected.
+#
+# A person decides there is a release and writes its notes
+# (docs/releases/<tag>.md). The workflow holds the tagged state to CI, builds
+# from it, runs each archive on its own platform, and publishes nothing until
+# a maintainer approves the `production` environment.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    name: Admit the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Reading an environment's protection rules.
+      actions: read
+    steps:
+      - name: Validate release tag syntax
+        shell: bash
+        run: |
+          if [[ ! "${RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag is not exact SemVer: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      # Only merged work is released: a tag on a branch commit names a state
+      # main may never hold.
+      - name: Require the tagged commit on main
+        shell: bash
+        run: |
+          commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          git merge-base --is-ancestor "${commit}" origin/main || { echo "Tagged commit ${commit} is not on main" >&2; exit 1; }
+
+      - name: Require release notes
+        shell: bash
+        run: |
+          notes="docs/releases/${RELEASE_TAG}.md"
+          test -s "${notes}" || { echo "${notes} is missing or empty at the tag" >&2; exit 1; }
+
+      # GitHub creates a missing environment on first use, without protection.
+      # Read the rule before building so the publish gate cannot be a bare name.
+      - name: Require a reviewer on the production environment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          reviewers="$(gh api "repos/${GH_REPO}/environments/production" --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length')" \
+            || { echo "The production environment could not be read; create it with a required reviewer (docs/releasing.md)" >&2; exit 1; }
+          [ "${reviewers}" -ge 1 ] || { echo "The production environment requires no reviewer" >&2; exit 1; }
+
+  # The same workflow CI runs, called at the tag, so a release cannot pass an
+  # older copy of the checks.
+  verify:
+    name: CI at the tag
+    needs: admit
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  package:
+    name: Package
+    needs:
+      - admit
+      - verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # One reviewed toolchain for release binaries, named exactly. The go
+          # directive in go.mod remains the source-compatibility floor.
+          go-version: 1.26.5
+          cache-dependency-path: go.sum
+
+      - name: Normalize archive file timestamps
+        shell: bash
+        run: |
+          source_date_epoch="$(git show -s --format=%ct "${RELEASE_TAG}^{commit}")"
+          touch --date="@${source_date_epoch}" LICENSE README.md THIRD_PARTY_NOTICES openapi.json
+
+      - name: Package without publishing
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          args: release --clean --skip=publish
+        env:
+          GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
+
+      - name: Verify packaged checksums
+        working-directory: dist
+        run: sha256sum --check checksums.txt
+
+      - name: Compare the archived API document with the tag
+        shell: bash
+        run: |
+          release_version="${RELEASE_TAG#v}"
+          mkdir -p "${RUNNER_TEMP}/unpacked"
+          tar -xzf "dist/judgment-pack-runner_${release_version}_linux_amd64.tar.gz" -C "${RUNNER_TEMP}/unpacked"
+          cmp openapi.json "${RUNNER_TEMP}/unpacked/openapi.json"
+          cmp THIRD_PARTY_NOTICES "${RUNNER_TEMP}/unpacked/THIRD_PARTY_NOTICES"
+
+      - name: Carry the release notes with the archives
+        shell: bash
+        run: cp "docs/releases/${RELEASE_TAG}.md" dist/release-notes.md
+
+      - name: Upload release archives for native smoke tests
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            dist/release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    name: ${{ matrix.os }} release archive
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          # linux/arm64 runs natively before the gate; a macOS arm runner
+          # executes the darwin binary, not this one.
+          - ubuntu-24.04-arm
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: Download packaged archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist
+
+      # Starting a job needs Runtime and a boot line from Desk; CI covers that
+      # at the tag. Here each archive is shown to hold programs that run on
+      # their platform, name the release, and refuse to start unconfigured.
+      - name: Verify and smoke-test native archive
+        shell: bash
+        run: |
+          case "$(uname -s)" in
+            Darwin) release_os="darwin"; checksum_command=(shasum -a 256 --check) ;;
+            Linux) release_os="linux"; checksum_command=(sha256sum --check) ;;
+            *) echo "Unsupported runner OS: $(uname -s)" >&2; exit 1 ;;
+          esac
+
+          case "$(uname -m)" in
+            arm64|aarch64) release_arch="arm64" ;;
+            x86_64) release_arch="amd64" ;;
+            *) echo "Unsupported runner architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+
+          release_version="${RELEASE_TAG#v}"
+          archive="judgment-pack-runner_${release_version}_${release_os}_${release_arch}.tar.gz"
+          destination="${RUNNER_TEMP}/runner-release-smoke"
+
+          (cd dist && "${checksum_command[@]}" checksums.txt)
+          mkdir -p "${destination}"
+          tar -xzf "dist/${archive}" -C "${destination}"
+
+          for program in jpack-runner jpack-source-worker jpack-google-relay; do
+            test -x "${destination}/${program}" || { echo "${program} is not in the archive, or not executable" >&2; exit 1; }
+          done
+          test "$("${destination}/jpack-runner" version)" = "jpack-runner ${RELEASE_TAG}"
+          test "$("${destination}/jpack-source-worker" version)" = "jpack-source-worker ${RELEASE_TAG}"
+
+          # No boot line: the refusal, exit 1, is the expected answer.
+          output="$("${destination}/jpack-runner" 2>&1 < /dev/null)" && code=0 || code=$?
+          if [ "${code}" != "1" ] || [ "${output}" != "runner: bounded boot configuration required" ]; then
+            echo "jpack-runner did not refuse an empty boot: exit ${code}: ${output}" >&2
+            exit 1
+          fi
+
+  attest-and-draft:
+    name: Attest and draft release
+    needs:
+      - package
+      - smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download smoke-tested archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Attest release archives
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+
+      - name: Create draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # No checkout in this job, so gh cannot infer the repository.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.tar.gz dist/checksums.txt)
+          if (( ${#assets[@]} != 5 )); then
+            echo "Expected four archives and checksums.txt, found ${#assets[@]} files" >&2
+            exit 1
+          fi
+
+          release_args=(
+            "${RELEASE_TAG}"
+            "${assets[@]}"
+            --draft
+            --notes-file dist/release-notes.md
+            --title "runner ${RELEASE_TAG}"
+            --verify-tag
+          )
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+
+          gh release create "${release_args[@]}"
+
+  publish:
+    name: Publish release
+    needs: attest-and-draft
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the reviewed draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          publish_args=("${RELEASE_TAG}" --draft=false)
+          # A prerelease (tag contains a hyphen) is never marked latest.
+          if [[ "${RELEASE_TAG}" != *-* ]]; then
+            publish_args+=(--latest)
+          fi
+          gh release edit "${publish_args[@]}"

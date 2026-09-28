@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/buildinfo"
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/runner"
 	"net"
 	"net/http"
@@ -17,6 +18,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println("jpack-source-worker", buildinfo.Version())
+		return
+	}
 	if e := run(); e != nil {
 		fmt.Fprintln(os.Stderr, "source worker:", e)
 		os.Exit(1)
