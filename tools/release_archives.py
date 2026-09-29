@@ -20,12 +20,13 @@ An archive holds files and nothing else: no directory of its own, no link,
 no device, no name twice, and no name written any way but the plain one
 (no "./", no trailing slash, no backslash). A member's header must be of the
 one form the packer writes, and any other is refused, though it may be a
-lawful archive: a plain regular file with no extended header. The
-members' headers are read first and their contents after, one at a time,
+lawful archive: a plain regular file with no extended header. An
+archive is first read to its end, a piece at a time and keeping none, since
+its checksum is there: one cut short or changed in passing is refused whole.
+Then the members' headers are read, and their contents after, one at a time
 and only of members a release holds; a member larger than any a release has
-is refused unread. An archive is first read to its end, where its checksum
-is: one cut short or changed in passing is refused whole. Every fault found
-is reported, and any fault is a failure.
+is not read into memory. Every fault found is reported, and any fault is a
+failure.
 
 The form is the packer's for what this repository gives it today: short
 names in plain letters, files of ordinary size, modes as the checkout has
@@ -124,20 +125,22 @@ def built(dist, target):
     for artifact in json.loads(account.read_text(encoding='utf-8')):
         if (artifact.get('type'), artifact.get('goos'), artifact.get('goarch')) != ('Binary', goos, goarch):
             continue
-        name = artifact['name']
+        name, path = artifact.get('name'), artifact.get('path')
+        if not name or not path:
+            raise SystemExit(f'{target}: the packer names a program it built without a name or a path: {artifact}')
         if name in found:
             raise SystemExit(f'{target}: the packer built {name} twice')
-        # The account names a path from where the packer ran, which begins with its directory of outputs.
-        found[name] = (dist / Path(*Path(artifact['path']).parts[1:])).read_bytes()
+        # The account names a path from where the packer ran: its directory of outputs, one name deep as the
+        # workflow leaves it, and the file below. The file is looked for below the directory this was given.
+        found[name] = (dist / Path(*Path(path).parts[1:])).read_bytes()
     return found
 
 
-def damage(archive):
-    """Why an archive cannot be read to its end, or nothing. Its checksum is there, and a reader of members stops short of it."""
+def read_to_its_end(archive):
+    """Read an archive to its end, which fails where it is cut short or changed. Its checksum is there, and a reader of members stops short of it."""
     with gzip.open(archive, 'rb') as opened:
         while opened.read(1 << 20):
             pass
-    return ''
 
 
 def headers(archive):
@@ -217,12 +220,10 @@ def check(archive, target, wanted_files, wanted_programs, outputs, scratch):
 
     unread = (tarfile.TarError, zlib.error, OSError, EOFError)
     try:
-        damaged = damage(archive)
+        read_to_its_end(archive)
         listed = list(headers(archive))
     except unread as refused:
         return [f'the archive cannot be read through: {refused}']
-    if damaged:
-        return [f'the archive cannot be read through: {damaged}']
     sound = {}
     seen = set()
     for name, kind, mode, size in listed:

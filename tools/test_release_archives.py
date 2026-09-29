@@ -66,7 +66,7 @@ class ArchiveChecks(unittest.TestCase):
         cls.programs = checked.programs(tree, 'HEAD', cls.scratch)
 
         cls.built = {}
-        for target in TARGETS + ['linux_arm64', 'darwin_amd64']:
+        for target in ['darwin_amd64', 'darwin_arm64', 'linux_amd64', 'linux_arm64']:
             goos, _, goarch = target.partition('_')
             where = cls.scratch / 'built' / target
             where.mkdir(parents=True)
@@ -444,6 +444,19 @@ class ArchiveChecks(unittest.TestCase):
         with self.assertRaises(SystemExit) as refused:
             checked.built(dist, 'linux_amd64')
         self.assertEqual(str(refused.exception), 'linux_amd64: the packer built one twice')
+        for lacking in ('name', 'path'):
+            entry = dict(account[0])
+            del entry[lacking]
+            (dist / 'artifacts.json').write_text(json.dumps([entry]))
+            with self.assertRaises(SystemExit) as refused:
+                checked.built(dist, 'linux_amd64')
+            self.assertIn('without a name or a path', str(refused.exception))
+        # Given by another name, or whole: the file is looked for below what was given.
+        (dist / 'artifacts.json').write_text(json.dumps(account[:2]))
+        moved = dist.parent / (dist.name + '-moved')
+        dist.rename(moved)
+        self.assertEqual(checked.built(moved, 'linux_amd64'), {'one': b'built for linux'})
+        self.assertEqual(checked.built(moved.resolve(), 'darwin_amd64'), {'one': b'built for macOS'})
 
     def test_a_program_that_is_not_a_program(self):
         held = self.contents('linux_amd64')
@@ -595,8 +608,9 @@ class ArchiveChecks(unittest.TestCase):
                 account.append({'type': 'Binary', 'name': name, 'goos': goos, 'goarch': goarch, 'path': f'dist/{name}_{target}/{name}'})
         (dist / 'artifacts.json').write_text(json.dumps(account))
 
-    def run_script(self, dist, *targets, commit='HEAD'):
-        self.with_account(dist)
+    def run_script(self, dist, *targets, commit='HEAD', account=True):
+        if account:
+            self.with_account(dist)
         arguments = [sys.executable, str(Path(checked.__file__)), '--dist', str(dist), '--version', '1.0.0', '--tree', str(self.tree), '--commit', commit]
         for target in targets:
             arguments += ['--target', target]
@@ -619,6 +633,27 @@ class ArchiveChecks(unittest.TestCase):
         self.assertEqual(len(said), len(checked.TARGETS), said)
         for target in checked.TARGETS:
             self.assertTrue(any(line.startswith(f'{target}: ') and line.endswith(' is not there') for line in said), (target, said))
+
+    def test_the_script_as_the_workflow_runs_it(self):
+        # Every platform, none named. The packer's account and outputs are made first, and an archive changed after.
+        dist = Path(tempfile.mkdtemp(dir=self.scratch))
+        for target in checked.TARGETS:
+            made = self.archive(target, self.contents(target))
+            archive = next(made.iterdir())
+            archive.rename(dist / archive.name)
+        self.with_account(dist)
+        ran = self.run_script(dist, account=False)
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+        self.assertEqual(len(ran.stdout.splitlines()), len(checked.TARGETS), ran.stdout)
+        held = self.contents('darwin_amd64')
+        built = held['one'][1]
+        held['one'] = (0o755, built[:-1] + bytes([built[-1] ^ 1]))
+        made = self.archive('darwin_amd64', held)
+        next(made.iterdir()).replace(dist / f'{checked.PROJECT}_1.0.0_darwin_amd64.tar.gz')
+        ran = self.run_script(dist, account=False)
+        self.assertEqual(ran.returncode, 1, ran.stdout)
+        self.assertEqual(ran.stderr.splitlines(), ['darwin_amd64: one: not the bytes the packer built'])
+        self.assertEqual(len(ran.stdout.splitlines()), len(checked.TARGETS) - 1, ran.stdout)
 
     def test_a_fault_is_a_failure_of_the_script(self):
         held = self.contents('linux_amd64')
