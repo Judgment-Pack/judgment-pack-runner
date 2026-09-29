@@ -447,14 +447,13 @@ permissions, calls each operation once, verifies its receipt and exact arguments
 and derives facts/evidence through the existing mapping contract. Never reuse a
 release sample or retained response as a scheduled input.
 
-**Known fault ([#5](https://github.com/Judgment-Pack/judgment-pack-runner/issues/5)).**
-An unattended run that acquires two or more operation sources is refused, and no
-decision is requested: Runner acquires each source in a session of its own, on the
-legacy path and on the durable one, and its verifier takes acquisitions of one session
-only. A run that acquires one operation source is not affected, with local-file sources
-beside it or without; nor is a mapping whose second operation is skipped because what
-it depends on was unavailable; nor is preparation in Desk, which uses one session for
-all sources.
+Runner acquires each operation in a Gateway session of its own, takes the answer only as
+that session's first call, and asks Gateway to seal the session after. Its verifier takes
+acquisitions that share one session, as Desk's preparation leaves them, or that are each
+the first call of a session of their own, as these are
+([MAPPING-V2.md](docs/MAPPING-V2.md#time-sessions-errors-and-retries)). In `v0.1.0` it
+took the first form only, and refused every unattended run that acquired two or more
+operation sources ([#5](https://github.com/Judgment-Pack/judgment-pack-runner/issues/5)).
 
 For legacy connections (without `durable: true`), an occurrence is durably marked
 `preparing` before network acquisition. A crash
