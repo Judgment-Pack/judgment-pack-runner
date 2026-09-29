@@ -156,7 +156,8 @@ jobs:
         env:
           GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
 
-      # Printed so the approver can compare the draft's checksums with this run's.
+      # Printed so the run's own record says what it packaged. The publish job
+      # compares the draft with these again before it publishes.
       - name: Verify packaged checksums
         working-directory: dist
         run: |
@@ -164,41 +165,14 @@ jobs:
           cat checksums.txt
 
       # Checked on the archives themselves, all four, not on the configuration
-      # meant to produce them: the files are the commit's byte for byte, each
-      # program was built from the package of its name for the archive's
-      # platform (the executable's own build record), is executable, and the
-      # archive holds nothing else.
+      # meant to produce them (tools/release_archives.py): the documents are
+      # the commit's byte for byte; each program is a file built from the
+      # package of its name, for the archive's platform, at the lowest level
+      # of its architecture, and executable; the archive holds nothing else.
+      # CI runs a negative case for each of these.
       - name: Check the contents of every archive
         shell: bash
-        run: |
-          release_version="${RELEASE_TAG#v}"
-          module="$(go list -m)"
-          programs="$(ls cmd)"
-          for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
-            unpacked="${RUNNER_TEMP}/unpacked/${target}"
-            mkdir -p "${unpacked}"
-            tar -xzf "dist/judgment-pack-runner_${release_version}_${target}.tar.gz" -C "${unpacked}"
-
-            for file in LICENSE README.md THIRD_PARTY_NOTICES openapi.json; do
-              cmp "${file}" "${unpacked}/${file}"
-            done
-
-            for program in ${programs}; do
-              # From the executable's build record: "<package> <os>_<arch>".
-              built="$(go version -m "${unpacked}/${program}" | awk '
-                $1 == "path" { package = $2 }
-                $1 == "build" && index($2, "GOOS=") == 1 { os = substr($2, 6) }
-                $1 == "build" && index($2, "GOARCH=") == 1 { arch = substr($2, 8) }
-                END { print package " " os "_" arch }')"
-              [ "${built}" = "${module}/cmd/${program} ${target}" ] \
-                || { echo "${target}: ${program} is not cmd/${program} built for ${target}: ${built}" >&2; exit 1; }
-              [ -x "${unpacked}/${program}" ] || { echo "${target}: ${program} is not executable" >&2; exit 1; }
-            done
-
-            expected="$( { printf '%s\n' LICENSE README.md THIRD_PARTY_NOTICES openapi.json; echo "${programs}"; } | LC_ALL=C sort)"
-            found="$(ls -A "${unpacked}" | LC_ALL=C sort)"
-            [ "${expected}" = "${found}" ] || { echo "${target}: unexpected archive contents:" >&2; diff <(echo "${expected}") <(echo "${found}") >&2; exit 1; }
-          done
+        run: python3 tools/release_archives.py --dist dist --version "${RELEASE_TAG#v}"
 
       - name: Carry the release notes with the archives
         shell: bash
@@ -213,7 +187,9 @@ jobs:
             dist/checksums.txt
             dist/release-notes.md
           if-no-files-found: error
-          retention-days: 7
+          # As long as an approval may be waited for: the publish job reads
+          # the artifact again after the gate.
+          retention-days: 30
 
   smoke:
     name: ${{ matrix.os }} release archive
@@ -370,6 +346,39 @@ jobs:
           named="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
             | awk -v tag="refs/tags/${RELEASE_TAG}" '$2 == tag { plain = $1 } $2 == tag "^{}" { peeled = $1 } END { print (peeled != "" ? peeled : plain) }')"
           [ -n "${named}" ] && [ "${named}" = "${GITHUB_SHA}" ] || { echo "refs/tags/${RELEASE_TAG} names ${named:-nothing}; the draft was built from ${GITHUB_SHA}" >&2; exit 1; }
+
+      - name: Download the archives this run packaged
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: run
+
+      # A draft can be changed while it waits at the gate, by anyone who can
+      # write to the repository. Download it as it now stands and compare it
+      # with what this run packaged: the same files by name, the same list of
+      # checksums, and every archive the bytes that list names. A moment
+      # remains between this check and publishing; nothing here closes it.
+      - name: Require the draft to hold what this run packaged
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          state="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)"
+          [ "${state}" = "true" ] || { echo "The release under ${RELEASE_TAG} is not a draft" >&2; exit 1; }
+
+          mkdir draft
+          gh release download "${RELEASE_TAG}" --dir draft
+
+          packaged="$(cd run && find . -type f ! -name release-notes.md | LC_ALL=C sort)"
+          drafted="$(cd draft && find . -type f | LC_ALL=C sort)"
+          [ "${packaged}" = "${drafted}" ] || { echo "The draft does not hold the files this run packaged:" >&2; diff <(echo "${packaged}") <(echo "${drafted}") >&2; exit 1; }
+
+          cmp run/checksums.txt draft/checksums.txt
+          named="$(awk '{ print "./" $2 }' draft/checksums.txt | LC_ALL=C sort)"
+          archives="$(cd draft && find . -type f ! -name checksums.txt | LC_ALL=C sort)"
+          [ "${named}" = "${archives}" ] || { echo "checksums.txt does not name the draft's archives, each once:" >&2; diff <(echo "${named}") <(echo "${archives}") >&2; exit 1; }
+          (cd draft && sha256sum --check --strict checksums.txt)
 
       - name: Publish the reviewed draft release
         shell: bash

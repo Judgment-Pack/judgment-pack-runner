@@ -27,7 +27,7 @@ under `deploy/google-cloud/`.
 | --- | --- | --- |
 | Formatting, vet, race tests and real-Runtime integration (CI, run again at the tag) | `amd64` | `arm64` |
 | The released archive, run: all three programs present; `jpack-runner` and `jpack-source-worker` name the release; `jpack-runner` refuses to start without a boot line | `amd64` and `arm64` | `arm64` |
-| The released archive, read and not run: its files are the commit's, byte for byte; each program was built from the package of its name, for the archive's platform, and is executable; it holds nothing else | `amd64` and `arm64` | `amd64` and `arm64` |
+| The released archive, read and not run: its documents are the commit's, byte for byte; each program is a file built from the package of its name, for the archive's platform, at the lowest level of its architecture, and executable; it holds nothing else | `amd64` and `arm64` | `amd64` and `arm64` |
 
 The `darwin/amd64` archive is built, read and checksummed and is not run by anything.
 `jpack-google-relay` is not started by any release check. The archive checks do not
@@ -109,17 +109,24 @@ name.
    [`ci.yml`](../.github/workflows/ci.yml), against the Runtime and Gateway revisions it
    pins. A check `main` has gained since that commit is not run.
 3. **Packages without publishing.** One toolchain, named exactly in the workflow; no
-   cgo; no recorded paths. The tag is written into the programs. All four archives are
-   then opened and read, as the table above states.
+   cgo; no recorded paths; `amd64` at `v1` and `arm64` at `v8.0`. The tag is written into
+   the programs. All four archives are then read by `tools/release_archives.py`, as the
+   table above states. CI runs that script against a negative case for each thing it
+   checks.
 4. **Runs the archives of three targets**, each on a runner of its own platform.
 5. **Attests and drafts.** After every smoke test passes, and only if the tag still names
    the commit, the archives are attested and a draft release is created with the notes
    from the commit.
-6. **Waits at the `production` gate.** Review the draft on the Releases page. Compare the
-   draft's `checksums.txt` with the one the `Package` job printed in the run: the checks
-   lock nothing, and anyone who can write to the repository could have changed a draft
-   since it was made. Then approve the pending deployment on the run. The tag is compared
-   with the commit once more, and the draft is published.
+6. **Waits at the `production` gate.** Review the draft on the Releases page: the notes
+   and the five assets. Approve the pending deployment on the run.
+7. **Compares the draft with the run, and publishes.** A draft can be changed while it
+   waits, by anyone who can write to the repository. After the gate, the tag is compared
+   with the commit once more, and the draft as it then stands is downloaded and compared
+   with what the run packaged: the same files by name, the same `checksums.txt`, and
+   every archive the bytes that list names. Then it is published. A moment remains
+   between that check and publishing; nothing closes it. An approval given more than
+   thirty days after the run finds the run's archives gone, and the job fails: release a
+   new version.
 
 No maintainer token and no repository secret is used.
 
@@ -127,8 +134,8 @@ No maintainer token and no repository secret is used.
 
 The gate is on the release. Three things exist before it and are not secret:
 
-- the archives, as an artifact of the workflow run, downloadable for seven days by anyone
-  who can read the repository's runs;
+- the archives, as an artifact of the workflow run, downloadable for thirty days by
+  anyone who can read the repository's runs;
 - the attestation of those archives, recorded in a public transparency log when it is
   made. It says which workflow built an archive, from which commit. It does not say a
   maintainer approved it;
@@ -145,7 +152,7 @@ What to do with a draft depends on which job failed:
 | --- | --- | --- |
 | Any job before `Attest and draft release` | none was made | re-run the failed jobs |
 | `Attest and draft release` | may exist, and may lack assets | read it, delete it by hand, then re-run the failed jobs. The job refuses to run while a release under the tag exists, draft or published, and refuses when it cannot find out |
-| `Publish release` | exists and is complete | **keep it**: that job only publishes the draft that is there. Re-run the failed jobs |
+| `Publish release` | exists and is complete | **keep it**: that job only publishes the draft that is there. Read why it failed first: if it found the draft changed, do not publish the draft. Otherwise re-run the failed jobs |
 
 Delete a draft with `gh release delete <tag> --repo Judgment-Pack/judgment-pack-runner`,
 which leaves the tag. A published release is never deleted to make room for another.

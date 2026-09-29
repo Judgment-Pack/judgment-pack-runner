@@ -27,8 +27,12 @@ builds:
     goarch:
       - amd64
       - arm64
+    # The lowest level of each architecture, stated rather than defaulted: an
+    # archive named for an architecture runs on every processor of it.
     goamd64:
       - v1
+    goarm64:
+      - v8.0
     mod_timestamp: "{{ .CommitTimestamp }}"
   - <<: *program
     id: jpack-source-worker

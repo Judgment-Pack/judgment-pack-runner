@@ -88,6 +88,11 @@ jobs:
           [ -n "$named" ] && [ "go$named" = "$(go env GOVERSION)" ] || { echo "release.yml names Go ${named:-nothing}; this job runs $(go env GOVERSION)"; exit 1; }
       - name: Check third-party notices against linked modules
         run: python3 tools/third_party_notices.py --check
+      # What the release workflow checks of its archives, run against a negative
+      # case for each: real programs, built for two platforms, archived, and
+      # spoiled one way at a time.
+      - name: Check the archive check refuses each fault it names
+        run: python3 tools/test_release_archives.py
       # Names in a file compared with directories: an early warning only. The
       # release workflow checks the archives themselves.
       - name: Check every program is named in the release build
