@@ -17,13 +17,23 @@ built for, the archive of that name must hold exactly:
 
 An archive holds files and nothing else: no directory of its own, no link,
 no device, no name twice, and no name written any way but the plain one
-(no "./", no trailing slash, no backslash). The members' headers are read
-first and their contents after, one at a time, and only of members a
-release holds; a member larger than any a release has is refused unread.
-Every fault found is reported, and any fault is a failure.
+(no "./", no trailing slash, no backslash). A member's header must be of the
+one form the packer writes, and any other is refused, though it may be a
+lawful archive: a plain regular file with no extended header. The
+members' headers are read first and their contents after, one at a time,
+and only of members a release holds; a member larger than any a release has
+is refused unread. Every fault found is reported, and any fault is a
+failure.
 
 What is compared is the commit, not the working tree: a file changed or
 removed in the tree after the commit changes nothing here.
+
+What this is for, and what it is not. It is a check of the workflow's own
+packaging: that a pattern did not pass a file over, that a build was made
+from the package and for the platform its name says. It reads an archive as
+Python's standard library reads one. It is not a defence against an archive
+made to be read one way by one program and another way by the next: whoever
+could put such an archive where this looks could change this script too.
 
 What this does not establish: that a program behaves. A build record says
 what an executable was built from and for; it is read here, by whatever
@@ -79,32 +89,42 @@ def committed(tree, commit):
     return {path: git(tree, 'cat-file', 'blob', f'{commit}:{path}') for path in DOCUMENTS}
 
 
+def tar_kind(info):
+    """What a tar member is, by everything its header says of it."""
+    if info.isdir():
+        return 'directory'
+    if info.issym() or info.islnk():
+        return 'link'
+    if info.type != tarfile.REGTYPE:
+        return 'member of no kind the packer writes'
+    if info.pax_headers:
+        return 'member whose header says more than a name, a mode and a time'
+    return 'file'
+
+
 def headers(archive):
     """Every member's header as (name, kind, mode, size), the name as the archive writes it. Nothing is read."""
     with tarfile.open(archive, 'r:gz') as opened:
         for info in opened:
-            if info.isreg():
-                kind = 'file'
-            elif info.isdir():
-                kind = 'directory'
-            elif info.issym() or info.islnk():
-                kind = 'link'
-            else:
-                kind = 'special file'
-            yield info.name, kind, info.mode & 0o7777, info.size
+            # An extended header may give the name, and the reader has tidied it by then.
+            yield info.pax_headers.get('path', info.name), tar_kind(info), info.mode & 0o7777, info.size
 
 
 def contents(archive, names):
-    """(name, bytes) for the named members, one at a time, in the archive's order."""
+    """(name, bytes) for the named members, one at a time, in the archive's order. The names are of sound members."""
     with tarfile.open(archive, 'r:gz') as opened:
         for info in opened:
-            if info.name in names and info.isreg():
+            if info.name in names:
                 yield info.name, opened.extractfile(info).read()
 
 
 def plain(name):
-    """Whether a name is written the one plain way: parts joined by single slashes, none empty, none a dot."""
-    return bool(name) and '\\' not in name and all(part not in ('', '.', '..') for part in name.split('/'))
+    """Whether a name is written the one plain way: parts joined by single slashes, none empty, none a dot.
+
+    No name a release holds is written any other way, so a name that fails this is refused without it, as a
+    file a release does not hold. This says why.
+    """
+    return '\\' not in name and all(part not in ('', '.', '..') for part in name.split('/'))
 
 
 def parse_record(text):
@@ -112,9 +132,11 @@ def parse_record(text):
     packages, settings = [], {}
     for line in text.splitlines():
         fields = line.split()
-        if len(fields) >= 2 and fields[0] == 'path':
+        if len(fields) < 2:
+            continue
+        if fields[0] == 'path':
             packages.append(fields[1])
-        if len(fields) >= 2 and fields[0] == 'build' and '=' in fields[1]:
+        if fields[0] == 'build':
             key, _, value = fields[1].partition('=')
             settings.setdefault(key, []).append(value)
     if len(packages) != 1:
@@ -141,23 +163,32 @@ def build_record(data, scratch):
         ran = subprocess.run(['go', 'version', '-m', str(held)], capture_output=True, text=True)
     finally:
         held.unlink()
-    if ran.returncode != 0:
-        return None, 'it carries no build record: ' + (ran.stderr.strip().splitlines() or ['go version -m failed'])[-1]
+    if ran.returncode != 0 or not ran.stdout.strip():
+        return None, 'it carries no build record: ' + (ran.stderr.strip().splitlines() or ['go version -m said nothing'])[-1]
     return parse_record(ran.stdout)
 
 
 def check(archive, target, wanted_files, wanted_programs, scratch):
     """Every fault of one archive, as sentences; none is a pass."""
     faults = []
-    goos, _, goarch = target.partition('_')
+    shared = sorted(set(wanted_files) & set(wanted_programs))
+    if shared:
+        # One name cannot be held to a document's bytes and to a program's record.
+        return [f'{name}: the name of a document and of a program' for name in shared]
     wanted = set(wanted_files) | set(wanted_programs)
 
+    unread = (tarfile.TarError, OSError, EOFError)
+    try:
+        listed = list(headers(archive))
+    except unread as refused:
+        return [f'the archive cannot be read through: {refused}']
     sound = {}
     seen = set()
-    for name, kind, mode, size in headers(archive):
-        shown = name if name else '(a member with no name)'
+    for name, kind, mode, size in listed:
+        shown = repr(name)[1:-1]
         if name in seen:
             faults.append(f'{shown}: in the archive twice')
+            # Neither is read: there is no saying which one an unpacking would leave.
             sound.pop(name, None)
             continue
         seen.add(name)
@@ -174,20 +205,30 @@ def check(archive, target, wanted_files, wanted_programs, scratch):
     for name in sorted(wanted - seen):
         faults.append(f'{name}: not in the archive')
 
+    try:
+        # One member at a time; a fault in reading ends the reading.
+        for name, data in contents(archive, set(sound)):
+            faults += member_faults(name, data, sound[name], wanted_files, wanted_programs, target, scratch)
+    except unread as refused:
+        faults.append(f'the archive cannot be read through: {refused}')
+    return faults
+
+
+def member_faults(name, data, mode, wanted_files, wanted_programs, target, scratch):
+    """The faults of one sound member's contents and mode."""
+    if name in wanted_files:
+        return [] if data == wanted_files[name] else [f'{name}: not the bytes the commit holds']
+    faults = []
+    goos, _, goarch = target.partition('_')
     level_key, level = LEVELS[goarch]
-    for name, data in contents(archive, set(sound)):
-        if name in wanted_files:
-            if data != wanted_files[name]:
-                faults.append(f'{name}: not the bytes the commit holds')
-            continue
-        package = wanted_programs[name]
-        record, why = build_record(data, scratch)
-        if record is None:
-            faults.append(f'{name}: {why}')
-        elif record != (package, goos, goarch, level):
-            faults.append(f'{name}: built from {record[0]} for {record[1]}_{record[2]} at {record[3]}, and not from {package} for {target} at {level_key}={level}')
-        if sound[name] & 0o555 != 0o555:
-            faults.append(f'{name}: mode {sound[name]:04o}, which not everyone can read and execute')
+    package = wanted_programs[name]
+    record, why = build_record(data, scratch)
+    if record is None:
+        faults.append(f'{name}: {why}')
+    elif record != (package, goos, goarch, level):
+        faults.append(f'{name}: built from {record[0]} for {record[1]}_{record[2]} at {record[3]}, and not from {package} for {target} at {level_key}={level}')
+    if mode & 0o555 != 0o555:
+        faults.append(f'{name}: mode {mode:04o}, which not everyone can read and execute')
     return faults
 
 

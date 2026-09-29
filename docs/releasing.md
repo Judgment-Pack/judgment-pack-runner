@@ -29,6 +29,12 @@ under `deploy/google-cloud/`.
 | The released archive, run: all three programs present; `jpack-runner` and `jpack-source-worker` name the release; `jpack-runner` refuses to start without a boot line | `amd64` and `arm64` | `arm64` |
 | The released archive, read and not run: it holds files and nothing else, each under its plain name and once; its documents are the commit's, byte for byte; each program is one program, built from the package of its name, for the archive's platform, at the lowest level of its architecture, readable and executable by everyone; no file is there that a release does not hold | `amd64` and `arm64` | `amd64` and `arm64` |
 
+What the reading of the archives is for: a mistake in the packaging, such as a program
+built from the wrong package or for the wrong platform. It accepts a member only in the
+form the packer writes one, and reads an archive as Python's standard library does. It
+is not a defence against an archive made to be read differently by different programs:
+whoever could put one where the check looks could change the check.
+
 The `darwin/amd64` archive is built, read and checksummed and is not run by anything.
 `jpack-google-relay` is not started by any release check. The archive checks do not
 start a job: that needs Runtime and a boot line from Desk, which CI covers at the tagged
@@ -122,9 +128,9 @@ name.
 7. **Compares the draft with the run, and publishes.** A draft can be changed while it
    waits, by anyone who can write to the repository. After the gate, the tag is compared
    with the commit once more, and the draft as it then stands is downloaded and compared
-   with what the run packaged: the same files by name, the same `checksums.txt`, and
-   every archive the bytes that list names. The notes and the title are not compared:
-   those are what the approver read. Then it is published. A moment remains
+   with what the run packaged: the title the workflow gave it, the notes the commit
+   holds, the same files by name, the same `checksums.txt`, and every archive the bytes
+   that list names. Then it is published. A moment remains
    between that check and publishing; nothing closes it. An approval given more than
    thirty days after the run finds the run's archives gone, and the job fails: release a
    new version.
@@ -153,7 +159,7 @@ What to do with a draft depends on which job failed:
 | --- | --- | --- |
 | Any job before `Attest and draft release` | none was made | re-run the failed jobs |
 | `Attest and draft release` | may exist, and may lack assets | read it, delete it by hand, then re-run the failed jobs. The job refuses to run while a release under the tag exists, draft or published, and refuses when it cannot find out |
-| `Publish release` | exists, and may have been changed or be incomplete | **keep it**: that job only publishes the draft that is there. Read why it failed first: if it found the draft changed or incomplete, do not publish the draft. Otherwise re-run the failed jobs |
+| `Publish release` | needs looking at: it may be as it was made, changed, incomplete, gone, or already published | read why the job failed, and look at the Releases page. **Keep** a draft that is as it was made, and re-run the failed jobs: that job only publishes the draft that is there. Do not publish a draft that was changed or is incomplete. If it is gone or the release is already published, there is nothing to re-run. Where the draft cannot be published, release a new version |
 
 Delete a draft with `gh release delete <tag> --repo Judgment-Pack/judgment-pack-runner`,
 which leaves the tag. A published release is never deleted to make room for another.
