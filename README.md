@@ -63,7 +63,9 @@ go build -trimpath -o bin/jpack-runner ./cmd/jpack-runner
 A repository release carries the built programs for Linux and macOS, with checksums and
 a provenance attestation; [docs/releasing.md](docs/releasing.md#verifying-a-download)
 says how to verify one. `jpack-runner version` names the release a program was built
-from, or `unversioned build` for a plain checkout build.
+from. A build that is not a release reports the module version the Go toolchain
+recorded (in a Git checkout, a pseudo-version naming the commit), or `unversioned build`
+where it recorded none.
 
 Alternatively install `jpack-runner` beside `jpack-desk`. Desk discovers that sibling
 binary. The runner is a long-lived Desk companion, not a browser task. Closing every

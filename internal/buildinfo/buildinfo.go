@@ -9,7 +9,8 @@ import "runtime/debug"
 var releaseVersion string
 
 // Version is the tag of a release build, else the module version the toolchain
-// recorded, else "unversioned build", which is what a plain checkout build says.
+// recorded (in a Git checkout, a pseudo-version naming the commit), else
+// "unversioned build" where it recorded none, as under -buildvcs=false.
 func Version() string {
 	if releaseVersion != "" {
 		return releaseVersion

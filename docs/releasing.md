@@ -27,7 +27,7 @@ under `deploy/google-cloud/`.
 | --- | --- | --- |
 | Formatting, vet, race tests and real-Runtime integration (CI, run again at the tag) | `amd64` | `arm64` |
 | The released archive, run: all three programs present; `jpack-runner` and `jpack-source-worker` name the release; `jpack-runner` refuses to start without a boot line | `amd64` and `arm64` | `arm64` |
-| The released archive, read and not run: its files are the commit's, byte for byte; each program was built from the package of its name; it holds nothing else | `amd64` and `arm64` | `amd64` and `arm64` |
+| The released archive, read and not run: its files are the commit's, byte for byte; each program was built from the package of its name, for the archive's platform, and is executable; it holds nothing else | `amd64` and `arm64` | `amd64` and `arm64` |
 
 The `darwin/amd64` archive is built, read and checksummed and is not run by anything.
 `jpack-google-relay` is not started by any release check. The archive checks do not
@@ -52,7 +52,8 @@ commit from source.
 
 2. Turn on release immutability for the repository (Settings → General → Releases). It
    locks the tag and the assets once a release is published, not before. Until then the
-   workflow compares the tag with the commit the run was started for.
+   workflow compares the tag with the commit the run was started for. The workflow does
+   not read this setting.
 
 ## Prepare the release
 
@@ -88,7 +89,8 @@ git push origin <tag>
 ```
 
 If no signing key is configured, stop and settle the signing policy. Do not replace a
-signed tag with an unsigned one. A tag is never moved or reused; a fix is a new version.
+signed tag with an unsigned one. Signing is the maintainer's practice; the workflow does
+not check it. A tag is never moved or reused; a fix is a new version.
 
 A tag is `vX.Y.Z` or `vX.Y.Z-<prerelease>`, as SemVer 2.0.0 writes them. Build metadata
 (`+...`) is refused. A tag with a hyphen (`v0.1.0-rc.1`) is a prerelease: it is published
@@ -113,9 +115,11 @@ name.
 5. **Attests and drafts.** After every smoke test passes, and only if the tag still names
    the commit, the archives are attested and a draft release is created with the notes
    from the commit.
-6. **Waits at the `production` gate.** Review the draft on the Releases page, then approve
-   the pending deployment on the run. The tag is compared with the commit once more, and
-   the draft is published.
+6. **Waits at the `production` gate.** Review the draft on the Releases page. Compare the
+   draft's `checksums.txt` with the one the `Package` job printed in the run: the checks
+   lock nothing, and anyone who can write to the repository could have changed a draft
+   since it was made. Then approve the pending deployment on the run. The tag is compared
+   with the commit once more, and the draft is published.
 
 No maintainer token and no repository secret is used.
 
@@ -135,10 +139,16 @@ The gate is on the release. Three things exist before it and are not secret:
 Fix the cause on `main` and release a new version. Re-running is for a failure that was
 the hosted runner's: re-run the failed jobs, not all jobs.
 
-The draft job refuses to run while a release under the tag exists, draft or published.
-If a failed run left a draft, read it, delete it by hand (`gh release delete <tag> --repo
-Judgment-Pack/judgment-pack-runner`, which leaves the tag), and re-run the failed job. A
-published release is never deleted to make room for another.
+What to do with a draft depends on which job failed:
+
+| The job that failed | The draft | What to do |
+| --- | --- | --- |
+| Any job before `Attest and draft release` | none was made | re-run the failed jobs |
+| `Attest and draft release` | may exist, and may lack assets | read it, delete it by hand, then re-run the failed jobs. The job refuses to run while a release under the tag exists, draft or published, and refuses when it cannot find out |
+| `Publish release` | exists and is complete | **keep it**: that job only publishes the draft that is there. Re-run the failed jobs |
+
+Delete a draft with `gh release delete <tag> --repo Judgment-Pack/judgment-pack-runner`,
+which leaves the tag. A published release is never deleted to make room for another.
 
 ## Verifying a download
 

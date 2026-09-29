@@ -67,17 +67,21 @@ jobs:
       - name: Require the tag to name that commit
         shell: bash
         run: |
-          # The last line is the commit an annotated tag points to, or the
-          # tag's own line for a lightweight tag.
-          named="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" | awk 'END { print $1 }')"
+          # ls-remote patterns match the end of a name, so lines are selected
+          # by exact name. The peeled line is the commit an annotated tag
+          # points to; a lightweight tag has only its own line.
+          named="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            | awk -v tag="refs/tags/${RELEASE_TAG}" '$2 == tag { plain = $1 } $2 == tag "^{}" { peeled = $1 } END { print (peeled != "" ? peeled : plain) }')"
           [ -n "${named}" ] && [ "${named}" = "${GITHUB_SHA}" ] || { echo "refs/tags/${RELEASE_TAG} names ${named:-nothing}; the run was started for ${GITHUB_SHA}" >&2; exit 1; }
 
       # Only merged work is released: a tag on a branch commit names a state
       # main may never hold. Any commit on main is admitted, not only its tip.
+      # Main is named in full: a tag called origin/main would answer the short
+      # name before the branch.
       - name: Require the tagged commit on main
         shell: bash
         run: |
-          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || { echo "Tagged commit ${GITHUB_SHA} is not on main" >&2; exit 1; }
+          git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main || { echo "Tagged commit ${GITHUB_SHA} is not on main" >&2; exit 1; }
 
       - name: Require release notes
         shell: bash
@@ -152,14 +156,18 @@ jobs:
         env:
           GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
 
+      # Printed so the approver can compare the draft's checksums with this run's.
       - name: Verify packaged checksums
         working-directory: dist
-        run: sha256sum --check checksums.txt
+        run: |
+          sha256sum --check checksums.txt
+          cat checksums.txt
 
       # Checked on the archives themselves, all four, not on the configuration
       # meant to produce them: the files are the commit's byte for byte, each
-      # program was built from the package of its name (the executable's own
-      # build record), and the archive holds nothing else.
+      # program was built from the package of its name for the archive's
+      # platform (the executable's own build record), is executable, and the
+      # archive holds nothing else.
       - name: Check the contents of every archive
         shell: bash
         run: |
@@ -176,9 +184,15 @@ jobs:
             done
 
             for program in ${programs}; do
-              built_from="$(go version -m "${unpacked}/${program}" | awk '$1 == "path" { print $2 }')"
-              [ "${built_from}" = "${module}/cmd/${program}" ] \
-                || { echo "${target}: ${program} was not built from cmd/${program}" >&2; exit 1; }
+              # From the executable's build record: "<package> <os>_<arch>".
+              built="$(go version -m "${unpacked}/${program}" | awk '
+                $1 == "path" { package = $2 }
+                $1 == "build" && index($2, "GOOS=") == 1 { os = substr($2, 6) }
+                $1 == "build" && index($2, "GOARCH=") == 1 { arch = substr($2, 8) }
+                END { print package " " os "_" arch }')"
+              [ "${built}" = "${module}/cmd/${program} ${target}" ] \
+                || { echo "${target}: ${program} is not cmd/${program} built for ${target}: ${built}" >&2; exit 1; }
+              [ -x "${unpacked}/${program}" ] || { echo "${target}: ${program} is not executable" >&2; exit 1; }
             done
 
             expected="$( { printf '%s\n' LICENSE README.md THIRD_PARTY_NOTICES openapi.json; echo "${programs}"; } | LC_ALL=C sort)"
@@ -252,8 +266,12 @@ jobs:
           for program in jpack-runner jpack-source-worker jpack-google-relay; do
             test -x "${destination}/${program}" || { echo "${program} is not in the archive, or not executable" >&2; exit 1; }
           done
-          test "$("${destination}/jpack-runner" version)" = "jpack-runner ${RELEASE_TAG}"
-          test "$("${destination}/jpack-source-worker" version)" = "jpack-source-worker ${RELEASE_TAG}"
+          # Assigned first, compared after: a program that prints the right
+          # words and exits non-zero fails the step.
+          for program in jpack-runner jpack-source-worker; do
+            reported="$("${destination}/${program}" version)"
+            [ "${reported}" = "${program} ${RELEASE_TAG}" ] || { echo "${program} reports ${reported}" >&2; exit 1; }
+          done
 
           # No boot line: the refusal, exit 1, is the expected answer.
           output="$("${destination}/jpack-runner" 2>&1 < /dev/null)" && code=0 || code=$?
@@ -284,7 +302,8 @@ jobs:
       - name: Require the tag to still name that commit
         shell: bash
         run: |
-          named="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" | awk 'END { print $1 }')"
+          named="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            | awk -v tag="refs/tags/${RELEASE_TAG}" '$2 == tag { plain = $1 } $2 == tag "^{}" { peeled = $1 } END { print (peeled != "" ? peeled : plain) }')"
           [ -n "${named}" ] && [ "${named}" = "${GITHUB_SHA}" ] || { echo "refs/tags/${RELEASE_TAG} names ${named:-nothing}; the archives were built from ${GITHUB_SHA}" >&2; exit 1; }
 
       # An existing release, draft or published, is never replaced or completed
@@ -295,8 +314,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if state="$(gh release view "${RELEASE_TAG}" --json isDraft --jq 'if .isDraft then "a draft" else "published" end' 2>/dev/null)"; then
-            echo "A release under ${RELEASE_TAG} already exists, and it is ${state}" >&2
+          # List every release, drafts included, and match the tag exactly. A
+          # failed lookup fails the step; it is never read as absence.
+          state="$(gh api "repos/${GH_REPO}/releases" --paginate --jq '.[] | select(.tag_name == env.RELEASE_TAG) | if .draft then "a draft" else "published" end')"
+          if [ -n "${state}" ]; then
+            echo "A release under ${RELEASE_TAG} already exists, and it is $(echo "${state}" | sort -u | paste -sd, -)" >&2
             exit 1
           fi
 
@@ -345,7 +367,8 @@ jobs:
       - name: Require the tag to still name that commit
         shell: bash
         run: |
-          named="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" | awk 'END { print $1 }')"
+          named="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            | awk -v tag="refs/tags/${RELEASE_TAG}" '$2 == tag { plain = $1 } $2 == tag "^{}" { peeled = $1 } END { print (peeled != "" ? peeled : plain) }')"
           [ -n "${named}" ] && [ "${named}" = "${GITHUB_SHA}" ] || { echo "refs/tags/${RELEASE_TAG} names ${named:-nothing}; the draft was built from ${GITHUB_SHA}" >&2; exit 1; }
 
       - name: Publish the reviewed draft release
