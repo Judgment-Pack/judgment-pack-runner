@@ -41,6 +41,13 @@ The initial local pilot was verified with these source revisions:
 | Runtime | [`6842494`](https://github.com/Judgment-Pack/judgment-pack-runtime/commit/6842494ff0492c4f1a3bd185451d7d9c21a8e97e) |
 | Gateway, for connected inputs | [`v0.3.1`](https://github.com/Judgment-Pack/judgment-pack-gateway/releases/tag/v0.3.1), as pinned by Desk |
 
+CI tests every commit of this repository with Runtime
+[`v0.23.1`](https://github.com/Judgment-Pack/judgment-pack-runtime/releases/tag/v0.23.1)
+and Gateway
+[`v0.5.0`](https://github.com/Judgment-Pack/judgment-pack-gateway/releases/tag/v0.5.0),
+each built from source at the commit its release names. The notes of a release of this
+repository say what that release was tested with.
+
 These are a reproducible baseline, not a promise that every earlier release supports
 the Jobs contract. Build matching Desk and Runtime revisions when using this pilot.
 Runner's companion protocol is `jobs/1`; its HTTP contract is in [openapi.json](openapi.json).
@@ -442,6 +449,12 @@ fresh typed parameters. The sequential planner preflights all source profiles an
 permissions, calls each operation once, verifies its receipt and exact arguments,
 and derives facts/evidence through the existing mapping contract. Never reuse a
 release sample or retained response as a scheduled input.
+
+**Known fault ([#5](https://github.com/Judgment-Pack/judgment-pack-runner/issues/5)).**
+An unattended run of a mapping with two or more operation sources is refused, and no
+decision is requested: Runner acquires each source in a session of its own, and its
+verifier takes acquisitions of one session only. A mapping with one operation source
+is not affected, nor is preparation in Desk, which uses one session for all sources.
 
 For legacy connections (without `durable: true`), an occurrence is durably marked
 `preparing` before network acquisition. A crash
