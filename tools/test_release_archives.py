@@ -12,7 +12,9 @@ refuse it and say why.
 
 The cases are not a proof that nothing else gets through.
 """
+import gzip
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -94,9 +96,33 @@ class ArchiveChecks(unittest.TestCase):
                 opened.addfile(info, io.BytesIO(data) if data is not None else None)
         return dist
 
+    def as_archived(self, archive, target, programs):
+        """The programs an archive holds, as the packer's outputs: what it built is then what it archived."""
+        names = {name + '' for name in programs}
+        found = {}
+        try:
+            if archive.suffix == '.zip':
+                with zipfile.ZipFile(archive) as opened:
+                    for info in opened.infolist():
+                        if info.orig_filename in names:
+                            found[info.orig_filename] = opened.read(info)
+            else:
+                with tarfile.open(archive, 'r:gz') as opened:
+                    for info in opened:
+                        if info.name in names and info.isreg():
+                            found[info.name] = opened.extractfile(info).read()
+        except Exception:
+            pass
+        return found
+
+    def check(self, archive, target, files, programs, scratch, outputs=None):
+        if outputs is None:
+            outputs = self.as_archived(archive, target, programs)
+        return checked.check(archive, target, files, programs, outputs, scratch)
+
     def faults(self, target, held, extra=()):
         dist = self.archive(target, held, extra)
-        return checked.check(next(dist.iterdir()), target, self.files, self.programs, dist)
+        return self.check(next(dist.iterdir()), target, self.files, self.programs, dist)
 
     def refused(self, target, held, saying, extra=()):
         faults = self.faults(target, held, extra)
@@ -108,6 +134,22 @@ class ArchiveChecks(unittest.TestCase):
         return info
 
     # Sound archives, and what they are compared with.
+
+    def test_the_documents_of_a_release(self):
+        # Written out here, and not read from the script.
+        self.assertEqual(checked.DOCUMENTS, ['LICENSE', 'README.md', 'THIRD_PARTY_NOTICES', 'openapi.json'])
+        for name in ['LICENSE', 'README.md', 'THIRD_PARTY_NOTICES', 'openapi.json']:
+            held = self.contents('linux_amd64')
+            del held[name]
+            self.assertEqual(self.faults('linux_amd64', held), [f'{name}: not in the archive'])
+
+    def test_a_member_of_the_largest_size_there_may_be(self):
+        kept = checked.LIMIT
+        try:
+            checked.LIMIT = max(len(data) for _, data in self.contents('linux_amd64').values())
+            self.assertEqual(self.faults('linux_amd64', self.contents('linux_amd64')), [])
+        finally:
+            checked.LIMIT = kept
 
     def test_sound_archives_pass(self):
         for target in TARGETS:
@@ -139,7 +181,7 @@ class ArchiveChecks(unittest.TestCase):
             held = self.contents('linux_amd64')
             held['openapi.json'] = (0o644, b'changed after the commit\n')
             dist = self.archive('linux_amd64', held)
-            faults = checked.check(next(dist.iterdir()), 'linux_amd64', files, self.programs, dist)
+            faults = self.check(next(dist.iterdir()), 'linux_amd64', files, self.programs, dist)
             self.assertEqual(faults, ['openapi.json: not the bytes the commit holds'])
         finally:
             changed.write_bytes(kept[0])
@@ -177,7 +219,7 @@ class ArchiveChecks(unittest.TestCase):
 
     def test_a_name_of_a_document_and_of_a_program(self):
         dist = self.archive('linux_amd64', self.contents('linux_amd64'))
-        faults = checked.check(next(dist.iterdir()), 'linux_amd64', self.files, dict(self.programs, LICENSE=f'{MODULE}/cmd/LICENSE'), dist)
+        faults = self.check(next(dist.iterdir()), 'linux_amd64', self.files, dict(self.programs, LICENSE=f'{MODULE}/cmd/LICENSE'), dist)
         self.assertEqual(faults, ['LICENSE: the name of a document and of a program'])
 
     def test_a_member_larger_than_any_of_a_release(self):
@@ -252,12 +294,12 @@ class ArchiveChecks(unittest.TestCase):
         # The reader drops a trailing slash from such a name; unpacked, it makes a directory and no program.
         for written in ('one/', 'one//', 'other'):
             dist = self.pax_archive(self.contents('linux_amd64'), 'one', {'path': written})
-            faults = checked.check(next(dist.iterdir()), 'linux_amd64', self.files, self.programs, dist)
+            faults = self.check(next(dist.iterdir()), 'linux_amd64', self.files, self.programs, dist)
             self.assertEqual(sorted(faults), sorted(['one: not in the archive', f'{written}: a member whose header says more than a name, a mode and a time, and a release holds files']), written)
 
     def test_a_member_with_any_extended_header(self):
         dist = self.pax_archive(self.contents('linux_amd64'), 'LICENSE', {'comment': 'x'})
-        faults = checked.check(next(dist.iterdir()), 'linux_amd64', self.files, self.programs, dist)
+        faults = self.check(next(dist.iterdir()), 'linux_amd64', self.files, self.programs, dist)
         self.assertEqual(faults, ['LICENSE: a member whose header says more than a name, a mode and a time, and a release holds files'])
 
     def test_a_member_that_cannot_be_read(self):
@@ -272,21 +314,10 @@ class ArchiveChecks(unittest.TestCase):
             yield
         try:
             checked.contents = failing
-            faults = checked.check(next(dist.iterdir()), 'linux_amd64', self.files, self.programs, dist)
+            faults = self.check(next(dist.iterdir()), 'linux_amd64', self.files, self.programs, dist)
         finally:
             checked.contents = kept
         self.assertEqual(faults, ['notes.txt: a file a release does not hold', 'the archive cannot be read through: unexpected end of data'])
-
-    def test_an_archive_that_cannot_be_read_through(self):
-        dist = self.archive('linux_amd64', self.contents('linux_amd64'))
-        archive = next(dist.iterdir())
-        archive.write_bytes(archive.read_bytes()[:-2000])
-        faults = checked.check(archive, 'linux_amd64', self.files, self.programs, dist)
-        self.assertTrue(faults and faults[-1].startswith('the archive cannot be read through: '), faults)
-        archive.write_bytes(b'not an archive')
-        faults = checked.check(archive, 'linux_amd64', self.files, self.programs, dist)
-        self.assertEqual(len(faults), 1, faults)
-        self.assertTrue(faults[0].startswith('the archive cannot be read through: '), faults)
 
     # Kinds.
 
@@ -369,13 +400,50 @@ class ArchiveChecks(unittest.TestCase):
                 given = sound[:place] + (other,) + sound[place + 1:]
                 checked.build_record = lambda data, scratch, given=given: (given, '')
                 dist = self.archive('linux_amd64', held)
-                faults = checked.check(next(dist.iterdir()), 'linux_amd64', self.files, {'one': package}, dist)
+                faults = self.check(next(dist.iterdir()), 'linux_amd64', self.files, {'one': package}, dist)
                 self.assertEqual(faults, [f'one: built from {given[0]} for {given[1]}_{given[2]} at {given[3]}, and not from {package} for linux_amd64 at GOAMD64=v1'])
             checked.build_record = lambda data, scratch: (sound, '')
             dist = self.archive('linux_amd64', held)
-            self.assertEqual(checked.check(next(dist.iterdir()), 'linux_amd64', self.files, {'one': package}, dist), [])
+            self.assertEqual(self.check(next(dist.iterdir()), 'linux_amd64', self.files, {'one': package}, dist), [])
         finally:
             checked.build_record = kept
+
+    def test_a_program_with_a_byte_changed_since_it_was_built(self):
+        # The byte that says what machine it is for. The build record is elsewhere in the file and reads as before.
+        held = self.contents('linux_amd64')
+        built = held['one'][1]
+        held['one'] = (0o755, built[:18] + bytes([built[18] ^ 1]) + built[19:])
+        dist = self.archive('linux_amd64', held)
+        archive = next(dist.iterdir())
+        outputs = dict(self.as_archived(archive, 'linux_amd64', self.programs), **{'one': built})
+        self.assertEqual(self.check(archive, 'linux_amd64', self.files, self.programs, dist, outputs), ['one: not the bytes the packer built'])
+        del outputs['one']
+        self.assertEqual(self.check(archive, 'linux_amd64', self.files, self.programs, dist, outputs), ['one: the packer has no record of building it'])
+
+    def test_what_the_packer_built(self):
+        dist = Path(tempfile.mkdtemp(dir=self.scratch))
+        with self.assertRaises(SystemExit) as refused:
+            checked.built(dist, 'linux_amd64')
+        self.assertIn('artifacts.json is not there', str(refused.exception))
+        (dist / 'one_linux_amd64_v1').mkdir()
+        (dist / 'one_linux_amd64_v1' / 'one').write_bytes(b'built for linux')
+        (dist / 'one_darwin_amd64_v1').mkdir()
+        (dist / 'one_darwin_amd64_v1' / 'one').write_bytes(b'built for macOS')
+        account = [
+            {'type': 'Binary', 'name': 'one', 'goos': 'linux', 'goarch': 'amd64', 'path': 'dist/one_linux_amd64_v1/one'},
+            {'type': 'Binary', 'name': 'one', 'goos': 'darwin', 'goarch': 'amd64', 'path': 'dist/one_darwin_amd64_v1/one'},
+            {'type': 'Binary', 'name': 'one', 'goos': 'linux', 'goarch': 'arm64', 'path': 'dist/one_linux_arm64_v8.0/one'},
+            {'type': 'Archive', 'name': 'one', 'goos': 'linux', 'goarch': 'amd64', 'path': 'dist/nothing'},
+            {'type': 'Metadata', 'name': 'metadata.json', 'path': 'dist/metadata.json'},
+        ]
+        (dist / 'artifacts.json').write_text(json.dumps(account))
+        self.assertEqual(checked.built(dist, 'linux_amd64'), {'one': b'built for linux'})
+        self.assertEqual(checked.built(dist, 'darwin_amd64'), {'one': b'built for macOS'})
+        self.assertEqual(checked.built(dist, 'darwin_arm64'), {})
+        (dist / 'artifacts.json').write_text(json.dumps(account + account[:1]))
+        with self.assertRaises(SystemExit) as refused:
+            checked.built(dist, 'linux_amd64')
+        self.assertEqual(str(refused.exception), 'linux_amd64: the packer built one twice')
 
     def test_a_program_that_is_not_a_program(self):
         held = self.contents('linux_amd64')
@@ -384,8 +452,9 @@ class ArchiveChecks(unittest.TestCase):
 
     def test_a_universal_program(self):
         # A true one: two programs for macOS, of two architectures, in the container that holds both.
-        parts = [(0x01000007, 3, (self.built['darwin_amd64'] / 'one').read_bytes()),
-                 (0x0100000c, 0, (self.built['darwin_arm64'] / 'one').read_bytes())]
+        # Its first part is for the platform it is checked against, and that is the one the toolchain would read.
+        parts = [(0x0100000c, 0, (self.built['darwin_arm64'] / 'one').read_bytes()),
+                 (0x01000007, 3, (self.built['darwin_amd64'] / 'one').read_bytes())]
         step, place, table, body = 1 << 14, 1 << 14, b'', b''
         for kind, sub, data in parts:
             table += struct.pack('>iiIII', kind, sub, place, len(data), 14)
@@ -398,28 +467,28 @@ class ArchiveChecks(unittest.TestCase):
         held['one'] = (0o755, whole)
         self.assertEqual(self.faults('darwin_arm64', held), ['one: it holds several programs, and a release holds one under each name'])
 
-    def with_toolchain(self, script, data=b'#!/bin/sh\n'):
-        """What is said of a file's build record when `go` is the given script."""
-        tool = Path(tempfile.mkdtemp(dir=self.scratch))
-        (tool / 'go').write_text(script)
-        (tool / 'go').chmod(0o755)
-        kept = os.environ['PATH']
+    def with_toolchain(self, code, out, err=''):
+        """What is said of a file's build record when the toolchain answers so."""
+        kept = checked.subprocess.run
+
+        def answer(arguments, **how):
+            self.assertEqual(arguments[:3], ['go', 'version', '-m'])
+            return subprocess.CompletedProcess(arguments, code, out, err)
         try:
-            os.environ['PATH'] = f'{tool}{os.pathsep}{kept}'
-            return checked.build_record(data, self.scratch)
+            checked.subprocess.run = answer
+            return checked.build_record(b'any bytes', self.scratch)
         finally:
-            os.environ['PATH'] = kept
+            checked.subprocess.run = kept
 
     def test_a_toolchain_that_says_nothing_of_a_file_and_does_not_fail(self):
-        self.assertEqual(self.with_toolchain('#!/bin/sh\nexit 0\n'), (None, 'it carries no build record: go version -m said nothing'))
+        self.assertEqual(self.with_toolchain(0, ''), (None, 'it carries no build record: go version -m said nothing'))
+        self.assertEqual(self.with_toolchain(0, ' \n'), (None, 'it carries no build record: go version -m said nothing'))
 
     def test_a_toolchain_that_gives_a_record_and_fails(self):
-        script = "#!/bin/sh\nprintf '%s' '" + RECORD + "'\necho 'could not read the whole file' >&2\nexit 1\n"
-        self.assertEqual(self.with_toolchain(script), (None, 'it carries no build record: could not read the whole file'))
+        self.assertEqual(self.with_toolchain(1, RECORD, 'could not read the whole file\n'), (None, 'it carries no build record: could not read the whole file'))
 
     def test_a_toolchain_that_gives_a_record(self):
-        script = "#!/bin/sh\nprintf '%s' '" + RECORD + "'\n"
-        self.assertEqual(self.with_toolchain(script), ((f'{MODULE}/cmd/one', 'linux', 'amd64', 'v1'), ''))
+        self.assertEqual(self.with_toolchain(0, RECORD), ((f'{MODULE}/cmd/one', 'linux', 'amd64', 'v1'), ''))
 
     def test_a_file_that_holds_several_programs(self):
         # As a universal Mach-O begins, in either byte order and either width;
@@ -436,6 +505,48 @@ class ArchiveChecks(unittest.TestCase):
             held = self.contents('darwin_arm64')
             held['two'] = (mode, held['two'][1])
             self.assertEqual(self.faults('darwin_arm64', held), [f'two: mode {mode:04o}, which not everyone can read and execute'])
+
+    # Damage.
+
+    def unreadable(self, archive, target='linux_amd64'):
+        faults = self.check(archive, target, self.files, self.programs, archive.parent)
+        self.assertEqual(len(faults), 1, faults)
+        self.assertTrue(faults[0].startswith('the archive cannot be read through: '), faults)
+        return faults[0]
+
+    def test_an_archive_cut_short_or_changed_at_its_end(self):
+        # The last eight bytes are the checksum and the length of what was compressed.
+        # A reader of members stops at the last member and never comes to them.
+        dist = self.archive('linux_amd64', self.contents('linux_amd64'))
+        archive = next(dist.iterdir())
+        raw = archive.read_bytes()
+        self.assertEqual(self.check(archive, 'linux_amd64', self.files, self.programs, dist), [])
+        spoiled = {'without its last eight bytes': raw[:-8], 'with its checksum changed': raw[:-8] + bytes([raw[-8] ^ 1]) + raw[-7:],
+                   'with its length changed': raw[:-1] + bytes([raw[-1] ^ 1]), 'cut in the middle': raw[:len(raw) // 2]}
+        for what, data in spoiled.items():
+            archive.write_bytes(data)
+            self.unreadable(archive)
+
+    def test_an_archive_of_damaged_compressed_data(self):
+        dist = self.archive('linux_amd64', self.contents('linux_amd64'))
+        archive = next(dist.iterdir())
+        raw = archive.read_bytes()
+        # Past the header, which may carry a name: the first byte of what is compressed, made a block of no kind there is.
+        place = 10
+        if raw[3] & 0x08:
+            place = raw.index(b'\0', place) + 1
+        archive.write_bytes(raw[:place] + bytes([raw[place] | 0x06]) + raw[place + 1:])
+        self.assertIn('invalid block type', self.unreadable(archive))
+
+    def test_an_archive_that_is_not_one(self):
+        dist = self.archive('linux_amd64', self.contents('linux_amd64'))
+        archive = next(dist.iterdir())
+        archive.write_bytes(b'not an archive')
+        self.unreadable(archive)
+        archive.write_bytes(gzip.compress(b'compressed, and no archive' * 100))
+        self.unreadable(archive)
+        archive.write_bytes(b'')
+        self.unreadable(archive)
 
     # The build record, as text.
 
@@ -468,7 +579,24 @@ class ArchiveChecks(unittest.TestCase):
 
     # The script, as the workflow runs it.
 
+    def with_account(self, dist):
+        """Write the packer's account and outputs into a directory of archives: it built what they hold."""
+        account = []
+        for archive in sorted(dist.iterdir()):
+            if not archive.name.endswith(('.tar.gz', '.zip')):
+                continue
+            target = archive.name.rsplit('.', 2 if archive.name.endswith('.tar.gz') else 1)[0].rsplit('_', 2)
+            target = f'{target[1]}_{target[2]}'
+            goos, _, goarch = target.partition('_')
+            for name, data in self.as_archived(archive, target, self.programs).items():
+                where = dist / f'{name}_{target}'
+                where.mkdir(exist_ok=True)
+                (where / name).write_bytes(data)
+                account.append({'type': 'Binary', 'name': name, 'goos': goos, 'goarch': goarch, 'path': f'dist/{name}_{target}/{name}'})
+        (dist / 'artifacts.json').write_text(json.dumps(account))
+
     def run_script(self, dist, *targets, commit='HEAD'):
+        self.with_account(dist)
         arguments = [sys.executable, str(Path(checked.__file__)), '--dist', str(dist), '--version', '1.0.0', '--tree', str(self.tree), '--commit', commit]
         for target in targets:
             arguments += ['--target', target]
@@ -480,6 +608,17 @@ class ArchiveChecks(unittest.TestCase):
         self.assertEqual(ran.returncode, 1, ran.stderr)
         self.assertIn('linux_amd64: judgment-pack-runner_1.0.0_linux_amd64.tar.gz holds what commit', ran.stdout)
         self.assertIn('darwin_arm64: judgment-pack-runner_1.0.0_darwin_arm64.tar.gz is not there', ran.stderr)
+
+    def test_every_platform_of_a_release_is_looked_for(self):
+        # As the workflow runs the script: no target named. The platforms are written out here.
+        self.assertEqual(checked.TARGETS, ['darwin_amd64', 'darwin_arm64', 'linux_amd64', 'linux_arm64'])
+        empty = Path(tempfile.mkdtemp(dir=self.scratch))
+        ran = self.run_script(empty)
+        self.assertEqual(ran.returncode, 1, ran.stdout)
+        said = ran.stderr.splitlines()
+        self.assertEqual(len(said), len(checked.TARGETS), said)
+        for target in checked.TARGETS:
+            self.assertTrue(any(line.startswith(f'{target}: ') and line.endswith(' is not there') for line in said), (target, said))
 
     def test_a_fault_is_a_failure_of_the_script(self):
         held = self.contents('linux_amd64')

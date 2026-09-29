@@ -168,7 +168,7 @@ jobs:
       # meant to produce them (tools/release_archives.py): an archive holds
       # files and nothing else, each in the form the packer writes, under its
       # plain name and once; the documents are the commit's byte for byte;
-      # each program is one program
+      # each program is the bytes the packer built, one program
       # built from the package of its name, for the archive's platform, at the
       # lowest level of its architecture, readable and executable by everyone.
       # CI runs the script against sound archives and against archives spoiled

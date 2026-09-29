@@ -27,13 +27,23 @@ under `deploy/google-cloud/`.
 | --- | --- | --- |
 | Formatting, vet, race tests and real-Runtime integration (CI, run again at the tag) | `amd64` | `arm64` |
 | The released archive, run: all three programs present; `jpack-runner` and `jpack-source-worker` name the release; `jpack-runner` refuses to start without a boot line | `amd64` and `arm64` | `arm64` |
-| The released archive, read and not run: it holds files and nothing else, each under its plain name and once; its documents are the commit's, byte for byte; each program is one program, built from the package of its name, for the archive's platform, at the lowest level of its architecture, readable and executable by everyone; no file is there that a release does not hold | `amd64` and `arm64` | `amd64` and `arm64` |
+| The released archive, read and not run: it holds files and nothing else, each under its plain name and once; its documents are the commit's, byte for byte; each program is one program, built from the package of its name, for the archive's platform, at the lowest level of its architecture, the bytes the packer built, readable and executable by everyone; no file is there that a release does not hold; the archive reads to its end | `amd64` and `arm64` | `amd64` and `arm64` |
 
 What the reading of the archives is for: a mistake in the packaging, such as a program
-built from the wrong package or for the wrong platform. It accepts a member only in the
-form the packer writes one, and reads an archive as Python's standard library does. It
-is not a defence against an archive made to be read differently by different programs:
-whoever could put one where the check looks could change the check.
+built from the wrong package or for the wrong platform, or an archive cut short. It
+accepts a member only in the form the packer writes one, and reads an archive as
+Python's standard library does. It is not a defence against an archive made to be read
+differently by different programs: whoever could put one where the check looks could
+change the check.
+
+A program is compared with the bytes the packer wrote when it built it, by the packer's
+own account (`dist/artifacts.json`). Those bytes are checked against nothing but their
+build record: the check does not say the packer built a program well.
+
+The form is the packer's for what this repository gives it today: short names in plain
+letters, files of ordinary size, modes as the checkout has them. A file added under a
+long name or one not in plain letters, or an upgrade of the packer, may be written in a
+form the check refuses. Look into such a refusal: the check may have to follow.
 
 The `darwin/amd64` archive is built, read and checksummed and is not run by anything.
 `jpack-google-relay` is not started by any release check. The archive checks do not
@@ -129,8 +139,9 @@ name.
    waits, by anyone who can write to the repository. After the gate, the tag is compared
    with the commit once more, and the draft as it then stands is downloaded and compared
    with what the run packaged: the title the workflow gave it, the notes the commit
-   holds, the same files by name, the same `checksums.txt`, and every archive the bytes
-   that list names. Then it is published. A moment remains
+   holds (compared without the newlines either ends in), the same files by name, the
+   same `checksums.txt`, and every archive the bytes that list names. Then it is
+   published. A moment remains
    between that check and publishing; nothing closes it. An approval given more than
    thirty days after the run finds the run's archives gone, and the job fails: release a
    new version.
