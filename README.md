@@ -41,11 +41,8 @@ The initial local pilot was verified with these source revisions:
 | Runtime | [`6842494`](https://github.com/Judgment-Pack/judgment-pack-runtime/commit/6842494ff0492c4f1a3bd185451d7d9c21a8e97e) |
 | Gateway, for connected inputs | [`v0.3.1`](https://github.com/Judgment-Pack/judgment-pack-gateway/releases/tag/v0.3.1), as pinned by Desk |
 
-CI tests every commit of this repository with Runtime
-[`v0.23.1`](https://github.com/Judgment-Pack/judgment-pack-runtime/releases/tag/v0.23.1)
-and Gateway
-[`v0.5.0`](https://github.com/Judgment-Pack/judgment-pack-gateway/releases/tag/v0.5.0),
-each built from source at the commit its release names. The notes of a release of this
+CI tests Runner with Runtime and Gateway built from source, at the commits
+[ci.yml](.github/workflows/ci.yml) pins. The [notes](docs/releases/) of a release of this
 repository say what that release was tested with.
 
 These are a reproducible baseline, not a promise that every earlier release supports
@@ -451,10 +448,13 @@ and derives facts/evidence through the existing mapping contract. Never reuse a
 release sample or retained response as a scheduled input.
 
 **Known fault ([#5](https://github.com/Judgment-Pack/judgment-pack-runner/issues/5)).**
-An unattended run of a mapping with two or more operation sources is refused, and no
-decision is requested: Runner acquires each source in a session of its own, and its
-verifier takes acquisitions of one session only. A mapping with one operation source
-is not affected, nor is preparation in Desk, which uses one session for all sources.
+An unattended run that acquires two or more operation sources is refused, and no
+decision is requested: Runner acquires each source in a session of its own, on the
+legacy path and on the durable one, and its verifier takes acquisitions of one session
+only. A run that acquires one operation source is not affected, with local-file sources
+beside it or without; nor is a mapping whose second operation is skipped because what
+it depends on was unavailable; nor is preparation in Desk, which uses one session for
+all sources.
 
 For legacy connections (without `durable: true`), an occurrence is durably marked
 `preparing` before network acquisition. A crash

@@ -33,8 +33,9 @@ jobs:
         run: go vet ./...
       # Real-Runtime tests must run in CI, not silently skip behind an unset
       # JPACK_TEST_BIN. Pin the independently versioned evaluator contract.
-      # The commit is the one Runtime's release v0.23.1 names. A commit is
-      # pinned and not the tag, since a commit cannot come to name other code.
+      # A commit is pinned and not a tag, since a commit cannot come to name
+      # other code. The name after it is the release the commit was taken
+      # from when the pin was set: whoever moves one moves the other.
       - name: Check out tested Runtime
         uses: actions/checkout@v4
         with:
@@ -45,7 +46,6 @@ jobs:
       - name: Build Runtime
         working-directory: .ci-runtime
         run: go build -trimpath -o "$RUNNER_TEMP/jpack" ./cmd/jpack
-      # The commit is the one Gateway's release v0.5.0 names.
       - name: Check out durable Gateway contract
         uses: actions/checkout@v4
         with:
