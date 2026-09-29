@@ -165,14 +165,16 @@ jobs:
           cat checksums.txt
 
       # Checked on the archives themselves, all four, not on the configuration
-      # meant to produce them (tools/release_archives.py): the documents are
-      # the commit's byte for byte; each program is a file built from the
-      # package of its name, for the archive's platform, at the lowest level
-      # of its architecture, and executable; the archive holds nothing else.
-      # CI runs a negative case for each of these.
+      # meant to produce them (tools/release_archives.py): an archive holds
+      # files and nothing else, each under its plain name and once; the
+      # documents are the commit's byte for byte; each program is one program
+      # built from the package of its name, for the archive's platform, at the
+      # lowest level of its architecture, readable and executable by everyone.
+      # CI runs the script against sound archives and against archives spoiled
+      # one way at a time.
       - name: Check the contents of every archive
         shell: bash
-        run: python3 tools/release_archives.py --dist dist --version "${RELEASE_TAG#v}"
+        run: python3 tools/release_archives.py --dist dist --version "${RELEASE_TAG#v}" --commit "${GITHUB_SHA}"
 
       - name: Carry the release notes with the archives
         shell: bash
@@ -356,7 +358,8 @@ jobs:
       # A draft can be changed while it waits at the gate, by anyone who can
       # write to the repository. Download it as it now stands and compare it
       # with what this run packaged: the same files by name, the same list of
-      # checksums, and every archive the bytes that list names. A moment
+      # checksums, and every archive the bytes that list names. The notes and
+      # the title are not compared: those are what the approver read. A moment
       # remains between this check and publishing; nothing here closes it.
       - name: Require the draft to hold what this run packaged
         shell: bash
@@ -375,6 +378,13 @@ jobs:
           [ "${packaged}" = "${drafted}" ] || { echo "The draft does not hold the files this run packaged:" >&2; diff <(echo "${packaged}") <(echo "${drafted}") >&2; exit 1; }
 
           cmp run/checksums.txt draft/checksums.txt
+          # The list is read in the one form this workflow writes it: a digest,
+          # two spaces, and a name of plain characters. Any other line is
+          # refused, though a checksum program would read it.
+          if grep -q -v -E '^[0-9a-f]{64}  [A-Za-z0-9._-]+$' draft/checksums.txt; then
+            echo "checksums.txt holds a line that is not a digest, two spaces and a plain name" >&2
+            exit 1
+          fi
           named="$(awk '{ print "./" $2 }' draft/checksums.txt | LC_ALL=C sort)"
           archives="$(cd draft && find . -type f ! -name checksums.txt | LC_ALL=C sort)"
           [ "${named}" = "${archives}" ] || { echo "checksums.txt does not name the draft's archives, each once:" >&2; diff <(echo "${named}") <(echo "${archives}") >&2; exit 1; }
