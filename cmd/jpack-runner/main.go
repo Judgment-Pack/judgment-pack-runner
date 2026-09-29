@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/buildinfo"
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/runner"
 	"io"
 	"net"
@@ -19,7 +20,9 @@ import (
 
 func main() {
 	err := error(nil)
-	if len(os.Args) > 1 && os.Args[1] == "verify-run" {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println("jpack-runner", buildinfo.Version())
+	} else if len(os.Args) > 1 && os.Args[1] == "verify-run" {
 		err = verifyRun(os.Args[2:])
 	} else {
 		err = serve()

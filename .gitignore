@@ -1,2 +1,4 @@
 /bin/
 *.sqlite*
+/dist/
+__pycache__/

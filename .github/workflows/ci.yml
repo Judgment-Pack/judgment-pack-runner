@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The release workflow calls this one at a tag (release.yml).
+  workflow_call:
 
 permissions:
   contents: read
@@ -66,3 +68,35 @@ jobs:
         run: |
           go build -trimpath -o "$RUNNER_TEMP/jpack-runner" ./cmd/jpack-runner
           go build -trimpath -o "$RUNNER_TEMP/jpack-source-worker" ./cmd/jpack-source-worker
+
+  # What a repository release carries (docs/releasing.md), checked on every
+  # commit so a tag is never the first to find a gap. The toolchain is the exact
+  # one release.yml names: the notices include the toolchain's own licence.
+  release-contents:
+    name: Release contents
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: true
+      - name: Check the toolchain is the one the release workflow names
+        run: |
+          named="$(sed -n "s/^ *go-version: *['\"]\{0,1\}\([0-9][0-9.]*\)['\"]\{0,1\} *\$/\1/p" .github/workflows/release.yml)"
+          [ -n "$named" ] && [ "go$named" = "$(go env GOVERSION)" ] || { echo "release.yml names Go ${named:-nothing}; this job runs $(go env GOVERSION)"; exit 1; }
+      - name: Check third-party notices against linked modules
+        run: python3 tools/third_party_notices.py --check
+      # What the release workflow checks of its archives, run against sound
+      # archives and against archives spoiled one way at a time: real programs,
+      # built by this toolchain and archived.
+      - name: Check the archive check refuses each fault it names
+        run: python3 tools/test_release_archives.py
+      # Names in a file compared with directories: an early warning only. The
+      # release workflow checks the archives themselves.
+      - name: Check every program is named in the release build
+        run: |
+          want="$(ls cmd | sort)"
+          have="$(sed -n 's/^    binary: //p' .goreleaser.yml | sort)"
+          [ "$want" = "$have" ] || { echo "cmd and .goreleaser.yml name different programs:"; diff <(echo "$want") <(echo "$have"); exit 1; }
