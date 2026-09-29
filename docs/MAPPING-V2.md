@@ -180,8 +180,26 @@ No acquisition or network wait holds a SQLite transaction or dispatcher slot.
 This first slice intentionally uses **receipt-only verification**. It does not
 claim a sealed/complete session, fresh session ownership, absence of omitted
 attempts or proof that a caller did not choose among multiple valid responses.
-All submitted acquisitions must share a session, and one receipt cannot stand in
-for two sources. Cached responses can be reused within their source's `maxAge`.
+The acquisitions of one input are in one of two forms, and one receipt cannot
+stand in for two sources:
+
+- **they share a session**, at any call indexes that differ. Desk's preparation
+  leaves them so;
+- **each is alone in a session of its own and is that session's first call**
+  (call index zero). Runner leaves them so when it acquires unattended, on
+  either path: it names a session for each acquisition, takes the answer only
+  as that session's first call, and asks the gateway to seal the session after.
+
+An input in neither form is refused at the first source that leaves both: two
+acquisitions that share a session beside one that does not, or an acquisition in
+a session of its own that is not its first call. One acquisition alone is in both
+forms. The form is read from the receipts and from nothing else, so whoever
+verifies an export later reads the same form. Neither form says a session is
+sealed or complete, as stated above: a caller that asks twice chooses which
+answer to submit, in one session or in two.
+
+Citations are recorded by call index, and those of equal index in the mapping's
+order of sources. Cached responses can be reused within their source's `maxAge`.
 `maxAge` is required, from 1 through 86,400 seconds. Observation and Gateway
 serving time permit at most 30 seconds of future clock skew.
 
@@ -255,7 +273,7 @@ choice of policy or its historical verification time.
 
 ## Deferred scope
 
-Runner-issued preparation sessions and seal verification, unattended acquisition/scheduling, HTTP catalog support,
+Preparation sessions that Runner issues to a caller, seal verification, HTTP catalog support,
 SQL async statement lifecycles, model HTTP calls, multi-record/page acquisition,
 and pack-level class declarations remain separate work. Model classification
 admission is implemented and tested for authenticated MCP sources; this does not

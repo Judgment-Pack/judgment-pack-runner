@@ -39,7 +39,11 @@ worker restart and is never replayed. Completed responses remain available.
 Operation IDs do not prove input correctness. The final response must verify its
 signature, result bytes, original argument commitment, source/adapter/endpoint
 pins, output-class admission and freshness. The dedicated session must be
-`async.<operation-id>`, call index zero. Pending status contains no evidence.
+`async.<operation-id>`, call index zero. A preparation of several operations
+so holds acquisitions of as many sessions, each the first call of its own, and
+the verifier takes them in that form ([MAPPING-V2.md](../MAPPING-V2.md#time-sessions-errors-and-retries)).
+Up to `v0.1.0` it took acquisitions of one session only, and refused every
+preparation of two operations or more (#5). Pending status contains no evidence.
 Local files and case parameters are captured once; completed sources do not
 change silently while a later source waits. If their freshness window expires,
 the occurrence needs review. A future refresh feature must invalidate dependent

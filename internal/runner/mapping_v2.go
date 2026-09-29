@@ -182,7 +182,13 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 	generated := map[string]bool{}
 	used := map[string]bool{}
 	cites := map[string]bool{}
-	session := ""
+	// The acquisitions of one input are in one of two forms, and an input
+	// that is in neither is refused. Either they share a session, as a
+	// caller that prepares every source in one session leaves them; or each
+	// is alone in a session of its own and is the first call of it, as
+	// Runner leaves them when it acquires unattended. One acquisition is in
+	// both forms. Neither form says a session is sealed or complete.
+	shared, apart, first := true, true, ""
 	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation) error {
 		ft, et, err := readTargets(read)
 		if err != nil {
@@ -364,15 +370,21 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 				}
 			}
 			if cite != nil {
-				if session != "" && session != cite.SessionID {
-					return fail(errors.New("acquisitions must share one session"))
-				}
-				session = cite.SessionID
 				key := fmt.Sprintf("%s/%d", cite.SessionID, cite.CallIndex)
 				if cites[key] {
 					return fail(errors.New("one receipt cannot stand in for multiple source acquisitions"))
 				}
 				cites[key] = true
+				if len(prep.Cites) == 0 {
+					first = cite.SessionID
+				}
+				// Two first calls of one session would be one receipt twice,
+				// which is refused above: so first calls are of sessions apart.
+				shared = shared && cite.SessionID == first
+				apart = apart && cite.CallIndex == 0
+				if !shared && !apart {
+					return fail(errors.New("acquisitions must share one session, or each be the first call of a session of its own"))
+				}
 				prep.Cites = append(prep.Cites, *cite)
 			}
 			claim, e = applyRead(source.Read, artifact, params)
@@ -391,7 +403,12 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 			return i, inputProblem("unexpected source response")
 		}
 	}
-	sort.Slice(prep.Cites, func(a, b int) bool { return prep.Cites[a].CallIndex < prep.Cites[b].CallIndex })
+	// By call index, as before. Where each acquisition is the first call of
+	// its own session the indexes are equal, and the order is the mapping's
+	// order of sources: the sort keeps equal elements as they were. No test
+	// tells this sort from one that does not promise to: for as many
+	// sources as a mapping may have, the other keeps them too.
+	sort.SliceStable(prep.Cites, func(a, b int) bool { return prep.Cites[a].CallIndex < prep.Cites[b].CallIndex })
 	c.MappingDigest = hash
 	mapped := Input{Facts: encode(facts), Source: &c, Preparation: prep}
 	for _, l := range prep.Lineage {

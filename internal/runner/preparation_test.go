@@ -18,11 +18,14 @@ import (
 type asyncFixture struct {
 	mu                sync.Mutex
 	ready, bad, stale bool
-	requests          map[string][]byte
-	cancelled         int
-	p                 InputProfile
-	key               ed25519.PrivateKey
-	t                 *testing.T
+	// elsewhere answers in a session that is not the operation's, and later
+	// as a call of the operation's session that is not its first.
+	elsewhere, later bool
+	requests         map[string][]byte
+	cancelled        int
+	p                InputProfile
+	key              ed25519.PrivateKey
+	t                *testing.T
 }
 
 func (f *asyncFixture) serve(w http.ResponseWriter, r *http.Request) {
@@ -58,11 +61,18 @@ func (f *asyncFixture) serve(w http.ResponseWriter, r *http.Request) {
 	if f.stale {
 		at = at.Add(-time.Hour)
 	}
-	response := signResponse(f.t, f.p, f.key, args, []byte(`{"id":7,"description":"fresh","detail":"ready"}`), at, 0)
+	index, session := 0, "async."+req.ID
+	if f.later {
+		index = 1
+	}
+	if f.elsewhere {
+		session = "async.elsewhere"
+	}
+	response := signResponse(f.t, f.p, f.key, args, []byte(`{"id":7,"description":"fresh","detail":"ready"}`), at, index)
 	var v map[string]any
 	json.Unmarshal(response, &v)
 	receipt := v["receipt"].(map[string]any)
-	receipt["sessionId"] = "async." + req.ID
+	receipt["sessionId"] = session
 	signReceipt(f.t, receipt, f.key)
 	write(w, 200, map[string]any{"id": req.ID, "deadline": req.Deadline, "state": "completed", "response": v})
 }
