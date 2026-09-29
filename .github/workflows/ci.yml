@@ -33,11 +33,14 @@ jobs:
         run: go vet ./...
       # Real-Runtime tests must run in CI, not silently skip behind an unset
       # JPACK_TEST_BIN. Pin the independently versioned evaluator contract.
+      # A commit is pinned and not a tag, since a commit cannot come to name
+      # other code. The name after it is the release the commit was taken
+      # from when the pin was set: whoever moves one moves the other.
       - name: Check out tested Runtime
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-runtime
-          ref: 87d9880824944981dfeed9a8907509138c751ca0
+          ref: 5098060c86de1f9f7e315a0f3f93a358c7864872 # v0.23.1
           path: .ci-runtime
           persist-credentials: false
       - name: Build Runtime
@@ -47,7 +50,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-gateway
-          ref: ec03dc0e1e68bc2adf5d50735bc0fb95788c108c
+          ref: 775176e6bc92470e45f70d89ee9275aac544532f # v0.5.0
           path: .ci-gateway
           persist-credentials: false
       - name: Build Gateway and MCP adapter
