@@ -186,8 +186,9 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 	// that is in neither is refused. Either they share a session, as a
 	// caller that prepares every source in one session leaves them; or each
 	// is alone in a session of its own and is the first call of it, as
-	// Runner leaves them when it acquires unattended. One acquisition is in
-	// both forms. Neither form says a session is sealed or complete.
+	// Runner leaves them when it acquires unattended. One acquisition alone
+	// shares a session with itself, at any call index. Neither form says a
+	// session is sealed or complete.
 	shared, apart, first := true, true, ""
 	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation) error {
 		ft, et, err := readTargets(read)

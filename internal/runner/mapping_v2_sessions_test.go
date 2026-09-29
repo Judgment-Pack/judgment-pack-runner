@@ -59,16 +59,16 @@ func TestV2AcquisitionsShareASessionOrEachHasItsOwn(t *testing.T) {
 		at      map[string]where
 		refused string
 	}{
-		"one session, in order":                       {map[string]where{"vendor": {"one", 0}, "detail": {"one", 1}, "standing": {"one", 2}}, ""},
-		"one session, not from its first call":        {map[string]where{"vendor": {"one", 4}, "detail": {"one", 9}, "standing": {"one", 5}}, ""},
-		"each the first call of its own":              {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 0}, "standing": {"job.c", 0}}, ""},
-		"its own, and the second not a first call":    {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 1}, "standing": {"job.c", 0}}, "detail"},
-		"its own, and the first not a first call":     {map[string]where{"vendor": {"job.a", 1}, "detail": {"job.b", 0}, "standing": {"job.c", 0}}, "detail"},
-		"its own, and the last not a first call":      {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 0}, "standing": {"job.c", 2}}, "standing"},
-		"two that share, and a third apart":           {map[string]where{"vendor": {"one", 0}, "detail": {"one", 1}, "standing": {"job.c", 0}}, "standing"},
-		"two apart, and a third that shares":          {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 0}, "standing": {"job.a", 1}}, "standing"},
-		"two apart, and a third in the first's place": {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 0}, "standing": {"job.b", 0}}, "standing"},
-		"one receipt's place for two sources":         {map[string]where{"vendor": {"one", 0}, "detail": {"one", 0}, "standing": {"one", 1}}, "detail"},
+		"one session, in order":                        {map[string]where{"vendor": {"one", 0}, "detail": {"one", 1}, "standing": {"one", 2}}, ""},
+		"one session, not from its first call":         {map[string]where{"vendor": {"one", 4}, "detail": {"one", 9}, "standing": {"one", 5}}, ""},
+		"each the first call of its own":               {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 0}, "standing": {"job.c", 0}}, ""},
+		"its own, and the second not a first call":     {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 1}, "standing": {"job.c", 0}}, "detail"},
+		"its own, and the first not a first call":      {map[string]where{"vendor": {"job.a", 1}, "detail": {"job.b", 0}, "standing": {"job.c", 0}}, "detail"},
+		"its own, and the last not a first call":       {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 0}, "standing": {"job.c", 2}}, "standing"},
+		"two that share, and a third apart":            {map[string]where{"vendor": {"one", 0}, "detail": {"one", 1}, "standing": {"job.c", 0}}, "standing"},
+		"two apart, and a third that shares":           {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 0}, "standing": {"job.a", 1}}, "standing"},
+		"two apart, and a third in the second's place": {map[string]where{"vendor": {"job.a", 0}, "detail": {"job.b", 0}, "standing": {"job.b", 0}}, "standing"},
+		"one receipt's place for two sources":          {map[string]where{"vendor": {"one", 0}, "detail": {"one", 0}, "standing": {"one", 1}}, "detail"},
 	} {
 		input, p, key, at, args := threeSources(t)
 		for source, w := range test.at {
@@ -147,9 +147,11 @@ func TestV2CitationsOfSixteenSourcesKeepTheMappingsOrder(t *testing.T) {
 	}
 }
 
-// An unattended run that acquires three operation sources comes to its
-// end: Runner asks the gateway for each in a session of its own, and takes
-// what it acquired. (Runner issue 5: it refused its own acquisitions.)
+// On the legacy path, three operation sources are acquired and what was
+// acquired is verified: Runner asks the gateway for each in a session of
+// its own, and takes what it acquired. No run is made of it here; the
+// durable path's test below goes on to the evaluation. (Runner issue 5: it
+// refused its own acquisitions.)
 func TestAutomaticGatewayAcquiresEverySourceOfAMapping(t *testing.T) {
 	input, p, key, _, _ := threeSources(t)
 	input.Source.Sources = map[string]SourceValue{}
@@ -336,5 +338,30 @@ func TestDurablePreparationOfTwoSourcesIsEvaluated(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.requests) != 2 {
 		t.Fatalf("%d operations for two sources", len(f.requests))
+	}
+}
+
+// One acquisition alone is taken at any call index, as it was before the
+// rule had two forms: it shares a session with itself.
+func TestV2OneAcquisitionAloneIsTakenAtAnyIndex(t *testing.T) {
+	input, p, key, at := v2Fixture(t)
+	for _, index := range []int{0, 1, 9} {
+		input.Source.Sources["vendor"] = SourceValue{Response: signResponseIn(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), sourceResults["vendor"], at, "any.session", index)}
+		got, e := normalizeV2(input, []InputProfile{p}, at)
+		if e != nil || len(got.Preparation.Cites) != 1 || got.Preparation.Cites[0].CallIndex != index {
+			t.Fatalf("at index %d: %v", index, e)
+		}
+	}
+}
+
+// A mapping that names two operations and acquires one, the second being
+// skipped for what it depends on, was taken before and is taken the same.
+func TestV2ASkippedOperationLeavesOneAcquisition(t *testing.T) {
+	input, p, key, at := v2Fixture(t)
+	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Parameters: map[string]Parameter{"description": {From: "vendor", Pointer: "/vendor/description", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"description":{"$param":"description"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/detail", "/detail"}}, Evidence: []EvidenceMapping{}}}})
+	input.Source.Sources["vendor"] = SourceValue{Response: signResponseIn(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), []byte(`{"id":8,"description":"of another vendor"}`), at, "job.a", 3)}
+	got, e := normalizeV2(input, []InputProfile{p}, at)
+	if e != nil || len(got.Preparation.Cites) != 1 || got.Preparation.Outcomes[2].Reason != "dependency-unavailable" {
+		t.Fatal(e, string(encode(got.Preparation)))
 	}
 }

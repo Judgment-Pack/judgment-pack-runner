@@ -190,10 +190,11 @@ stand in for two sources:
   either path: it names a session for each acquisition, takes the answer only
   as that session's first call, and asks the gateway to seal the session after.
 
-An input in neither form is refused at the first source that leaves both: two
-acquisitions that share a session beside one that does not, or an acquisition in
-a session of its own that is not its first call. One acquisition alone is in both
-forms. The form is read from the receipts and from nothing else, so whoever
+An input in neither form is refused at the first source, in the mapping's order,
+that leaves both: two acquisitions that share a session beside one that does not,
+or, among acquisitions of sessions apart, one that is not its session's first
+call. One acquisition alone shares a session with itself, and is taken at any
+call index, as it was. The form is read from the receipts and from nothing else, so whoever
 verifies an export later reads the same form. Neither form says a session is
 sealed or complete, as stated above: a caller that asks twice chooses which
 answer to submit, in one session or in two.
