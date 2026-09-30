@@ -204,8 +204,22 @@ func TestInstallationCanRefuseUntestedReleases(t *testing.T) {
 	if json.Unmarshal(res.Body.Bytes(), &body); res.Code != 409 || body.Error.Code != "release_untested" || body.Error.Message != refusal.Message {
 		t.Fatal(res.Code, res.Body.String())
 	}
-	if n := countRows(t, s, "jobs"); n != 1 {
-		t.Fatal("refused job was stored", n)
+	// A job created with its first trigger is refused the same, and leaves no trigger.
+	trigger := TriggerConfig{Name: "Intake event", Kind: "event", Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+	if _, err = s.createJobConfigured("Untested", fresh.ID, &trigger); !errors.As(err, &refusal) || refusal.Code != "release_untested" {
+		t.Fatal("untested release became a job with a trigger", err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/v1/jobs", bytes.NewReader(encode(map[string]any{"name": "Untested", "releaseId": fresh.ID, "reviewed": true, "trigger": trigger})))
+	req.Header.Set("Authorization", "Bearer test-token")
+	res = httptest.NewRecorder()
+	s.Handler("test-token").ServeHTTP(res, req)
+	if json.Unmarshal(res.Body.Bytes(), &body); res.Code != 409 || body.Error.Code != "release_untested" {
+		t.Fatal(res.Code, res.Body.String())
+	}
+	for table, want := range map[string]int{"jobs": 1, "triggers": 0, "trigger_revisions": 0} {
+		if n := countRows(t, s, table); n != want {
+			t.Fatal("refused job left rows in", table, n)
+		}
 	}
 	// A job made before the setting was on is returned as before, and runs.
 	if again, e := s.createJob("Untested", untested.ID); e != nil || again.ID != earlier.ID {
