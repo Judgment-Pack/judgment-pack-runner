@@ -184,7 +184,9 @@ validated dependency chaining and per-target lineage. Releases freeze the mappin
 and operator profiles; operational evaluations retain matching Runtime citations.
 An offline `verify-run` command checks retained inputs against independently trusted
 profiles and a release digest. Its report says that the run's disposition was not
-checked. V1 behavior and records remain unchanged.
+checked. Given the release's own Runtime executable (`--runtime`), it also evaluates
+the verified inputs again as a rehearsal, and reports `verified-disposition` only
+when the disposition matches the retained one. V1 behavior and records remain unchanged.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the

@@ -267,16 +267,39 @@ jpack-runner verify-run \
 Verification recomputes the frozen release digest, receipt signatures, exact
 arguments/result digests, historical freshness, projection, admission, lineage
 and audit input/citation binding. It performs no network request or model call.
-It reports `verified-inputs`, not policy truth or evaluator re-execution.
+Without `--runtime` it reports `verified-inputs`, not policy truth or evaluator
+re-execution.
 
-The retained disposition is not read. A record whose inputs are intact and whose
-disposition was changed after the run still verifies. The report says so, on
+The retained disposition is then not read. A record whose inputs are intact and
+whose disposition was changed after the run still verifies. The report says so, on
 standard output for a program and on standard error for a person:
 
 ```text
 {"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs"}
 verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.
 ```
+
+Add `--runtime /absolute/path/to/jpack` to check the disposition too, for a
+completed run. The executable's bytes are hashed and it is refused unless the
+digest is the release's `runtimeDigest`; the copy that was hashed is the one run.
+It evaluates the verified facts and evidence under the release's frozen pack,
+configuration and lock as a rehearsal (`jpack experimental evaluate --rehearsal`),
+in a private directory under the system's temporary directory (`TMPDIR`) that is
+removed after. A rehearsal appends no audit record; an answer not labelled as a
+rehearsal, or an audit record left anyway, is refused. Nothing is written to a
+Runner store. The canonical disposition is compared byte for byte with the one the
+run's result retains and the one its audit record retains:
+
+```text
+{"retainedDisposition":"matches-re-execution","scope":"retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth","status":"verified-disposition"}
+verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true.
+```
+
+When either differs, the command exits 1, reports `"status":"disposition-differs"`
+with `"retainedDisposition":"differs-from-re-execution"`, and names the failure
+on standard error. `verified-disposition` adds one statement to `verified-inputs`:
+the release's Runtime, given the verified inputs, decides what the record says.
+It is not policy truth.
 
 The export includes private case/request values and consumed grant salts;
 distribute it only to intended reviewers. Public keys alone do not authenticate an export's
