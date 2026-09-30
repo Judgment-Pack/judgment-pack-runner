@@ -14,6 +14,7 @@ const triggerSchema = `
  CREATE TABLE IF NOT EXISTS triggers(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,job_id TEXT NOT NULL,record TEXT NOT NULL,key_hash TEXT NOT NULL DEFAULT '',observed TEXT NOT NULL DEFAULT '',pending TEXT NOT NULL DEFAULT '',pending_at TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS trigger_revisions(trigger_id TEXT NOT NULL,revision INTEGER NOT NULL,record TEXT NOT NULL,PRIMARY KEY(trigger_id,revision));
  CREATE TABLE IF NOT EXISTS occurrences(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,job_id TEXT NOT NULL,trigger_id TEXT NOT NULL,identity TEXT NOT NULL,payload_digest TEXT NOT NULL,state TEXT NOT NULL,record TEXT NOT NULL,UNIQUE(trigger_id,identity));
+ CREATE TABLE IF NOT EXISTS occurrence_keys(occurrence_id TEXT PRIMARY KEY,key_hash TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS occurrences_state ON occurrences(state,seq);
  CREATE INDEX IF NOT EXISTS triggers_job ON triggers(job_id);
  CREATE INDEX IF NOT EXISTS occurrences_job ON occurrences(job_id,seq);
@@ -297,9 +298,58 @@ func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrenc
 	if e = s.admitOccurrence(tx, t, &o, "event:"+event.ID, payload); e != nil {
 		return o, false, e
 	}
+	// The occurrence is bound to the credential that created it, for that
+	// credential's read of its result.
+	if _, e = tx.Exec("INSERT INTO occurrence_keys(occurrence_id,key_hash) VALUES(?,?)", o.ID, hash); e != nil {
+		return o, false, e
+	}
 	e = tx.Commit()
 	o.Input = nil
 	return o, false, e
+}
+
+// eventResult answers a trigger token about an occurrence that token created:
+// its state and, once its run completed, the disposition and handoff target.
+// Nothing else: no inputs, no identifiers of other records, no listing. The
+// token must be its trigger's current credential and the one that created the
+// occurrence; knowing an occurrence ID is not enough. Every other case gets one
+// refusal, which does not say whether the occurrence exists.
+func (s *Service) eventResult(triggerID, occurrenceID, token string) (map[string]any, error) {
+	_, hash, e := s.trigger(triggerID)
+	if e != nil || len(token) != 64 || hash == "" || subtle.ConstantTimeCompare([]byte(digest([]byte(token))), []byte(hash)) != 1 {
+		return nil, &apiError{401, "invalid_trigger_token", "The event credential is invalid."}
+	}
+	// One statement, so a rotation after the check above still refuses.
+	var raw string
+	e = s.db.QueryRow("SELECT o.record FROM occurrences o JOIN occurrence_keys k ON k.occurrence_id=o.id JOIN triggers t ON t.id=o.trigger_id WHERE o.id=? AND o.trigger_id=? AND k.key_hash=? AND t.key_hash=k.key_hash", occurrenceID, triggerID, hash).Scan(&raw)
+	if errors.Is(e, sql.ErrNoRows) {
+		return nil, &apiError{404, "occurrence_not_found", "No occurrence with this ID was created with this credential."}
+	}
+	var o Occurrence
+	if e == nil {
+		e = json.Unmarshal([]byte(raw), &o)
+	}
+	if e != nil {
+		return nil, e
+	}
+	answer := map[string]any{"id": o.ID, "state": o.State}
+	if o.RunID == "" {
+		return answer, nil
+	}
+	run, e := s.run(o.RunID)
+	if e != nil {
+		return nil, e
+	}
+	summary := map[string]any{"state": run.State}
+	if run.State == "completed" {
+		var result map[string]json.RawMessage
+		if e = json.Unmarshal(run.Result, &result); e != nil {
+			return nil, e
+		}
+		summary["result"] = map[string]json.RawMessage{"disposition": result["disposition"], "handoffTarget": result["handoffTarget"]}
+	}
+	answer["run"] = summary
+	return answer, nil
 }
 func newOccurrence(t Trigger, j Job, at time.Time) Occurrence {
 	return Occurrence{PreparationSeconds: t.Config.PreparationSeconds, QueueSeconds: t.Config.QueueSeconds, ID: id("occ_"), JobID: j.ID, ReleaseID: j.ReleaseID, JobRevision: j.Revision, TriggerID: t.ID, TriggerRevision: t.Revision, Kind: t.Config.Kind, ReceivedAt: at.UTC().Format(time.RFC3339Nano), ExpiresAt: at.Add(time.Duration(t.Config.QueueSeconds) * time.Second).UTC().Format(time.RFC3339Nano), State: "accepted"}

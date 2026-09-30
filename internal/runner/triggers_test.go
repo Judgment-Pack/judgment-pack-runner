@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -464,5 +465,133 @@ func TestConcurrentEventRetriesAdmitOneOccurrence(t *testing.T) {
 	}
 	if !strings.HasPrefix(first, "occ_") || countRows(t, s, "occurrences") != 1 {
 		t.Fatal(first)
+	}
+}
+
+// A trigger token reads the occurrence it created, and no more than its state
+// and result. Another token, a revoked one, or an occurrence ID alone gets one
+// refusal, the same whether or not the occurrence exists.
+func TestEventTokenReadsOnlyItsOwnOccurrence(t *testing.T) {
+	s, _, j, _ := automaticFixture(t)
+	enable := func(name, overlap string) (Trigger, string) {
+		tr, e := s.configureTrigger(j.ID, "", 0, TriggerConfig{Name: name, Kind: "event", Missed: "skip", Overlap: overlap, QueueSeconds: 3600})
+		if e != nil {
+			t.Fatal(e)
+		}
+		tr, key, e := s.setTriggerState(tr.ID, tr.Revision, false, true)
+		if e != nil || len(key) != 64 {
+			t.Fatal(e)
+		}
+		return tr, key
+	}
+	tr, key := enable("Intake event", "queue")
+	other, otherKey := enable("One at a time", "skip")
+	h := s.Handler("owner")
+	read := func(trigger, occurrence, token string) (int, string) {
+		req := httptest.NewRequest("GET", "/v1/triggers/"+trigger+"/occurrences/"+occurrence, nil)
+		req.Header.Set("Authorization", "Bearer owner")
+		if token != "" {
+			req.Header.Set("X-Trigger-Token", token)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+	members := func(raw []byte, want ...string) map[string]json.RawMessage {
+		t.Helper()
+		var o map[string]json.RawMessage
+		if e := json.Unmarshal(raw, &o); e != nil || len(o) != len(want) {
+			t.Fatal("members", string(raw))
+		}
+		for _, k := range want {
+			if _, ok := o[k]; !ok {
+				t.Fatal("missing", k, string(raw))
+			}
+		}
+		return o
+	}
+	o, _, e := s.event(tr.ID, key, EventDelivery{ID: "event-1", OccurredAt: now(), Input: sample()})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if code, body := read(tr.ID, o.ID, key); code != 200 || body != `{"id":"`+o.ID+`","state":"accepted"}`+"\n" {
+		t.Fatal(code, body)
+	}
+	if e = s.automationTick(time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	held, e := s.occurrence(o.ID)
+	if e != nil || held.RunID == "" {
+		t.Fatal("not submitted", e)
+	}
+	done := waitRun(t, s, held.RunID)
+	code, body := read(tr.ID, o.ID, key)
+	if code != 200 || done.State != "completed" {
+		t.Fatal(code, body, done.State)
+	}
+	answer := members([]byte(body), "id", "state", "run")
+	run := members(answer["run"], "state", "result")
+	result := members(run["result"], "disposition", "handoffTarget")
+	if string(answer["state"]) != `"submitted"` || string(run["state"]) != `"completed"` || !sameJSON(result["disposition"], member(done.Result, "disposition")) || string(result["handoffTarget"]) != "null" {
+		t.Fatal(body)
+	}
+	for _, private := range []string{done.ID, j.ID, "data-access", "facts", "input"} {
+		if strings.Contains(body, private) {
+			t.Fatal("answer exposes", private, body)
+		}
+	}
+	// An occurrence skipped at admission has a state and no run.
+	first, _, e := s.event(other.ID, otherKey, EventDelivery{ID: "first", OccurredAt: now(), Input: sample()})
+	if e != nil {
+		t.Fatal(e)
+	}
+	skipped, _, e := s.event(other.ID, otherKey, EventDelivery{ID: "second", OccurredAt: now(), Input: sample()})
+	if e != nil || skipped.State != "skipped" {
+		t.Fatal(skipped, e)
+	}
+	if code, body = read(other.ID, skipped.ID, otherKey); code != 200 || body != `{"id":"`+skipped.ID+`","state":"skipped"}`+"\n" {
+		t.Fatal(code, body)
+	}
+	tr, newKey, e := s.rotateTriggerKey(tr.ID, tr.Revision)
+	if e != nil {
+		t.Fatal(e)
+	}
+	absent := "occ_" + strings.Repeat("0", 32)
+	code, notFound := read(tr.ID, absent, newKey)
+	if code != 404 || !strings.Contains(notFound, `"occurrence_not_found"`) {
+		t.Fatal(code, notFound)
+	}
+	if _, e = s.db.Exec("DELETE FROM occurrence_keys WHERE occurrence_id=?", first.ID); e != nil {
+		t.Fatal(e)
+	}
+	for name, c := range map[string][3]string{
+		"another trigger's token, on its own trigger": {other.ID, o.ID, otherKey},
+		"a later token of the same trigger":           {tr.ID, o.ID, newKey},
+		"another trigger's occurrence":                {tr.ID, first.ID, newKey},
+		"an occurrence with no recorded credential":   {other.ID, first.ID, otherKey},
+	} {
+		if code, body = read(c[0], c[1], c[2]); code != 404 || body != notFound {
+			t.Fatal(name, code, body)
+		}
+	}
+	// Only the current token reads what it created; no other credential does.
+	current, _, e := s.event(tr.ID, newKey, EventDelivery{ID: "event-2", OccurredAt: now(), Input: sample()})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if code, body = read(tr.ID, current.ID, newKey); code != 200 || body != `{"id":"`+current.ID+`","state":"accepted"}`+"\n" {
+		t.Fatal(code, body)
+	}
+	_, invalid := read(tr.ID, absent, strings.Repeat("a", 64))
+	for name, c := range map[string][3]string{
+		"a wrong token":                   {tr.ID, current.ID, strings.Repeat("a", 64)},
+		"the rotated token":               {tr.ID, current.ID, key},
+		"another trigger's token":         {tr.ID, current.ID, otherKey},
+		"no token, only the owner bearer": {tr.ID, current.ID, ""},
+		"a trigger that does not exist":   {"trg_absent", current.ID, newKey},
+	} {
+		if code, body = read(c[0], c[1], c[2]); code != 401 || body != invalid || !strings.Contains(body, `"invalid_trigger_token"`) {
+			t.Fatal(name, code, body)
+		}
 	}
 }

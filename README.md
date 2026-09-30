@@ -395,7 +395,8 @@ recomputes verification at that recorded time. Queue expiry bounds the delay.
 Enable an event trigger to receive a scoped random token, shown once. Runner stores
 only its SHA-256 digest. **Rotate token** invalidates the previous credential
 immediately. Tokens cannot list jobs, inspect records, edit triggers, or choose
-another release. Desk exposes a dedicated non-browser endpoint:
+another release; the one thing a token reads is the result of an occurrence it
+created ([below](#reading-a-result)). Desk exposes a dedicated non-browser endpoint:
 
 ```http
 POST /api/job-events/trg_<id>
@@ -417,6 +418,36 @@ Direct Runner callers need the private owner bearer plus `X-Trigger-Token`.
 Desk's scoped route refuses browser Origin headers and does not forward arbitrary
 paths. It does not provide public ingress, cloud credentials, or a tunnel. Google Cloud uses an authenticated relay and an outbound pull subscription.
 Future AWS/Azure adapters can reuse the same occurrence admission boundary.
+
+#### Reading a result
+
+The token that created an occurrence can read what became of it, and nothing else:
+
+```http
+GET /v1/triggers/trg_<id>/occurrences/occ_<id>
+Authorization: Bearer <owner-bearer>
+X-Trigger-Token: <trigger-token>
+```
+
+The answer is the occurrence's `id` and `state` and, once it has a run, that run's
+execution `state`. Once the run is `completed` it adds `result` with the run's
+`disposition` and `handoffTarget`, as run lists summarize them:
+
+```json
+{"id":"occ_<id>","state":"submitted","run":{"state":"completed","result":{"disposition":{"kind":"outcome","outcomeId":"proceed","reasons":[],"handoff":{"state":"none"}},"handoffTarget":null}}}
+```
+
+It carries no inputs, no run, job or release identifiers, no problem text, and no
+other occurrence; there is no listing. The read is bound to the token that created
+the occurrence, not to knowing its ID. Another token is refused, including a later
+token of the same trigger, and so is a rotated one. A token that is not its
+trigger's current credential gets 401 `invalid_trigger_token`. A current token asking
+for an occurrence it did not create gets 404 `occurrence_not_found`, the same answer
+as for an occurrence that does not exist. Occurrences accepted before this read
+existed have no recorded credential and cannot be read with a token.
+
+Direct Runner callers need the private owner bearer plus `X-Trigger-Token`, as for
+delivery. Desk does not expose this read yet.
 
 There are at most 128 configured triggers per local store. Trigger revisions and
 occurrences are retained in `runs.sqlite`; backups must include the entire stopped
