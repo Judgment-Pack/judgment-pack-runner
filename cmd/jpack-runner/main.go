@@ -23,7 +23,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		fmt.Println("jpack-runner", buildinfo.Version())
 	} else if len(os.Args) > 1 && os.Args[1] == "verify-run" {
-		err = verifyRun(os.Args[2:])
+		err = verifyRun(os.Args[2:], os.Stdout, os.Stderr)
 	} else {
 		err = serve()
 	}
@@ -88,7 +88,7 @@ func serve() error {
 	return nil
 }
 
-func verifyRun(args []string) error {
+func verifyRun(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("verify-run", flag.ContinueOnError)
 	file := flags.String("file", "", "retained verification export")
 	profilesPath := flags.String("profiles", "", "independently trusted input profiles JSON")
@@ -126,5 +126,8 @@ func verifyRun(args []string) error {
 	if err = runner.VerifyRun(raw, profiles, *release); err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "verified-inputs", "scope": "retained input derivation and audit binding; not sealed-session completeness or policy truth"})
+	// verified-inputs covers the inputs, not the result. Nothing here compares the
+	// retained disposition with an evaluation, and both outputs say so.
+	fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.")
+	return json.NewEncoder(stdout).Encode(map[string]string{"status": "verified-inputs", "retainedDisposition": "not-checked", "scope": "retained input derivation and audit binding; not sealed-session completeness or policy truth"})
 }
