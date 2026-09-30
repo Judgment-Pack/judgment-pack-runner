@@ -78,7 +78,7 @@ Desk resumes queued work and marks previously running work interrupted. A shut d
 computer does not execute jobs. This is not a hosted scheduler or a Vercel function.
 
 The executable receives one bounded JSON boot line on stdin with `dir`, `runtime`,
-`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2 and an absolute `inputRoot` for file automation. It binds an ephemeral IPv4 loopback port,
+`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, and `requireTestedReleases` ([below](#release-readiness)). It binds an ephemeral IPv4 loopback port,
 prints `{"protocol":"jobs/1","url":"http://127.0.0.1:..."}`, and stays alive until
 stdin closes. The bearer is never printed, passed in argv, read from a project file,
 or sent to the browser. Desk selects the workspace and stable installation owner.
@@ -93,7 +93,8 @@ bearer and origin guards. The pilot has one local owner, not delegated machine r
    lock, evaluates the sample as rehearsal, and runs its saved test expectations.
 4. Review the fixed release, test report and advisory coverage, then create the job.
    Failed/incomplete tests block creation; releases without tests require explicit
-   review as untested. A sample preview is not a passing test suite.
+   review as untested, or are refused where the installation requires tested releases.
+   A sample preview is not a passing test suite.
 5. Use **Run job** for a new operational input, or configure **Triggers**. Automatic triggers are saved paused and require separate review before enabling.
 
 A release retains the exact pack text, pack digest, generated config and lock,
@@ -125,6 +126,12 @@ Failed and incomplete checks remain reviewable but cannot create jobs, including
 through the direct API. A caller may omit a matrix and explicitly review an
 untested release; this is labeled `not-run`, never passed. Existing untested jobs
 keep their original records. No coverage probe blocks admission: gaps are advisory.
+
+An installation can refuse untested releases as well. With `"requireTestedReleases": true`
+on the boot line, creating a job from a `not-run` release returns 409 `release_untested`,
+a refusal of its own beside `release_not_ready`. The setting is off by default, and then
+nothing changes. It refuses the creation of a job only: repeating the creation of a job
+made before the setting was on returns that job, as before, and the job keeps running.
 
 Desk rereads the pack and saved cases before checking and again before creation;
 changed inputs require a new review. Once admitted, the job stays bound to its

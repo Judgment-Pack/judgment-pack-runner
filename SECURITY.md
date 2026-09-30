@@ -73,6 +73,8 @@ as a rehearsal in a temporary directory, writing nothing to the runner's store, 
 
 **A release whose tests never ran can become a job.** Such a release is labelled `not-run`, never
 passed, and requires explicit review as untested. A release whose tests ran and did not pass cannot.
+An installation can refuse untested releases too, with `requireTestedReleases` on its boot line; it
+is off by default, and a job made before it was on keeps running.
 
 **Storage is local files.** Job artifacts, input snapshots and records are kept on the local
 filesystem, with SQLite holding the queue and records. The source worker's database contains

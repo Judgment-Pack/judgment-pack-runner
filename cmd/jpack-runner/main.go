@@ -49,11 +49,12 @@ func serve() error {
 		GatewayConnections []runner.GatewayConnection `json:"gatewayConnections,omitempty"`
 		InputRoot          string                     `json:"inputRoot,omitempty"`
 		InputProfiles      []runner.InputProfile      `json:"inputProfiles,omitempty"`
+		RequireTested      bool                       `json:"requireTestedReleases,omitempty"`
 	}
 	if json.Unmarshal([]byte(line), &boot) != nil || len(boot.Token) < 32 {
 		return fmt.Errorf("invalid boot configuration")
 	}
-	service, err := runner.Open(runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections})
+	service, err := runner.Open(runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested})
 	if err != nil {
 		return err
 	}
