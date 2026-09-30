@@ -294,6 +294,9 @@ and pull requests. Include a reproduction and relevant verification results. Use
 Do not include real credentials, customer evidence or private operational records
 in public issues, examples or test fixtures.
 
+Report a vulnerability privately, not in a public issue: [SECURITY.md](SECURITY.md) says
+how, and states the security boundary of this pilot.
+
 CI runs formatting, vet, race tests and real-Runtime integration on Linux and
 macOS. The workflow pins exact Runtime and Gateway revisions so release, audit, mapping
 and offline verification tests run against a reproducible evaluator contract.
