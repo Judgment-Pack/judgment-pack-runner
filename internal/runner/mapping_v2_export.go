@@ -67,16 +67,28 @@ func VerifyDisposition(ctx context.Context, raw []byte, profiles []InputProfile,
 	if _, e = os.Lstat(filepath.Join(work, "audit")); !errors.Is(e, fs.ErrNotExist) {
 		return errors.New("the re-execution left an audit record")
 	}
-	var fresh, result, audit struct {
-		Disposition json.RawMessage `json:"disposition"`
+	fresh := member(out, "disposition")
+	if len(fresh) == 0 {
+		return errors.New("the re-execution returned no disposition")
 	}
-	if json.Unmarshal(out, &fresh) != nil || json.Unmarshal(b.Run.Result, &result) != nil || json.Unmarshal(b.Run.Audit, &audit) != nil {
-		return errors.New("a disposition could not be read")
-	}
-	if !sameJSON(fresh.Disposition, result.Disposition) || !sameJSON(fresh.Disposition, audit.Disposition) {
+	if !sameJSON(fresh, member(b.Run.Result, "disposition")) || !sameJSON(fresh, member(b.Run.Audit, "disposition")) {
 		return ErrDispositionDiffers
 	}
 	return nil
+}
+
+// member reads a member of a retained JSON object by its exact name, as a
+// reader of the export reads it. Go's decoder would also take a member whose
+// name differs only in case, and the last of two such members.
+func member(raw json.RawMessage, path ...string) json.RawMessage {
+	for _, name := range path {
+		var o map[string]json.RawMessage
+		if json.Unmarshal(raw, &o) != nil {
+			return nil
+		}
+		raw = o[name]
+	}
+	return raw
 }
 
 // verifyInputs is VerifyRun's check. It returns the export and the inputs it
@@ -87,6 +99,12 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	}
 	if e = strictJSON(raw, &b); e != nil {
 		return b, prepared, e
+	}
+	// What is verified must be what a reader reads. The decoder takes a member
+	// named like a field but for case as that field, so the export must be
+	// exactly what the runner encodes.
+	if !sameJSON(raw, encode(b)) {
+		return b, prepared, errors.New("verification bundle is not in the runner's own encoding")
 	}
 	if b.Version != 2 || !validDigest(trustedReleaseDigest) || b.ReleaseDigest != trustedReleaseDigest || releaseDigest(b.Release) != trustedReleaseDigest {
 		return b, prepared, errors.New("release does not match the independently trusted digest")
@@ -117,19 +135,10 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 		return b, prepared, errors.New("retained lineage does not match recomputation")
 	}
 	if r.State == "completed" {
-		var audit struct {
-			Kind   string `json:"kind"`
-			Inputs struct {
-				Facts    json.RawMessage `json:"facts"`
-				Evidence json.RawMessage `json:"evidence"`
-				Supplied bool            `json:"evidenceSupplied"`
-			} `json:"inputs"`
-			Pack struct {
-				Digest string `json:"digest"`
-			} `json:"pack"`
-			Cites json.RawMessage `json:"cites"`
-		}
-		if json.Unmarshal(r.Audit, &audit) != nil || audit.Kind != "evaluation" || audit.Pack.Digest != release.PackDigest || !sameJSON(audit.Inputs.Facts, prepared.Facts) || audit.Inputs.Supplied != (len(prepared.Evidence) > 0) || len(prepared.Evidence) > 0 && !sameJSON(audit.Inputs.Evidence, prepared.Evidence) || !auditCitesMatch(audit.Cites, prepared.Preparation.Cites) {
+		a := r.Audit
+		var kind, packDigest string
+		var supplied bool
+		if json.Unmarshal(member(a, "kind"), &kind) != nil || json.Unmarshal(member(a, "pack", "digest"), &packDigest) != nil || json.Unmarshal(member(a, "inputs", "evidenceSupplied"), &supplied) != nil || kind != "evaluation" || packDigest != release.PackDigest || !sameJSON(member(a, "inputs", "facts"), prepared.Facts) || supplied != (len(prepared.Evidence) > 0) || len(prepared.Evidence) > 0 && !sameJSON(member(a, "inputs", "evidence"), prepared.Evidence) || !auditCitesMatch(member(a, "cites"), prepared.Preparation.Cites) {
 			return b, prepared, errors.New("retained audit inputs or citations do not match verified inputs")
 		}
 	}

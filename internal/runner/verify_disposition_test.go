@@ -20,7 +20,11 @@ func completedExport(t *testing.T, operation bool) (VerificationBundle, []InputP
 	t.Helper()
 	cfg := testConfig(t)
 	copy := CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}
-	input := Input{Source: &SourceInput{Mapping: InputMapping{Version: 2, UnmappedEvidence: []string{"sensitive-data-approvals"}, Case: &CaseMapping{Facts: copy.Facts, Evidence: copy.Evidence}}, Case: encode(sample())}}
+	// The case carries a member named like "facts" but for case. It is data, not
+	// a field of the export, and the export still verifies.
+	data := encode(sample())
+	data = append(data[:len(data)-1], `,"Facts":{"note":"data"}}`...)
+	input := Input{Source: &SourceInput{Mapping: InputMapping{Version: 2, UnmappedEvidence: []string{"sensitive-data-approvals"}, Case: &CaseMapping{Facts: copy.Facts, Evidence: copy.Evidence}}, Case: data}}
 	if operation {
 		fixture, p, key, at := v2Fixture(t)
 		input = fixture
@@ -213,6 +217,48 @@ func TestVerifyDispositionRefusesWhatItCannotStandBehind(t *testing.T) {
 		b.ReleaseDigest = releaseDigest(b.Release)
 		if e := check(b, path); e != nil {
 			t.Fatal("rehearsal was not requested", e)
+		}
+	})
+}
+
+// Go's decoder takes a member named like a field but for case as that field,
+// and of two such members the last. A reader of the export takes the exact
+// name. Neither a changed disposition nor changed inputs may hide behind one.
+func TestVerifyReadsTheNamesAReaderReads(t *testing.T) {
+	bin := os.Getenv("JPACK_TEST_BIN")
+	bundle, profiles, _ := completedExport(t, false)
+	t.Setenv("TMPDIR", t.TempDir())
+	decided, other := []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`)
+	// shadow appends to object a member named name, after the one it shadows.
+	shadow := func(object []byte, name string, value []byte) []byte {
+		out := append(bytes.Clone(object[:len(object)-1]), `,"`+name+`":`...)
+		return append(append(out, value...), '}')
+	}
+	changedResult := bytes.Replace(bundle.Run.Result, decided, other, 1)
+	changedAudit := bytes.Replace(bundle.Run.Audit, decided, other, 1)
+	inResult, inAudit, inRun := bundle, bundle, bundle
+	inResult.Run.Result = shadow(changedResult, "Disposition", member(bundle.Run.Result, "disposition"))
+	inAudit.Run.Audit = shadow(changedAudit, "Disposition", member(bundle.Run.Audit, "disposition"))
+	inRun.Run.Result = changedResult
+	run := encode(inRun)
+	run = append(shadow(run[:len(run)-1], "Result", bundle.Run.Result), '}')
+	for name, raw := range map[string][]byte{"result": encode(inResult), "audit record": encode(inAudit), "run": run} {
+		t.Run("disposition shadowed in the "+name, func(t *testing.T) {
+			if e := VerifyDisposition(context.Background(), raw, profiles, bundle.ReleaseDigest, bin); e == nil {
+				t.Fatal("a changed disposition verified")
+			}
+		})
+	}
+	t.Run("audit inputs shadowed", func(t *testing.T) {
+		b := bundle
+		inputs := member(b.Run.Audit, "inputs")
+		changed := bytes.Replace(inputs, []byte(`"completeness":"complete"`), []byte(`"completeness":"incomplete"`), 1)
+		if bytes.Equal(changed, inputs) {
+			t.Fatal("fixture has no input to change")
+		}
+		b.Run.Audit = shadow(bytes.Replace(b.Run.Audit, inputs, changed, 1), "Inputs", inputs)
+		if e := VerifyRun(encode(b), profiles, b.ReleaseDigest); e == nil {
+			t.Fatal("changed audit inputs verified")
 		}
 	})
 }

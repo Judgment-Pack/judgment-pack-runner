@@ -267,6 +267,9 @@ jpack-runner verify-run \
 Verification recomputes the frozen release digest, receipt signatures, exact
 arguments/result digests, historical freshness, projection, admission, lineage
 and audit input/citation binding. It performs no network request or model call.
+It verifies what a reader of the export reads: the export must be exactly what
+the runner encodes, so a member named like one of its fields but for case is
+refused, and the retained result and audit record are read by exact member names.
 Without `--runtime` it reports `verified-inputs`, not policy truth or evaluator
 re-execution.
 
