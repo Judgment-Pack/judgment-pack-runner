@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -145,5 +146,31 @@ func TestVerifyRunSaysTheDispositionWasNotChecked(t *testing.T) {
 				t.Fatal("human output:", human)
 			}
 		})
+	}
+}
+
+// With the release's Runtime the report says the disposition was checked, and
+// a disposition changed after the run is a failure with a report of its own.
+func TestVerifyRunReExecutesWithTheReleaseRuntime(t *testing.T) {
+	bundle, digest := exportedRun(t)
+	t.Setenv("TMPDIR", t.TempDir())
+	runtime := "--runtime=" + os.Getenv("JPACK_TEST_BIN")
+	scope := "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
+	report, human, err := verify(t, bundle, digest, runtime)
+	if err != nil || len(report) != 3 || report["status"] != "verified-disposition" || report["retainedDisposition"] != "matches-re-execution" || report["scope"] != scope {
+		t.Fatal(err, report)
+	}
+	if !strings.Contains(human, "given them again, decides what the record says") {
+		t.Fatal("human output:", human)
+	}
+	var run map[string]json.RawMessage
+	if err = json.Unmarshal(bundle["run"], &run); err != nil {
+		t.Fatal(err)
+	}
+	run["result"] = bytes.Replace(run["result"], []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`), 1)
+	bundle["run"], _ = json.Marshal(run)
+	report, human, err = verify(t, bundle, digest, runtime)
+	if !errors.Is(err, runner.ErrDispositionDiffers) || len(report) != 3 || report["status"] != "disposition-differs" || report["retainedDisposition"] != "differs-from-re-execution" || report["scope"] != scope || human != "" {
+		t.Fatal(err, report, human)
 	}
 }

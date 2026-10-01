@@ -63,9 +63,13 @@ receipt to its document, and does **not** cryptographically authenticate an API 
 Version 2 mappings verify version 3 gateway receipts against operator-supplied profiles. Even a
 valid receipt attests to acquisition, not to the truth of what was acquired.
 
-**`verify-run` checks retained inputs, not the result.** It reports `verified-inputs`, not policy
-truth or evaluator re-execution ([docs/MAPPING-V2.md](docs/MAPPING-V2.md)). Its report says that the
-disposition was not checked: a record whose disposition was changed after the run still verifies.
+**`verify-run` checks retained inputs, and the result only when asked.** Without `--runtime` it
+reports `verified-inputs`, not policy truth or evaluator re-execution
+([docs/MAPPING-V2.md](docs/MAPPING-V2.md)). Its report says that the disposition was not checked: a
+record whose disposition was changed after the run still verifies. With `--runtime`, the executable
+is refused unless its digest is the release's Runtime digest; it evaluates the verified inputs again
+as a rehearsal in a temporary directory, writing nothing to the runner's store, and the report is
+`verified-disposition` only if the disposition matches the retained one.
 
 **A release whose tests never ran can become a job.** Such a release is labelled `not-run`, never
 passed, and requires explicit review as untested. A release whose tests ran and did not pass cannot.

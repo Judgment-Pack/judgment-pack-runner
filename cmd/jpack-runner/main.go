@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/buildinfo"
@@ -93,6 +94,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	file := flags.String("file", "", "retained verification export")
 	profilesPath := flags.String("profiles", "", "independently trusted input profiles JSON")
 	release := flags.String("release-digest", "", "independently trusted frozen release digest")
+	runtime := flags.String("runtime", "", "optional: the release's Runtime executable, to evaluate the verified inputs again and compare the disposition")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -123,11 +125,26 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err = runner.VerifyRun(raw, profiles, *release); err != nil {
+	if *runtime == "" {
+		if err = runner.VerifyRun(raw, profiles, *release); err != nil {
+			return err
+		}
+		// verified-inputs covers the inputs, not the result. Nothing here compares the
+		// retained disposition with an evaluation, and both outputs say so.
+		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.")
+		return json.NewEncoder(stdout).Encode(map[string]string{"status": "verified-inputs", "retainedDisposition": "not-checked", "scope": "retained input derivation and audit binding; not sealed-session completeness or policy truth"})
+	}
+	// The release's own Runtime evaluates the verified inputs again, as a
+	// rehearsal. A different disposition is a failure with a report of its own.
+	scope := "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
+	err = runner.VerifyDisposition(context.Background(), raw, profiles, *release, *runtime)
+	if errors.Is(err, runner.ErrDispositionDiffers) {
+		json.NewEncoder(stdout).Encode(map[string]string{"status": "disposition-differs", "retainedDisposition": "differs-from-re-execution", "scope": scope})
 		return err
 	}
-	// verified-inputs covers the inputs, not the result. Nothing here compares the
-	// retained disposition with an evaluation, and both outputs say so.
-	fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.")
-	return json.NewEncoder(stdout).Encode(map[string]string{"status": "verified-inputs", "retainedDisposition": "not-checked", "scope": "retained input derivation and audit binding; not sealed-session completeness or policy truth"})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true.")
+	return json.NewEncoder(stdout).Encode(map[string]string{"status": "verified-disposition", "retainedDisposition": "matches-re-execution", "scope": scope})
 }

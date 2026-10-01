@@ -75,6 +75,12 @@ func readLimit(path string, limit int64) ([]byte, error) {
 }
 func (s *Service) pinRuntime(path string) (string, string, error) {
 	// Runtime comes from the trusted host configuration, never an HTTP request.
+	return pinExecutable(path, filepath.Join(s.cfg.Dir, "runtimes"))
+}
+
+// pinExecutable copies the executable at path into dir, named by its digest,
+// and returns the copy: what runs is what was hashed.
+func pinExecutable(path, dir string) (string, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", "", err
@@ -88,7 +94,7 @@ func (s *Service) pinRuntime(path string) (string, string, error) {
 		return "", "", errors.New("runtime binary exceeds limit")
 	}
 	hash := digest(b)
-	target := filepath.Join(s.cfg.Dir, "runtimes", strings.TrimPrefix(hash, "sha256:"))
+	target := filepath.Join(dir, strings.TrimPrefix(hash, "sha256:"))
 	if _, err = os.Lstat(target); os.IsNotExist(err) {
 		err = saveFile(target, b, 0700)
 	}
@@ -267,10 +273,18 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 	if err != nil || digest(b) != r.RuntimeDigest {
 		return nil, nil, errors.New("pinned Runtime is missing or changed")
 	}
+	return evaluateWith(ctx, bin, r, input, dir, rehearsal)
+}
+
+// evaluateWith invokes the pinned Runtime at bin on the release's frozen pack,
+// configuration and lock, and on one input, and checks what it answers. Only
+// an operational evaluation appends to the directory's audit trail.
+func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, error) {
 	// The directory is exclusively created per invocation and never reused.
-	if err = os.Mkdir(dir, 0700); err != nil {
+	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, nil, err
 	}
+	var err error
 	for name, b := range map[string][]byte{"pack.json": []byte(r.Pack), "jpack.json": []byte(r.Config), "jpack.lock.json": []byte(r.Lock), "facts.json": input.Facts} {
 		if err = saveFile(filepath.Join(dir, name), b, 0600); err != nil {
 			return nil, nil, err
