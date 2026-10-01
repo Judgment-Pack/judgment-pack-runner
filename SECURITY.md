@@ -82,9 +82,10 @@ reads and the source's own request does not carry unambiguously (as a whole valu
 names another parameter), nor a calculator's signed answer echo: changing one can change a derived
 target without failing verification. The report counts the run's targets by the class of their
 source, those without a value included, names the parameters each acquired source's rule reads
-unsigned, and says when inputs were asserted or derived from such a parameter. `--require-sourced`
-refuses such a run, except where the only such parameter is `runAt`, the export's own verification
-time.
+unsigned, including values derived from them by an earlier source, and says when inputs were
+asserted or derived from such a parameter. `--require-sourced` refuses such a run, except where the
+only such parameter is `runAt`, the export's own verification time, which is exempt so that
+freshness checks that use it are not refused.
 
 **A release whose tests never ran can become a job.** Such a release is labelled `not-run`, never
 passed, and requires explicit review as untested. A release whose tests ran and did not pass cannot.

@@ -3,115 +3,190 @@ package runner
 import "encoding/json"
 
 // UnsignedParameters names, for one acquired source, the parameters its rule
-// reads that no signed request commits, and how many fact and evidence targets
-// the source maps, with a value or without. A receipt commits to the request
-// the source sent, so a parameter a request template refers to is signed; one
-// that only a rule reads is not, and changing it in an export can change the
-// source's targets without failing verification.
+// reads that its own receipt does not commit, and how many fact and evidence
+// targets the source maps, with a value or without. Changing such a parameter
+// in an export can change the source's targets without failing verification.
 type UnsignedParameters struct {
 	Source     string              `json:"source"`
 	Parameters []UnsignedParameter `json:"parameters"`
 	Targets    int                 `json:"targets"`
 }
 
-// UnsignedParameter is one such parameter and where its value comes from:
-// "case", the case as the operator supplied it; "runAt", the export's own
-// verification time; or "local-file", a fact of an earlier local-file source.
-// A fact of an earlier acquired source is derived from that source's signed
-// response, and is not listed: what that source's own rule reads is listed for
-// that source.
+// UnsignedParameter is one such parameter, and why it is not signed:
+//
+//   - "case": a case parameter, as the operator supplied it;
+//   - "local-file": a fact of an earlier local-file source, which is asserted;
+//   - "upstream": a fact of an earlier acquired source whose own rule read a
+//     parameter of one of these kinds;
+//   - "ambiguous-text": one of those, which the request carries only in text
+//     that names another parameter;
+//   - "runAt": the export's own verification time;
+//   - "upstream-runAt": a fact of an earlier acquired source whose own rule
+//     read runAt, and no parameter the operator supplied.
 type UnsignedParameter struct {
 	Name string `json:"name"`
 	Kind string `json:"kind"`
 }
 
-// Operator reports whether the parameter's value is the operator's own: from
-// the case or a local file. runAt is the export's verification time.
-func (p UnsignedParameter) Operator() bool { return p.Kind != "runAt" }
+// Operator reports whether the parameter rests on what the operator supplied,
+// rather than only on the export's verification time.
+func (p UnsignedParameter) Operator() bool { return p.Kind != "runAt" && p.Kind != "upstream-runAt" }
 
 // unsignedParameters lists, in the mapping's order of sources, each acquired
-// source with targets whose rule reads a parameter that no signed request
-// commits. The parameters are worked out from the frozen mapping's request
-// templates and rules. A source was acquired in this run when its outcome
-// retains the request it sent; a skipped source's rule read nothing.
+// source with targets whose rule read a parameter that its own receipt does not
+// commit. It is worked out from the frozen mapping and this run's outcomes, and
+// the stored lineage is unchanged.
 //
-// A case parameter is committed when the request of any acquired source refers
-// to it: changing it changes that request, and its receipt then fails. A
-// source's own parameter is committed only by its own request. runAt never is.
+// A source's receipt commits a parameter its request carries unambiguously: as
+// a whole value ($param), or in $text that names no other parameter. Text that
+// names one parameter, however often, renders different values differently;
+// text that names two need not: {{a}}{{b}} renders 1 and 23 as 12 and 3. A
+// calculator's receipt also commits each parameter its calculation binds, whose
+// echo in the signed answer must equal it. Another source's receipt commits
+// nothing for this one.
+//
+// A rule reads the parameters its conditions name. A source was acquired when
+// its outcome retains the request it sent. A skipped source, and a calculator
+// that did not compute, whose rule was not applied, read nothing; a source
+// without targets has no facts, and influences nothing.
 func unsignedParameters(m InputMapping, p *Preparation) []UnsignedParameters {
 	acquired := map[string]bool{}
 	for _, o := range p.Outcomes {
 		acquired[o.Name] = len(o.Arguments) > 0
 	}
-	local := map[string]bool{}
-	requests := map[string]map[string]bool{}
-	signed := map[string]bool{}
-	for _, s := range m.Sources {
-		local[s.Name] = s.Kind != "operation" && s.Provider != "google-drive"
-		template, _ := readInputJSON(s.Arguments)
-		requests[s.Name] = map[string]bool{}
-		templateParameters(template, requests[s.Name])
-		// A source's own parameter cannot share a case parameter's name, so
-		// only case parameters are looked up here.
-		for n := range requests[s.Name] {
-			signed[n] = signed[n] || acquired[s.Name]
-		}
+	targets := map[string]int{}
+	applied := map[string]bool{}
+	for _, l := range p.Lineage {
+		targets[l.Source]++
+		applied[l.Source] = l.Calculation == nil || l.Calculation.Status == calculationComputed
 	}
+	// A source without targets is not in the lineage, and is not applied here.
+	local := map[string]bool{}
+	// taint is "operator" or "clock" for a source whose rule read an unsigned
+	// parameter: its facts carry that parameter's influence to later sources.
+	taint := map[string]string{}
 	var out []UnsignedParameters
 	for _, s := range m.Sources {
+		local[s.Name] = s.Kind != "operation" && s.Provider != "google-drive"
 		var rule ruleDocument
-		if !acquired[s.Name] || len(s.Read.Rule) == 0 || json.Unmarshal(s.Read.Rule, &rule) != nil {
+		if local[s.Name] || !acquired[s.Name] || !applied[s.Name] || len(s.Read.Rule) == 0 || json.Unmarshal(s.Read.Rule, &rule) != nil {
 			continue
 		}
+		reads := map[string]bool{}
+		for _, c := range rule.Clauses {
+			conditionParameters(c.When, reads)
+		}
+		committed, ambiguous := map[string]bool{}, map[string]bool{}
+		template, _ := readInputJSON(s.Arguments)
+		requestParameters(template, committed, ambiguous)
+		if s.Calculation != nil {
+			for _, n := range s.Calculation.Inputs {
+				committed[n] = true
+			}
+		}
 		var ps []UnsignedParameter
-		for _, n := range sortedKeys(rule.Parameters) {
-			kind := "case"
-			if own, ok := s.Parameters[n]; ok {
-				if !local[own.From] || requests[s.Name][n] {
-					continue
-				}
-				kind = "local-file"
-			} else if n == "runAt" {
-				kind = "runAt"
-			} else if signed[n] {
+		byOperator := false
+		for _, n := range sortedKeys(reads) {
+			if committed[n] {
 				continue
 			}
+			kind, operator := "case", true
+			if own, ok := s.Parameters[n]; ok {
+				switch {
+				case local[own.From]:
+					kind = "local-file"
+				case taint[own.From] == "operator":
+					kind = "upstream"
+				case taint[own.From] == "clock":
+					kind, operator = "upstream-runAt", false
+				default:
+					continue
+				}
+			} else if n == "runAt" {
+				kind, operator = "runAt", false
+			}
+			if operator && ambiguous[n] {
+				kind = "ambiguous-text"
+			}
+			byOperator = byOperator || operator
 			ps = append(ps, UnsignedParameter{n, kind})
 		}
-		targets := 0
-		for _, l := range p.Lineage {
-			if l.Source == s.Name {
-				targets++
-			}
+		if len(ps) == 0 {
+			continue
 		}
-		if len(ps) > 0 && targets > 0 {
-			out = append(out, UnsignedParameters{s.Name, ps, targets})
+		taint[s.Name] = "clock"
+		if byOperator {
+			taint[s.Name] = "operator"
 		}
+		out = append(out, UnsignedParameters{s.Name, ps, targets[s.Name]})
 	}
 	return out
 }
 
-// templateParameters adds to into each parameter a request template refers to,
-// as a whole value ($param) or in text ($text), as instantiate reads them.
-func templateParameters(v any, into map[string]bool) {
+// conditionParameters adds to into each parameter a rule condition names:
+// equalsParam's param, and freshWithin's asOf and maxAge, at any depth of not,
+// all and any.
+func conditionParameters(raw json.RawMessage, into map[string]bool) {
+	var o map[string]json.RawMessage
+	if json.Unmarshal(raw, &o) != nil {
+		return
+	}
+	var op string
+	_ = json.Unmarshal(o["op"], &op)
+	name := func(member string) {
+		var n string
+		if json.Unmarshal(o[member], &n) == nil {
+			into[n] = true
+		}
+	}
+	switch op {
+	case "equalsParam":
+		name("param")
+	case "freshWithin":
+		name("asOf")
+		name("maxAge")
+	case "not":
+		conditionParameters(o["of"], into)
+	case "all", "any":
+		var of []json.RawMessage
+		_ = json.Unmarshal(o["of"], &of)
+		for _, c := range of {
+			conditionParameters(c, into)
+		}
+	}
+}
+
+// requestParameters sorts the parameters a request template refers to, as
+// instantiate reads them: into committed, those it carries unambiguously, as a
+// whole value or in text that names no other; into ambiguous, those it carries
+// only in text that names another.
+func requestParameters(v any, committed, ambiguous map[string]bool) {
 	switch o := v.(type) {
 	case map[string]any:
 		if n, ok := o["$param"].(string); ok && len(o) == 1 {
-			into[n] = true
+			committed[n] = true
 			return
 		}
 		if s, ok := o["$text"].(string); ok && len(o) == 1 {
+			names := map[string]bool{}
 			for _, m := range textParameter.FindAllStringSubmatch(s, -1) {
-				into[m[1]] = true
+				names[m[1]] = true
+			}
+			for n := range names {
+				if len(names) == 1 {
+					committed[n] = true
+				} else {
+					ambiguous[n] = true
+				}
 			}
 			return
 		}
 		for _, x := range o {
-			templateParameters(x, into)
+			requestParameters(x, committed, ambiguous)
 		}
 	case []any:
 		for _, x := range o {
-			templateParameters(x, into)
+			requestParameters(x, committed, ambiguous)
 		}
 	}
 }

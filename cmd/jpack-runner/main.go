@@ -96,7 +96,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	profilesPath := flags.String("profiles", "", "independently trusted input profiles JSON")
 	release := flags.String("release-digest", "", "independently trusted frozen release digest")
 	runtime := flags.String("runtime", "", "optional: the release's Runtime executable, to evaluate the verified inputs again and compare the disposition")
-	requireSourced := flags.Bool("require-sourced", false, "optional: refuse a run any of whose fact or evidence targets is asserted (typed into the case or read from a local file), or derived by a rule that reads a case parameter or a local file's fact that no signed request commits")
+	requireSourced := flags.Bool("require-sourced", false, "optional: refuse a run any of whose fact or evidence targets is asserted (typed into the case or read from a local file), or derived by a rule that reads a parameter its source's receipt does not commit and that rests on the operator's say (runAt is exempt)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -132,9 +132,9 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	classes := verified.Classes
-	// An asserted target, and a parameter that no signed request commits, are
-	// checked against nothing but the export, which an operator can rewrite
-	// consistently. The refusal comes before a re-execution,
+	// An asserted target, and a parameter that its source's receipt does not
+	// commit, are checked against nothing but the export, which an operator can
+	// rewrite consistently. The refusal comes before a re-execution,
 	// which then does not run.
 	if *requireSourced {
 		if status, err := refuseUnsourced(classes, verified.Unsigned); err != nil {
@@ -172,8 +172,8 @@ type verifyReport struct {
 	Scope               string              `json:"scope"`
 	Status              string              `json:"status"`
 	TargetsByClass      runner.InputClasses `json:"targetsByClass"`
-	// Present only when an acquired source's rule reads a parameter that no
-	// signed request commits.
+	// Present only when an acquired source's rule reads a parameter that its
+	// receipt does not commit.
 	UnsignedParameters []runner.UnsignedParameters `json:"unsignedParameters,omitempty"`
 }
 

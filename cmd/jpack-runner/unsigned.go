@@ -8,9 +8,9 @@ import (
 )
 
 // unsignedTargets counts the targets of the sources whose rules read an
-// unsigned parameter the operator supplied (from the case or a local file), and
-// of those whose rules read runAt, the export's own verification time. A source
-// whose rule reads both counts in both.
+// unsigned parameter resting on what the operator supplied, and of those whose
+// rules read runAt, the export's own verification time, or a value derived from
+// it. A source whose rule reads both counts in both.
 func unsignedTargets(unsigned []runner.UnsignedParameters) (operator, clock int) {
 	for _, u := range unsigned {
 		fromOperator, fromClock := false, false
@@ -40,23 +40,23 @@ func ofTheInputs(n, total int) string {
 }
 
 // unsignedSentence is what the line on standard error adds when an acquired
-// source's rule reads a parameter that no signed request commits.
+// source's rule reads a parameter that its receipt does not commit.
 func unsignedSentence(c runner.InputClasses, unsigned []runner.UnsignedParameters) string {
 	total := c.Asserted + c.Record + c.Generated
 	operator, clock := unsignedTargets(unsigned)
 	s := ""
 	if operator > 0 {
-		s += " " + ofTheInputs(operator, total) + " derived by a rule that reads a parameter from the case or a local file, which no signed request commits: nothing here checks that parameter against a source."
+		s += " " + ofTheInputs(operator, total) + " derived by a rule that reads a parameter resting on the operator's say, which its source's receipt does not commit: nothing here checks that parameter against a source."
 	}
 	if clock > 0 {
-		s += " " + ofTheInputs(clock, total) + " derived by a rule that reads runAt, which rests on the export's own verification time."
+		s += " " + ofTheInputs(clock, total) + " derived by a rule that reads runAt, or a value derived from it, which rests on the export's own verification time."
 	}
 	return s
 }
 
 // refuseUnsourced is --require-sourced's check, and the status of its refusal:
 // an asserted target first, then a target derived by a rule that reads an
-// unsigned parameter the operator supplied.
+// unsigned parameter resting on what the operator supplied.
 func refuseUnsourced(c runner.InputClasses, unsigned []runner.UnsignedParameters) (string, error) {
 	if err := requireSourcedInputs(c); err != nil {
 		return "inputs-asserted", err
@@ -68,9 +68,10 @@ func refuseUnsourced(c runner.InputClasses, unsigned []runner.UnsignedParameters
 }
 
 // errParametersUnsigned is --require-sourced's refusal of a run with a target of
-// an acquired source whose rule reads a parameter from the case or a local file
-// that no signed request commits. runAt alone is reported and not
-// refused: every freshness rule reads it.
+// an acquired source whose rule reads a parameter that its receipt does not
+// commit and that rests on what the operator supplied. runAt is exempt, and so
+// is a value derived from it, so that freshness checks that use it are not
+// refused; they are reported.
 var errParametersUnsigned = errors.New("parameters-unsigned")
 
 func requireSignedParameters(c runner.InputClasses, unsigned []runner.UnsignedParameters) error {
@@ -83,5 +84,5 @@ func requireSignedParameters(c runner.InputClasses, unsigned []runner.UnsignedPa
 	if operator == 1 && total > 1 {
 		them = "it"
 	}
-	return fmt.Errorf("%w: %s derived by a rule that reads a parameter from the case or a local file, which no signed request commits, and --require-sourced refuses %s: nothing here checks that parameter against a source", errParametersUnsigned, ofTheInputs(operator, total), them)
+	return fmt.Errorf("%w: %s derived by a rule that reads a parameter resting on the operator's say, which its source's receipt does not commit, and --require-sourced refuses %s: nothing here checks that parameter against a source", errParametersUnsigned, ofTheInputs(operator, total), them)
 }

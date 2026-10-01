@@ -201,9 +201,11 @@ nothing but the export vouches for. A parameter that a rule reads is not signed 
 unless the source's own request carries it unambiguously (as a whole value, not in text
 that names another parameter) or a calculator's signed answer echoes it, and can change
 a derived target without failing verification: the report names such parameters, per
-source. It says when inputs were asserted or derived by such a rule, and
-`--require-sourced` refuses such a run, unless the only parameter is `runAt`, the
-export's own verification time. V1 behavior and records remain unchanged.
+source, with those a value derived from one carries to a later source. It says when
+inputs were asserted or derived by such a rule, and `--require-sourced` refuses such a
+run, unless the only such parameter is `runAt`, the export's own verification time,
+which is exempt so that freshness checks that use it are not refused. V1 behavior and
+records remain unchanged.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
