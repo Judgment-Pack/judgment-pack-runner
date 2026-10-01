@@ -1272,7 +1272,7 @@
           "reviewed"
         ],
         "additionalProperties": false,
-        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. Coverage never gates. Reusing an immutable release and name is idempotent."
+        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. An installation booted with requireTestedReleases refuses a new job from a not-run release with 409 release_untested; repeating the creation of an existing job still returns it. Coverage never gates. Reusing an immutable release and name is idempotent."
       },
       "Job": {
         "type": "object",

@@ -19,7 +19,11 @@ type Config struct {
 	InputRoot                      string
 	CloudConnections               []CloudConnection
 	GatewayConnections             []GatewayConnection
-	disableAutomation              bool
+	// RequireTestedReleases refuses to create a job from a release whose saved
+	// tests never ran. Off by default, when an explicitly reviewed untested
+	// release can become a job.
+	RequireTestedReleases bool
+	disableAutomation     bool
 }
 type Service struct {
 	unhealthy              atomic.Bool
@@ -258,6 +262,11 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Job{}, err
+	}
+	// Only a new job is refused: a job made before the setting was on is returned
+	// as any repeated creation is, and keeps running.
+	if s.cfg.RequireTestedReleases && r.Tests == "not-run" {
+		return Job{}, &apiError{409, "release_untested", "This installation creates jobs only from releases whose saved tests ran and passed. Save tests for this pack, then check a new release."}
 	}
 	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest}
 	if c != nil {

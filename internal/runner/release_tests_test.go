@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -155,5 +156,87 @@ func TestReleaseCheckRejectsIncompleteProcess(t *testing.T) {
 	e := s.checkReleaseTests(context.Background(), r, releaseMatrix("proceed"), nil, filepath.Join(cfg.Dir, "abnormal"))
 	if e.Status != "error" || e.Problem == "" {
 		t.Fatal("abnormal process became pass", e)
+	}
+}
+
+// An installation can refuse jobs from releases whose tests never ran. Off by
+// default; on, it refuses the creation of a job and nothing else.
+func TestInstallationCanRefuseUntestedReleases(t *testing.T) {
+	cfg := testConfig(t)
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { s.Close() }()
+	untested := testRelease(t, s)
+	earlier, err := s.createJob("Untested", untested.ID)
+	if err != nil || untested.Tests != "not-run" {
+		t.Fatal("default refused an untested release", err, untested.Tests)
+	}
+	s.Close()
+	cfg.RequireTestedReleases = true
+	if s, err = Open(cfg); err != nil {
+		t.Fatal(err)
+	}
+	pack, err := os.ReadFile("testdata/triage.pack.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(matrix string) Release {
+		r, e := s.preview(context.Background(), PreviewRequest{Pack: string(pack), Input: sample(), Matrix: matrix})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return r
+	}
+	fresh := check("")
+	var refusal *apiError
+	if _, err = s.createJob("Untested", fresh.ID); !errors.As(err, &refusal) || refusal.Status != 409 || refusal.Code != "release_untested" {
+		t.Fatal("untested release became a job", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs", bytes.NewReader(encode(map[string]any{"name": "Untested", "releaseId": fresh.ID, "reviewed": true})))
+	req.Header.Set("Authorization", "Bearer test-token")
+	res := httptest.NewRecorder()
+	s.Handler("test-token").ServeHTTP(res, req)
+	var body struct {
+		Error struct{ Code, Message string }
+	}
+	if json.Unmarshal(res.Body.Bytes(), &body); res.Code != 409 || body.Error.Code != "release_untested" || body.Error.Message != refusal.Message {
+		t.Fatal(res.Code, res.Body.String())
+	}
+	// A job created with its first trigger is refused the same, and leaves no trigger.
+	trigger := TriggerConfig{Name: "Intake event", Kind: "event", Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+	if _, err = s.createJobConfigured("Untested", fresh.ID, &trigger); !errors.As(err, &refusal) || refusal.Code != "release_untested" {
+		t.Fatal("untested release became a job with a trigger", err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/v1/jobs", bytes.NewReader(encode(map[string]any{"name": "Untested", "releaseId": fresh.ID, "reviewed": true, "trigger": trigger})))
+	req.Header.Set("Authorization", "Bearer test-token")
+	res = httptest.NewRecorder()
+	s.Handler("test-token").ServeHTTP(res, req)
+	if json.Unmarshal(res.Body.Bytes(), &body); res.Code != 409 || body.Error.Code != "release_untested" {
+		t.Fatal(res.Code, res.Body.String())
+	}
+	for table, want := range map[string]int{"jobs": 1, "triggers": 0, "trigger_revisions": 0} {
+		if n := countRows(t, s, table); n != want {
+			t.Fatal("refused job left rows in", table, n)
+		}
+	}
+	// A job made before the setting was on is returned as before, and runs.
+	if again, e := s.createJob("Untested", untested.ID); e != nil || again.ID != earlier.ID {
+		t.Fatal("earlier job refused", e)
+	}
+	run, _, err := s.submit(earlier.ID, "after-setting", sample())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := waitRun(t, s, run.ID); done.State != "completed" {
+		t.Fatal(done.State, done.Problem)
+	}
+	// Tests that ran keep their gate: failed has its own refusal, passed is a job.
+	if _, err = s.createJob("Failed", check(releaseMatrix("decline-redirect")).ID); !errors.As(err, &refusal) || refusal.Code != "release_not_ready" {
+		t.Fatal("failed release", err)
+	}
+	if _, err = s.createJob("Passed", check(releaseMatrix("proceed")).ID); err != nil {
+		t.Fatal("passed release refused", err)
 	}
 }
