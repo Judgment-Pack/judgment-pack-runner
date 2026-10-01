@@ -332,18 +332,28 @@ verified-inputs: the run's inputs match its record. Its disposition was not chec
 
 Verification recomputes every input the same way, but what that establishes
 depends on the input's class. `targetsByClass` counts the run's fact and evidence
-targets by the `class` its lineage records for each. A `record` or `generated`
-target was derived from a signed receipt: its value is checked against the
-receipt's signature, under the key a trusted profile pins, and an export with
-that value changed is refused. An `asserted` target was typed into the case or
-read from a local file, and nothing but the export vouches for it. An export
-whose asserted inputs were rewritten after the run, with its preparation, result
-and audit record recomputed to match, verifies as the original did, with or
-without `--runtime`. A run of a case-only mapping has only asserted targets.
-A target is counted whether or not the run has a value for it. Parameters,
-including the case's, are dependencies, not targets, and are not counted: a
-receipt commits to the request a parameter filled in, and a parameter that
-chose the request remains the caller's assertion, as above.
+targets by the `class` its lineage records for each: the class of the source the
+target is mapped from. Every target is counted, including one the run has no
+value for, and one whose source was skipped because a dependency was
+unavailable, which has no response and no citation.
+
+An `asserted` target was typed into the case or read from a local file, and
+nothing but the export vouches for it. An export whose asserted inputs were
+rewritten after the run, with its preparation, result and audit record
+recomputed to match, verifies as the original did, with or without `--runtime`.
+A run of a case-only mapping has only asserted targets.
+
+A `record` or `generated` target of a source that was acquired was derived from
+a signed response. Verification checks the response's signature, under the key a
+trusted profile pins, and derives the target again from that response and from
+the dependencies the export retains. Changing the response, or a target's
+retained value alone, fails verification. Changing a parameter need not.
+Parameters, including the case's, are dependencies, not targets, and are not
+counted. One that fills in the request is committed to by the receipt, so
+changing it fails verification; the record it chose remains the caller's
+assertion, as above. One that a rule reads, and the signed request does not
+contain, is not signed: changing it in the export can change a derived target,
+for example evidence from `present` to `unknown`, and the export still verifies.
 
 When any target is asserted, the line on standard error says so: as above when
 all are, or how many, for example `1 of the run's 3 inputs is the operator's own:
@@ -382,9 +392,16 @@ re-execution, so with `--runtime` the executable is not run:
 runner: inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source
 ```
 
-Without the flag nothing is refused that was accepted before. A `generated`
-target passes it: its receipt says what the generating source answered, not that
-the answer is true.
+An asserted target is refused whether or not the run has a value for it: an
+omitted value is the operator's say as much as a present one. Without the flag
+nothing is refused that was accepted before. What it lets through:
+
+- A `generated` target: its receipt says what the generating source answered,
+  not that the answer is true.
+- A `record` or `generated` target whose source was skipped: it has no value,
+  rather than an asserted one, and no receipt.
+- Parameters, which are not targets: a rule's unsigned parameter, which can
+  change a derived target as above, is not refused.
 
 The export includes private case/request values and consumed grant salts;
 distribute it only to intended reviewers. Public keys alone do not authenticate an export's

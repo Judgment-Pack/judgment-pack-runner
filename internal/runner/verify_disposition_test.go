@@ -14,11 +14,21 @@ import (
 )
 
 // completedExport completes one mapping v2 run with the real Runtime and
-// returns its export. Its three fact and evidence targets are of the classes
-// named: "asserted", read from the case; "record" or "generated", read from an
-// operation of that class; or "mixed", the fact read from the case and the
-// evidence from a record operation. With an operation source, the operational
-// evaluation is given a citation, which a rehearsal never is.
+// returns its export. Its fact and evidence targets are of the classes named:
+//
+//   - "asserted": all three read from the case;
+//   - "record" or "generated": all three read from an operation of that class;
+//   - "mixed": the fact read from the case, the evidence from a record operation;
+//   - "absent": the fact and one evidence requirement mapped from the case, which
+//     has a value for the evidence only; a record operation's fact, absent from
+//     its answer; and the other evidence requirement mapped from a second record
+//     operation, skipped because it depends on that absent fact;
+//   - "influenced": a generated operation's fact, on which a second, record
+//     operation depends; all three of the pack's targets are read from the
+//     second, and record a generated influence.
+//
+// With an operation source, the operational evaluation is given a citation,
+// which a rehearsal never is.
 func completedExport(t *testing.T, classes string) (VerificationBundle, []InputProfile, string) {
 	t.Helper()
 	cfg := testConfig(t)
@@ -31,21 +41,45 @@ func completedExport(t *testing.T, classes string) (VerificationBundle, []InputP
 	if classes != "asserted" {
 		fixture, p, key, at := v2Fixture(t)
 		read := copy
+		result := encode(sample())
+		cfg.InputProfiles = []InputProfile{p}
+		// second is a record operation that depends on the first source's fact.
+		second := func(profile InputProfile, parameter, pointer string, read CopyMapping) {
+			fixture.Source.Mapping.Sources = append(fixture.Source.Mapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: profile.ID, ProfileDigest: profileHash(profile), MaxAge: 300, Parameters: map[string]Parameter{parameter: {From: "vendor", Pointer: pointer, Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"` + parameter + `":{"$param":"` + parameter + `"}}}`), Read: SourceRead{Copy: &read}})
+		}
 		switch classes {
 		case "generated":
 			p.Class = "generated"
+			cfg.InputProfiles = []InputProfile{p}
 			fixture.Source.Mapping.Sources[0].ProfileDigest = profileHash(p)
 			fixture.Source.Mapping.Admits = &Admission{Facts: map[string][]string{"/request": {"generated"}}, Evidence: map[string][]string{"intake-form": {"generated"}, "sponsor-endorsement": {"generated"}}}
 		case "mixed":
 			fixture.Source.Mapping.Case.Facts = copy.Facts
 			fixture.Source.Case = encode(map[string]any{"id": 7, "facts": sample().Facts})
 			read = CopyMapping{Facts: []FactMapping{}, Evidence: copy.Evidence}
+		case "absent":
+			fixture.Source.Mapping.Case.Facts = copy.Facts
+			fixture.Source.Mapping.Case.Evidence = copy.Evidence[:1]
+			fixture.Source.Case = json.RawMessage(`{"id":7,"evidence":{"intake-form":"present"}}`)
+			read = CopyMapping{Facts: []FactMapping{{"/vendor/name", "/name"}}, Evidence: []EvidenceMapping{}}
+			second(p, "name", "/vendor/name", CopyMapping{Facts: []FactMapping{}, Evidence: copy.Evidence[1:]})
+		case "influenced":
+			p.Class = "generated"
+			record, _ := testProfile(t)
+			record.ID, record.Source, record.PublicKey = "second", "second/live", p.PublicKey
+			cfg.InputProfiles = []InputProfile{p, record}
+			fixture.Source.Mapping.Sources[0].ProfileDigest = profileHash(p)
+			both := []string{"record", "generated"}
+			fixture.Source.Mapping.Admits = &Admission{Facts: map[string][]string{"/screen/kind": {"generated"}, "/request": both}, Evidence: map[string][]string{"intake-form": both, "sponsor-endorsement": both}}
+			read = CopyMapping{Facts: []FactMapping{{"/screen/kind", "/kind"}}, Evidence: []EvidenceMapping{}}
+			result = []byte(`{"kind":"data-access"}`)
+			second(record, "kind", "/screen/kind", copy)
+			fixture.Source.Sources["detail"] = SourceValue{Response: signResponse(t, record, key, []byte(`{"tool":"lookup","arguments":{"kind":"data-access"}}`), encode(sample()), at, 1)}
 		}
 		input = fixture
-		cfg.InputProfiles = []InputProfile{p}
 		input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
 		input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &read}
-		input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), encode(sample()), at, 0)}
+		input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), result, at, 0)}
 	}
 	s, e := Open(cfg)
 	if e != nil {
@@ -279,16 +313,47 @@ func TestVerifyReadsTheNamesAReaderReads(t *testing.T) {
 
 // A run's fact and evidence targets are counted by the class its lineage
 // records: a case's are asserted, and an operation's are its profile's class.
-// The case's parameter, which chooses the operation's request, is not a target.
+// A target is counted whether or not the run has a value for it, and whether or
+// not its source was acquired. A record target that a generated value chose is
+// counted as record: its influence is recorded apart. The case's parameter,
+// which chooses the operation's request, is not a target.
 func TestVerifyInputsCountsTargetsByClass(t *testing.T) {
 	bin := os.Getenv("JPACK_TEST_BIN")
-	for classes, want := range map[string]InputClasses{"asserted": {Asserted: 3}, "mixed": {Asserted: 1, Record: 2}, "record": {Record: 3}, "generated": {Generated: 3}} {
+	for classes, c := range map[string]struct {
+		want                        InputClasses
+		absent, skipped, influenced int
+	}{
+		"asserted":   {InputClasses{Asserted: 3}, 0, 0, 0},
+		"mixed":      {InputClasses{Asserted: 1, Record: 2}, 0, 0, 0},
+		"record":     {InputClasses{Record: 3}, 0, 0, 0},
+		"generated":  {InputClasses{Generated: 3}, 0, 0, 3},
+		"absent":     {InputClasses{Asserted: 2, Record: 2}, 3, 1, 0},
+		"influenced": {InputClasses{Record: 3, Generated: 1}, 0, 0, 4},
+	} {
 		t.Run(classes, func(t *testing.T) {
 			bundle, profiles, _ := completedExport(t, classes)
 			t.Setenv("TMPDIR", t.TempDir())
 			v, e := VerifyInputs(encode(bundle), profiles, bundle.ReleaseDigest)
-			if e != nil || v.Classes != want {
+			if e != nil || v.Classes != c.want {
 				t.Fatal(e, v.Classes)
+			}
+			// The fixture is what it says: so many targets without a value, so many
+			// of a record source skipped without a receipt, and so many with a
+			// generated influence.
+			absent, skipped, influenced := 0, 0, 0
+			for _, l := range bundle.Run.Input.Preparation.Lineage {
+				if !l.Present {
+					absent++
+				}
+				if l.Reason == "dependency-unavailable" && l.Class == "record" && l.Receipt == nil {
+					skipped++
+				}
+				if l.GeneratedInfluence {
+					influenced++
+				}
+			}
+			if absent != c.absent || skipped != c.skipped || influenced != c.influenced {
+				t.Fatal("absent", absent, "skipped", skipped, "influenced", influenced)
 			}
 			// What was verified is what a re-execution evaluates.
 			if e = v.Disposition(context.Background(), bin); e != nil {

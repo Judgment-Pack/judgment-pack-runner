@@ -16,8 +16,15 @@ import (
 )
 
 // exportedRun completes one mapping v2 run with the real Runtime, through the
-// runner's HTTP API, and returns its verification export.
+// runner's HTTP API, and returns its verification export. Its mapping reads
+// the case only, and the case has a value for each of its three targets.
 func exportedRun(t *testing.T) (bundle map[string]json.RawMessage, digest string) {
+	t.Helper()
+	return exportedRunOf(t, `{"facts":{"request":{"type":"data-access","completeness":"complete","appropriateness":"pass","embargoedInformationToUnauthorizedRecipients":false}},"evidence":{"intake-form":"present","sponsor-endorsement":"present"}}`)
+}
+
+// exportedRunOf is exportedRun with the case given.
+func exportedRunOf(t *testing.T, kase string) (bundle map[string]json.RawMessage, digest string) {
 	t.Helper()
 	bin := os.Getenv("JPACK_TEST_BIN")
 	if bin == "" {
@@ -63,7 +70,7 @@ func exportedRun(t *testing.T) (bundle map[string]json.RawMessage, digest string
 			Facts:    []runner.FactMapping{{Target: "/request", Source: "/facts/request"}},
 			Evidence: []runner.EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}},
 		}},
-		Case: json.RawMessage(`{"facts":{"request":{"type":"data-access","completeness":"complete","appropriateness":"pass","embargoedInformationToUnauthorizedRecipients":false}},"evidence":{"intake-form":"present","sponsor-endorsement":"present"}}`),
+		Case: json.RawMessage(kase),
 	}}
 	var id struct {
 		ID    string `json:"id"`
@@ -247,5 +254,37 @@ func TestAssertedInputsAreNamedAndRefusedByCount(t *testing.T) {
 		if assertedSentence(c.classes) != c.sentence || c.refusal == "" && err != nil || c.refusal != "" && (!errors.Is(err, errInputsAsserted) || err.Error() != c.refusal) {
 			t.Fatal(c.classes, assertedSentence(c.classes), err)
 		}
+	}
+}
+
+// A target the run has no value for is counted as its source's class, so a
+// case that leaves every mapped target out is still the operator's say, and
+// --require-sourced still refuses it.
+func TestVerifyRunRefusesAbsentAssertedInputs(t *testing.T) {
+	bundle, digest := exportedRunOf(t, `{}`)
+	var run struct {
+		Input struct {
+			Preparation struct {
+				Lineage []struct {
+					Present bool `json:"present"`
+				} `json:"lineage"`
+			} `json:"preparation"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(bundle["run"], &run); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range run.Input.Preparation.Lineage {
+		if l.Present {
+			t.Fatal("the fixture has a value for a target")
+		}
+	}
+	out, human, err := verify(t, bundle, digest)
+	if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " The run's inputs are the operator's own: nothing here checks them against a source.\n") {
+		t.Fatal(err, out, human)
+	}
+	out, human, err = verify(t, bundle, digest, "--require-sourced")
+	if !errors.Is(err, errInputsAsserted) || out != report("inputs-asserted", "not-checked", inputsOnly, 3, 0, 0) || human != "" {
+		t.Fatal(err, out, human)
 	}
 }

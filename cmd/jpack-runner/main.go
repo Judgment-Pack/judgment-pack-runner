@@ -96,7 +96,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	profilesPath := flags.String("profiles", "", "independently trusted input profiles JSON")
 	release := flags.String("release-digest", "", "independently trusted frozen release digest")
 	runtime := flags.String("runtime", "", "optional: the release's Runtime executable, to evaluate the verified inputs again and compare the disposition")
-	requireSourced := flags.Bool("require-sourced", false, "optional: refuse a run any of whose fact or evidence targets is asserted, not derived from a signed receipt")
+	requireSourced := flags.Bool("require-sourced", false, "optional: refuse a run any of whose fact or evidence targets is asserted: typed into the case or read from a local file")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ type verifyReport struct {
 
 // assertedSentence is what the line on standard error adds when a run's fact or
 // evidence targets were asserted: all of them, or how many. It adds nothing
-// when every target was derived from a signed receipt.
+// when none was.
 func assertedSentence(c runner.InputClasses) string {
 	total := c.Asserted + c.Record + c.Generated
 	switch {
@@ -190,7 +190,9 @@ func assertedSentence(c runner.InputClasses) string {
 }
 
 // errInputsAsserted is --require-sourced's refusal of a run with an asserted
-// fact or evidence target.
+// fact or evidence target, with a value or without. A record or generated
+// target whose source was skipped has no value, not an asserted one, and is
+// not refused; nor is a parameter, which is not a target.
 var errInputsAsserted = errors.New("inputs-asserted")
 
 func requireSourcedInputs(c runner.InputClasses) error {

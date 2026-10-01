@@ -77,8 +77,10 @@ record whose disposition was changed after the run still verifies. With `--runti
 is refused unless its digest is the release's Runtime digest; it evaluates the verified inputs again
 as a rehearsal in a temporary directory, writing nothing to the runner's store, and the report is
 `verified-disposition` only if the disposition matches the retained one. Neither report says more
-of an asserted input than that the export is consistent with itself: the report counts the run's
-targets by class and says when inputs were asserted, and `--require-sourced` refuses such a run.
+of an asserted input than that the export is consistent with itself, nor of a parameter that a rule
+reads outside the signed request: changing one can change a derived target without failing
+verification. The report counts the run's targets by the class of their source, those without a
+value included, and says when inputs were asserted; `--require-sourced` refuses such a run.
 
 **A release whose tests never ran can become a job.** Such a release is labelled `not-run`, never
 passed, and requires explicit review as untested. A release whose tests ran and did not pass cannot.

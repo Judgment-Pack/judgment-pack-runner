@@ -29,11 +29,16 @@ func VerifyRun(raw []byte, profiles []InputProfile, trustedReleaseDigest string)
 }
 
 // InputClasses counts a run's fact and evidence targets by the class its
-// lineage records for each. An asserted target was typed into the case or read
-// from a local file: nothing but the export vouches for it. A record or
-// generated target was derived from a signed receipt. A target is counted
-// whether or not the run has a value for it. Parameters, including the case's,
-// choose what a source is asked; they are dependencies, not targets.
+// lineage records for each: the class of the source the target is mapped from.
+// Every target is counted, including one the run has no value for and one whose
+// source was skipped because a dependency was unavailable, which has no receipt.
+// An asserted target was typed into the case or read from a local file: nothing
+// but the export vouches for it. A record or generated target of a source that
+// was acquired was derived from a signed response. Verification checks the
+// signature and derives the target again from that response and the retained
+// parameters; a parameter that a rule reads and the signed request does not
+// contain is not signed, and can change such a target without failing
+// verification. Parameters are dependencies, not targets, and are not counted.
 type InputClasses struct {
 	Asserted  int `json:"asserted"`
 	Record    int `json:"record"`

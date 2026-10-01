@@ -194,9 +194,12 @@ profiles and a release digest. Its report says that the run's disposition was no
 checked. Given the release's own Runtime executable (`--runtime`), it also evaluates
 the verified inputs again as a rehearsal, and reports `verified-disposition` only
 when the disposition matches the retained one. The report also counts the run's fact
-and evidence targets by class: derived from signed receipts (`record`, `generated`),
-or `asserted`, typed into the case or read from a local file, which nothing but the
-export vouches for. It says so when inputs were asserted, and `--require-sourced`
+and evidence targets by the class of the source each is mapped from, those without a
+value included: `record` or `generated`, derived from a signed response when the source
+was acquired, or `asserted`, typed into the case or read from a local file, which
+nothing but the export vouches for. A parameter that a rule reads outside the signed
+request is not signed either, and can change a derived target without failing
+verification. The report says when inputs were asserted, and `--require-sourced`
 refuses such a run. V1 behavior and records remain unchanged.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
