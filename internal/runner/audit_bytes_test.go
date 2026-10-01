@@ -155,7 +155,7 @@ func caseRun(kase string) Input {
 // A version-3 export carries the record's bytes as the Runtime wrote them,
 // after a restart, and verification reports their digest. Version 2, served
 // when nothing is asked, is the export Runner made before: the same run's
-// export without them. Asking for another version is refused.
+// export without them.
 func TestVersion3ExportCarriesTheRecordsBytes(t *testing.T) {
 	cfg := testConfig(t)
 	s, e := Open(cfg)
@@ -217,11 +217,6 @@ func TestVersion3ExportCarriesTheRecordsBytes(t *testing.T) {
 	}
 	if verified, e = VerifyInputs(want.Bytes(), nil, v3.ReleaseDigest); e != nil || verified.ExportVersion() != 2 || verified.RecordDigest() != "" {
 		t.Fatal(e, verified.ExportVersion(), verified.RecordDigest())
-	}
-	for _, query := range []string{"?version=4", "?version=", "?version=3&version=3", "?version=03"} {
-		if got := get(t, h, "/v1/runs/"+run.ID+"/verification"+query, 400); !bytes.Contains(got, []byte(`"invalid_version"`)) {
-			t.Fatal(query, string(got))
-		}
 	}
 }
 
@@ -441,6 +436,122 @@ func TestRecordLineIsTheTrailsOneLine(t *testing.T) {
 	} {
 		if got := recordLine([]byte(trail)); string(got) != want || (want == "") != (got == nil) {
 			t.Errorf("%q: %q", trail, got)
+		}
+	}
+}
+
+// beforeExactBytes is the export made at the commit before version 3, the
+// record's line the Runtime wrote, its trusted release digest and profiles.
+func beforeExactBytes(t *testing.T) (export, line []byte, release string, profiles []InputProfile) {
+	t.Helper()
+	dir := "testdata/mapping-v2-before-exact-bytes/"
+	export, e := os.ReadFile(dir + "run.json")
+	if e != nil {
+		t.Fatal(e)
+	}
+	trail, e := os.ReadFile(dir + "audit-record.jsonl")
+	if e != nil {
+		t.Fatal(e)
+	}
+	trusted, e := os.ReadFile(dir + "release-digest.txt")
+	if e != nil {
+		t.Fatal(e)
+	}
+	rawProfiles, e := os.ReadFile(dir + "profiles.json")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if profiles, e = ParseInputProfiles(rawProfiles); e != nil {
+		t.Fatal(e)
+	}
+	return export, bytes.TrimSuffix(trail, []byte("\n")), strings.TrimSpace(string(trusted)), profiles
+}
+
+// The version asked for is read from a query parsed strictly: a malformed
+// query, whose entries a lenient reader would drop, is refused, as is a version
+// asked for twice or one that is not 2 or 3.
+func TestAnExportVersionIsAskedForOnceInAWellFormedQuery(t *testing.T) {
+	export, _, _, _ := beforeExactBytes(t)
+	cfg, b := fixtureStore(t, export)
+	s, e := Open(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	h := s.Handler("test")
+	path := "/v1/runs/" + b.Run.ID + "/verification"
+	for _, query := range []string{"", "?version=2", "?version=3", "?other=1"} {
+		get(t, h, path+query, 200)
+	}
+	for _, query := range []string{"?version=4", "?version=", "?version=3&version=3", "?version=03", "?version=%ZZ", "?version=2&version=%ZZ", "?version=3;bad", "?other=%ZZ"} {
+		if got := get(t, h, path+query, 400); !bytes.Contains(got, []byte(`"invalid_version"`)) {
+			t.Fatal(query, string(got))
+		}
+	}
+}
+
+// A version-3 export is held to the 8 MiB version 2 is held to, beside the
+// member that carries the record's bytes, which are held to the 8 MiB of an
+// audit trail Runner reads. So an export that version 2 accepts at its limit is
+// accepted as version 3, though it is larger. Padding with whitespace, which a
+// reader ignores, sets the sizes.
+func TestVersion3IsHeldToVersion2sLimitBesideItsBytes(t *testing.T) {
+	export, line, release, profiles := beforeExactBytes(t)
+	var v2 VerificationBundle
+	if e := json.Unmarshal(export, &v2); e != nil {
+		t.Fatal(e)
+	}
+	v3 := v2
+	v3.Version, v3.Run.AuditBytes = 3, line
+	member := len(encode(v3)) - len(encode(v2))
+	if member != len(`,"auditBytes":""`)+base64.StdEncoding.EncodedLen(len(line)) {
+		t.Fatal("the member's size is not as counted:", member)
+	}
+	pad := func(raw []byte, to int) []byte {
+		return append(bytes.Clone(raw), bytes.Repeat([]byte(" "), to-len(raw))...)
+	}
+	verify := func(raw []byte) error {
+		_, e := VerifyInputs(raw, profiles, release)
+		return e
+	}
+	for name, c := range map[string]struct {
+		raw     []byte
+		refusal string
+	}{
+		"version 2 at 8 MiB":                     {pad(encode(v2), 8<<20), ""},
+		"version 2 past 8 MiB":                   {pad(encode(v2), 8<<20+1), "verification bundle exceeds 8 MiB"},
+		"version 3 at 8 MiB beside its bytes":    {pad(encode(v3), 8<<20+member), ""},
+		"version 3 past 8 MiB beside its bytes":  {pad(encode(v3), 8<<20+member+1), "verification bundle exceeds 8 MiB"},
+		"anything past the most an export holds": {bytes.Repeat([]byte("x"), MaxExportSize+1), "verification bundle exceeds 8 MiB"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if e := verify(c.raw); c.refusal == "" && e != nil || c.refusal != "" && (e == nil || e.Error() != c.refusal) {
+				t.Fatal(len(c.raw), e)
+			}
+		})
+	}
+	// The record's bytes may take up the 8 MiB of a trail, and no more. Spaces
+	// after the record's first brace keep them one line and the same record.
+	// With 8 MiB of them beside 8 MiB of the rest, an export is as large as one
+	// can be, counted here apart from MaxExportSize.
+	most := 8<<20 + len(`,"auditBytes":""`) + base64.StdEncoding.EncodedLen(maxOutput)
+	for _, c := range []struct {
+		size, to int
+		refusal  string
+	}{
+		{maxOutput, 0, ""},
+		{maxOutput + 1, 0, "the audit record's bytes exceed 8 MiB"},
+		{maxOutput, most, ""},
+		{maxOutput, most + 1, "verification bundle exceeds 8 MiB"},
+	} {
+		b := v3
+		b.Run.AuditBytes = append(append([]byte("{"), bytes.Repeat([]byte(" "), c.size-len(line))...), line[1:]...)
+		raw := encode(b)
+		if c.to > 0 {
+			raw = pad(raw, c.to)
+		}
+		if e := verify(raw); c.refusal == "" && e != nil || c.refusal != "" && (e == nil || e.Error() != c.refusal) {
+			t.Fatal(c.size, len(raw), e)
 		}
 	}
 }

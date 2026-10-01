@@ -480,7 +480,7 @@
             "name": "version",
             "in": "query",
             "required": false,
-            "description": "The export version asked for, at most once. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's original bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). Anything else is refused with invalid_version.",
+            "description": "The export version asked for, at most once, in a well-formed query. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). Anything else, or a malformed query, is refused with invalid_version.",
             "schema": {
               "type": "integer",
               "enum": [
@@ -2977,7 +2977,7 @@
       },
       "VerificationBundleV3": {
         "type": "object",
-        "description": "Version 3: version 2 with the audit record's original bytes, as run.auditBytes, beside the parsed run.audit. Only a completed run that holds them is exported as version 3.",
+        "description": "Version 3: version 2 with the audit record's bytes, as run.auditBytes, beside the parsed run.audit. Only a completed run that holds them is exported as version 3. verify-run checks that the bytes parse to run.audit and reports their SHA-256, the digest a gateway receipt would name for those bytes; that they are the bytes the Runtime wrote for this run is shown only by comparison with a digest held independently, such as a receipt's. Held to 8 MiB beside the run.auditBytes member, whose bytes are held to 8 MiB.",
         "properties": {
           "version": {
             "const": 3

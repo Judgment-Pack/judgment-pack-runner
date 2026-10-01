@@ -49,7 +49,7 @@ func (s *Service) Handler(token string) http.Handler {
 		write(w, 200, profiles)
 	})
 	mux.HandleFunc("GET /v1/runs/{run}/verification", func(w http.ResponseWriter, r *http.Request) {
-		version, err := exportVersionAsked(r.URL.Query())
+		version, err := exportVersionAsked(r.URL.RawQuery)
 		if err != nil {
 			failure(w, err)
 			return

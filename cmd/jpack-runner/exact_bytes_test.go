@@ -39,7 +39,7 @@ func TestVerifyRunReportsTheRecordsDigest(t *testing.T) {
 	}
 	sum := sha256.Sum256(line)
 	want := "sha256:" + hex.EncodeToString(sum[:])
-	said := " The audit record's original bytes parse to the record, and their SHA-256, the digest a gateway receipt names it by, is " + want + ".\n"
+	said := " The export's bytes of the audit record parse to the record. Their SHA-256 is " + want + ": a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run.\n"
 	out, human, err := verify(t, bundle, digest)
 	if err != nil || out != reportV3(want, "verified-inputs", "not-checked", inputsOnly, 3, 0, 0) {
 		t.Fatal(err, out)
@@ -89,5 +89,31 @@ func TestVerifyRunSaysVersion2CarriesNoBytes(t *testing.T) {
 	out, human, err = verifyFiles(file, dir+"profiles.json", strings.TrimSpace(string(trusted)))
 	if err == nil || !strings.Contains(err.Error(), "a version-3 export carries the original bytes") || out != "" || human != "" {
 		t.Fatal(err, out, human)
+	}
+}
+
+// A version-3 export can exceed 8 MiB where the run's version-2 export does
+// not: here a run whose case maps a string of 1,030,000 characters, which the
+// export holds several times over. verify-run reads and verifies both.
+func TestVerifyRunReadsAVersion3ExportBeyond8MiB(t *testing.T) {
+	long := strings.Repeat("x", 1030000)
+	bundle, digest, line := exportedRunAs(t, `{"facts":{"request":{"type":"data-access","completeness":"complete","appropriateness":"pass","embargoedInformationToUnauthorizedRecipients":false,"vendor":"`+long+`"}},"evidence":{"intake-form":"present","sponsor-endorsement":"present"}}`, "", "?version=3")
+	var run map[string]json.RawMessage
+	if err := json.Unmarshal(bundle["run"], &run); err != nil {
+		t.Fatal(err)
+	}
+	delete(run, "auditBytes")
+	v2 := map[string]json.RawMessage{"version": json.RawMessage("2"), "releaseDigest": bundle["releaseDigest"], "release": bundle["release"]}
+	v2["run"], _ = json.Marshal(run)
+	three, _ := json.Marshal(bundle)
+	two, _ := json.Marshal(v2)
+	if !bytes.Contains(line, []byte(long)) || len(two) > 8<<20 || len(three) <= 8<<20 {
+		t.Fatal("the fixture's exports are not on either side of 8 MiB:", len(two), len(three))
+	}
+	t.Logf("version 2: %d bytes; version 3: %d bytes", len(two), len(three))
+	for version, b := range map[string]map[string]json.RawMessage{"2": v2, "3": bundle} {
+		if out, _, err := verify(t, b, digest); err != nil || !strings.Contains(out, `"exportVersion":`+version+`,`) {
+			t.Fatal(version, err, out)
+		}
 	}
 }

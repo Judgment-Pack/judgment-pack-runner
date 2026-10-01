@@ -156,10 +156,13 @@ func member(raw json.RawMessage, path ...string) json.RawMessage {
 // verifyInputs is VerifyRun's check. It returns the export and the inputs it
 // recomputed, which a re-execution evaluates.
 func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string) (b VerificationBundle, prepared Input, e error) {
-	if len(raw) > 8<<20 {
+	if len(raw) > MaxExportSize {
 		return b, prepared, errors.New("verification bundle exceeds 8 MiB")
 	}
 	if e = strictJSON(raw, &b); e != nil {
+		return b, prepared, e
+	}
+	if e = exportWithinLimits(raw, b); e != nil {
 		return b, prepared, e
 	}
 	// What is verified must be what a reader reads. The decoder takes a member

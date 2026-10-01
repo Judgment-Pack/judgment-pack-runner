@@ -497,26 +497,44 @@ The verification export has two versions:
   member would break them.
 - **Version 3**, served for `?version=3`, carries `run.auditBytes` beside the
   parsed `run.audit`. A run that holds no bytes is exported as version 2 even
-  then: nothing is made up in their place. Any other `version`, or more than
-  one, is refused with `invalid_version`.
+  then: nothing is made up in their place. Any other `version`, `version` asked
+  for more than once, or a query that is not well formed, is refused with
+  `invalid_version`.
+
+Version 3 is larger than version 2 by the bytes, in base64. It is held to the
+8 MiB that version 2 is held to, beside the member carrying the bytes, which
+are held to the 8 MiB of an audit trail that Runner reads. So `verify-run`
+reads a version-3 export of up to about 18.7 MiB, and accepts as version 3 any
+export that it accepts as version 2.
 
 `verify-run` accepts both, and checks both as above. Of a version-3 export it
 also checks that the bytes are one line, with neither a line feed nor a carriage
 return, that they parse as strictly as the export does, and that they are the
 same JSON value as `run.audit`. Otherwise it refuses the export. Its report
-gives their SHA-256 as `recordDigest`, the digest a gateway receipt would name:
+gives their SHA-256 as `recordDigest`, the digest a gateway receipt would name
+for those bytes:
 
 ```text
 {"exactBytes":"matches-record","exportVersion":3,"recordDigest":"sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d","retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
-verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source. The audit record's original bytes parse to the record, and their SHA-256, the digest a gateway receipt names it by, is sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d.
+verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source. The export's bytes of the audit record parse to the record. Their SHA-256 is sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d: a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run.
 ```
 
 Of a version-2 export it reports `"exactBytes":"not-in-export"` and no
 `recordDigest`, and the line on standard error says that exact-byte checks were
-not possible, as in the examples above. `verify-run` reads no receipt: matching
-the digest to one is the reader's step. Nor does the digest say more of the
-record than the checks above do. Bytes and record rewritten together still
-verify, with another digest, which then matches no receipt.
+not possible, as in the examples above. What the line says of the bytes comes
+last, after what it says of asserted inputs and unsigned parameters.
+
+What version 3 establishes is narrow. The bytes it carries are consistent with
+the record it exports, and their digest is the one a gateway receipt would name
+for those bytes. Bytes that were changed have another digest, and fail a
+comparison with an original digest held independently of the export, such as a
+gateway receipt's. `verify-run` reads no receipt: that comparison is the
+reader's step. Without it, version 3 does not establish that these are the
+bytes the Runtime wrote for this run, nor that the record belongs to this run:
+nothing binds the run to the record beyond the checks above. Another run of the
+same release with the same inputs could supply its own record and bytes. Bytes
+re-encoded without changing their value, with other whitespace or an escaped
+`&`, also verify, with another digest, without `run.audit` being rewritten.
 
 ## Deferred scope
 

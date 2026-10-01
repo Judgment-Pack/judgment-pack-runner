@@ -103,23 +103,24 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	if *file == "" || *profilesPath == "" || *release == "" || flags.NArg() != 0 {
 		return fmt.Errorf("file, profiles and release-digest are required")
 	}
-	read := func(path string) ([]byte, error) {
+	read := func(path string, limit int) ([]byte, error) {
 		f, e := os.Open(path)
 		if e != nil {
 			return nil, e
 		}
 		defer f.Close()
-		b, e := io.ReadAll(io.LimitReader(f, 8<<20+1))
-		if len(b) > 8<<20 {
+		b, e := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+		if len(b) > limit {
 			return nil, fmt.Errorf("verification input exceeds limit")
 		}
 		return b, e
 	}
-	raw, err := read(*file)
+	// A version-3 export may exceed 8 MiB by the record's bytes it carries.
+	raw, err := read(*file, runner.MaxExportSize)
 	if err != nil {
 		return err
 	}
-	p, err := read(*profilesPath)
+	p, err := read(*profilesPath, 8<<20)
 	if err != nil {
 		return err
 	}
@@ -179,11 +180,12 @@ type verifyReport struct {
 	UnsignedParameters []runner.UnsignedParameters `json:"unsignedParameters,omitempty"`
 }
 
-// recordReport is what the report says of the audit record's original bytes,
-// by which a digest of the record is taken. A version-3 export carries them,
-// and they were checked against the record; their SHA-256 is the digest a
-// gateway action receipt names the record by. A version-2 export carries none,
-// and nothing about them could be checked.
+// recordReport is what the report says of the audit record's bytes, by which a
+// digest of the record is taken. A version-3 export carries bytes, which parse
+// to the record it exports; their SHA-256 is the digest a gateway action
+// receipt would name for those bytes. That they are the bytes the Runtime
+// wrote for this run is not shown without such a digest held independently. A
+// version-2 export carries none, and nothing about them could be checked.
 type recordReport struct {
 	ExactBytes    string `json:"exactBytes"`
 	ExportVersion int    `json:"exportVersion"`
@@ -202,7 +204,7 @@ func (r recordReport) sentence() string {
 	if r.ExportVersion != 3 {
 		return " Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by."
 	}
-	return " The audit record's original bytes parse to the record, and their SHA-256, the digest a gateway receipt names it by, is " + r.RecordDigest + "."
+	return " The export's bytes of the audit record parse to the record. Their SHA-256 is " + r.RecordDigest + ": a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run."
 }
 
 // assertedSentence is what the line on standard error adds when a run's fact or

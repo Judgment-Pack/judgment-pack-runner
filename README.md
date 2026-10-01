@@ -209,9 +209,10 @@ records remain unchanged.
 The export is version 2 unless version 3 is asked for
 (`?version=3`), which adds the audit record's bytes exactly as the Runtime wrote
 them: the bytes a gateway receipt's `decision.recordDigest` is taken over, which
-Runner's own encoding of the record can change. `verify-run` checks them against
-the record and reports their SHA-256; of version 2 it says that exact-byte checks
-were not possible.
+Runner's own encoding of the record can change. `verify-run` checks that they parse
+to the exported record and reports their SHA-256. That shows they are the bytes the
+Runtime wrote for this run only when compared with a digest held independently, such
+as a gateway receipt's. Of version 2 it says that exact-byte checks were not possible.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
