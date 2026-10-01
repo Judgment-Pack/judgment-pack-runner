@@ -206,6 +206,12 @@ inputs were asserted or derived by such a rule, and `--require-sourced` refuses 
 run, unless the only such parameter is `runAt`, the export's own verification time,
 which is exempt so that freshness checks that use it are not refused. V1 behavior and
 records remain unchanged.
+The export is version 2 unless version 3 is asked for
+(`?version=3`), which adds the audit record's bytes exactly as the Runtime wrote
+them: the bytes a gateway receipt's `decision.recordDigest` is taken over, which
+Runner's own encoding of the record can change. `verify-run` checks them against
+the record and reports their SHA-256; of version 2 it says that exact-byte checks
+were not possible.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the

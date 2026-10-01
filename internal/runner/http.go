@@ -49,6 +49,11 @@ func (s *Service) Handler(token string) http.Handler {
 		write(w, 200, profiles)
 	})
 	mux.HandleFunc("GET /v1/runs/{run}/verification", func(w http.ResponseWriter, r *http.Request) {
+		version, err := exportVersionAsked(r.URL.Query())
+		if err != nil {
+			failure(w, err)
+			return
+		}
 		run, err := s.run(r.PathValue("run"))
 		if err != nil {
 			failure(w, err)
@@ -63,7 +68,7 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, bad("not_verified_mapping", "This run does not use mapping v2."))
 			return
 		}
-		write(w, 200, VerificationBundle{Version: 2, Release: release, Run: run, ReleaseDigest: releaseDigest(release)})
+		write(w, 200, verificationExport(release, run, version))
 	})
 	mux.HandleFunc("GET /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("POST /v1/jobs/{job}/briefs", s.briefHandler("job"))

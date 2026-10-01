@@ -26,18 +26,41 @@ func exportedRun(t *testing.T) (bundle map[string]json.RawMessage, digest string
 // exportedRunOf is exportedRun with the case given.
 func exportedRunOf(t *testing.T, kase string) (bundle map[string]json.RawMessage, digest string) {
 	t.Helper()
-	return exportedRunWith(t, runner.Input{Source: &runner.SourceInput{
+	return exportedRunWith(t, caseInput(kase), nil)
+}
+
+// caseInput is a mapping v2 input that reads the case given only: its request
+// and two evidence requirements.
+func caseInput(kase string) runner.Input {
+	return runner.Input{Source: &runner.SourceInput{
 		Mapping: runner.InputMapping{Version: 2, UnmappedEvidence: []string{"sensitive-data-approvals"}, Case: &runner.CaseMapping{
 			Facts:    []runner.FactMapping{{Target: "/request", Source: "/facts/request"}},
 			Evidence: []runner.EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}},
 		}},
 		Case: json.RawMessage(kase),
-	}}, nil)
+	}}
 }
 
 // exportedRunWith completes one run of input as its release's sample, with the
 // installation's trusted profiles given, and returns its verification export.
 func exportedRunWith(t *testing.T, input runner.Input, profiles []runner.InputProfile) (bundle map[string]json.RawMessage, digest string) {
+	t.Helper()
+	bundle, digest, _ = exportedRunIn(t, input, profiles, "", "")
+	return bundle, digest
+}
+
+// exportedRunAs is exportedRunOf with the pack's identifier replaced, unless
+// packID is empty, and the export asked for with query. It also returns the
+// record the Runtime wrote to the run's attempt audit trail: its line, without
+// the newline that ends it.
+func exportedRunAs(t *testing.T, kase, packID, query string) (bundle map[string]json.RawMessage, digest string, line []byte) {
+	t.Helper()
+	return exportedRunIn(t, caseInput(kase), nil, packID, query)
+}
+
+// exportedRunIn is exportedRunWith with exportedRunAs's pack identifier, query
+// and returned line.
+func exportedRunIn(t *testing.T, input runner.Input, profiles []runner.InputProfile, packID, query string) (bundle map[string]json.RawMessage, digest string, line []byte) {
 	t.Helper()
 	bin := os.Getenv("JPACK_TEST_BIN")
 	if bin == "" {
@@ -78,6 +101,9 @@ func exportedRunWith(t *testing.T, input runner.Input, profiles []runner.InputPr
 	if err != nil {
 		t.Fatal(err)
 	}
+	if packID != "" {
+		pack = bytes.Replace(pack, []byte(`"id": "https://example.invalid/judgment-packs/data-request-intake-triage",`), []byte(`"id": "`+packID+`",`), 1)
+	}
 	var id struct {
 		ID    string `json:"id"`
 		State string `json:"state"`
@@ -91,13 +117,17 @@ func exportedRunWith(t *testing.T, input runner.Input, profiles []runner.InputPr
 		}
 		json.Unmarshal(call("GET", "/v1/runs/"+id.ID, nil, "", 200), &id)
 	}
-	if err = json.Unmarshal(call("GET", "/v1/runs/"+id.ID+"/verification", nil, "", 200), &bundle); err != nil {
+	if err = json.Unmarshal(call("GET", "/v1/runs/"+id.ID+"/verification"+query, nil, "", 200), &bundle); err != nil {
 		t.Fatal(err)
 	}
 	if err = json.Unmarshal(bundle["releaseDigest"], &digest); err != nil {
 		t.Fatal(err)
 	}
-	return bundle, digest
+	trail, err := os.ReadFile(filepath.Join(dir, "attempts", id.ID, "audit", "evaluations.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bundle, digest, bytes.TrimSuffix(trail, []byte("\n"))
 }
 
 // verify runs the command on an export, as an operator would, with no trusted
@@ -124,11 +154,15 @@ func verifyFiles(file, profiles, digest string, extra ...string) (string, string
 	return stdout.String(), stderr.String(), err
 }
 
-// report is the report line verify-run writes for a status, a retained
-// disposition, a scope, and counts of asserted, record and generated targets.
+// report is the report line verify-run writes of a version-2 export for a
+// status, a retained disposition, a scope, and counts of asserted, record and
+// generated targets.
 func report(status, disposition, scope string, asserted, record, generated int) string {
-	return fmt.Sprintf(`{"retainedDisposition":%q,"scope":%q,"status":%q,"targetsByClass":{"asserted":%d,"record":%d,"generated":%d}}`+"\n", disposition, scope, status, asserted, record, generated)
+	return fmt.Sprintf(`{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":%q,"scope":%q,"status":%q,"targetsByClass":{"asserted":%d,"record":%d,"generated":%d}}`+"\n", disposition, scope, status, asserted, record, generated)
 }
+
+// notInExport is how the line on standard error ends for a version-2 export.
+const notInExport = " Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by."
 
 const (
 	inputsOnly = "retained input derivation and audit binding; not sealed-session completeness or policy truth"
@@ -176,7 +210,7 @@ func TestVerifyRunReExecutesWithTheReleaseRuntime(t *testing.T) {
 	if err != nil || out != report("verified-disposition", "matches-re-execution", reExecuted, 3, 0, 0) {
 		t.Fatal(err, out)
 	}
-	if human != "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. The run's inputs are the operator's own: nothing here checks them against a source.\n" {
+	if human != "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n" {
 		t.Fatal("human output:", human)
 	}
 	var run map[string]json.RawMessage
@@ -201,7 +235,7 @@ func TestVerifyRunSaysWhenInputsAreAsserted(t *testing.T) {
 	if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) {
 		t.Fatal(err, out)
 	}
-	if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source.\n" {
+	if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n" {
 		t.Fatal("human output:", human)
 	}
 	// The executable named does not exist: a refusal after the re-execution
@@ -234,7 +268,7 @@ func TestVerifyRunAcceptsInputsDerivedFromReceipts(t *testing.T) {
 		if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 0, 3, 0) {
 			t.Fatal(extra, err, out)
 		}
-		if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.\n" {
+		if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+notInExport+"\n" {
 			t.Fatal(extra, "human output:", human)
 		}
 	}
@@ -286,7 +320,7 @@ func TestVerifyRunRefusesAbsentAssertedInputs(t *testing.T) {
 		}
 	}
 	out, human, err := verify(t, bundle, digest)
-	if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " The run's inputs are the operator's own: nothing here checks them against a source.\n") {
+	if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n") {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verify(t, bundle, digest, "--require-sourced")

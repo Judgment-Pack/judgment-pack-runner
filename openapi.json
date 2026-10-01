@@ -466,7 +466,7 @@
     "/runs/{run}/verification": {
       "get": {
         "operationId": "exportInputVerification",
-        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth.",
+        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth. Version 2 unless version 3 is asked for; version 3 adds the audit record's original bytes.",
         "parameters": [
           {
             "name": "run",
@@ -474,6 +474,20 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "description": "The export version asked for, at most once. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's original bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). Anything else is refused with invalid_version.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                2,
+                3
+              ],
+              "default": 2
             }
           }
         ],
@@ -483,7 +497,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/VerificationBundle"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/VerificationBundle"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VerificationBundleV3"
+                    }
+                  ]
                 }
               }
             }
@@ -1534,6 +1555,11 @@
           },
           "audit": {
             "type": "object"
+          },
+          "auditBytes": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "The audit record exactly as the Runtime wrote it, without the newline that ends its line, in standard base64: the bytes a digest of the record, such as a gateway receipt's decision.recordDigest, is taken over. audit is the same record parsed, which Runner encodes again with other bytes. Absent for a run recorded before Runner kept them, and for a run without an audit record. Not in run lists or briefs."
           },
           "problem": {
             "type": "string"
@@ -2914,6 +2940,7 @@
       },
       "VerificationBundle": {
         "type": "object",
+        "description": "Version 2, the export Runner has always made. It carries no original bytes of the audit record.",
         "properties": {
           "version": {
             "const": 2
@@ -2926,7 +2953,59 @@
             "$ref": "#/components/schemas/Release"
           },
           "run": {
-            "$ref": "#/components/schemas/Run"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Run"
+              },
+              {
+                "not": {
+                  "required": [
+                    "auditBytes"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "releaseDigest",
+          "release",
+          "run"
+        ],
+        "additionalProperties": false
+      },
+      "VerificationBundleV3": {
+        "type": "object",
+        "description": "Version 3: version 2 with the audit record's original bytes, as run.auditBytes, beside the parsed run.audit. Only a completed run that holds them is exported as version 3.",
+        "properties": {
+          "version": {
+            "const": 3
+          },
+          "releaseDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "release": {
+            "$ref": "#/components/schemas/Release"
+          },
+          "run": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Run"
+              },
+              {
+                "required": [
+                  "audit",
+                  "auditBytes"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "completed"
+                  }
+                }
+              }
+            ]
           }
         },
         "required": [

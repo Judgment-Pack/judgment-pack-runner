@@ -132,35 +132,36 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	classes := verified.Classes
+	record := recordReportOf(verified)
 	// An asserted target, and a parameter that its source's receipt does not
 	// commit, are checked against nothing but the export, which an operator can
 	// rewrite consistently. The refusal comes before a re-execution,
 	// which then does not run.
 	if *requireSourced {
 		if status, err := refuseUnsourced(classes, verified.Unsigned); err != nil {
-			json.NewEncoder(stdout).Encode(verifyReport{Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 			return err
 		}
 	}
 	if *runtime == "" {
 		// verified-inputs covers the inputs, not the result. Nothing here compares the
 		// retained disposition with an evaluation, and both outputs say so.
-		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned))
-		return json.NewEncoder(stdout).Encode(verifyReport{Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned)+record.sentence())
+		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 	}
 	// The release's own Runtime evaluates the verified inputs again, as a
 	// rehearsal. A different disposition is a failure with a report of its own.
 	scope := "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
 	err = verified.Disposition(context.Background(), *runtime)
 	if errors.Is(err, runner.ErrDispositionDiffers) {
-		json.NewEncoder(stdout).Encode(verifyReport{Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned))
-	return json.NewEncoder(stdout).Encode(verifyReport{Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned)+record.sentence())
+	return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 }
 
 const inputsScope = "retained input derivation and audit binding; not sealed-session completeness or policy truth"
@@ -168,6 +169,7 @@ const inputsScope = "retained input derivation and audit binding; not sealed-ses
 // verifyReport is verify-run's report on standard output. Its members encode
 // sorted by name, as they did when the report was a map; the counts sort last.
 type verifyReport struct {
+	recordReport
 	RetainedDisposition string              `json:"retainedDisposition"`
 	Scope               string              `json:"scope"`
 	Status              string              `json:"status"`
@@ -175,6 +177,32 @@ type verifyReport struct {
 	// Present only when an acquired source's rule reads a parameter that its
 	// receipt does not commit.
 	UnsignedParameters []runner.UnsignedParameters `json:"unsignedParameters,omitempty"`
+}
+
+// recordReport is what the report says of the audit record's original bytes,
+// by which a digest of the record is taken. A version-3 export carries them,
+// and they were checked against the record; their SHA-256 is the digest a
+// gateway action receipt names the record by. A version-2 export carries none,
+// and nothing about them could be checked.
+type recordReport struct {
+	ExactBytes    string `json:"exactBytes"`
+	ExportVersion int    `json:"exportVersion"`
+	RecordDigest  string `json:"recordDigest,omitempty"`
+}
+
+func recordReportOf(v runner.VerifiedRun) recordReport {
+	if v.ExportVersion() == 3 {
+		return recordReport{ExactBytes: "matches-record", ExportVersion: 3, RecordDigest: v.RecordDigest()}
+	}
+	return recordReport{ExactBytes: "not-in-export", ExportVersion: v.ExportVersion()}
+}
+
+// sentence is what the line on standard error says of the bytes.
+func (r recordReport) sentence() string {
+	if r.ExportVersion != 3 {
+		return " Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by."
+	}
+	return " The audit record's original bytes parse to the record, and their SHA-256, the digest a gateway receipt names it by, is " + r.RecordDigest + "."
 }
 
 // assertedSentence is what the line on standard error adds when a run's fact or

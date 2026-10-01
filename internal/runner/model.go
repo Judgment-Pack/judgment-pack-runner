@@ -77,7 +77,13 @@ type Run struct {
 	Attempt       int             `json:"attempt"`
 	Result        json.RawMessage `json:"result,omitempty"`
 	Audit         json.RawMessage `json:"audit,omitempty"`
-	Problem       string          `json:"problem,omitempty"`
+	// AuditBytes is the audit record exactly as the Runtime wrote it, without
+	// the newline that ends its line: what a digest of the record is taken over.
+	// Audit is the same record parsed, which Runner encodes again, with other
+	// bytes. A []byte encodes as base64, which no JSON encoder changes. A run
+	// recorded before Runner kept them has none.
+	AuditBytes []byte `json:"auditBytes,omitempty"`
+	Problem    string `json:"problem,omitempty"`
 }
 type apiError struct {
 	Status        int

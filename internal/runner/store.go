@@ -473,7 +473,9 @@ func (s *Service) worker(ctx context.Context) {
 			}
 		}
 		if err == nil {
-			r.Result, r.Audit, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+			var trail []byte
+			r.Result, trail, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+			r.retainAudit(trail)
 		}
 		r.FinishedAt = now()
 		if err == nil {

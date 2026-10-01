@@ -168,8 +168,11 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if !sameJSON(raw, encode(b)) {
 		return b, prepared, errors.New("verification bundle is not in the runner's own encoding")
 	}
-	if b.Version != 2 || !validDigest(trustedReleaseDigest) || b.ReleaseDigest != trustedReleaseDigest || releaseDigest(b.Release) != trustedReleaseDigest {
+	if (b.Version != 2 && b.Version != 3) || !validDigest(trustedReleaseDigest) || b.ReleaseDigest != trustedReleaseDigest || releaseDigest(b.Release) != trustedReleaseDigest {
 		return b, prepared, errors.New("release does not match the independently trusted digest")
+	}
+	if e = checkAuditBytes(b); e != nil {
+		return b, prepared, e
 	}
 	r := b.Run
 	release := b.Release

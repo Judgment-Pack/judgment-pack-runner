@@ -264,7 +264,7 @@ func TestV2RealRuntimeReleaseRunOfflineAndRestart(t *testing.T) {
 	if !bytes.Contains(done.Audit, []byte(`"cites"`)) {
 		t.Fatal("missing actual audit citations")
 	}
-	bundle := VerificationBundle{2, releaseDigest(release), release, done}
+	bundle := verificationExport(release, done, 2)
 	raw := encode(bundle)
 	if dir := os.Getenv("JPACK_V2_TEST_EXPORT_DIR"); dir != "" {
 		for name, data := range map[string][]byte{"run.json": raw, "profiles.json": encode([]InputProfile{p}), "release-digest.txt": []byte(bundle.ReleaseDigest)} {
@@ -439,7 +439,7 @@ func TestV2RealRuntimeWithoutExternalCitations(t *testing.T) {
 			if done.State != "completed" || len(done.Audit) == 0 {
 				t.Fatal(done.State, done.Problem)
 			}
-			bundle := VerificationBundle{2, releaseDigest(release), release, done}
+			bundle := verificationExport(release, done, 2)
 			if err = VerifyRun(encode(bundle), nil, bundle.ReleaseDigest); err != nil {
 				t.Fatal(err)
 			}
