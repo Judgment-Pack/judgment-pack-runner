@@ -2373,6 +2373,9 @@
           },
           "read": {
             "$ref": "#/components/schemas/SourceRead"
+          },
+          "calculation": {
+            "$ref": "#/components/schemas/CalculationBinding"
           }
         },
         "required": [
@@ -2627,6 +2630,9 @@
             },
             "maxItems": 64,
             "uniqueItems": true
+          },
+          "calculator": {
+            "$ref": "#/components/schemas/CalculatorPin"
           }
         },
         "required": [
@@ -2810,6 +2816,9 @@
           },
           "receipt": {
             "$ref": "#/components/schemas/Citation"
+          },
+          "calculation": {
+            "$ref": "#/components/schemas/CalculationLineage"
           }
         },
         "required": [
@@ -3587,6 +3596,122 @@
         "required": [
           "id",
           "state"
+        ],
+        "additionalProperties": false
+      },
+      "CalculatorPin": {
+        "type": "object",
+        "description": "The installation's statement that each allowed tool computes a deterministic function of the inputs it echoes and the tables it reports, calling no model. Only on a record MCP profile.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "CalculationBinding": {
+        "type": "object",
+        "description": "Required exactly when the operation's profile names a calculator. Binds each echoed input to a parameter of the source (never runAt) and each reported table to its maximum age in seconds.",
+        "properties": {
+          "inputs": {
+            "type": "object",
+            "maxProperties": 64,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+            }
+          },
+          "tables": {
+            "type": "object",
+            "maxProperties": 64,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_.-]{1,128}$"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 315360000
+            }
+          }
+        },
+        "required": [
+          "inputs",
+          "tables"
+        ],
+        "additionalProperties": false
+      },
+      "CalculationLineage": {
+        "type": "object",
+        "properties": {
+          "calculator": {
+            "$ref": "#/components/schemas/CalculatorPin"
+          },
+          "status": {
+            "enum": [
+              "computed",
+              "input-missing",
+              "cannot-compute"
+            ]
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalculationInput"
+            }
+          },
+          "asOf": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "calculator",
+          "status",
+          "inputs",
+          "asOf"
+        ],
+        "additionalProperties": false
+      },
+      "CalculationInput": {
+        "type": "object",
+        "description": "An input the calculator echoed, the parameter it is bound to, and where that parameter's value came from: the case or an earlier source, and the pointer.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parameter": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "parameter",
+          "source",
+          "pointer"
         ],
         "additionalProperties": false
       }

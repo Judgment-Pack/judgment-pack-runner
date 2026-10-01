@@ -50,6 +50,9 @@ func validateProfiles(profiles []InputProfile) error {
 		if p.Endpoint != nil && len(*p.Endpoint) > 2048 || len(p.Tools) > 64 {
 			return errors.New("input profile exceeds limit")
 		}
+		if c := p.Calculator; c != nil && (p.Class != "record" || p.Shape != "mcp" || c.Name == "" || len(c.Name) > 256 || c.Version == "" || len(c.Version) > 256) {
+			return errors.New("a calculator profile is a record MCP profile naming its calculator and version")
+		}
 		identity := p.PublicKey + "\n" + p.Source + "\n" + p.Authority
 		if c, ok := identities[identity]; ok && c != p.Class {
 			return errors.New("one trusted source cannot have conflicting output classes")

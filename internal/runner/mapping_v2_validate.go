@@ -344,6 +344,11 @@ func validateMappingV2(m InputMapping) error {
 				return fail(e.Error())
 			}
 		}
+		if s.Calculation != nil {
+			if e := validateCalculationBinding(*s.Calculation, s.Kind, local); e != nil {
+				return fail(e.Error())
+			}
+		}
 		f, ev, e := readTargets(s.Read)
 		if e != nil {
 			return fail(e.Error())

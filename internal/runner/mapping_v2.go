@@ -65,22 +65,36 @@ func copyClaim(c CopyMapping, artifact any) (derivedClaim, error) {
 	return derivedClaim{encode(facts), evidence, "resolved", "copied", basis}, nil
 }
 func applyRead(read SourceRead, artifact any, params map[string]any) (derivedClaim, error) {
+	artifact, err := unwrapRead(read, artifact)
+	if err != nil {
+		return derivedClaim{}, err
+	}
+	return deriveRead(read, artifact, params)
+}
+
+// unwrapRead applies a read's unwrap steps and bounds the value a read applies to.
+func unwrapRead(read SourceRead, artifact any) (any, error) {
 	for _, p := range read.Unwrap {
 		tokens, _ := pointerTokens(p, true)
 		v, ok := pointerRead(artifact, tokens)
 		s, isString := v.(string)
 		if !ok || !isString || len(s) > maxInputDocument {
-			return derivedClaim{}, errors.New("unwrap requires one bounded JSON string")
+			return nil, errors.New("unwrap requires one bounded JSON string")
 		}
 		next, e := readInputJSON([]byte(s))
 		if e != nil {
-			return derivedClaim{}, errors.New("unwrap contains invalid JSON")
+			return nil, errors.New("unwrap contains invalid JSON")
 		}
 		artifact = next
 	}
 	if err := boundedArtifact(artifact); err != nil {
-		return derivedClaim{}, err
+		return nil, err
 	}
+	return artifact, nil
+}
+
+// deriveRead applies a read's copy or rule to an unwrapped value.
+func deriveRead(read SourceRead, artifact any, params map[string]any) (derivedClaim, error) {
 	if read.Copy != nil {
 		c, e := copyClaim(*read.Copy, artifact)
 		if e != nil {
@@ -190,7 +204,7 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 	// shares a session with itself, at any call index. Neither form says a
 	// session is sealed or complete.
 	shared, apart, first := true, true, ""
-	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation) error {
+	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, calc *CalculationLineage) error {
 		ft, et, err := readTargets(read)
 		if err != nil {
 			return err
@@ -210,7 +224,7 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 			if present {
 				writeTarget(facts, f.Target, v)
 			}
-			prep.Lineage = append(prep.Lineage, TargetLineage{f.Target, "fact", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Target), deps, cite})
+			prep.Lineage = append(prep.Lineage, TargetLineage{f.Target, "fact", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Target), deps, cite, calc})
 		}
 		for _, f := range et {
 			if !admitted(m, "evidence", f.Requirement, class, gen) {
@@ -220,7 +234,7 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 			if present {
 				evidence[f.Requirement] = v
 			}
-			prep.Lineage = append(prep.Lineage, TargetLineage{f.Requirement, "evidence", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Requirement), deps, cite})
+			prep.Lineage = append(prep.Lineage, TargetLineage{f.Requirement, "evidence", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Requirement), deps, cite, calc})
 		}
 		return nil
 	}
@@ -240,7 +254,7 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 		if err != nil {
 			return i, sourceFailure("case", err)
 		}
-		if err = merge("case", "asserted", false, read, claim, nil, nil); err != nil {
+		if err = merge("case", "asserted", false, read, claim, nil, nil, nil); err != nil {
 			return i, sourceFailure("case", err)
 		}
 		prep.Outcomes = append(prep.Outcomes, SourceOutcome{Name: "case", Status: claim.Status, Reason: claim.Reason, Parameters: encode(caseParams), Claim: encode(claim)})
@@ -291,6 +305,7 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 		claim := derivedClaim{json.RawMessage(`{}`), map[string]string{}, "unknown", "dependency-unavailable", []string{}}
 		var args json.RawMessage
 		var cite *Citation
+		var calc *CalculationLineage
 		if unavailable {
 			if present {
 				return fail(errors.New("a skipped dependent source must not supply a response"))
@@ -388,12 +403,29 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 				}
 				prep.Cites = append(prep.Cites, *cite)
 			}
-			claim, e = applyRead(source.Read, artifact, params)
+			artifact, e = unwrapRead(source.Read, artifact)
+			if e != nil {
+				return fail(e)
+			}
+			if source.Calculation != nil {
+				if profile.Calculator == nil {
+					return fail(errors.New("a calculated source requires a calculator's profile"))
+				}
+				calc, e = checkCalculation(source, *profile.Calculator, parameterOrigins(m.Case, source), artifact, params, at)
+				if e != nil {
+					return fail(e)
+				}
+			}
+			if calc != nil && calc.Status != calculationComputed {
+				claim, e = calculationUnknown(source.Read, calc.Status)
+			} else {
+				claim, e = deriveRead(source.Read, artifact, params)
+			}
 			if e != nil {
 				return fail(e)
 			}
 		}
-		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite); e != nil {
+		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite, calc); e != nil {
 			return fail(e)
 		}
 		claims[source.Name] = claim
