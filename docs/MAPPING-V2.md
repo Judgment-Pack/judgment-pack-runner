@@ -155,6 +155,54 @@ By default targets admit asserted and record. Use `admits.facts` and
 `{"facts":{"/vendor/risk":["generated"]}}`. Admission applies to all possible
 outputs, including branches the preview did not reach.
 
+## Calculated values
+
+An installation declares a calculator on a trusted profile, as
+`calculator: {name, version}`. The profile must be `record` and `mcp`. Declaring
+it asserts that each allowed tool computes a deterministic function of the inputs
+it echoes and the tables it reports, and calls no model; Runner cannot check that.
+A calculator that calls a model is a `generated` profile and cannot be declared a
+calculator. The reasons are in [the design record](design/calculated-values.md).
+
+The value a calculated source's read applies to, after `unwrap`, is an object with
+a `calculation` member of exactly `calculator` (the pinned name and version),
+`status` (`computed`, `input-missing` or `cannot-compute`), `inputs` (each input
+used, by name) and `asOf` (for each table read, a timestamp in the rule's form).
+The source binds that member:
+
+```json
+"calculation": {
+  "inputs": {"amount": "invoiceAmount", "currency": "invoiceCurrency"},
+  "tables": {"ecb-rates": 86400}
+}
+```
+
+Each input names a parameter of the source, a case parameter or one taken from an
+earlier source, and never `runAt`. Each table names the oldest its contents may
+be, in seconds, from 1 through 315,360,000. A source with a calculator profile
+and no `calculation`, or the reverse, fails preview before any acquisition.
+
+Preparation fails unless the answer names the pinned calculator and version;
+every echoed input is bound and equals its parameter as canonical JSON; and every
+reported table is named and has an instant. A `computed` answer must also echo
+every bound input and report every named table, as of no more than its limit
+before the verification instant and no more than 30 seconds after it.
+
+For `input-missing` or `cannot-compute`, Runner does not apply the source's read.
+The claim has no facts, every mapped evidence requirement `unknown`, acquisition
+status `unknown`, reason `calculation-input-missing` or
+`calculation-cannot-compute`, and basis `/calculation/status`. Dependent sources
+record `dependency-unavailable`. Each lineage entry of a calculated source that
+was acquired carries `calculation`: the calculator, the status, each echoed input
+with the parameter it is bound to and that parameter's source and pointer, and
+the reported `asOf`. A calculated source skipped as `dependency-unavailable`
+acquired nothing, and its entries carry no `calculation`.
+
+Neither the echo nor the instants are Runner's to establish: they are the
+calculator's statements in a signed response, held to the case and to the
+mapping's limits. A profile, mapping or lineage entry without these members
+encodes as before.
+
 ## Numeric and resource profile
 
 V1 still preserves fractional and large integer values. V2 claims, rules,

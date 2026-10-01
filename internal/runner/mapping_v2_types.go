@@ -15,6 +15,14 @@ type InputProfile struct {
 	Adapter   AdapterPin `json:"adapter"`
 	Endpoint  *string    `json:"endpoint"`
 	Tools     []string   `json:"tools,omitempty"`
+	// Calculator, when set, is the installation's statement that each allowed
+	// tool computes a deterministic function of the inputs it echoes and the
+	// tables it reports, calling no model. Absent, the profile encodes as before.
+	Calculator *CalculatorPin `json:"calculator,omitempty"`
+}
+type CalculatorPin struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 type AdapterPin struct {
 	Name    string `json:"name"`
@@ -41,6 +49,15 @@ type MappingSource struct {
 	Parameters    map[string]Parameter `json:"parameters,omitempty"`
 	Arguments     json.RawMessage      `json:"arguments,omitempty"`
 	Read          SourceRead           `json:"read"`
+	Calculation   *CalculationBinding  `json:"calculation,omitempty"`
+}
+
+// CalculationBinding binds a calculator's answer to the case: each input it
+// echoes to a parameter of the source, and each table it reports to the oldest
+// its contents may be, in seconds.
+type CalculationBinding struct {
+	Inputs map[string]string `json:"inputs"`
+	Tables map[string]int    `json:"tables"`
 }
 type SourceRead struct {
 	Unwrap []string        `json:"unwrap,omitempty"`
@@ -70,19 +87,35 @@ type Dependency struct {
 	Pointer   string `json:"pointer"`
 }
 type TargetLineage struct {
-	Target             string       `json:"target"`
-	Kind               string       `json:"kind"`
-	Source             string       `json:"source"`
-	Class              string       `json:"class"`
-	GeneratedInfluence bool         `json:"generatedInfluence"`
-	Present            bool         `json:"present"`
-	Status             string       `json:"status"`
-	Reason             string       `json:"reason"`
-	ReadDigest         string       `json:"readDigest"`
-	Basis              []string     `json:"basis"`
-	Candidates         []string     `json:"candidateFrom,omitempty"`
-	Dependencies       []Dependency `json:"dependencies,omitempty"`
-	Receipt            *Citation    `json:"receipt,omitempty"`
+	Target             string              `json:"target"`
+	Kind               string              `json:"kind"`
+	Source             string              `json:"source"`
+	Class              string              `json:"class"`
+	GeneratedInfluence bool                `json:"generatedInfluence"`
+	Present            bool                `json:"present"`
+	Status             string              `json:"status"`
+	Reason             string              `json:"reason"`
+	ReadDigest         string              `json:"readDigest"`
+	Basis              []string            `json:"basis"`
+	Candidates         []string            `json:"candidateFrom,omitempty"`
+	Dependencies       []Dependency        `json:"dependencies,omitempty"`
+	Receipt            *Citation           `json:"receipt,omitempty"`
+	Calculation        *CalculationLineage `json:"calculation,omitempty"`
+}
+
+// CalculationLineage records, for a calculated source, which calculator answered,
+// its status, where each input it echoed came from, and its tables' instants.
+type CalculationLineage struct {
+	Calculator CalculatorPin      `json:"calculator"`
+	Status     string             `json:"status"`
+	Inputs     []CalculationInput `json:"inputs"`
+	AsOf       map[string]string  `json:"asOf"`
+}
+type CalculationInput struct {
+	Name      string `json:"name"`
+	Parameter string `json:"parameter"`
+	Source    string `json:"source"`
+	Pointer   string `json:"pointer"`
 }
 type SourceOutcome struct {
 	Name       string          `json:"name"`

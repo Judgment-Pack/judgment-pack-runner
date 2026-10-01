@@ -77,6 +77,11 @@ func preflightV2(m InputMapping, profiles []InputProfile) error {
 				return err
 			}
 			class = profile.Class
+			// A calculator's answer is held to a binding, and a binding is
+			// held only to a calculator's answer: neither stands alone.
+			if (profile.Calculator != nil) != (source.Calculation != nil) {
+				return fmt.Errorf("source %s: a calculator's profile and a calculation binding go together", source.Name)
+			}
 			if source.Kind == "operation" {
 				var request struct {
 					Tool string `json:"tool"`
