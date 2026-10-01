@@ -36,9 +36,11 @@ func VerifyRun(raw []byte, profiles []InputProfile, trustedReleaseDigest string)
 // but the export vouches for it. A record or generated target of a source that
 // was acquired was derived from a signed response. Verification checks the
 // signature and derives the target again from that response and the retained
-// parameters; a parameter that a rule reads and the signed request does not
-// contain is not signed, and can change such a target without failing
-// verification. Parameters are dependencies, not targets, and are not counted.
+// parameters. A parameter that a rule reads is not signed unless the source's
+// own request carries it unambiguously, as a whole value and not in text that
+// names another parameter; one that is not can change such a target without
+// failing verification. Parameters are dependencies, not targets, and are not
+// counted.
 type InputClasses struct {
 	Asserted  int `json:"asserted"`
 	Record    int `json:"record"`

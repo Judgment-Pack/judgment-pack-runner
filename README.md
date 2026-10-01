@@ -197,8 +197,9 @@ when the disposition matches the retained one. The report also counts the run's 
 and evidence targets by the class of the source each is mapped from, those without a
 value included: `record` or `generated`, derived from a signed response when the source
 was acquired, or `asserted`, typed into the case or read from a local file, which
-nothing but the export vouches for. A parameter that a rule reads outside the signed
-request is not signed either, and can change a derived target without failing
+nothing but the export vouches for. A parameter that a rule reads is not signed either,
+unless the source's own request carries it unambiguously (as a whole value, not in text
+that names another parameter), and can change a derived target without failing
 verification. The report says when inputs were asserted, and `--require-sourced`
 refuses such a run. V1 behavior and records remain unchanged.
 
