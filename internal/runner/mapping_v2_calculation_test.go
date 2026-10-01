@@ -266,6 +266,38 @@ func TestACalculatedSourceSkippedBehindAnotherCarriesNoCalculation(t *testing.T)
 // its profile, mapping and release digests and its lineage with this code, so
 // it verifies only if they encode as they did.
 func TestARunRecordedBeforeCalculatorsVerifiesUnchanged(t *testing.T) {
+	raw, profiles, release := beforeCalculators(t)
+	if e := VerifyRun(raw, profiles, release); e != nil {
+		t.Fatal("a run recorded before calculators no longer verifies:", e)
+	}
+	var bundle VerificationBundle
+	if e := json.Unmarshal(raw, &bundle); e != nil {
+		t.Fatal(e)
+	}
+	if bundle.Run.Input.Source.Mapping.Sources[0].ProfileDigest != profileHash(profiles[0]) || bytes.Contains(raw, []byte(`"calculat`)) {
+		t.Fatal("the frozen profile digest differs from this code's")
+	}
+}
+
+// Its three targets were read from a record operation. The case's parameter,
+// which chose the operation's request, is a dependency and is not counted.
+func TestARunRecordedBeforeCalculatorsCountsItsTargetsByClass(t *testing.T) {
+	raw, profiles, release := beforeCalculators(t)
+	v, e := VerifyInputs(raw, profiles, release)
+	if e != nil || v.Classes != (InputClasses{Record: 3}) {
+		t.Fatal(e, v.Classes)
+	}
+	var bundle VerificationBundle
+	if e = json.Unmarshal(raw, &bundle); e != nil {
+		t.Fatal(e)
+	}
+	if len(bundle.Run.Input.Source.Mapping.Case.Parameters) != 1 || len(bundle.Run.Input.Preparation.Lineage) != 3 {
+		t.Fatal("the fixture no longer has a case parameter and three targets")
+	}
+}
+
+func beforeCalculators(t *testing.T) (raw []byte, profiles []InputProfile, release string) {
+	t.Helper()
 	dir := "testdata/mapping-v2-before-calculators/"
 	raw, e := os.ReadFile(dir + "run.json")
 	if e != nil {
@@ -275,24 +307,14 @@ func TestARunRecordedBeforeCalculatorsVerifiesUnchanged(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	release, e := os.ReadFile(dir + "release-digest.txt")
+	trusted, e := os.ReadFile(dir + "release-digest.txt")
 	if e != nil {
 		t.Fatal(e)
 	}
-	profiles, e := ParseInputProfiles(rawProfiles)
-	if e != nil {
+	if profiles, e = ParseInputProfiles(rawProfiles); e != nil {
 		t.Fatal(e)
 	}
-	if e = VerifyRun(raw, profiles, strings.TrimSpace(string(release))); e != nil {
-		t.Fatal("a run recorded before calculators no longer verifies:", e)
-	}
-	var bundle VerificationBundle
-	if e = json.Unmarshal(raw, &bundle); e != nil {
-		t.Fatal(e)
-	}
-	if bundle.Run.Input.Source.Mapping.Sources[0].ProfileDigest != profileHash(profiles[0]) || bytes.Contains(raw, []byte(`"calculat`)) {
-		t.Fatal("the frozen profile digest differs from this code's")
-	}
+	return raw, profiles, strings.TrimSpace(string(trusted))
 }
 
 func TestCalculatorProfileAndBindingGoTogetherBeforeAnyAcquisition(t *testing.T) {

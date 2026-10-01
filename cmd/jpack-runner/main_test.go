@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -88,7 +89,7 @@ func exportedRun(t *testing.T) (bundle map[string]json.RawMessage, digest string
 
 // verify runs the command on an export, as an operator would, with no trusted
 // profiles: the fixture's mapping reads its case only.
-func verify(t *testing.T, bundle map[string]json.RawMessage, digest string, extra ...string) (map[string]string, string, error) {
+func verify(t *testing.T, bundle map[string]json.RawMessage, digest string, extra ...string) (string, string, error) {
 	t.Helper()
 	dir := t.TempDir()
 	file, profiles := filepath.Join(dir, "run.json"), filepath.Join(dir, "profiles.json")
@@ -99,18 +100,27 @@ func verify(t *testing.T, bundle map[string]json.RawMessage, digest string, extr
 	if err := os.WriteFile(profiles, []byte("[]"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	return verifyFiles(file, profiles, digest, extra...)
+}
+
+// verifyFiles runs the command on an export and profiles already on disk, and
+// returns its report on standard output, its line on standard error and its error.
+func verifyFiles(file, profiles, digest string, extra ...string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	err := verifyRun(append([]string{"--file", file, "--profiles", profiles, "--release-digest", digest}, extra...), &stdout, &stderr)
-	var report map[string]string
-	if stdout.Len() > 0 {
-		d := json.NewDecoder(&stdout)
-		d.DisallowUnknownFields()
-		if e := d.Decode(&report); e != nil {
-			t.Fatal("report is not one JSON object:", e)
-		}
-	}
-	return report, stderr.String(), err
+	return stdout.String(), stderr.String(), err
 }
+
+// report is the report line verify-run writes for a status, a retained
+// disposition, a scope, and counts of asserted, record and generated targets.
+func report(status, disposition, scope string, asserted, record, generated int) string {
+	return fmt.Sprintf(`{"retainedDisposition":%q,"scope":%q,"status":%q,"targetsByClass":{"asserted":%d,"record":%d,"generated":%d}}`+"\n", disposition, scope, status, asserted, record, generated)
+}
+
+const (
+	inputsOnly = "retained input derivation and audit binding; not sealed-session completeness or policy truth"
+	reExecuted = "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
+)
 
 // verified-inputs must not be readable as covering the result. A retained
 // disposition changed after the run is not detected, and the report says it was
@@ -129,18 +139,12 @@ func TestVerifyRunSaysTheDispositionWasNotChecked(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			run["result"] = result
 			bundle["run"], _ = json.Marshal(run)
-			report, human, err := verify(t, bundle, digest)
+			out, human, err := verify(t, bundle, digest)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := map[string]string{"status": "verified-inputs", "retainedDisposition": "not-checked", "scope": "retained input derivation and audit binding; not sealed-session completeness or policy truth"}
-			if len(report) != len(want) {
-				t.Fatal(report)
-			}
-			for k, v := range want {
-				if report[k] != v {
-					t.Fatal(k, report)
-				}
+			if out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) {
+				t.Fatal(out)
 			}
 			if !strings.Contains(human, "disposition was not checked") || !strings.Contains(human, "does not say the run decided what its record says") {
 				t.Fatal("human output:", human)
@@ -155,12 +159,11 @@ func TestVerifyRunReExecutesWithTheReleaseRuntime(t *testing.T) {
 	bundle, digest := exportedRun(t)
 	t.Setenv("TMPDIR", t.TempDir())
 	runtime := "--runtime=" + os.Getenv("JPACK_TEST_BIN")
-	scope := "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
-	report, human, err := verify(t, bundle, digest, runtime)
-	if err != nil || len(report) != 3 || report["status"] != "verified-disposition" || report["retainedDisposition"] != "matches-re-execution" || report["scope"] != scope {
-		t.Fatal(err, report)
+	out, human, err := verify(t, bundle, digest, runtime)
+	if err != nil || out != report("verified-disposition", "matches-re-execution", reExecuted, 3, 0, 0) {
+		t.Fatal(err, out)
 	}
-	if !strings.Contains(human, "given them again, decides what the record says") {
+	if human != "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. The run's inputs are the operator's own: nothing here checks them against a source.\n" {
 		t.Fatal("human output:", human)
 	}
 	var run map[string]json.RawMessage
@@ -169,8 +172,80 @@ func TestVerifyRunReExecutesWithTheReleaseRuntime(t *testing.T) {
 	}
 	run["result"] = bytes.Replace(run["result"], []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`), 1)
 	bundle["run"], _ = json.Marshal(run)
-	report, human, err = verify(t, bundle, digest, runtime)
-	if !errors.Is(err, runner.ErrDispositionDiffers) || len(report) != 3 || report["status"] != "disposition-differs" || report["retainedDisposition"] != "differs-from-re-execution" || report["scope"] != scope || human != "" {
-		t.Fatal(err, report, human)
+	out, human, err = verify(t, bundle, digest, runtime)
+	if !errors.Is(err, runner.ErrDispositionDiffers) || out != report("disposition-differs", "differs-from-re-execution", reExecuted, 3, 0, 0) || human != "" {
+		t.Fatal(err, out, human)
+	}
+}
+
+// verified-inputs and verified-disposition read the same whether a run's
+// inputs were derived from signed receipts or asserted. When they were
+// asserted, the report counts them and the line on standard error says so; and
+// --require-sourced refuses the run, before any re-execution.
+func TestVerifyRunSaysWhenInputsAreAsserted(t *testing.T) {
+	bundle, digest := exportedRun(t)
+	out, human, err := verify(t, bundle, digest)
+	if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) {
+		t.Fatal(err, out)
+	}
+	if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source.\n" {
+		t.Fatal("human output:", human)
+	}
+	// The executable named does not exist: a refusal after the re-execution
+	// would fail on it, not refuse the inputs.
+	absent := "--runtime=" + filepath.Join(t.TempDir(), "absent")
+	for name, extra := range map[string][]string{"inputs only": {"--require-sourced"}, "with a runtime": {"--require-sourced", absent}} {
+		t.Run(name, func(t *testing.T) {
+			out, human, err := verify(t, bundle, digest, extra...)
+			if !errors.Is(err, errInputsAsserted) || err.Error() != "inputs-asserted: the run's inputs are all asserted, 3 of 3, and --require-sourced refuses them: nothing here checks them against a source" {
+				t.Fatal(err)
+			}
+			if out != report("inputs-asserted", "not-checked", inputsOnly, 3, 0, 0) || human != "" {
+				t.Fatal(out, human)
+			}
+		})
+	}
+}
+
+// A run whose inputs were all derived from signed receipts reads as before,
+// with its counts, and --require-sourced accepts it. The export was written by
+// an earlier Runner; its case parameter, which chose the request, is not counted.
+func TestVerifyRunAcceptsInputsDerivedFromReceipts(t *testing.T) {
+	dir := "../../internal/runner/testdata/mapping-v2-before-calculators/"
+	trusted, err := os.ReadFile(dir + "release-digest.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, extra := range [][]string{nil, {"--require-sourced"}} {
+		out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", strings.TrimSpace(string(trusted)), extra...)
+		if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 0, 3, 0) {
+			t.Fatal(extra, err, out)
+		}
+		if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.\n" {
+			t.Fatal(extra, "human output:", human)
+		}
+	}
+}
+
+// What the line on standard error adds, and what --require-sourced refuses,
+// for every mix of classes: all asserted, some, one, or none.
+func TestAssertedInputsAreNamedAndRefusedByCount(t *testing.T) {
+	for _, c := range []struct {
+		classes  runner.InputClasses
+		sentence string
+		refusal  string
+	}{
+		{runner.InputClasses{Asserted: 3}, " The run's inputs are the operator's own: nothing here checks them against a source.", "inputs-asserted: the run's inputs are all asserted, 3 of 3, and --require-sourced refuses them: nothing here checks them against a source"},
+		{runner.InputClasses{Asserted: 1}, " The run's inputs are the operator's own: nothing here checks them against a source.", "inputs-asserted: the run's inputs are all asserted, 1 of 1, and --require-sourced refuses them: nothing here checks them against a source"},
+		{runner.InputClasses{Asserted: 2, Generated: 1}, " 2 of the run's 3 inputs are the operator's own: nothing here checks those against a source.", "inputs-asserted: 2 of the run's 3 inputs are asserted, and --require-sourced refuses them: nothing here checks them against a source"},
+		{runner.InputClasses{Asserted: 1, Record: 2}, " 1 of the run's 3 inputs is the operator's own: nothing here checks it against a source.", "inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source"},
+		{runner.InputClasses{Record: 2, Generated: 1}, "", ""},
+		{runner.InputClasses{Generated: 3}, "", ""},
+		{runner.InputClasses{}, "", ""},
+	} {
+		err := requireSourcedInputs(c.classes)
+		if assertedSentence(c.classes) != c.sentence || c.refusal == "" && err != nil || c.refusal != "" && (!errors.Is(err, errInputsAsserted) || err.Error() != c.refusal) {
+			t.Fatal(c.classes, assertedSentence(c.classes), err)
+		}
 	}
 }

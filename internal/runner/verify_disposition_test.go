@@ -14,9 +14,12 @@ import (
 )
 
 // completedExport completes one mapping v2 run with the real Runtime and
-// returns its export. With an operation source, the operational evaluation is
-// given a citation, which a rehearsal never is.
-func completedExport(t *testing.T, operation bool) (VerificationBundle, []InputProfile, string) {
+// returns its export. Its three fact and evidence targets are of the classes
+// named: "asserted", read from the case; "record" or "generated", read from an
+// operation of that class; or "mixed", the fact read from the case and the
+// evidence from a record operation. With an operation source, the operational
+// evaluation is given a citation, which a rehearsal never is.
+func completedExport(t *testing.T, classes string) (VerificationBundle, []InputProfile, string) {
 	t.Helper()
 	cfg := testConfig(t)
 	copy := CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}
@@ -25,12 +28,23 @@ func completedExport(t *testing.T, operation bool) (VerificationBundle, []InputP
 	data := encode(sample())
 	data = append(data[:len(data)-1], `,"Facts":{"note":"data"}}`...)
 	input := Input{Source: &SourceInput{Mapping: InputMapping{Version: 2, UnmappedEvidence: []string{"sensitive-data-approvals"}, Case: &CaseMapping{Facts: copy.Facts, Evidence: copy.Evidence}}, Case: data}}
-	if operation {
+	if classes != "asserted" {
 		fixture, p, key, at := v2Fixture(t)
+		read := copy
+		switch classes {
+		case "generated":
+			p.Class = "generated"
+			fixture.Source.Mapping.Sources[0].ProfileDigest = profileHash(p)
+			fixture.Source.Mapping.Admits = &Admission{Facts: map[string][]string{"/request": {"generated"}}, Evidence: map[string][]string{"intake-form": {"generated"}, "sponsor-endorsement": {"generated"}}}
+		case "mixed":
+			fixture.Source.Mapping.Case.Facts = copy.Facts
+			fixture.Source.Case = encode(map[string]any{"id": 7, "facts": sample().Facts})
+			read = CopyMapping{Facts: []FactMapping{}, Evidence: copy.Evidence}
+		}
 		input = fixture
 		cfg.InputProfiles = []InputProfile{p}
 		input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
-		input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &copy}
+		input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &read}
 		input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), encode(sample()), at, 0)}
 	}
 	s, e := Open(cfg)
@@ -55,7 +69,7 @@ func completedExport(t *testing.T, operation bool) (VerificationBundle, []InputP
 		t.Fatal(e)
 	}
 	done := waitRun(t, s, run.ID)
-	if done.State != "completed" || operation != bytes.Contains(done.Audit, []byte(`"cites"`)) {
+	if done.State != "completed" || (classes != "asserted") != bytes.Contains(done.Audit, []byte(`"cites"`)) {
 		t.Fatal(done.State, done.Problem, string(done.Audit))
 	}
 	return VerificationBundle{2, releaseDigest(release), release, done}, cfg.InputProfiles, cfg.Dir
@@ -108,9 +122,9 @@ func tree(t *testing.T, dir string) string {
 
 func TestVerifyDispositionReExecutesWithTheReleaseRuntime(t *testing.T) {
 	bin := os.Getenv("JPACK_TEST_BIN")
-	for name, operation := range map[string]bool{"case": false, "operation with a citation": true} {
+	for name, classes := range map[string]string{"case": "asserted", "operation with a citation": "record"} {
 		t.Run(name, func(t *testing.T) {
-			bundle, profiles, store := completedExport(t, operation)
+			bundle, profiles, store := completedExport(t, classes)
 			scratch := t.TempDir()
 			t.Setenv("TMPDIR", scratch)
 			before := tree(t, store)
@@ -134,7 +148,7 @@ func TestVerifyDispositionReExecutesWithTheReleaseRuntime(t *testing.T) {
 
 func TestVerifyDispositionRefusesWhatItCannotStandBehind(t *testing.T) {
 	bin := os.Getenv("JPACK_TEST_BIN")
-	bundle, profiles, _ := completedExport(t, false)
+	bundle, profiles, _ := completedExport(t, "asserted")
 	t.Setenv("TMPDIR", t.TempDir())
 	check := func(b VerificationBundle, runtime string) error {
 		return VerifyDisposition(context.Background(), encode(b), profiles, b.ReleaseDigest, runtime)
@@ -226,7 +240,7 @@ func TestVerifyDispositionRefusesWhatItCannotStandBehind(t *testing.T) {
 // name. Neither a changed disposition nor changed inputs may hide behind one.
 func TestVerifyReadsTheNamesAReaderReads(t *testing.T) {
 	bin := os.Getenv("JPACK_TEST_BIN")
-	bundle, profiles, _ := completedExport(t, false)
+	bundle, profiles, _ := completedExport(t, "asserted")
 	t.Setenv("TMPDIR", t.TempDir())
 	decided, other := []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`)
 	// shadow appends to object a member named name, after the one it shadows.
@@ -261,4 +275,25 @@ func TestVerifyReadsTheNamesAReaderReads(t *testing.T) {
 			t.Fatal("changed audit inputs verified")
 		}
 	})
+}
+
+// A run's fact and evidence targets are counted by the class its lineage
+// records: a case's are asserted, and an operation's are its profile's class.
+// The case's parameter, which chooses the operation's request, is not a target.
+func TestVerifyInputsCountsTargetsByClass(t *testing.T) {
+	bin := os.Getenv("JPACK_TEST_BIN")
+	for classes, want := range map[string]InputClasses{"asserted": {Asserted: 3}, "mixed": {Asserted: 1, Record: 2}, "record": {Record: 3}, "generated": {Generated: 3}} {
+		t.Run(classes, func(t *testing.T) {
+			bundle, profiles, _ := completedExport(t, classes)
+			t.Setenv("TMPDIR", t.TempDir())
+			v, e := VerifyInputs(encode(bundle), profiles, bundle.ReleaseDigest)
+			if e != nil || v.Classes != want {
+				t.Fatal(e, v.Classes)
+			}
+			// What was verified is what a re-execution evaluates.
+			if e = v.Disposition(context.Background(), bin); e != nil {
+				t.Fatal(e)
+			}
+		})
+	}
 }

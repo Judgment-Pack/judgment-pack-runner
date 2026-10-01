@@ -193,7 +193,11 @@ An offline `verify-run` command checks retained inputs against independently tru
 profiles and a release digest. Its report says that the run's disposition was not
 checked. Given the release's own Runtime executable (`--runtime`), it also evaluates
 the verified inputs again as a rehearsal, and reports `verified-disposition` only
-when the disposition matches the retained one. V1 behavior and records remain unchanged.
+when the disposition matches the retained one. The report also counts the run's fact
+and evidence targets by class: derived from signed receipts (`record`, `generated`),
+or `asserted`, typed into the case or read from a local file, which nothing but the
+export vouches for. It says so when inputs were asserted, and `--require-sourced`
+refuses such a run. V1 behavior and records remain unchanged.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
