@@ -81,6 +81,14 @@ func completedExport(t *testing.T, classes string) (VerificationBundle, []InputP
 		input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &read}
 		input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), result, at, 0)}
 	}
+	return completeExport(t, cfg, input, classes != "asserted"), cfg.InputProfiles, cfg.Dir
+}
+
+// completeExport makes a release of the triage pack with input as its sample,
+// completes one run of it with the real Runtime, and returns its export. The
+// operational evaluation is given citations exactly when cited.
+func completeExport(t *testing.T, cfg Config, input Input, cited bool) VerificationBundle {
+	t.Helper()
 	s, e := Open(cfg)
 	if e != nil {
 		t.Fatal(e)
@@ -103,10 +111,10 @@ func completedExport(t *testing.T, classes string) (VerificationBundle, []InputP
 		t.Fatal(e)
 	}
 	done := waitRun(t, s, run.ID)
-	if done.State != "completed" || (classes != "asserted") != bytes.Contains(done.Audit, []byte(`"cites"`)) {
+	if done.State != "completed" || cited != bytes.Contains(done.Audit, []byte(`"cites"`)) {
 		t.Fatal(done.State, done.Problem, string(done.Audit))
 	}
-	return VerificationBundle{2, releaseDigest(release), release, done}, cfg.InputProfiles, cfg.Dir
+	return VerificationBundle{2, releaseDigest(release), release, done}
 }
 
 // standIn writes a script that answers an evaluation with output, using shell

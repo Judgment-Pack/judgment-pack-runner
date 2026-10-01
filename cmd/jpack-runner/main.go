@@ -96,7 +96,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	profilesPath := flags.String("profiles", "", "independently trusted input profiles JSON")
 	release := flags.String("release-digest", "", "independently trusted frozen release digest")
 	runtime := flags.String("runtime", "", "optional: the release's Runtime executable, to evaluate the verified inputs again and compare the disposition")
-	requireSourced := flags.Bool("require-sourced", false, "optional: refuse a run any of whose fact or evidence targets is asserted: typed into the case or read from a local file")
+	requireSourced := flags.Bool("require-sourced", false, "optional: refuse a run any of whose fact or evidence targets is asserted (typed into the case or read from a local file), or derived by a rule that reads a case parameter or a local file's fact that no signed request commits")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -132,34 +132,35 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	classes := verified.Classes
-	// An asserted target is checked against nothing but the export, which an
-	// operator can rewrite consistently. The refusal comes before a re-execution,
+	// An asserted target, and a parameter that no signed request commits, are
+	// checked against nothing but the export, which an operator can rewrite
+	// consistently. The refusal comes before a re-execution,
 	// which then does not run.
 	if *requireSourced {
-		if err = requireSourcedInputs(classes); err != nil {
-			json.NewEncoder(stdout).Encode(verifyReport{Status: "inputs-asserted", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes})
+		if status, err := refuseUnsourced(classes, verified.Unsigned); err != nil {
+			json.NewEncoder(stdout).Encode(verifyReport{Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 			return err
 		}
 	}
 	if *runtime == "" {
 		// verified-inputs covers the inputs, not the result. Nothing here compares the
 		// retained disposition with an evaluation, and both outputs say so.
-		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+assertedSentence(classes))
-		return json.NewEncoder(stdout).Encode(verifyReport{Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes})
+		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned))
+		return json.NewEncoder(stdout).Encode(verifyReport{Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 	}
 	// The release's own Runtime evaluates the verified inputs again, as a
 	// rehearsal. A different disposition is a failure with a report of its own.
 	scope := "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
 	err = verified.Disposition(context.Background(), *runtime)
 	if errors.Is(err, runner.ErrDispositionDiffers) {
-		json.NewEncoder(stdout).Encode(verifyReport{Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes})
+		json.NewEncoder(stdout).Encode(verifyReport{Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+assertedSentence(classes))
-	return json.NewEncoder(stdout).Encode(verifyReport{Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes})
+	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned))
+	return json.NewEncoder(stdout).Encode(verifyReport{Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 }
 
 const inputsScope = "retained input derivation and audit binding; not sealed-session completeness or policy truth"
@@ -171,6 +172,9 @@ type verifyReport struct {
 	Scope               string              `json:"scope"`
 	Status              string              `json:"status"`
 	TargetsByClass      runner.InputClasses `json:"targetsByClass"`
+	// Present only when an acquired source's rule reads a parameter that no
+	// signed request commits.
+	UnsignedParameters []runner.UnsignedParameters `json:"unsignedParameters,omitempty"`
 }
 
 // assertedSentence is what the line on standard error adds when a run's fact or

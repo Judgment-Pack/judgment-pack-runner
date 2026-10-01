@@ -200,8 +200,10 @@ was acquired, or `asserted`, typed into the case or read from a local file, whic
 nothing but the export vouches for. A parameter that a rule reads is not signed either,
 unless the source's own request carries it unambiguously (as a whole value, not in text
 that names another parameter) or a calculator's signed answer echoes it, and can change
-a derived target without failing verification. The report says when inputs were asserted, and `--require-sourced`
-refuses such a run. V1 behavior and records remain unchanged.
+a derived target without failing verification: the report names such parameters, per
+source. It says when inputs were asserted or derived by such a rule, and
+`--require-sourced` refuses such a run, unless the only parameter is `runAt`, the
+export's own verification time. V1 behavior and records remain unchanged.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
