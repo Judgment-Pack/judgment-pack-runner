@@ -199,8 +199,8 @@ value included: `record` or `generated`, derived from a signed response when the
 was acquired, or `asserted`, typed into the case or read from a local file, which
 nothing but the export vouches for. A parameter that a rule reads is not signed either,
 unless the source's own request carries it unambiguously (as a whole value, not in text
-that names another parameter), and can change a derived target without failing
-verification. The report says when inputs were asserted, and `--require-sourced`
+that names another parameter) or a calculator's signed answer echoes it, and can change
+a derived target without failing verification. The report says when inputs were asserted, and `--require-sourced`
 refuses such a run. V1 behavior and records remain unchanged.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON

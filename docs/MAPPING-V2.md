@@ -354,12 +354,13 @@ to by its receipt, so changing it fails verification; the record it chose
 remains the caller's assertion, as above. A request carries a parameter
 unambiguously as a whole value (`$param`), or in `$text` that names no other
 parameter. Text that names two or more commits none of them: `{{a}}{{b}}`
-renders 1 and 23 as it renders 12 and 3. A parameter that a rule reads, and the source's
-own request does not carry unambiguously, is not signed: changing it in the
-export can change a derived target, for example evidence from `present` to
-`unknown`, and the export still verifies. Another source's receipt does not
-sign it for this one, and a value derived from such a parameter, through a
-dependency, is not signed either.
+renders 1 and 23 as it renders 12 and 3. A calculator's signed answer also
+commits each parameter its `calculation` binds, since the answer's echo of that
+input must equal it. A parameter that a rule reads, and that neither commits,
+is not signed: changing it in the export can change a derived target, for
+example evidence from `present` to `unknown`, and the export still verifies.
+Another source's receipt does not sign it for this one, and a value derived
+from such a parameter, through a dependency, is not signed either.
 
 When any target is asserted, the line on standard error says so: as above when
 all are, or how many, for example `1 of the run's 3 inputs is the operator's own:

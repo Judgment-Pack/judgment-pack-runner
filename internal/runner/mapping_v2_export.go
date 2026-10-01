@@ -38,9 +38,9 @@ func VerifyRun(raw []byte, profiles []InputProfile, trustedReleaseDigest string)
 // signature and derives the target again from that response and the retained
 // parameters. A parameter that a rule reads is not signed unless the source's
 // own request carries it unambiguously, as a whole value and not in text that
-// names another parameter; one that is not can change such a target without
-// failing verification. Parameters are dependencies, not targets, and are not
-// counted.
+// names another parameter, or a calculator's signed answer echoes it; one that
+// is not can change such a target without failing verification. Parameters are
+// dependencies, not targets, and are not counted.
 type InputClasses struct {
 	Asserted  int `json:"asserted"`
 	Record    int `json:"record"`
