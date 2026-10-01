@@ -64,7 +64,8 @@ Version 2 mappings verify version 3 gateway receipts against operator-supplied p
 valid receipt attests to acquisition, not to the truth of what was acquired.
 
 **`verify-run` checks retained inputs, not the result.** It reports `verified-inputs`, not policy
-truth or evaluator re-execution ([docs/MAPPING-V2.md](docs/MAPPING-V2.md)).
+truth or evaluator re-execution ([docs/MAPPING-V2.md](docs/MAPPING-V2.md)). Its report says that the
+disposition was not checked: a record whose disposition was changed after the run still verifies.
 
 **A release whose tests never ran can become a job.** Such a release is labelled `not-run`, never
 passed, and requires explicit review as untested. A release whose tests ran and did not pass cannot.

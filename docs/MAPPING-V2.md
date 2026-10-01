@@ -267,9 +267,19 @@ jpack-runner verify-run \
 Verification recomputes the frozen release digest, receipt signatures, exact
 arguments/result digests, historical freshness, projection, admission, lineage
 and audit input/citation binding. It performs no network request or model call.
-It reports `verified-inputs`, not policy truth or evaluator re-execution. The
-export includes private case/request values and consumed grant salts; distribute
-it only to intended reviewers. Public keys alone do not authenticate an export's
+It reports `verified-inputs`, not policy truth or evaluator re-execution.
+
+The retained disposition is not read. A record whose inputs are intact and whose
+disposition was changed after the run still verifies. The report says so, on
+standard output for a program and on standard error for a person:
+
+```text
+{"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs"}
+verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.
+```
+
+The export includes private case/request values and consumed grant salts;
+distribute it only to intended reviewers. Public keys alone do not authenticate an export's
 choice of policy or its historical verification time.
 
 ## Deferred scope
