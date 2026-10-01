@@ -192,9 +192,11 @@ For `input-missing` or `cannot-compute`, Runner does not apply the source's read
 The claim has no facts, every mapped evidence requirement `unknown`, acquisition
 status `unknown`, reason `calculation-input-missing` or
 `calculation-cannot-compute`, and basis `/calculation/status`. Dependent sources
-record `dependency-unavailable`. Each lineage entry of a calculated source carries
-`calculation`: the calculator, the status, each echoed input with the parameter it
-is bound to and that parameter's source and pointer, and the reported `asOf`.
+record `dependency-unavailable`. Each lineage entry of a calculated source that
+was acquired carries `calculation`: the calculator, the status, each echoed input
+with the parameter it is bound to and that parameter's source and pointer, and
+the reported `asOf`. A calculated source skipped as `dependency-unavailable`
+acquired nothing, and its entries carry no `calculation`.
 
 Neither the echo nor the instants are Runner's to establish: they are the
 calculator's statements in a signed response, held to the case and to the

@@ -87,40 +87,56 @@ func TestCalculatedValueIsDerivedAndItsLineageSaysFromWhat(t *testing.T) {
 func TestCalculatorAnswerIsHeldToItsBinding(t *testing.T) {
 	input, p, key, at := calculatorFixture(t)
 	hour := at.Add(-time.Hour).Format(time.RFC3339)
-	refused := map[string]func(c map[string]any){
-		"another calculator":             func(c map[string]any) { c["calculator"] = map[string]any{"name": "fx-other", "version": "2.1.0"} },
-		"another version":                func(c map[string]any) { c["calculator"] = map[string]any{"name": "fx-convert", "version": "2.1.1"} },
-		"calculator with a third member": func(c map[string]any) { c["calculator"].(map[string]any)["build"] = "x" },
-		"a fifth member":                 func(c map[string]any) { c["note"] = "x" },
-		"no asOf member":                 func(c map[string]any) { delete(c, "asOf") },
-		"inputs not an object":           func(c map[string]any) { c["inputs"] = []any{} },
-		"an unknown status":              func(c map[string]any) { c["status"] = "partial" },
-		"an input of another value":      func(c map[string]any) { c["inputs"].(map[string]any)["amount"] = "1200.01" },
-		"an input of another type":       func(c map[string]any) { c["inputs"].(map[string]any)["amount"] = 1200 },
-		"an input the mapping does not bind": func(c map[string]any) {
-			c["inputs"].(map[string]any)["rounding"] = "half-even"
-		},
-		"a computed answer missing an input": func(c map[string]any) { delete(c["inputs"].(map[string]any), "currency") },
-		"a table the mapping does not name":  func(c map[string]any) { c["asOf"].(map[string]any)["holidays"] = hour },
-		"a computed answer missing a table":  func(c map[string]any) { c["asOf"] = map[string]any{} },
-		"a table without an instant":         func(c map[string]any) { c["asOf"].(map[string]any)["ecb-rates"] = "2026-10-01T14:00:00.5Z" },
-		"a table older than its limit": func(c map[string]any) {
-			c["asOf"].(map[string]any)["ecb-rates"] = at.Add(-86401 * time.Second).Format(time.RFC3339)
-		},
-		"a table from the future": func(c map[string]any) {
-			c["asOf"].(map[string]any)["ecb-rates"] = at.Add(31 * time.Second).Format(time.RFC3339)
-		},
+	notComputed := func(status string, change func(c map[string]any)) func(c map[string]any) {
+		return func(c map[string]any) { c["status"] = status; change(c) }
 	}
-	for name, change := range refused {
+	unboundNull := func(c map[string]any) { c["inputs"].(map[string]any)["rounding"] = nil }
+	unnamedTable := func(c map[string]any) { c["asOf"].(map[string]any)["holidays"] = hour }
+	// Each answer is refused for its own reason, named by the message, so a
+	// refusal that a later check happens to make does not hide a removed one.
+	refused := map[string]struct {
+		change func(c map[string]any)
+		reason string
+	}{
+		"another calculator":                 {func(c map[string]any) { c["calculator"] = map[string]any{"name": "fx-other", "version": "2.1.0"} }, "another calculator or version"},
+		"another version":                    {func(c map[string]any) { c["calculator"] = map[string]any{"name": "fx-convert", "version": "2.1.1"} }, "another calculator or version"},
+		"calculator with a third member":     {func(c map[string]any) { c["calculator"].(map[string]any)["build"] = "x" }, "another calculator or version"},
+		"a fifth member":                     {func(c map[string]any) { c["note"] = "x" }, "exactly calculator, status, inputs and asOf"},
+		"no asOf member":                     {func(c map[string]any) { delete(c, "asOf") }, "exactly calculator, status, inputs and asOf"},
+		"inputs not an object":               {func(c map[string]any) { c["inputs"] = []any{} }, "exactly calculator, status, inputs and asOf"},
+		"an unknown status":                  {func(c map[string]any) { c["status"] = "partial" }, "not computed, input-missing or cannot-compute"},
+		"an input of another value":          {func(c map[string]any) { c["inputs"].(map[string]any)["amount"] = "1200.01" }, "amount does not equal its parameter"},
+		"an input of another type":           {func(c map[string]any) { c["inputs"].(map[string]any)["amount"] = 1200 }, "amount does not equal its parameter"},
+		"an input the mapping does not bind": {func(c map[string]any) { c["inputs"].(map[string]any)["rounding"] = "half-even" }, "an input the mapping does not bind"},
+		// Not computed, nothing else holds these: an unbound input is null, as
+		// an absent parameter would be, and no table is held to its limit.
+		"input-missing with an unbound null input":     {notComputed("input-missing", unboundNull), "an input the mapping does not bind"},
+		"cannot-compute with an unbound null input":    {notComputed("cannot-compute", unboundNull), "an input the mapping does not bind"},
+		"input-missing with a table it does not name":  {notComputed("input-missing", unnamedTable), "a table the mapping does not name"},
+		"cannot-compute with a table it does not name": {notComputed("cannot-compute", unnamedTable), "a table the mapping does not name"},
+		"a computed answer missing an input":           {func(c map[string]any) { delete(c["inputs"].(map[string]any), "currency") }, "must echo every input"},
+		"a table the mapping does not name":            {unnamedTable, "a table the mapping does not name"},
+		"a computed answer missing a table":            {func(c map[string]any) { c["asOf"] = map[string]any{} }, "must report every table"},
+		"a table without an instant": {func(c map[string]any) {
+			c["asOf"].(map[string]any)["ecb-rates"] = at.Add(-time.Hour).Format("2006-01-02T15:04:05") + ".5Z"
+		}, "ecb-rates has no as-of instant"},
+		"a table older than its limit": {func(c map[string]any) {
+			c["asOf"].(map[string]any)["ecb-rates"] = at.Add(-86401 * time.Second).Format(time.RFC3339)
+		}, "ecb-rates is older than its limit or from the future"},
+		"a table from the future": {func(c map[string]any) {
+			c["asOf"].(map[string]any)["ecb-rates"] = at.Add(31 * time.Second).Format(time.RFC3339)
+		}, "ecb-rates is older than its limit or from the future"},
+	}
+	for name, r := range refused {
 		t.Run(name, func(t *testing.T) {
 			i := cloneInput(input)
 			c := calculation(at)
-			change(c)
+			r.change(c)
 			answer(t, &i, p, key, at, c)
 			_, e := normalizeV2(i, []InputProfile{p}, at)
 			var problem *apiError
-			if e == nil || !errors.As(e, &problem) || problem.Code != "input_preparation_failed" {
-				t.Fatalf("not refused as a failed preparation: %v", e)
+			if e == nil || !errors.As(e, &problem) || problem.Code != "input_preparation_failed" || !strings.Contains(problem.Message, r.reason) {
+				t.Fatalf("not refused for %q: %v", r.reason, e)
 			}
 		})
 	}
@@ -192,6 +208,91 @@ func TestCalculationThatCouldNotComputeIsUnknownUnderItsOwnReason(t *testing.T) 
 			t.Fatal("an answer about other inputs became an unknown")
 		}
 	})
+}
+
+func TestACalculatedSourceSkippedBehindAnotherCarriesNoCalculation(t *testing.T) {
+	input, p, key, at := calculatorFixture(t)
+	tax, taxKey := testProfile(t)
+	tax.ID = "tax"
+	tax.Source = "tax/live"
+	tax.Tools = []string{"tax"}
+	tax.Calculator = &CalculatorPin{"tax-calc", "1.0.0"}
+	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "tax", Kind: "operation", Profile: tax.ID, ProfileDigest: profileHash(tax), MaxAge: 300,
+		Parameters:  map[string]Parameter{"converted": {From: "fx", Pointer: "/invoice/converted", Type: "string"}},
+		Arguments:   json.RawMessage(`{"tool":"tax","arguments":{"amount":{"$param":"converted"}}}`),
+		Read:        SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/invoice/tax", "/tax"}}, Evidence: []EvidenceMapping{}}},
+		Calculation: &CalculationBinding{Inputs: map[string]string{"amount": "converted"}, Tables: map[string]int{}}})
+	profiles := []InputProfile{p, tax}
+	computed := cloneInput(input)
+	taxAnswer := encode(map[string]any{"calculation": map[string]any{"calculator": map[string]any{"name": "tax-calc", "version": "1.0.0"}, "status": "computed", "inputs": map[string]any{"amount": "1302.36"}, "asOf": map[string]any{}}, "tax": "65.12"})
+	computed.Source.Sources["tax"] = SourceValue{Response: signResponse(t, tax, taxKey, []byte(`{"tool":"tax","arguments":{"amount":"1302.36"}}`), taxAnswer, at, 1)}
+	got, e := normalizeV2(computed, profiles, at)
+	if e != nil {
+		t.Fatal(e)
+	}
+	// An input taken from an earlier source names that source and its fact.
+	last := got.Preparation.Lineage[len(got.Preparation.Lineage)-1]
+	if string(got.Facts) != `{"invoice":{"converted":"1302.36","tax":"65.12"}}` || last.Source != "tax" || last.Calculation == nil ||
+		string(canonTest(t, encode(last.Calculation.Inputs))) != `[{"name":"amount","parameter":"converted","pointer":"/invoice/converted","source":"fx"}]` {
+		t.Fatal(string(got.Facts), string(encode(last)))
+	}
+	// When the first could not compute, the second acquires nothing, and its
+	// entries say why without a calculation member.
+	skipped := cloneInput(input)
+	c := calculation(at)
+	c["status"] = "cannot-compute"
+	answer(t, &skipped, p, key, at, c)
+	got, e = normalizeV2(skipped, profiles, at)
+	if e != nil {
+		t.Fatal(e)
+	}
+	seen := 0
+	for _, l := range got.Preparation.Lineage {
+		if l.Source == "tax" {
+			seen++
+			if l.Reason != "dependency-unavailable" || l.Calculation != nil {
+				t.Fatal(string(encode(l)))
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no lineage for the skipped source")
+	}
+}
+
+// The export in testdata/mapping-v2-before-calculators was written by Runner
+// before calculators existed: TestV2RealRuntimeReleaseRunOfflineAndRestart on
+// main at a71e4be, with JPACK_V2_TEST_EXPORT_DIR set. Verifying it recomputes
+// its profile, mapping and release digests and its lineage with this code, so
+// it verifies only if they encode as they did.
+func TestARunRecordedBeforeCalculatorsVerifiesUnchanged(t *testing.T) {
+	dir := "testdata/mapping-v2-before-calculators/"
+	raw, e := os.ReadFile(dir + "run.json")
+	if e != nil {
+		t.Fatal(e)
+	}
+	rawProfiles, e := os.ReadFile(dir + "profiles.json")
+	if e != nil {
+		t.Fatal(e)
+	}
+	release, e := os.ReadFile(dir + "release-digest.txt")
+	if e != nil {
+		t.Fatal(e)
+	}
+	profiles, e := ParseInputProfiles(rawProfiles)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = VerifyRun(raw, profiles, strings.TrimSpace(string(release))); e != nil {
+		t.Fatal("a run recorded before calculators no longer verifies:", e)
+	}
+	var bundle VerificationBundle
+	if e = json.Unmarshal(raw, &bundle); e != nil {
+		t.Fatal(e)
+	}
+	if bundle.Run.Input.Source.Mapping.Sources[0].ProfileDigest != profileHash(profiles[0]) || bytes.Contains(raw, []byte(`"calculat`)) {
+		t.Fatal("the frozen profile digest differs from this code's")
+	}
 }
 
 func TestCalculatorProfileAndBindingGoTogetherBeforeAnyAcquisition(t *testing.T) {

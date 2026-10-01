@@ -110,7 +110,8 @@ every mapping, and a reviewer reads one vocabulary.
 
 ## 5. What the lineage records
 
-Each lineage entry of a calculated source carries `calculation`:
+Each lineage entry of a calculated source that was acquired carries
+`calculation`:
 
 ```json
 "calculation": {
@@ -129,6 +130,9 @@ value came from: the case and the case pointer, or the earlier source and the
 pointer of its derived fact. The echoed values are not repeated; the retained
 response holds them. Offline verification recomputes this member with the rest
 of the lineage.
+
+A calculated source skipped as `dependency-unavailable` acquired nothing. There
+is no answer to describe, and its entries carry no `calculation`.
 
 ## What this does not establish
 
