@@ -983,7 +983,61 @@
             }
           }
         },
-        "description": "Direct Runner requires owner bearer plus X-Trigger-Token. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap/queue policy: inspect occurrence.state."
+        "description": "Direct Runner requires owner bearer plus X-Trigger-Token. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap/queue policy: inspect occurrence.state. The token that created an occurrence can read its result with readEventResult."
+      }
+    },
+    "/triggers/{trigger}/occurrences/{occurrence}": {
+      "parameters": [
+        {
+          "name": "trigger",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "X-Trigger-Token",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "readEventResult",
+        "description": "The one read a trigger token has: an occurrence that this token itself created, its state and, once its run completed, the disposition and handoff target. No inputs, identifiers of other records, problem text or listing. Direct Runner requires owner bearer plus X-Trigger-Token; Desk does not expose this route yet. A token that is not the trigger's current credential (wrong, rotated or absent) returns 401 invalid_trigger_token. A current token asking for an occurrence it did not create (another trigger's, one created by an earlier token of this trigger, or one accepted before this read existed) returns 404 occurrence_not_found, the same answer as for an occurrence that does not exist.",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/jobs/{job}/occurrences": {
@@ -3470,6 +3524,71 @@
           }
         },
         "description": "Public progress only. Checkpoint bytes, frozen operation requests and installed Gateway URLs remain private."
+      },
+      "EventResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "accepted",
+              "submitted",
+              "skipped",
+              "failed",
+              "expired",
+              "preparing",
+              "waiting",
+              "needs-attention",
+              "cancelled"
+            ]
+          },
+          "run": {
+            "type": "object",
+            "description": "Present once the occurrence has a run.",
+            "properties": {
+              "state": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "completed",
+                  "failed",
+                  "interrupted"
+                ]
+              },
+              "result": {
+                "type": "object",
+                "description": "Present once the run completed.",
+                "properties": {
+                  "disposition": {
+                    "type": "object"
+                  },
+                  "handoffTarget": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "disposition",
+                  "handoffTarget"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ],
+        "additionalProperties": false
       }
     }
   }

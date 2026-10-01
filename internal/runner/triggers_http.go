@@ -185,6 +185,14 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 		}
 		write(w, status, map[string]any{"occurrence": o, "replayed": replay})
 	})
+	mux.HandleFunc("GET /v1/triggers/{trigger}/occurrences/{occurrence}", func(w http.ResponseWriter, r *http.Request) {
+		answer, e := s.eventResult(r.PathValue("trigger"), r.PathValue("occurrence"), r.Header.Get("X-Trigger-Token"))
+		if e != nil {
+			failure(w, e)
+			return
+		}
+		write(w, 200, answer)
+	})
 	mux.HandleFunc("GET /v1/jobs/{job}/occurrences", func(w http.ResponseWriter, r *http.Request) {
 		if _, e := s.job(r.PathValue("job")); e != nil {
 			failure(w, e)

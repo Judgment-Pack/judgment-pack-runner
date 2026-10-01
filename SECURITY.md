@@ -13,7 +13,7 @@ external action.
 Do not open a public issue for a vulnerability that could:
 
 - let a caller use the control API without the owner bearer, or let a trigger token do more than
-  start a run of its own trigger;
+  start a run of its own trigger and read the result of an occurrence that token created;
 - disclose the owner bearer, a trigger token, a worker token, or a credential;
 - make the runner accept a receipt, a release, or a mapped input it should refuse;
 - start a program other than the release's digest-pinned runtime; or
@@ -52,6 +52,13 @@ no tunnel, and no transport security of its own.
 digest. Rotation revokes the previous token immediately. A token cannot list jobs, inspect records,
 edit triggers, or choose another release. A direct caller of the runner needs the owner bearer as
 well as the trigger token. A `202` acknowledges an occurrence, not a completed decision.
+
+A token may read one thing: for an occurrence that token itself created, the occurrence's state
+and, once its run completed, the run's disposition and handoff target. Nothing else is in the
+answer: no inputs, no other runs, no records, no listing. The read is bound to the credential that
+created the occurrence, not to knowing its ID. Another token is refused, including a later token of
+the same trigger, and so is a rotated or revoked one. The refusal does not say whether the
+occurrence exists.
 
 **The evaluator is a separate program, pinned by digest.** A release retains a digest-pinned copy
 of the runtime executable, and the runner runs it through its public command line. The runner
