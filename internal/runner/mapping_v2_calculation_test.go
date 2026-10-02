@@ -444,7 +444,7 @@ func TestCalculatedRunIsEvaluatedAndVerifiedOffline(t *testing.T) {
 	if done.State != "completed" {
 		t.Fatal(done.Problem)
 	}
-	bundle := VerificationBundle{2, releaseDigest(release), release, done}
+	bundle := verificationExport(release, done, 2)
 	if e = VerifyRun(encode(bundle), []InputProfile{p}, bundle.ReleaseDigest); e != nil {
 		t.Fatal("offline verification", e)
 	}

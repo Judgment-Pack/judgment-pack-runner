@@ -278,7 +278,8 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 
 // evaluateWith invokes the pinned Runtime at bin on the release's frozen pack,
 // configuration and lock, and on one input, and checks what it answers. Only
-// an operational evaluation appends to the directory's audit trail.
+// an operational evaluation appends to the directory's audit trail, and only
+// it returns the trail's bytes, as read, beside the answer.
 func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, error) {
 	// The directory is exclusively created per invocation and never reused.
 	if err := os.Mkdir(dir, 0700); err != nil {
@@ -359,5 +360,5 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 	if input.Preparation != nil && !auditCitesMatch(record.Cites, input.Preparation.Cites) {
 		return nil, nil, errors.New("operational audit citations do not match verified input")
 	}
-	return out, bytes.TrimSpace(audit), nil
+	return out, audit, nil
 }

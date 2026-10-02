@@ -302,6 +302,8 @@ checks that Runtime's retained audit contains exactly the supplied citations,
 facts and evidence. No Runtime internals or semantic changes are introduced.
 
 `GET /v1/runs/{run}/verification` exports `{version:2,releaseDigest,release,run}`.
+With `?version=3` it exports version 3, which adds the audit record's original
+bytes ([below](#exact-bytes-of-the-audit-record)).
 Retain a trusted release digest independently, alongside the installation's public
 profiles. An untrusted export cannot establish its own public-key or release trust.
 
@@ -326,8 +328,8 @@ whose disposition was changed after the run still verifies. The report says so, 
 standard output for a program and on standard error for a person:
 
 ```text
-{"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
-verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source.
+{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by.
 ```
 
 Verification recomputes every input the same way, but what that establishes
@@ -419,8 +421,8 @@ Runner store. The canonical disposition is compared byte for byte with the one t
 run's result retains and the one its audit record retains:
 
 ```text
-{"retainedDisposition":"matches-re-execution","scope":"retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth","status":"verified-disposition","targetsByClass":{"asserted":0,"record":3,"generated":0}}
-verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true.
+{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-re-execution","scope":"retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth","status":"verified-disposition","targetsByClass":{"asserted":0,"record":3,"generated":0}}
+verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by.
 ```
 
 When either differs, the command exits 1, reports `"status":"disposition-differs"`
@@ -438,7 +440,7 @@ targets it refuses. It comes before any re-execution, so with `--runtime` the
 executable is not run:
 
 ```text
-{"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
+{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
 runner: inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source
 ```
 
@@ -466,6 +468,73 @@ nothing is refused that was accepted before. What it lets through:
 The export includes private case/request values and consumed grant salts;
 distribute it only to intended reviewers. Public keys alone do not authenticate an export's
 choice of policy or its historical verification time.
+
+### Exact bytes of the audit record
+
+A digest of an audit record, such as the `decision.recordDigest` by which a
+gateway action receipt names the record it relied on, is the SHA-256 of the
+bytes the Runtime wrote: the record's line in the attempt's audit trail,
+without the newline that ends it. The Runtime writes `&`, `<` and `>` as they
+are. Runner keeps the record parsed, as `run.audit`, and encodes it again with
+them escaped: the same JSON value, with other bytes and another digest. With
+Runtime 0.24.0 this happens, for example, when the pack's identifier holds an
+`&`. A run's facts reach the Runtime as Runner encoded them, already escaped,
+and are recorded so.
+
+So a run also keeps the record's line exactly, as `run.auditBytes`, in standard
+base64. Base64 rather than a JSON string: every JSON encoder passes it through
+unchanged; it carries any bytes, including bytes that are not UTF-8, which no
+JSON string can; and it decodes in one step to the bytes a digest is taken
+over. `GET /v1/runs/{run}` shows it; run lists and briefs leave it out. A run
+recorded before Runner kept the bytes has none, nor does a run without an audit
+record.
+
+The verification export has two versions:
+
+- **Version 2**, served when no version is asked for and for `?version=2`, is
+  the export Runner has always made, byte for byte. It carries no original
+  bytes: its readers decode it strictly and accept only version 2, so a new
+  member would break them.
+- **Version 3**, served for `?version=3`, carries `run.auditBytes` beside the
+  parsed `run.audit`. A run that holds no bytes is exported as version 2 even
+  then: nothing is made up in their place. Any other `version`, `version` asked
+  for more than once, or a query that is not well formed, is refused with
+  `invalid_version`.
+
+Version 3 is larger than version 2 by the bytes, in base64. It is held to the
+8 MiB that version 2 is held to, beside the member carrying the bytes, which
+are held to the 8 MiB of an audit trail that Runner reads. So `verify-run`
+reads a version-3 export of up to about 18.7 MiB, and accepts as version 3 any
+export that it accepts as version 2.
+
+`verify-run` accepts both, and checks both as above. Of a version-3 export it
+also checks that the bytes are one line, with neither a line feed nor a carriage
+return, that they parse as strictly as the export does, and that they are the
+same JSON value as `run.audit`. Otherwise it refuses the export. Its report
+gives their SHA-256 as `recordDigest`, the digest a gateway receipt would name
+for those bytes:
+
+```text
+{"exactBytes":"matches-record","exportVersion":3,"recordDigest":"sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d","retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source. The export's bytes of the audit record parse to the record. Their SHA-256 is sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d: a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run.
+```
+
+Of a version-2 export it reports `"exactBytes":"not-in-export"` and no
+`recordDigest`, and the line on standard error says that exact-byte checks were
+not possible, as in the examples above. What the line says of the bytes comes
+last, after what it says of asserted inputs and unsigned parameters.
+
+What version 3 establishes is narrow. The bytes it carries are consistent with
+the record it exports, and their digest is the one a gateway receipt would name
+for those bytes. Bytes that were changed have another digest, and fail a
+comparison with an original digest held independently of the export, such as a
+gateway receipt's. `verify-run` reads no receipt: that comparison is the
+reader's step. Without it, version 3 does not establish that these are the
+bytes the Runtime wrote for this run, nor that the record belongs to this run:
+nothing binds the run to the record beyond the checks above. Another run of the
+same release with the same inputs could supply its own record and bytes. Bytes
+re-encoded without changing their value, with other whitespace or an escaped
+`&`, also verify, with another digest, without `run.audit` being rewritten.
 
 ## Deferred scope
 

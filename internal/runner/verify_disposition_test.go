@@ -114,7 +114,7 @@ func completeExport(t *testing.T, cfg Config, input Input, cited bool) Verificat
 	if done.State != "completed" || cited != bytes.Contains(done.Audit, []byte(`"cites"`)) {
 		t.Fatal(done.State, done.Problem, string(done.Audit))
 	}
-	return VerificationBundle{2, releaseDigest(release), release, done}
+	return verificationExport(release, done, 2)
 }
 
 // standIn writes a script that answers an evaluation with output, using shell
