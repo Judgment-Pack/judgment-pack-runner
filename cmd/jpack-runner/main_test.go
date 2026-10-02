@@ -26,6 +26,19 @@ func exportedRun(t *testing.T) (bundle map[string]json.RawMessage, digest string
 // exportedRunOf is exportedRun with the case given.
 func exportedRunOf(t *testing.T, kase string) (bundle map[string]json.RawMessage, digest string) {
 	t.Helper()
+	return exportedRunWith(t, runner.Input{Source: &runner.SourceInput{
+		Mapping: runner.InputMapping{Version: 2, UnmappedEvidence: []string{"sensitive-data-approvals"}, Case: &runner.CaseMapping{
+			Facts:    []runner.FactMapping{{Target: "/request", Source: "/facts/request"}},
+			Evidence: []runner.EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}},
+		}},
+		Case: json.RawMessage(kase),
+	}}, nil)
+}
+
+// exportedRunWith completes one run of input as its release's sample, with the
+// installation's trusted profiles given, and returns its verification export.
+func exportedRunWith(t *testing.T, input runner.Input, profiles []runner.InputProfile) (bundle map[string]json.RawMessage, digest string) {
+	t.Helper()
 	bin := os.Getenv("JPACK_TEST_BIN")
 	if bin == "" {
 		t.Skip("set JPACK_TEST_BIN to exercise the real Runtime contract")
@@ -37,7 +50,7 @@ func exportedRunOf(t *testing.T, kase string) (bundle map[string]json.RawMessage
 	if err = os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	s, err := runner.Open(runner.Config{Dir: dir, Runtime: bin, Workspace: "test-workspace", Owner: "local-owner"})
+	s, err := runner.Open(runner.Config{Dir: dir, Runtime: bin, Workspace: "test-workspace", Owner: "local-owner", InputProfiles: profiles})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,13 +78,6 @@ func exportedRunOf(t *testing.T, kase string) (bundle map[string]json.RawMessage
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := runner.Input{Source: &runner.SourceInput{
-		Mapping: runner.InputMapping{Version: 2, UnmappedEvidence: []string{"sensitive-data-approvals"}, Case: &runner.CaseMapping{
-			Facts:    []runner.FactMapping{{Target: "/request", Source: "/facts/request"}},
-			Evidence: []runner.EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}},
-		}},
-		Case: json.RawMessage(kase),
-	}}
 	var id struct {
 		ID    string `json:"id"`
 		State string `json:"state"`

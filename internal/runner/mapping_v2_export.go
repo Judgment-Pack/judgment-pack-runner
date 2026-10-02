@@ -63,10 +63,12 @@ func classesOf(lineage []TargetLineage) (c InputClasses) {
 	return c
 }
 
-// VerifiedRun is an export whose inputs verified: its targets by class, and the
-// inputs that were recomputed, which a re-execution evaluates.
+// VerifiedRun is an export whose inputs verified: its targets by class, the
+// parameters its acquired sources' rules read unsigned, and the inputs that
+// were recomputed, which a re-execution evaluates.
 type VerifiedRun struct {
 	Classes  InputClasses
+	Unsigned []UnsignedParameters
 	bundle   VerificationBundle
 	prepared Input
 }
@@ -79,7 +81,7 @@ func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if e != nil {
 		return VerifiedRun{}, e
 	}
-	return VerifiedRun{classesOf(prepared.Preparation.Lineage), b, prepared}, nil
+	return VerifiedRun{classesOf(prepared.Preparation.Lineage), unsignedParameters(b.Run.Input.Source.Mapping, prepared.Preparation), b, prepared}, nil
 }
 
 // ErrDispositionDiffers means that the release's Runtime, given a run's

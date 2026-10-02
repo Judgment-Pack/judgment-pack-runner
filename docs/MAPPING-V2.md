@@ -362,9 +362,50 @@ example evidence from `present` to `unknown`, and the export still verifies.
 Another source's receipt does not sign it for this one, and a value derived
 from such a parameter, through a dependency, is not signed either.
 
+`unsignedParameters` names them. For each source that was acquired and has
+targets, and whose rule reads a parameter that the source's own receipt does
+not commit, it gives the source, each such parameter's `name` and `kind`, and
+how many targets the source maps, with a value or without. A source's receipt
+commits a parameter as above: its signed request carries it unambiguously, or
+its calculator's signed answer echoes it. Another source's receipt commits
+nothing for this one: it signs that source's request, not this source's rule.
+A rule reads the parameters its conditions name (`equalsParam`'s `param`,
+`freshWithin`'s `asOf` and `maxAge`, at any depth), not those it only declares.
+The kinds:
+
+- `case`: a case parameter, as the operator supplied it.
+- `local-file`: a fact of an earlier local-file source, which is asserted.
+- `upstream`: a fact of an earlier acquired source whose own rule read a
+  parameter of one of these kinds. Its value can change with that parameter,
+  so it is not signed for this source unless this source's own request
+  carries it unambiguously.
+- `ambiguous-text`: one of those, which the request carries only in text that
+  names another parameter.
+- `runAt`: the run's time, which no request can carry. Verification takes it
+  from the export's own `preparation.verifiedAt`, so a verdict that reads it,
+  such as `freshWithin`, rests on the time the export says it was prepared.
+- `upstream-runAt`: a fact of an earlier acquired source whose own rule read
+  `runAt`, and no parameter of the operator's.
+
+A fact of an earlier acquired source that its rule derived from signed values
+alone, or copied from its response, is not listed. A skipped source, and a
+calculator that did not compute, whose rule was not applied, read nothing, and
+are not listed. The member is worked out from the frozen mapping and the run's
+outcomes, so the stored lineage is as it was, and it is present only when a
+source is listed:
+
+```text
+"unsignedParameters":[{"source":"vendor","parameters":[{"name":"runAt","kind":"runAt"}],"targets":2},{"source":"registry","parameters":[{"name":"region","kind":"case"},{"name":"vendorId","kind":"ambiguous-text"}],"targets":1}]
+```
+
 When any target is asserted, the line on standard error says so: as above when
 all are, or how many, for example `1 of the run's 3 inputs is the operator's own:
-nothing here checks it against a source.` When none is, the line is as it was.
+nothing here checks it against a source.` For the member above it adds `1 of the
+run's 3 inputs was derived by a rule that reads a parameter resting on the
+operator's say, which its source's receipt does not commit: nothing here checks
+that parameter against a source.` and `2 of the run's 3 inputs were derived by a
+rule that reads runAt, or a value derived from it, which rests on the export's
+own verification time.` When there is neither, the line is as it was.
 
 Add `--runtime /absolute/path/to/jpack` to check the disposition too, for a
 completed run. The executable's bytes are hashed and it is refused unless the
@@ -389,14 +430,24 @@ the release's Runtime, given the verified inputs, decides what the record says.
 It is not policy truth. Nor does it say more of asserted inputs than
 `verified-inputs` does: the report counts them and the line names them the same way.
 
-Add `--require-sourced` to refuse a run with an asserted fact or evidence target.
-Verification is otherwise unchanged; the refusal exits 1, reports its own status,
-and names on standard error how many targets were asserted. It comes before any
-re-execution, so with `--runtime` the executable is not run:
+Add `--require-sourced` to refuse a run with an asserted fact or evidence target,
+or with a target of an acquired source whose rule reads a parameter of the kind
+`case`, `local-file`, `upstream` or `ambiguous-text`. Verification is otherwise unchanged;
+the refusal exits 1, reports its own status, and names on standard error how many
+targets it refuses. It comes before any re-execution, so with `--runtime` the
+executable is not run:
 
 ```text
 {"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
 runner: inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source
+```
+
+A target derived from an unsigned parameter is refused as `parameters-unsigned`.
+When a run has both, the status is `inputs-asserted`, and the report's members
+show both:
+
+```text
+runner: parameters-unsigned: 1 of the run's 3 inputs was derived by a rule that reads a parameter resting on the operator's say, which its source's receipt does not commit, and --require-sourced refuses it: nothing here checks that parameter against a source
 ```
 
 An asserted target is refused whether or not the run has a value for it: an
@@ -407,8 +458,10 @@ nothing is refused that was accepted before. What it lets through:
   not that the answer is true.
 - A `record` or `generated` target whose source was skipped: it has no value,
   rather than an asserted one, and no receipt.
-- Parameters, which are not targets: a rule's unsigned parameter, which can
-  change a derived target as above, is not refused.
+- A target whose rule reads `runAt`, or `upstream-runAt`, and no other unsigned
+  parameter. `runAt` is exempt so that freshness checks that use it are not
+  refused. The report and the line say that such a verdict rests on the
+  export's own verification time.
 
 The export includes private case/request values and consumed grant salts;
 distribute it only to intended reviewers. Public keys alone do not authenticate an export's
