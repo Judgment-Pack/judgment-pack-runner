@@ -24,8 +24,62 @@ func releaseDigest(r Release) string { b, _ := canonical(encode(r)); return dige
 // The result is an input-lineage finding, not verification of policy truth,
 // sealed-session completeness, or a re-execution of Runtime.
 func VerifyRun(raw []byte, profiles []InputProfile, trustedReleaseDigest string) error {
-	_, _, e := verifyInputs(raw, profiles, trustedReleaseDigest)
+	_, e := VerifyInputs(raw, profiles, trustedReleaseDigest)
 	return e
+}
+
+// InputClasses counts a run's fact and evidence targets by the class its
+// lineage records for each: the class of the source the target is mapped from.
+// Every target is counted, including one the run has no value for and one whose
+// source was skipped because a dependency was unavailable, which has no receipt.
+// An asserted target was typed into the case or read from a local file: nothing
+// but the export vouches for it. A record or generated target of a source that
+// was acquired was derived from a signed response. Verification checks the
+// signature and derives the target again from that response and the retained
+// parameters. A parameter that a rule reads is not signed unless the source's
+// own request carries it unambiguously, as a whole value and not in text that
+// names another parameter, or a calculator's signed answer echoes it; one that
+// is not can change such a target without failing verification. Parameters are
+// dependencies, not targets, and are not counted.
+type InputClasses struct {
+	Asserted  int `json:"asserted"`
+	Record    int `json:"record"`
+	Generated int `json:"generated"`
+}
+
+// classesOf counts lineage entries by class. Preparation records no other class:
+// the case and a local file are asserted, and a profile is record or generated.
+func classesOf(lineage []TargetLineage) (c InputClasses) {
+	for _, l := range lineage {
+		switch l.Class {
+		case "asserted":
+			c.Asserted++
+		case "record":
+			c.Record++
+		case "generated":
+			c.Generated++
+		}
+	}
+	return c
+}
+
+// VerifiedRun is an export whose inputs verified: its targets by class, and the
+// inputs that were recomputed, which a re-execution evaluates.
+type VerifiedRun struct {
+	Classes  InputClasses
+	bundle   VerificationBundle
+	prepared Input
+}
+
+// VerifyInputs is VerifyRun, and returns what it verified. The classes are
+// counted from the recomputed lineage, which is the retained lineage: an export
+// whose lineage differs from the recomputation is refused.
+func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string) (VerifiedRun, error) {
+	b, prepared, e := verifyInputs(raw, profiles, trustedReleaseDigest)
+	if e != nil {
+		return VerifiedRun{}, e
+	}
+	return VerifiedRun{classesOf(prepared.Preparation.Lineage), b, prepared}, nil
 }
 
 // ErrDispositionDiffers means that the release's Runtime, given a run's
@@ -40,10 +94,16 @@ var ErrDispositionDiffers = errors.New("the retained disposition differs from a 
 // temporary directory, removed after, so nothing is written to a runner's store
 // and no audit record is appended; a Runtime that leaves one anyway is refused.
 func VerifyDisposition(ctx context.Context, raw []byte, profiles []InputProfile, trustedReleaseDigest, runtime string) error {
-	b, prepared, e := verifyInputs(raw, profiles, trustedReleaseDigest)
+	v, e := VerifyInputs(raw, profiles, trustedReleaseDigest)
 	if e != nil {
 		return e
 	}
+	return v.Disposition(ctx, runtime)
+}
+
+// Disposition is VerifyDisposition's check of a run whose inputs verified.
+func (v VerifiedRun) Disposition(ctx context.Context, runtime string) error {
+	b, prepared := v.bundle, v.prepared
 	if b.Run.State != "completed" {
 		return errors.New("only a completed run has a disposition to check")
 	}

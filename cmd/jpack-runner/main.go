@@ -96,6 +96,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	profilesPath := flags.String("profiles", "", "independently trusted input profiles JSON")
 	release := flags.String("release-digest", "", "independently trusted frozen release digest")
 	runtime := flags.String("runtime", "", "optional: the release's Runtime executable, to evaluate the verified inputs again and compare the disposition")
+	requireSourced := flags.Bool("require-sourced", false, "optional: refuse a run any of whose fact or evidence targets is asserted: typed into the case or read from a local file")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -126,26 +127,83 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if *runtime == "" {
-		if err = runner.VerifyRun(raw, profiles, *release); err != nil {
+	verified, err := runner.VerifyInputs(raw, profiles, *release)
+	if err != nil {
+		return err
+	}
+	classes := verified.Classes
+	// An asserted target is checked against nothing but the export, which an
+	// operator can rewrite consistently. The refusal comes before a re-execution,
+	// which then does not run.
+	if *requireSourced {
+		if err = requireSourcedInputs(classes); err != nil {
+			json.NewEncoder(stdout).Encode(verifyReport{Status: "inputs-asserted", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes})
 			return err
 		}
+	}
+	if *runtime == "" {
 		// verified-inputs covers the inputs, not the result. Nothing here compares the
 		// retained disposition with an evaluation, and both outputs say so.
-		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.")
-		return json.NewEncoder(stdout).Encode(map[string]string{"status": "verified-inputs", "retainedDisposition": "not-checked", "scope": "retained input derivation and audit binding; not sealed-session completeness or policy truth"})
+		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+assertedSentence(classes))
+		return json.NewEncoder(stdout).Encode(verifyReport{Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes})
 	}
 	// The release's own Runtime evaluates the verified inputs again, as a
 	// rehearsal. A different disposition is a failure with a report of its own.
 	scope := "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
-	err = runner.VerifyDisposition(context.Background(), raw, profiles, *release, *runtime)
+	err = verified.Disposition(context.Background(), *runtime)
 	if errors.Is(err, runner.ErrDispositionDiffers) {
-		json.NewEncoder(stdout).Encode(map[string]string{"status": "disposition-differs", "retainedDisposition": "differs-from-re-execution", "scope": scope})
+		json.NewEncoder(stdout).Encode(verifyReport{Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes})
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true.")
-	return json.NewEncoder(stdout).Encode(map[string]string{"status": "verified-disposition", "retainedDisposition": "matches-re-execution", "scope": scope})
+	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+assertedSentence(classes))
+	return json.NewEncoder(stdout).Encode(verifyReport{Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes})
+}
+
+const inputsScope = "retained input derivation and audit binding; not sealed-session completeness or policy truth"
+
+// verifyReport is verify-run's report on standard output. Its members encode
+// sorted by name, as they did when the report was a map; the counts sort last.
+type verifyReport struct {
+	RetainedDisposition string              `json:"retainedDisposition"`
+	Scope               string              `json:"scope"`
+	Status              string              `json:"status"`
+	TargetsByClass      runner.InputClasses `json:"targetsByClass"`
+}
+
+// assertedSentence is what the line on standard error adds when a run's fact or
+// evidence targets were asserted: all of them, or how many. It adds nothing
+// when none was.
+func assertedSentence(c runner.InputClasses) string {
+	total := c.Asserted + c.Record + c.Generated
+	switch {
+	case c.Asserted == 0:
+		return ""
+	case c.Asserted == total:
+		return " The run's inputs are the operator's own: nothing here checks them against a source."
+	case c.Asserted == 1:
+		return fmt.Sprintf(" 1 of the run's %d inputs is the operator's own: nothing here checks it against a source.", total)
+	}
+	return fmt.Sprintf(" %d of the run's %d inputs are the operator's own: nothing here checks those against a source.", c.Asserted, total)
+}
+
+// errInputsAsserted is --require-sourced's refusal of a run with an asserted
+// fact or evidence target, with a value or without. A record or generated
+// target whose source was skipped has no value, not an asserted one, and is
+// not refused; nor is a parameter, which is not a target.
+var errInputsAsserted = errors.New("inputs-asserted")
+
+func requireSourcedInputs(c runner.InputClasses) error {
+	total := c.Asserted + c.Record + c.Generated
+	switch {
+	case c.Asserted == 0:
+		return nil
+	case c.Asserted == total:
+		return fmt.Errorf("%w: the run's inputs are all asserted, %d of %d, and --require-sourced refuses them: nothing here checks them against a source", errInputsAsserted, c.Asserted, total)
+	case c.Asserted == 1:
+		return fmt.Errorf("%w: 1 of the run's %d inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source", errInputsAsserted, total)
+	}
+	return fmt.Errorf("%w: %d of the run's %d inputs are asserted, and --require-sourced refuses them: nothing here checks them against a source", errInputsAsserted, c.Asserted, total)
 }

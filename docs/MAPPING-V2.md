@@ -326,9 +326,45 @@ whose disposition was changed after the run still verifies. The report says so, 
 standard output for a program and on standard error for a person:
 
 ```text
-{"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs"}
-verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says.
+{"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source.
 ```
+
+Verification recomputes every input the same way, but what that establishes
+depends on the input's class. `targetsByClass` counts the run's fact and evidence
+targets by the `class` its lineage records for each: the class of the source the
+target is mapped from. Every target is counted, including one the run has no
+value for, and one whose source was skipped because a dependency was
+unavailable, which has no response and no citation.
+
+An `asserted` target was typed into the case or read from a local file, and
+nothing but the export vouches for it. An export whose asserted inputs were
+rewritten after the run, with its preparation, result and audit record
+recomputed to match, verifies as the original did, with or without `--runtime`.
+A run of a case-only mapping has only asserted targets.
+
+A `record` or `generated` target of a source that was acquired was derived from
+a signed response. Verification checks the response's signature, under the key a
+trusted profile pins, and derives the target again from that response and from
+the dependencies the export retains. Changing the response, or a target's
+retained value alone, fails verification. Changing a parameter need not.
+Parameters, including the case's, are dependencies, not targets, and are not
+counted. One that the source's own request carries unambiguously is committed
+to by its receipt, so changing it fails verification; the record it chose
+remains the caller's assertion, as above. A request carries a parameter
+unambiguously as a whole value (`$param`), or in `$text` that names no other
+parameter. Text that names two or more commits none of them: `{{a}}{{b}}`
+renders 1 and 23 as it renders 12 and 3. A calculator's signed answer also
+commits each parameter its `calculation` binds, since the answer's echo of that
+input must equal it. A parameter that a rule reads, and that neither commits,
+is not signed: changing it in the export can change a derived target, for
+example evidence from `present` to `unknown`, and the export still verifies.
+Another source's receipt does not sign it for this one, and a value derived
+from such a parameter, through a dependency, is not signed either.
+
+When any target is asserted, the line on standard error says so: as above when
+all are, or how many, for example `1 of the run's 3 inputs is the operator's own:
+nothing here checks it against a source.` When none is, the line is as it was.
 
 Add `--runtime /absolute/path/to/jpack` to check the disposition too, for a
 completed run. The executable's bytes are hashed and it is refused unless the
@@ -342,7 +378,7 @@ Runner store. The canonical disposition is compared byte for byte with the one t
 run's result retains and the one its audit record retains:
 
 ```text
-{"retainedDisposition":"matches-re-execution","scope":"retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth","status":"verified-disposition"}
+{"retainedDisposition":"matches-re-execution","scope":"retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth","status":"verified-disposition","targetsByClass":{"asserted":0,"record":3,"generated":0}}
 verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true.
 ```
 
@@ -350,7 +386,29 @@ When either differs, the command exits 1, reports `"status":"disposition-differs
 with `"retainedDisposition":"differs-from-re-execution"`, and names the failure
 on standard error. `verified-disposition` adds one statement to `verified-inputs`:
 the release's Runtime, given the verified inputs, decides what the record says.
-It is not policy truth.
+It is not policy truth. Nor does it say more of asserted inputs than
+`verified-inputs` does: the report counts them and the line names them the same way.
+
+Add `--require-sourced` to refuse a run with an asserted fact or evidence target.
+Verification is otherwise unchanged; the refusal exits 1, reports its own status,
+and names on standard error how many targets were asserted. It comes before any
+re-execution, so with `--runtime` the executable is not run:
+
+```text
+{"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
+runner: inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source
+```
+
+An asserted target is refused whether or not the run has a value for it: an
+omitted value is the operator's say as much as a present one. Without the flag
+nothing is refused that was accepted before. What it lets through:
+
+- A `generated` target: its receipt says what the generating source answered,
+  not that the answer is true.
+- A `record` or `generated` target whose source was skipped: it has no value,
+  rather than an asserted one, and no receipt.
+- Parameters, which are not targets: a rule's unsigned parameter, which can
+  change a derived target as above, is not refused.
 
 The export includes private case/request values and consumed grant salts;
 distribute it only to intended reviewers. Public keys alone do not authenticate an export's
