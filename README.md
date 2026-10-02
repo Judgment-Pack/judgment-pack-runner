@@ -250,7 +250,12 @@ Runtime invocation to 30 seconds. There is one dispatcher per private workspace 
 ## Durability and recovery
 
 SQLite uses WAL and synchronous FULL. The queued record includes the immutable
-release ID and input snapshot. Before invoking Runtime, the dispatcher persists
+release ID and input snapshot. Immutable, here and wherever this README and the API
+use the word, means Runner offers no operation that changes the thing: a release,
+a recorded operation request. It is not protection against whoever can change the
+store, and nothing makes a release or a run tamper-evident to that person. A run
+whose inputs were all asserted can be rewritten consistently and still pass
+`verify-run` (#24). Before invoking Runtime, the dispatcher persists
 `running`. Each run has a unique private attempt directory and one attempt in this
 pilot. The non-rehearsal call records to that directory's Runtime audit trail.
 Completed means the response and single audit record agree on pack, inputs,
