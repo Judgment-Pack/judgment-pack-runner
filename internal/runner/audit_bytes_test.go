@@ -403,7 +403,8 @@ func TestVerifyHoldsTheRecordToItsBytes(t *testing.T) {
 		"a failed run":       {func(b *VerificationBundle) { b.Run.State = "failed" }, noLine},
 		"in version 2":       {func(b *VerificationBundle) { b.Version = 2 }, "a version-2 export carries no original bytes of the audit record"},
 		"in version 4":       {func(b *VerificationBundle) { b.Version = 4 }, "a version-4 export carries its run's entry in the installation's chain of runs"},
-		"in version 5":       {func(b *VerificationBundle) { b.Version = 5 }, "release does not match the independently trusted digest"},
+		"in version 5":       {func(b *VerificationBundle) { b.Version = 5 }, "a version-5 export carries its run's entry in the installation's chain of runs"},
+		"in version 6":       {func(b *VerificationBundle) { b.Version = 6 }, "release does not match the independently trusted digest"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := bundle
@@ -470,7 +471,7 @@ func beforeExactBytes(t *testing.T) (export, line []byte, release string, profil
 
 // The version asked for is read from a query parsed strictly: a malformed
 // query, whose entries a lenient reader would drop, is refused, as is a version
-// asked for twice or one that is not 2, 3 or 4.
+// asked for twice or one that is not 2, 3, 4 or 5.
 func TestAnExportVersionIsAskedForOnceInAWellFormedQuery(t *testing.T) {
 	export, _, _, _ := beforeExactBytes(t)
 	cfg, b := fixtureStore(t, export)
@@ -481,10 +482,10 @@ func TestAnExportVersionIsAskedForOnceInAWellFormedQuery(t *testing.T) {
 	defer s.Close()
 	h := s.Handler("test")
 	path := "/v1/runs/" + b.Run.ID + "/verification"
-	for _, query := range []string{"", "?version=2", "?version=3", "?version=4", "?other=1"} {
+	for _, query := range []string{"", "?version=2", "?version=3", "?version=4", "?version=5", "?other=1"} {
 		get(t, h, path+query, 200)
 	}
-	for _, query := range []string{"?version=5", "?version=1", "?version=", "?version=3&version=3", "?version=4&version=4", "?version=03", "?version=04", "?version=%ZZ", "?version=2&version=%ZZ", "?version=3;bad", "?other=%ZZ"} {
+	for _, query := range []string{"?version=6", "?version=05", "?version=5&version=5", "?version=1", "?version=", "?version=3&version=3", "?version=4&version=4", "?version=03", "?version=04", "?version=%ZZ", "?version=2&version=%ZZ", "?version=3;bad", "?other=%ZZ"} {
 		if got := get(t, h, path+query, 400); !bytes.Contains(got, []byte(`"invalid_version"`)) {
 			t.Fatal(query, string(got))
 		}

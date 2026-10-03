@@ -213,7 +213,7 @@ func TestAuditCrashWindow(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, _, e = s.evaluate(context.Background(), release, r.Input, filepath.Join(cfg.Dir, "attempts", r.ID), false); e != nil {
+		if _, _, _, e = s.evaluate(context.Background(), release, r.Input, filepath.Join(cfg.Dir, "attempts", r.ID), false); e != nil {
 			t.Fatal(e)
 		}
 		os.Exit(57)

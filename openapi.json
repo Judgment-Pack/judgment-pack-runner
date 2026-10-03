@@ -480,13 +480,14 @@
             "name": "version",
             "in": "query",
             "required": false,
-            "description": "The export version asked for, at most once, in a well-formed query. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). With 4: version 4 when the run also has an entry in the installation's chain of runs, and otherwise what 3 serves: a run recorded before Runner chained its runs has no entry and is unchained. Anything else, or a malformed query, is refused with invalid_version.",
+            "description": "The export version asked for, at most once, in a well-formed query. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). With 4: version 4 when the run also has an entry in the installation's chain of runs, and otherwise what 3 serves: a run recorded before Runner chained its runs has no entry and is unchained. With 5: version 5 when the run also keeps the signature sidecar of its audit record, and otherwise what 4 serves: a run recorded without a signing key, by a Runtime that cannot sign, or before Runner kept the sidecar, is unsigned. Anything else, or a malformed query, is refused with invalid_version.",
             "schema": {
               "type": "integer",
               "enum": [
                 2,
                 3,
-                4
+                4,
+                5
               ],
               "default": 2
             }
@@ -507,6 +508,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/VerificationBundleV4"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VerificationBundleV5"
                     }
                   ]
                 }
@@ -1592,6 +1596,11 @@
             "type": "string",
             "contentEncoding": "base64",
             "description": "The audit record exactly as the Runtime wrote it, without the newline that ends its line, in standard base64: the bytes a digest of the record, such as a gateway receipt's decision.recordDigest, is taken over. audit is the same record parsed, which Runner encodes again with other bytes. Every run Runner now records completed has them: an evaluation whose trail is not that one line, ended by a newline, is refused and its run fails. Absent for a run recorded before Runner kept them, for one Runner 0.4.0 completed without them, and for a run that did not complete. Not in run lists or briefs."
+          },
+          "auditSignatures": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "The signature sidecar of the attempt's audit trail, signatures.jsonl, exactly as the Runtime wrote it, newlines included, in standard base64: the line signing the audit record, when the installation gave the Runtime a signing key (signingKey on the boot line) and it could sign. At most 16 KiB. Absent for a run recorded without a key, by a Runtime that cannot sign, or before Runner kept the sidecar; such a run is unsigned. What it holds is checked only by verify-run --public-key. Not in run lists or briefs."
           },
           "problem": {
             "type": "string"
@@ -3050,7 +3059,7 @@
       },
       "VerificationBundleV4": {
         "type": "object",
-        "description": "Version 4: version 3 with the run's entry in the installation's chain of runs, as chain. Only a completed run that holds its audit record's bytes and has an entry is exported as version 4. verify-run checks that the entry names this run and the SHA-256 of run.auditBytes, and that the checkpoint is the entry's; along a supplied chain and against checkpoints held independently of the operator, it checks the entry's place in the chain. Without a held checkpoint it establishes nothing against the operator, who keeps the chain. Held to 8 MiB beside the run.auditBytes and chain members; the entry is held to 1024 bytes.",
+        "description": "Version 4: version 3 with the run's entry in the installation's chain of runs, as chain. Only a completed run that holds its audit record's bytes and has an entry is exported as version 4. verify-run checks that the entry names this run and the SHA-256 of run.auditBytes, and that the checkpoint is the entry's; along a supplied chain and against checkpoints held independently of the operator, it checks the entry's place in the chain. Without a held checkpoint it establishes nothing against the operator, who keeps the chain. Held to 8 MiB beside the run.auditBytes and chain members; the entry is held to 1024 bytes. It carries no run.auditSignatures, which only version 5 does.",
         "properties": {
           "version": {
             "const": 4
@@ -3071,6 +3080,52 @@
                 "required": [
                   "audit",
                   "auditBytes"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "completed"
+                  }
+                }
+              }
+            ]
+          },
+          "chain": {
+            "$ref": "#/components/schemas/RunChainExport"
+          }
+        },
+        "required": [
+          "version",
+          "releaseDigest",
+          "release",
+          "run",
+          "chain"
+        ],
+        "additionalProperties": false
+      },
+      "VerificationBundleV5": {
+        "type": "object",
+        "description": "Version 5: version 4 with the signature sidecar of the run's audit record, as run.auditSignatures. Only a completed run that has an entry in the installation's chain of runs and keeps a sidecar is exported as version 5. verify-run --public-key checks the record's signature under the key it is given, held first to the key check (no key of small order, no non-canonical encoding), by the Runtime guide's rule with the attempt's one-record trail known; --require-signed refuses a run that no valid signature covers. A valid signature shows only that whoever held the key signed these exact bytes: nothing against the operator, who holds the key, and nothing once the key is copied. Held to 8 MiB beside the run.auditBytes, chain and run.auditSignatures members; the sidecar is held to 16 KiB.",
+        "properties": {
+          "version": {
+            "const": 5
+          },
+          "releaseDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "release": {
+            "$ref": "#/components/schemas/Release"
+          },
+          "run": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Run"
+              },
+              {
+                "required": [
+                  "audit",
+                  "auditBytes",
+                  "auditSignatures"
                 ],
                 "properties": {
                   "state": {

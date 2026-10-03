@@ -36,7 +36,7 @@ var errChainInvalid = errors.New("chain-invalid")
 func checkChain(v runner.VerifiedRun, chainPath string, expect []string, requireWitnessed bool) (*runner.RunChainReport, error) {
 	if _, _, ok := v.ChainEntry(); !ok {
 		if chainPath != "" || len(expect) > 0 || requireWitnessed {
-			return nil, fmt.Errorf("%w: it is version %d. A run recorded before Runner chained its runs has no entry and is unchained, and an export asked for as version 2 or 3 carries none; --chain, --expect and --require-witnessed check a version-4 export", runner.ErrNoChainEntry, v.ExportVersion())
+			return nil, fmt.Errorf("%w: it is version %d. A run recorded before Runner chained its runs has no entry and is unchained, and an export asked for as version 2 or 3 carries none; --chain, --expect and --require-witnessed check a version-4 or version-5 export", runner.ErrNoChainEntry, v.ExportVersion())
 		}
 		return nil, nil
 	}

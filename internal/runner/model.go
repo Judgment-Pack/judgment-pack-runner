@@ -84,7 +84,13 @@ type Run struct {
 	// run Runner now records completed has them; a run recorded before Runner
 	// kept them, or one Runner 0.4.0 completed without them, has none.
 	AuditBytes []byte `json:"auditBytes,omitempty"`
-	Problem    string `json:"problem,omitempty"`
+	// AuditSignatures is the signature sidecar of the attempt's audit trail,
+	// signatures.jsonl, exactly as the Runtime wrote it, newlines included:
+	// the line that signs the record, when the attempt's Runtime was given a
+	// signing key and could sign. A []byte encodes as base64. A run recorded
+	// without a key, or before Runner kept the sidecar, has none.
+	AuditSignatures []byte `json:"auditSignatures,omitempty"`
+	Problem         string `json:"problem,omitempty"`
 }
 type apiError struct {
 	Status        int

@@ -461,10 +461,10 @@ type RunChainReport struct {
 	Witnessed     bool           `json:"witnessed"`
 }
 
-// ChainEntry is a verified version-4 export's entry and its checkpoint, and
-// false for an export of another version, which carries none.
+// ChainEntry is a verified version-4 or version-5 export's entry and its
+// checkpoint, and false for an export of another version, which carries none.
 func (v VerifiedRun) ChainEntry() (ChainEntry, Checkpoint, bool) {
-	if v.bundle.Version != 4 || v.bundle.Chain == nil {
+	if v.bundle.Version < 4 || v.bundle.Chain == nil {
 		return ChainEntry{}, Checkpoint{}, false
 	}
 	e, _ := ParseChainEntry(v.bundle.Chain.Entry)

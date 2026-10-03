@@ -16,7 +16,7 @@ type VerificationBundle struct {
 	Release       Release `json:"release"`
 	Run           Run     `json:"run"`
 	// Chain is the run's entry in the installation's chain of runs, in
-	// version 4 only. It is omitted from versions 2 and 3, which are byte for
+	// versions 4 and 5. It is omitted from versions 2 and 3, which are byte for
 	// byte what they were before it existed.
 	Chain *RunChainExport `json:"chain,omitempty"`
 }
@@ -126,7 +126,7 @@ func (v VerifiedRun) Disposition(ctx context.Context, runtime string) error {
 		return errors.New("this executable is not the Runtime the release froze")
 	}
 	work := filepath.Join(dir, "evaluation")
-	out, _, e := evaluateWith(ctx, bin, b.Release, Input{Facts: prepared.Facts, Evidence: prepared.Evidence}, work, true)
+	out, _, _, e := evaluateWith(ctx, bin, b.Release, Input{Facts: prepared.Facts, Evidence: prepared.Evidence}, work, true, "")
 	if e != nil {
 		return e
 	}
@@ -175,13 +175,16 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if !sameJSON(raw, encode(b)) {
 		return b, prepared, errors.New("verification bundle is not in the runner's own encoding")
 	}
-	if (b.Version != 2 && b.Version != 3 && b.Version != 4) || !validDigest(trustedReleaseDigest) || b.ReleaseDigest != trustedReleaseDigest || releaseDigest(b.Release) != trustedReleaseDigest {
+	if b.Version < 2 || b.Version > 5 || !validDigest(trustedReleaseDigest) || b.ReleaseDigest != trustedReleaseDigest || releaseDigest(b.Release) != trustedReleaseDigest {
 		return b, prepared, errors.New("release does not match the independently trusted digest")
 	}
 	if e = checkAuditBytes(b); e != nil {
 		return b, prepared, e
 	}
 	if e = checkChainEntry(b); e != nil {
+		return b, prepared, e
+	}
+	if e = checkAuditSignatures(b); e != nil {
 		return b, prepared, e
 	}
 	r := b.Run

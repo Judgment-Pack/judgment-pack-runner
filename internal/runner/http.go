@@ -79,7 +79,7 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, bad("not_verified_mapping", "This run does not use mapping v2."))
 			return
 		}
-		if version != 4 {
+		if version < 4 {
 			write(w, 200, verificationExport(release, run, version))
 			return
 		}
@@ -91,6 +91,9 @@ func (s *Service) Handler(token string) http.Handler {
 		if err != nil {
 			failure(w, err)
 			return
+		}
+		if version == 5 {
+			bundle = signedExport(bundle, run)
 		}
 		write(w, 200, bundle)
 	})

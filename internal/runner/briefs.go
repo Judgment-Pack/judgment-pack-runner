@@ -40,8 +40,10 @@ func (s *Service) briefSnapshot(kind, key string) (json.RawMessage, error) {
 		var held map[string]any
 		json.Unmarshal(encode(run), &held)
 		// A brief reads the parsed record. Its bytes add nothing to read, and
-		// would count against the snapshot's limit a second time.
+		// would count against the snapshot's limit a second time; nor does the
+		// record's signature sidecar.
 		delete(held, "auditBytes")
+		delete(held, "auditSignatures")
 		held["input"] = briefInput(run.Input)
 		record["run"] = held
 	}

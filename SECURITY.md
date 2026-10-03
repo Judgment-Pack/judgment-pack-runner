@@ -100,6 +100,19 @@ independently, or when it was made. Nor does it show anything about entries afte
 checkpoint, or about runs that were never recorded: an operator who controls the runner when a
 decision is made controls what it records. Runs recorded before the chain existed have no entry.
 
+**A record signature holds nothing against the operator, who holds the key.** With a signing key,
+the Runtime each run starts signs the run's audit record, and `verify-run --public-key` checks the
+signature by the Runtime guide's rule ([docs/MAPPING-V2.md](docs/MAPPING-V2.md#record-signatures)).
+A valid signature shows that whoever held the key signed these exact bytes as the attempt's record.
+The operator holds the key, and can rewrite a record and sign it again, so against the operator it
+shows nothing; nor after the key is copied or stolen, when its holder can sign what they like. It
+does not show when the record was signed, and it binds nothing but the record: the chain of runs,
+and a checkpoint someone else holds, are what bind a run to the installation's history. Runner
+checks where the key is before it starts. It never reads the key, logs it or keeps its path in the
+store, but the Runtime it starts reads it, and anyone who can run that Runtime as Runner's user can
+sign with it. A run that no valid signature covers is unsigned, never failed, unless
+`--require-signed` asks for one.
+
 **A release whose tests never ran can become a job.** Such a release is labelled `not-run`, never
 passed, and requires explicit review as untested. A release whose tests ran and did not pass cannot.
 An installation can refuse untested releases too, with `requireTestedReleases` on its boot line; it
