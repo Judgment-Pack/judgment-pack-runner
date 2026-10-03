@@ -81,12 +81,13 @@ type exported struct {
 // exportedRunFull is exportedRunIn, with the installation's chain of runs.
 func exportedRunFull(t *testing.T, input runner.Input, profiles []runner.InputProfile, packID, query string) (out exported) {
 	t.Helper()
-	return exportedRunKeyed(t, input, profiles, packID, query, "")
+	return exportedRunKeyed(t, input, profiles, packID, query, "", "")
 }
 
 // exportedRunKeyed is exportedRunFull, with the installation's signing key
-// given, unless it is empty.
-func exportedRunKeyed(t *testing.T, input runner.Input, profiles []runner.InputProfile, packID, query, signingKey string) (out exported) {
+// given, unless it is empty, and the Runtime given, unless it is empty, in
+// place of the Runtime under test.
+func exportedRunKeyed(t *testing.T, input runner.Input, profiles []runner.InputProfile, packID, query, signingKey, runtime string) (out exported) {
 	t.Helper()
 	var bundle map[string]json.RawMessage
 	var digest string
@@ -100,6 +101,9 @@ func exportedRunKeyed(t *testing.T, input runner.Input, profiles []runner.InputP
 	}
 	if err = os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
+	}
+	if runtime != "" {
+		bin = runtime
 	}
 	s, err := runner.Open(runner.Config{Dir: dir, Runtime: bin, Workspace: "test-workspace", Owner: "local-owner", InputProfiles: profiles, SigningKey: signingKey})
 	if err != nil {

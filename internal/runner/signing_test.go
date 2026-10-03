@@ -525,3 +525,61 @@ func TestVersion5CarriesTheSidecarAndNothingElseDoes(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// A sidecar line signing the record, ended by its newline as every line the
+// Runtime writes is, is kept and exported byte for byte, newline included, and
+// verifies as signed. A Runtime that signs is not needed: the test signs the
+// attempt itself, with the guide's first seed, as a Runtime given that key
+// would, so this runs on any Runtime. Without its newline the line would be a
+// torn one, which signs nothing.
+func TestASignatureLineIsKeptWithItsNewline(t *testing.T) {
+	cfg := testConfig(t)
+	log := filepath.Join(t.TempDir(), "signing.log")
+	cfg.Runtime = signingRuntime(t, cfg.Runtime, log)
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	input := caseRun(`{"facts":{"request":{"type":"data-access","completeness":"complete","appropriateness":"pass","embargoedInformationToUnauthorizedRecipients":false}},"evidence":{"intake-form":"present","sponsor-endorsement":"present"}}`)
+	release, err := s.preview(context.Background(), PreviewRequest{Pack: packWithAmpersand(t), Input: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.createJob("Signed here", release.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := s.submit(job.ID, "one", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitRun(t, s, run.ID)
+	sidecar, err := os.ReadFile(filepath.Join(cfg.Dir, "attempts", run.ID, "audit", "signatures.jsonl"))
+	if err != nil || done.State != "completed" {
+		helper, _ := os.ReadFile(log)
+		t.Fatalf("%s %s %v: %s", done.State, done.Problem, err, helper)
+	}
+	if !bytes.HasSuffix(sidecar, []byte("\n")) || bytes.Count(sidecar, []byte("\n")) != 1 || !bytes.Equal(done.AuditSignatures, sidecar) {
+		t.Fatalf("the sidecar's line is not kept exactly, newline included: kept %q, written %q", done.AuditSignatures, sidecar)
+	}
+	h := s.Handler("test")
+	member := []byte(`"auditSignatures":"` + base64.StdEncoding.EncodeToString(sidecar) + `"`)
+	if !bytes.Contains(get(t, h, "/v1/runs/"+run.ID, 200), member) {
+		t.Fatal("the run does not show its sidecar exactly")
+	}
+	v5 := get(t, h, "/v1/runs/"+run.ID+"/verification?version=5", 200)
+	if !bytes.Contains(v5, member) {
+		t.Fatal("version 5 does not carry the sidecar exactly")
+	}
+	verified, err := VerifyInputs(v5, nil, releaseDigest(release))
+	if err != nil || verified.ExportVersion() != 5 || !bytes.Equal(verified.Signatures(), sidecar) {
+		t.Fatal(err)
+	}
+	if r := verified.CheckSignature(mustKey(t, vectorKey1)); r.Status != SignatureSigned || r.ReadableLines != 1 || r.UnreadableLines != 0 || r.FindingsTotal != 0 {
+		t.Fatalf("%+v", r)
+	}
+	if r := verified.CheckSignature(mustKey(t, vectorKey2)); r.Status != SignatureInvalid {
+		t.Fatalf("%+v", r)
+	}
+}

@@ -247,7 +247,7 @@ func TestVerifyRunChecksARunTheRuntimeSigned(t *testing.T) {
 	if err = os.WriteFile(key, []byte(seed1+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	e := exportedRunKeyed(t, caseInput(`{"facts":{"request":{"type":"data-access","completeness":"complete","appropriateness":"pass","embargoedInformationToUnauthorizedRecipients":false}},"evidence":{"intake-form":"present","sponsor-endorsement":"present"}}`), nil, "", "?version=5", key)
+	e := exportedRunKeyed(t, caseInput(`{"facts":{"request":{"type":"data-access","completeness":"complete","appropriateness":"pass","embargoedInformationToUnauthorizedRecipients":false}},"evidence":{"intake-form":"present","sponsor-endorsement":"present"}}`), nil, "", "?version=5", key, "")
 	runtime, err := os.ReadFile(os.Getenv("JPACK_TEST_BIN"))
 	if err != nil {
 		t.Fatal(err)

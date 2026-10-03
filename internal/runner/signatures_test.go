@@ -166,6 +166,18 @@ func TestAPublicKeyIsHeldToTheKeyCheck(t *testing.T) {
 	}
 }
 
+// escapeEach is line with each of the pairs' first text replaced by its second,
+// once, and every one of them found.
+func escapeEach(line string, pairs ...string) string {
+	for i := 0; i < len(pairs); i += 2 {
+		if !strings.Contains(line, pairs[i]) {
+			panic("the fixture does not hold " + pairs[i])
+		}
+		line = strings.Replace(line, pairs[i], pairs[i+1], 1)
+	}
+	return line
+}
+
 // A sidecar line is read by the rule: one JSON object of exactly the seven
 // members, each once and of its form, whatever its whitespace and escapes,
 // with names and strings read as JSON decodes them, and at most 4096 bytes.
@@ -179,8 +191,13 @@ func TestASidecarLineIsReadByTheRule(t *testing.T) {
 	}{
 		"as written":                     {vectorLine1, true},
 		"spaced":                         {strings.ReplaceAll(strings.ReplaceAll(vectorLine1, `":`, `" : `), `,"`, ` , "`), true},
-		"a name escaped":                 {strings.Replace(vectorLine1, `"kind"`, `"kind"`, 1), true},
-		"a value escaped":                {strings.Replace(vectorLine1, `"trail":"00`, `"trail":"00`, 1), true},
+		"a name escaped":                 {strings.Replace(vectorLine1, `"kind"`, `"\u006bind"`, 1), true},
+		"every name escaped":             {escapeEach(vectorLine1, `"keyId"`, `"\u006beyId"`, `"kind"`, `"\u006bind"`, `"record"`, `"\u0072ecord"`, `"sequence"`, `"\u0073equence"`, `"sidecarVersion"`, `"\u0073idecarVersion"`, `"signature"`, `"\u0073ignature"`, `"trail"`, `"\u0074rail"`), true},
+		"a value escaped":                {strings.Replace(vectorLine1, `"trail":"00`, `"trail":"\u00300`, 1), true},
+		"every value escaped":            {escapeEach(vectorLine1, `"21fe`, `"\u0032\u0031fe`, `"record-signature"`, `"\u0072ecord-signature"`, `"sha256:`, `"\u0073ha256:`, `"sidecarVersion":"1"`, `"sidecarVersion":"\u0031"`, `"signature":"be`, `"signature":"\u0062e`, `"trail":"00`, `"trail":"\u00300`), true},
+		"a value escaped out of form":    {strings.Replace(vectorLine1, `"sidecarVersion":"1"`, `"sidecarVersion":"\u0032"`, 1), false},
+		"an escape to an uppercase hex":  {strings.Replace(vectorLine1, `"signature":"be`, `"signature":"\u0042e`, 1), false},
+		"a name given twice, escaped":    {strings.Replace(vectorLine1, `"kind":"record-signature",`, `"kind":"record-signature","\u006bind":"record-signature",`, 1), false},
 		"of exactly 4096 bytes":          {padded, true},
 		"of 4097 bytes":                  {strings.Replace(padded, `{`, `{ `, 1), false},
 		"a name given twice":             {strings.Replace(vectorLine1, `"kind":"record-signature",`, `"kind":"record-signature","kind":"record-signature",`, 1), false},
@@ -200,6 +217,9 @@ func TestASidecarLineIsReadByTheRule(t *testing.T) {
 		"two objects":                    {vectorLine1 + vectorLine1, false},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if strings.Contains(name, "escape") && !strings.Contains(c.line, `\u00`) {
+				t.Fatal("the fixture holds no escape")
+			}
 			_, readable := readSidecarLine([]byte(c.line))
 			got := checkSignatures(one, []byte(c.line+"\n"), key)
 			if readable != c.signed || (got.through == 1) != c.signed || got.total != 0 || got.readable+got.unreadable != 1 {
