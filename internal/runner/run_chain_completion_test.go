@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // wrappedRuntime is an executable that runs the Runtime at real and then
@@ -134,4 +135,70 @@ func TestACompletionWithoutTheRecordsBytesIsNotRecorded(t *testing.T) {
 		t.Fatal(got.State, e)
 	}
 	holdChain(t, s, []string{run}, func(string) []byte { return record })
+}
+
+// A completion whose entry cannot be appended is not recorded. Here the store
+// refuses the entry, through a trigger, after the Runtime evaluated the run:
+// the run is left as the dispatcher last saved it, running, with no entry, and
+// the dispatcher stops, as on any storage error. After a restart the run reads
+// interrupted, and the next completed run's entry follows the last one, with
+// no sequence skipped.
+func TestAFailedAppendRecordsNoCompletion(t *testing.T) {
+	cfg := testConfig(t)
+	s, e := Open(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer func() { s.Close() }()
+	release := testRelease(t, s)
+	job, e := s.createJob("Refused", release.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	first, _, e := s.submit(job.ID, "first", sample())
+	if e != nil {
+		t.Fatal(e)
+	}
+	if done := waitRun(t, s, first.ID); done.State != "completed" {
+		t.Fatal(done.State, done.Problem)
+	}
+	if _, e = s.db.Exec(`CREATE TRIGGER refuse_entry BEFORE INSERT ON run_chain BEGIN SELECT RAISE(ABORT, 'the test refuses this entry'); END`); e != nil {
+		t.Fatal(e)
+	}
+	refused, _, e := s.submit(job.ID, "refused", sample())
+	if e != nil {
+		t.Fatal(e)
+	}
+	select {
+	case <-s.done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the dispatcher did not stop when the append failed")
+	}
+	if got, e := s.run(refused.ID); e != nil || got.State != "running" || got.AuditBytes != nil {
+		t.Fatalf("a completion was recorded without its entry: state=%s auditBytes=%d %v", got.State, len(got.AuditBytes), e)
+	}
+	if _, chained, e := s.runEntrySequence(refused.ID); e != nil || chained {
+		t.Fatal("the refused entry was written", e)
+	}
+	if !s.unhealthy.Load() {
+		t.Fatal("the runner does not say it is unhealthy")
+	}
+	if _, e = s.db.Exec("DROP TRIGGER refuse_entry"); e != nil {
+		t.Fatal(e)
+	}
+	s.Close()
+	if s, e = Open(cfg); e != nil {
+		t.Fatal(e)
+	}
+	if got, e := s.run(refused.ID); e != nil || got.State != "interrupted" || got.AuditBytes != nil {
+		t.Fatal("after a restart the run does not read interrupted:", got.State, e)
+	}
+	after, _, e := s.submit(job.ID, "after", sample())
+	if e != nil {
+		t.Fatal(e)
+	}
+	if done := waitRun(t, s, after.ID); done.State != "completed" {
+		t.Fatal(done.State, done.Problem)
+	}
+	holdChain(t, s, []string{first.ID, after.ID}, func(run string) []byte { return trailLine(t, cfg.Dir, run) })
 }

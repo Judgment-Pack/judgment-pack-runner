@@ -324,6 +324,14 @@ func TestConcurrentAppendsNeitherRepeatNorSkip(t *testing.T) {
 	if e := appendEntry(s, runs[0], records[runs[0]]); e == nil {
 		t.Fatal("a run was given a second entry")
 	}
+	// The sequence is the table's key, a guard beside the serialized appends:
+	// the store refuses a second row at a sequence, and one before the first,
+	// whatever writes it.
+	for _, sequence := range []int64{1, 0} {
+		if _, e := s.db.Exec("INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)", sequence, "run_"+strings.Repeat("f", 32), []byte("{}")); e == nil {
+			t.Fatal("the store holds a row at sequence", sequence)
+		}
+	}
 }
 
 // The chain is served whole, in order, however many pages it takes.
