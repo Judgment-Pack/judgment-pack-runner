@@ -36,6 +36,9 @@ jobs:
       # A commit is pinned and not a tag, since a commit cannot come to name
       # other code. The name after it is the release the commit was taken
       # from when the pin was set: whoever moves one moves the other.
+      # TestTheRuntimesVerifierReadsTheChainOfRuns skips under this pin, which
+      # has no `jpack audit verify`: move the pin to the first Runtime release
+      # that chains its trail, and see that the test runs (#35).
       - name: Check out tested Runtime
         uses: actions/checkout@v4
         with:

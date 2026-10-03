@@ -255,7 +255,7 @@ func fixtureStore(t *testing.T, export []byte) (Config, VerificationBundle) {
 }
 
 // A run recorded before Runner kept the record's bytes has none to give. Asked
-// for version 3, its export is version 2, byte for byte the export an earlier
+// for version 3 or 4, its export is version 2, byte for byte the export an earlier
 // Runner made of it: one before calculators, and one at the commit before this
 // change, whose record holds an & that the export escapes.
 func TestARunRecordedBeforeExactBytesExportsVersion2Unchanged(t *testing.T) {
@@ -278,7 +278,7 @@ func TestARunRecordedBeforeExactBytesExportsVersion2Unchanged(t *testing.T) {
 			}
 			defer s.Close()
 			h := s.Handler("test")
-			for _, query := range []string{"", "?version=2", "?version=3"} {
+			for _, query := range []string{"", "?version=2", "?version=3", "?version=4"} {
 				if got := get(t, h, "/v1/runs/"+b.Run.ID+"/verification"+query, 200); !bytes.Equal(got, export) {
 					t.Fatalf("the export asked for with %q differs from the earlier Runner's", query)
 				}
@@ -402,7 +402,8 @@ func TestVerifyHoldsTheRecordToItsBytes(t *testing.T) {
 		"none in version 3":  {func(b *VerificationBundle) { b.Run.AuditBytes = nil }, noLine},
 		"a failed run":       {func(b *VerificationBundle) { b.Run.State = "failed" }, noLine},
 		"in version 2":       {func(b *VerificationBundle) { b.Version = 2 }, "a version-2 export carries no original bytes of the audit record"},
-		"in version 4":       {func(b *VerificationBundle) { b.Version = 4 }, "release does not match the independently trusted digest"},
+		"in version 4":       {func(b *VerificationBundle) { b.Version = 4 }, "a version-4 export carries its run's entry in the installation's chain of runs"},
+		"in version 5":       {func(b *VerificationBundle) { b.Version = 5 }, "release does not match the independently trusted digest"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := bundle
@@ -469,7 +470,7 @@ func beforeExactBytes(t *testing.T) (export, line []byte, release string, profil
 
 // The version asked for is read from a query parsed strictly: a malformed
 // query, whose entries a lenient reader would drop, is refused, as is a version
-// asked for twice or one that is not 2 or 3.
+// asked for twice or one that is not 2, 3 or 4.
 func TestAnExportVersionIsAskedForOnceInAWellFormedQuery(t *testing.T) {
 	export, _, _, _ := beforeExactBytes(t)
 	cfg, b := fixtureStore(t, export)
@@ -480,10 +481,10 @@ func TestAnExportVersionIsAskedForOnceInAWellFormedQuery(t *testing.T) {
 	defer s.Close()
 	h := s.Handler("test")
 	path := "/v1/runs/" + b.Run.ID + "/verification"
-	for _, query := range []string{"", "?version=2", "?version=3", "?other=1"} {
+	for _, query := range []string{"", "?version=2", "?version=3", "?version=4", "?other=1"} {
 		get(t, h, path+query, 200)
 	}
-	for _, query := range []string{"?version=4", "?version=", "?version=3&version=3", "?version=03", "?version=%ZZ", "?version=2&version=%ZZ", "?version=3;bad", "?other=%ZZ"} {
+	for _, query := range []string{"?version=5", "?version=1", "?version=", "?version=3&version=3", "?version=4&version=4", "?version=03", "?version=04", "?version=%ZZ", "?version=2&version=%ZZ", "?version=3;bad", "?other=%ZZ"} {
 		if got := get(t, h, path+query, 400); !bytes.Contains(got, []byte(`"invalid_version"`)) {
 			t.Fatal(query, string(got))
 		}

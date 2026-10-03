@@ -62,6 +62,25 @@ func exportedRunAs(t *testing.T, kase, packID, query string) (bundle map[string]
 // and returned line.
 func exportedRunIn(t *testing.T, input runner.Input, profiles []runner.InputProfile, packID, query string) (bundle map[string]json.RawMessage, digest string, line []byte) {
 	t.Helper()
+	e := exportedRunFull(t, input, profiles, packID, query)
+	return e.bundle, e.digest, e.line
+}
+
+// exported is one completed run's verification export, its trusted release
+// digest, the record's line its attempt's audit trail holds, and the
+// installation's chain of runs as GET /v1/run-chain served it after the run.
+type exported struct {
+	bundle map[string]json.RawMessage
+	digest string
+	line   []byte
+	chain  []byte
+}
+
+// exportedRunFull is exportedRunIn, with the installation's chain of runs.
+func exportedRunFull(t *testing.T, input runner.Input, profiles []runner.InputProfile, packID, query string) (out exported) {
+	t.Helper()
+	var bundle map[string]json.RawMessage
+	var digest string
 	bin := os.Getenv("JPACK_TEST_BIN")
 	if bin == "" {
 		t.Skip("set JPACK_TEST_BIN to exercise the real Runtime contract")
@@ -127,7 +146,7 @@ func exportedRunIn(t *testing.T, input runner.Input, profiles []runner.InputProf
 	if err != nil {
 		t.Fatal(err)
 	}
-	return bundle, digest, bytes.TrimSuffix(trail, []byte("\n"))
+	return exported{bundle, digest, bytes.TrimSuffix(trail, []byte("\n")), call("GET", "/v1/run-chain", nil, "", 200)}
 }
 
 // verify runs the command on an export, as an operator would, with no trusted

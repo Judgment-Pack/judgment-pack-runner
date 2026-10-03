@@ -1,10 +1,12 @@
 package runner
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -55,6 +57,15 @@ func (s *Service) Handler(token string) http.Handler {
 			return
 		}
 		run, err := s.run(r.PathValue("run"))
+		if errors.Is(err, sql.ErrNoRows) {
+			// A run the store no longer holds keeps its entry in the chain,
+			// which still names it: say so, rather than that it never existed.
+			if sequence, chained, e := s.runEntrySequence(r.PathValue("run")); e != nil {
+				err = e
+			} else if chained {
+				err = &apiError{410, "run_not_held", fmt.Sprintf("This run was recorded at sequence %d of the installation's chain of runs, and the store no longer holds it.", sequence)}
+			}
+		}
 		if err != nil {
 			failure(w, err)
 			return
@@ -68,8 +79,22 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, bad("not_verified_mapping", "This run does not use mapping v2."))
 			return
 		}
-		write(w, 200, verificationExport(release, run, version))
+		if version != 4 {
+			write(w, 200, verificationExport(release, run, version))
+			return
+		}
+		entry, err := s.runEntry(run.ID)
+		var bundle VerificationBundle
+		if err == nil {
+			bundle, err = chainedExport(release, run, entry)
+		}
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		write(w, 200, bundle)
 	})
+	mux.HandleFunc("GET /v1/run-chain", s.runChainHandler)
 	mux.HandleFunc("GET /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("POST /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
@@ -227,4 +252,38 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string)
 		return
 	}
 	write(w, 200, map[string]any{"items": items, "next": next})
+}
+
+// runChainHandler serves the installation's chain of runs: every entry's line,
+// exactly as stored, each ended by a newline, in sequence order. That is a
+// trail file as the Runtime reads one, which verify-run --chain reads too. It
+// is read in pages, so a slow reader never holds the store's one connection.
+// Rows are only ever appended, so the answer is the chain as it stood at some
+// moment during the reading. A page that cannot be read after the answer has
+// begun aborts it, so a reader sees a failed transfer, never a shorter chain.
+func (s *Service) runChainHandler(w http.ResponseWriter, r *http.Request) {
+	const page = 1000
+	lines, last, err := s.chainPage(0, page)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/jsonl")
+	w.WriteHeader(200)
+	for {
+		var out bytes.Buffer
+		for _, line := range lines {
+			out.Write(line)
+			out.WriteByte('\n')
+		}
+		if _, err = w.Write(out.Bytes()); err != nil {
+			return
+		}
+		if len(lines) < page {
+			return
+		}
+		if lines, last, err = s.chainPage(last, page); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+	}
 }

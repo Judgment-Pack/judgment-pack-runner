@@ -119,6 +119,9 @@ func Open(cfg Config) (_ *Service, err error) {
 	if _, err = s.db.Exec(triggerSchema); err != nil {
 		return nil, err
 	}
+	if _, err = s.db.Exec(runChainSchema); err != nil {
+		return nil, err
+	}
 	for k, v := range map[string]string{"schema": "1", "workspace": cfg.Workspace, "owner": cfg.Owner, "inputRoot": cfg.InputRoot} {
 		if _, err = s.db.Exec("INSERT OR IGNORE INTO metadata VALUES (?,?)", k, v); err != nil {
 			return nil, err
@@ -488,7 +491,10 @@ func (s *Service) worker(ctx context.Context) {
 				r.Problem = "The runner stopped during evaluation. This run was not automatically repeated."
 			}
 		}
-		if s.saveRun(r) != nil {
+		// A completed run is recorded with its entry in the installation's
+		// chain of runs, or not at all: a failed append stops the dispatcher as
+		// any storage error does, and the run reads interrupted after a restart.
+		if s.finishRun(r) != nil {
 			return
 		}
 	}

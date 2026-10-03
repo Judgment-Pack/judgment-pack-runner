@@ -330,6 +330,14 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 	if err != nil {
 		return nil, nil, errors.New("operational audit record could not be read")
 	}
+	// The record's line, exactly, is what a digest of the record and the run's
+	// entry in the installation's chain of runs are taken over. A trail that is
+	// not that one line, ended by a newline, still parses, but no line of it is
+	// the record: the evaluation is refused, and its run is not completed
+	// without them.
+	if recordLine(audit) == nil {
+		return nil, nil, errors.New("operational audit record is not one line ended by a newline, so its exact bytes cannot be kept")
+	}
 	var record struct {
 		Version string `json:"recordVersion"`
 		Kind    string `json:"kind"`

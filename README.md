@@ -214,6 +214,17 @@ to the exported record and reports their SHA-256. That shows they are the bytes 
 Runtime wrote for this run only when compared with a digest held independently, such
 as a gateway receipt's. Of version 2 it says that exact-byte checks were not possible.
 
+Runner keeps a chain of its completed runs, by the Runtime's chain rules (ADR-0047):
+each entry binds a run's id to the SHA-256 of its audit record's exact bytes, and
+links to the entry before it. Version 4 of the export (`?version=4`) adds the run's
+entry and its checkpoint, and `GET /v1/run-chain` serves the whole chain.
+`verify-run --chain` and `--expect` check the entry along the chain and against
+checkpoints a holder kept. The operator keeps the store and the chain, so without a
+checkpoint held independently of the operator this establishes nothing against them,
+and `verify-run` says so. Runs recorded before this release have no entry: they are
+unchained. The [chain's design and limits](docs/MAPPING-V2.md#the-installations-chain-of-runs)
+are with the rest of the v2 contract.
+
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
 `/v1/inputs/next` planner. Supply trusted installation profiles with Desk's
@@ -243,7 +254,8 @@ stored by Desk, outside Runner's job/run records.
 ## API
 
 See [the HTTP contract](openapi.json). Desk exposes each `/v1/<suffix>` operation at
-`/api/operations/<suffix>` with its existing authenticated bearer. There is no secret
+`/api/operations/<suffix>` with its existing authenticated bearer, except
+`/v1/run-chain`, which it does not pass through yet. There is no secret
 in the URL. Example, with environment variables populated privately by the caller:
 
 ```sh
@@ -272,10 +284,14 @@ SQLite uses WAL and synchronous FULL. The queued record includes the immutable
 release ID and input snapshot. Immutable, here and wherever this README and the API
 use the word, means Runner offers no operation that changes the thing: a release,
 a recorded operation request. It is not protection against whoever can change the
-store, and nothing makes a release or a run tamper-evident to that person. A run
-whose inputs were all asserted can be rewritten consistently and still pass
-`verify-run` (#24). Before invoking Runtime, the dispatcher persists
-`running`. Each run has a unique private attempt directory and one attempt in this
+store, and nothing makes a release or a run tamper-evident to that person, except
+against a checkpoint of the installation's chain of runs that someone else holds: a
+run's audit record, whose digest an entry names, then cannot be changed, nor its
+entry moved or removed, without `verify-run --chain --expect` failing against that
+checkpoint. A run whose inputs were all asserted can be rewritten consistently and
+still pass `verify-run` (#24), unless the verifier holds such a checkpoint, made
+before the rewrite and covering the run's entry: the audit record holds those
+inputs. Before invoking Runtime, the dispatcher persists `running`. Each run has a unique private attempt directory and one attempt in this
 pilot. The non-rehearsal call records to that directory's Runtime audit trail.
 Completed means the response and single audit record agree on pack, inputs,
 disposition, reviewed set and the supported contract. Reject, unresolved and
@@ -303,7 +319,10 @@ stop Desk and the runner, then copy the entire Jobs workspace directory, includi
 SQLite database, any WAL files, pinned runtimes, releases and attempts. Restore the
 entire directory with its private permissions in the same installation/project scope.
 Do not copy a live SQLite file by itself. Retention/deletion and hosted backup are
-not implemented yet; plan disk capacity before sustained use.
+not implemented yet; plan disk capacity before sustained use. The installation's chain
+of runs is in the SQLite database too, and is backed up and restored with it. A
+restored older copy rolls the chain back with the runs: a checkpoint someone else
+holds from after the copy is what shows it.
 
 ## Verification
 
