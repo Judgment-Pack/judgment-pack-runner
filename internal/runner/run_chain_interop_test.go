@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -20,16 +21,78 @@ import (
 // and do not chain their trail: under them the test skips, and it runs in CI
 // once CI pins a Runtime release that does (#35).
 
-// auditVerifyTakesATrail says whether the Runtime at bin has `jpack audit
-// verify` with --trail and --expect. A Runtime without it answers its root
-// help instead, which names neither.
-func auditVerifyTakesATrail(t *testing.T, bin string) bool {
-	t.Helper()
-	cmd := exec.Command(bin, "audit", "verify", "--help")
+// pinnedRuntime is the Runtime executable a release's runs execute: Runner's
+// pinned copy, named by the release's digest of it. A Runtime under test that
+// cannot itself be executed, such as one of mode 0600, still runs as that copy.
+func pinnedRuntime(s *Service, release Release) string {
+	return filepath.Join(s.cfg.Dir, "runtimes", strings.TrimPrefix(release.RuntimeDigest, "sha256:"))
+}
+
+// absentAnswers are the messages with which a Runtime answers an invocation of
+// a command or flag it does not have. The Runtime passes its command parser's
+// message on as the one diagnostic of an invocation error: code
+// JPS-INVOCATION-ARGUMENTS, exit status 3. Runtime 0.24.0 and 0.25.0 answer
+// the probe with "unknown flag: --trail", since flags are read before the
+// command they have no `audit verify` for.
+var absentAnswers = []string{
+	"unknown flag: --trail",
+	"unknown flag: --expect",
+	`unknown command "audit" for "jpack"`,
+	`unknown command "verify" for "jpack audit"`,
+}
+
+// probeAuditVerify asks the Runtime at bin to verify a chain of one entry
+// against that entry's checkpoint, with `jpack audit verify --trail --expect
+// --format json`. It answers "" when the Runtime verifies it. It answers the
+// Runtime's own words when the Runtime says, as an invocation error and in
+// nothing else, that it has no such command or flag. Anything else is an
+// error: a Runtime that could not be run, or that failed otherwise, is never
+// taken for one without the command.
+func probeAuditVerify(bin, dir string) (string, error) {
+	line := entryLine(strings.Repeat("a", 32), 1, emptyDigest, "run_"+strings.Repeat("b", 32), emptyDigest)
+	checkpoint, err := checkpointOf(line)
+	if err != nil {
+		return "", err
+	}
+	trail, held := filepath.Join(dir, "probe-chain.jsonl"), filepath.Join(dir, "probe-held.jsonl")
+	if err = os.WriteFile(trail, joinLines(line), 0600); err != nil {
+		return "", err
+	}
+	if err = os.WriteFile(held, joinLines(encode(checkpoint)), 0600); err != nil {
+		return "", err
+	}
+	cmd := exec.Command(bin, "audit", "verify", "--trail", trail, "--expect", held, "--format", "json")
 	cmd.Env = []string{"LANG=C", "LC_ALL=C"}
-	cmd.Dir = t.TempDir()
-	out, _ := cmd.CombinedOutput()
-	return bytes.Contains(out, []byte("--trail string")) && bytes.Contains(out, []byte("--expect stringArray"))
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	ran := cmd.Run()
+	var exit *exec.ExitError
+	if ran != nil && !errors.As(ran, &exit) {
+		return "", fmt.Errorf("the Runtime could not be run: %w", ran)
+	}
+	var answer struct {
+		Command     string `json:"command"`
+		Status      string `json:"status"`
+		Scope       string `json:"scope"`
+		Diagnostics []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"diagnostics"`
+	}
+	if err = json.Unmarshal(stdout.Bytes(), &answer); err != nil {
+		return "", fmt.Errorf("the Runtime's answer (%v) is not a JSON report: %s %s", ran, stdout.Bytes(), stderr.Bytes())
+	}
+	if ran == nil {
+		if answer.Command == "audit verify" && answer.Status == "valid" && answer.Scope == "checkpoint" {
+			return "", nil
+		}
+		return "", fmt.Errorf("the Runtime did not verify a chain of one entry against its checkpoint: %s", stdout.Bytes())
+	}
+	if exit.ExitCode() == 3 && answer.Status == "error" && len(answer.Diagnostics) == 1 && answer.Diagnostics[0].Code == "JPS-INVOCATION-ARGUMENTS" && slices.Contains(absentAnswers, answer.Diagnostics[0].Message) {
+		return answer.Diagnostics[0].Message, nil
+	}
+	return "", fmt.Errorf("the Runtime failed (%v) otherwise than for an unknown command or flag: %s %s", ran, stdout.Bytes(), stderr.Bytes())
 }
 
 // auditVerifyReport is what the test reads of `jpack audit verify --format
@@ -118,11 +181,6 @@ func relinked(entries ...ChainEntry) []byte {
 // Runtime's verifier names the record in the attempt's own trail.
 func TestTheRuntimesVerifierReadsTheChainOfRuns(t *testing.T) {
 	cfg := testConfig(t)
-	if !auditVerifyTakesATrail(t, cfg.Runtime) {
-		t.Skip("the Runtime under test (JPACK_TEST_BIN) has no `jpack audit verify --trail --expect`, as Runtime 0.25.0 and earlier have not: " +
-			"this test needs a Runtime that chains its trail (runtime #206 to #209), and runs in CI once CI pins a Runtime release that does (runner #35)")
-	}
-	bin := cfg.Runtime
 	s, e := Open(cfg)
 	if e != nil {
 		t.Fatal(e)
@@ -133,6 +191,16 @@ func TestTheRuntimesVerifierReadsTheChainOfRuns(t *testing.T) {
 	release, e := s.preview(context.Background(), PreviewRequest{Pack: packWithAmpersand(t), Input: input})
 	if e != nil {
 		t.Fatal(e)
+	}
+	// The Runtime asked is the one the runs execute: Runner's pinned copy.
+	bin := pinnedRuntime(s, release)
+	absent, e := probeAuditVerify(bin, t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	if absent != "" {
+		t.Skipf("the Runtime under test answers `jpack audit verify --trail --expect` with %q: it has no such command, as Runtime 0.25.0 and earlier have not. "+
+			"This test needs a Runtime that chains its trail (runtime #206 to #209), and runs in CI once CI pins a Runtime release that does (runner #35)", absent)
 	}
 	job, e := s.createJob("Interoperable", release.ID)
 	if e != nil {
@@ -242,6 +310,80 @@ func TestTheRuntimesVerifierReadsTheChainOfRuns(t *testing.T) {
 			}
 			if names := got.findings(); !slices.Equal(names, want.findings) {
 				t.Fatalf("findings %v, not %v", names, want.findings)
+			}
+		})
+	}
+}
+
+// The probe asks the Runtime the runs execute, and takes only the Runtime's
+// own answer for an unknown command or flag as the command's absence. A copy
+// of the Runtime under test of mode 0600, which cannot be executed, fails the
+// probe, and is never taken for a Runtime without the command; Runner runs its
+// pinned copy of that file, and the probe of that copy answers as the probe of
+// the Runtime under test's pinned copy does. A Runtime that fails otherwise
+// fails the probe.
+func TestTheAuditVerifyProbeTakesOnlyTheRuntimesAnswerForAbsence(t *testing.T) {
+	answerOf := func(cfg Config) string {
+		t.Helper()
+		s, e := Open(cfg)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer s.Close()
+		release := testRelease(t, s)
+		absent, e := probeAuditVerify(pinnedRuntime(s, release), t.TempDir())
+		if e != nil {
+			t.Fatal(e)
+		}
+		return absent
+	}
+	cfg := testConfig(t)
+	want := answerOf(cfg)
+	b, e := os.ReadFile(cfg.Runtime)
+	if e != nil {
+		t.Fatal(e)
+	}
+	unrunnable := filepath.Join(t.TempDir(), "jpack")
+	if e = os.WriteFile(unrunnable, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if absent, e := probeAuditVerify(unrunnable, t.TempDir()); e == nil || !strings.Contains(e.Error(), "could not be run") {
+		t.Fatalf("a Runtime that cannot be run was not refused: absent=%q %v", absent, e)
+	}
+	again := testConfig(t)
+	again.Runtime = unrunnable
+	if got := answerOf(again); got != want {
+		t.Fatalf("the pinned copy of the Runtime of mode 0600 answers %q, not %q", got, want)
+	}
+
+	released := `{"outputVersion":"2","tool":{"name":"jpack","version":"0.25.0"},"command":"jpack","status":"error","diagnostics":[{"code":"JPS-INVOCATION-ARGUMENTS","codeStability":"provisional","layer":"operation","severity":"error","instancePath":"","message":"unknown flag: --trail"}]}`
+	for name, c := range map[string]struct {
+		answer string
+		status int
+		absent string
+	}{
+		"as Runtime 0.24.0 and 0.25.0 answer":      {released, 3, "unknown flag: --trail"},
+		"without the audit command":                {strings.Replace(released, "unknown flag: --trail", `unknown command \"audit\" for \"jpack\"`, 1), 3, `unknown command "audit" for "jpack"`},
+		"for another flag":                         {strings.Replace(released, "--trail", "--format", 1), 3, ""},
+		"for an unknown flag, with another status": {released, 1, ""},
+		"for another invocation error":             {strings.Replace(released, "JPS-INVOCATION-ARGUMENTS", "JPS-INVOCATION-INPUT", 1), 3, ""},
+		"for a trail it could not read":            {`{"command":"audit verify","status":"error","diagnostics":[{"code":"JPS-AUDIT-IO","message":"the trail could not be read"}]}`, 1, ""},
+		"with no report":                           {"", 1, ""},
+		"with a report of an invalid chain":        {`{"command":"audit verify","status":"invalid","scope":"checkpoint"}`, 1, ""},
+		"with a report that is not of the chain":   {`{"command":"audit verify","status":"valid","scope":"one-supplied-chain"}`, 0, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			runtime := filepath.Join(t.TempDir(), "answering-runtime")
+			script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' '%s'\nexit %d\n", c.answer, c.status)
+			if e := os.WriteFile(runtime, []byte(script), 0700); e != nil {
+				t.Fatal(e)
+			}
+			absent, e := probeAuditVerify(runtime, t.TempDir())
+			if c.absent != "" && (e != nil || absent != c.absent) {
+				t.Fatalf("the Runtime's answer for an unknown command or flag was not taken: %q %v", absent, e)
+			}
+			if c.absent == "" && e == nil {
+				t.Fatalf("a Runtime that failed otherwise was taken for one without the command: %q", absent)
 			}
 		})
 	}
