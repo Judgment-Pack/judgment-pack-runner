@@ -78,7 +78,8 @@ Desk resumes queued work and marks previously running work interrupted. A shut d
 computer does not execute jobs. This is not a hosted scheduler or a Vercel function.
 
 The executable receives one bounded JSON boot line on stdin with `dir`, `runtime`,
-`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, and `requireTestedReleases` ([below](#release-readiness)). It binds an ephemeral IPv4 loopback port,
+`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, `requireTestedReleases` ([below](#release-readiness)), and an absolute `signingKey`
+([below](#verified-mapping-v2-runner-and-desk)). It binds an ephemeral IPv4 loopback port,
 prints `{"protocol":"jobs/1","url":"http://127.0.0.1:..."}`, and stays alive until
 stdin closes. The bearer is never printed, passed in argv, read from a project file,
 or sent to the browser. Desk selects the workspace and stable installation owner.
@@ -225,6 +226,21 @@ and `verify-run` says so. Runs recorded before this release have no entry: they 
 unchained. The [chain's design and limits](docs/MAPPING-V2.md#the-installations-chain-of-runs)
 are with the rest of the v2 contract.
 
+With a signing key, the Runtime each run starts signs the run's audit record
+(ADR-0047 §2b). The boot line's `signingKey` names an Ed25519 seed by its absolute
+real path, outside Runner's state directory, readable and writable by its owner
+alone. Runner checks where the key is and refuses to start otherwise; it never reads
+the key, and passes its path to each run's Runtime as `JPACK_SIGNING_KEY`. A Runtime
+that signs (after 0.25.0) writes a line signing the record to a sidecar beside its
+trail, and Runner keeps the sidecar exactly, with the run. Version 5 of the export
+(`?version=5`) adds it. `verify-run --public-key <hex>` checks it by the Runtime
+guide's rule, and `--require-signed` refuses a run that no valid signature covers. A
+signature shows only that whoever held the key signed these exact bytes. It
+establishes nothing against the operator, who holds the key, and nothing once the
+key is copied. Runtime 0.25.0 and earlier cannot sign, so their runs are unsigned, as
+are runs recorded without a key. The [details](docs/MAPPING-V2.md#record-signatures)
+are with the rest of the v2 contract.
+
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
 `/v1/inputs/next` planner. Supply trusted installation profiles with Desk's
@@ -291,7 +307,8 @@ entry moved or removed, without `verify-run --chain --expect` failing against th
 checkpoint. A run whose inputs were all asserted can be rewritten consistently and
 still pass `verify-run` (#24), unless the verifier holds such a checkpoint, made
 before the rewrite and covering the run's entry: the audit record holds those
-inputs. Before invoking Runtime, the dispatcher persists `running`. Each run has a unique private attempt directory and one attempt in this
+inputs. A record signature does not change this: the operator holds the key.
+Before invoking Runtime, the dispatcher persists `running`. Each run has a unique private attempt directory and one attempt in this
 pilot. The non-rehearsal call records to that directory's Runtime audit trail.
 Completed means the response and single audit record agree on pack, inputs,
 disposition, reviewed set and the supported contract. Reject, unresolved and
@@ -320,7 +337,9 @@ SQLite database, any WAL files, pinned runtimes, releases and attempts. Restore 
 entire directory with its private permissions in the same installation/project scope.
 Do not copy a live SQLite file by itself. Retention/deletion and hosted backup are
 not implemented yet; plan disk capacity before sustained use. The installation's chain
-of runs is in the SQLite database too, and is backed up and restored with it. A
+of runs is in the SQLite database too, and is backed up and restored with it, as are
+the record signatures runs keep. The signing key is not in the store: keep it, and any
+backup of it, from whoever should not sign. A
 restored older copy rolls the chain back with the runs: a checkpoint someone else
 holds from after the copy is what shows it.
 
@@ -336,6 +355,10 @@ missing-evidence decisions, duplicate submissions across restart, queue recovery
 exclusive dispatcher ownership, Runtime drift, HTTP authority, and forced exit after
 a real audit append but before the runner records completion. Integration tests require
 `JPACK_TEST_BIN`; without it they report skipped rather than claim a real evaluation.
+Three tests need more than a released Runtime has: `TestTheRuntimesVerifierReadsTheChainOfRuns`,
+`TestASignedRunKeepsItsSignature` and `TestVerifyRunChecksARunTheRuntimeSigned` need
+a Runtime that chains and signs its trail. Under Runtime 0.25.0 and earlier they skip,
+and say why, from the Runtime's own answer that it has no such command (#35).
 The fixture is a synthetic Apache-2.0 Runtime specification example, not business policy.
 
 ## License and contributions

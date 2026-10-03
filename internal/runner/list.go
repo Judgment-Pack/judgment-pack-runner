@@ -78,6 +78,7 @@ func (s *Service) filteredRecords(kind, jobID string, after int64, filter record
 			delete(summary, "input")
 			delete(summary, "audit")
 			delete(summary, "auditBytes")
+			delete(summary, "auditSignatures")
 			summary["jobName"] = encode(label)
 			if raw := summary["result"]; len(raw) > 0 {
 				var result map[string]json.RawMessage

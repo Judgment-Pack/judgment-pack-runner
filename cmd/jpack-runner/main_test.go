@@ -74,10 +74,20 @@ type exported struct {
 	digest string
 	line   []byte
 	chain  []byte
+	// dir is the store's state directory.
+	dir string
 }
 
 // exportedRunFull is exportedRunIn, with the installation's chain of runs.
 func exportedRunFull(t *testing.T, input runner.Input, profiles []runner.InputProfile, packID, query string) (out exported) {
+	t.Helper()
+	return exportedRunKeyed(t, input, profiles, packID, query, "", "")
+}
+
+// exportedRunKeyed is exportedRunFull, with the installation's signing key
+// given, unless it is empty, and the Runtime given, unless it is empty, in
+// place of the Runtime under test.
+func exportedRunKeyed(t *testing.T, input runner.Input, profiles []runner.InputProfile, packID, query, signingKey, runtime string) (out exported) {
 	t.Helper()
 	var bundle map[string]json.RawMessage
 	var digest string
@@ -92,7 +102,10 @@ func exportedRunFull(t *testing.T, input runner.Input, profiles []runner.InputPr
 	if err = os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	s, err := runner.Open(runner.Config{Dir: dir, Runtime: bin, Workspace: "test-workspace", Owner: "local-owner", InputProfiles: profiles})
+	if runtime != "" {
+		bin = runtime
+	}
+	s, err := runner.Open(runner.Config{Dir: dir, Runtime: bin, Workspace: "test-workspace", Owner: "local-owner", InputProfiles: profiles, SigningKey: signingKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +159,7 @@ func exportedRunFull(t *testing.T, input runner.Input, profiles []runner.InputPr
 	if err != nil {
 		t.Fatal(err)
 	}
-	return exported{bundle, digest, bytes.TrimSuffix(trail, []byte("\n")), call("GET", "/v1/run-chain", nil, "", 200)}
+	return exported{bundle, digest, bytes.TrimSuffix(trail, []byte("\n")), call("GET", "/v1/run-chain", nil, "", 200), dir}
 }
 
 // verify runs the command on an export, as an operator would, with no trusted

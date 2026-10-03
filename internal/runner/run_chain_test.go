@@ -1047,7 +1047,7 @@ func TestVersion4IsHeldToVersion2sLimitBesideItsMembers(t *testing.T) {
 		t.Fatal(e)
 	}
 	most := encode(RunChainExport{Entry: make([]byte, maxChainLine), Checkpoint: Checkpoint{"1", emptyDigest, maxSafeInteger - 1, strings.Repeat("a", 32)}})
-	if MaxExportSize != 8<<20+len(`,"auditBytes":""`)+(maxOutput+2)/3*4+len(`,"chain":`)+len(most) {
+	if MaxExportSize != 8<<20+len(`,"auditBytes":""`)+(maxOutput+2)/3*4+len(`,"chain":`)+len(most)+len(`,"auditSignatures":""`)+(maxSidecar+2)/3*4 {
 		t.Fatal("MaxExportSize is not the most an export holds")
 	}
 }

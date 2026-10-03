@@ -50,11 +50,12 @@ func serve() error {
 		InputRoot          string                     `json:"inputRoot,omitempty"`
 		InputProfiles      []runner.InputProfile      `json:"inputProfiles,omitempty"`
 		RequireTested      bool                       `json:"requireTestedReleases,omitempty"`
+		SigningKey         string                     `json:"signingKey,omitempty"`
 	}
 	if json.Unmarshal([]byte(line), &boot) != nil || len(boot.Token) < 32 {
 		return fmt.Errorf("invalid boot configuration")
 	}
-	service, err := runner.Open(runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested})
+	service, err := runner.Open(runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, SigningKey: boot.SigningKey})
 	if err != nil {
 		return err
 	}
@@ -97,18 +98,25 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	release := flags.String("release-digest", "", "independently trusted frozen release digest")
 	runtime := flags.String("runtime", "", "optional: the release's Runtime executable, to evaluate the verified inputs again and compare the disposition")
 	requireSourced := flags.Bool("require-sourced", false, "optional: refuse a run any of whose fact or evidence targets is asserted (typed into the case or read from a local file), or derived by a rule that reads a parameter its source's receipt does not commit and that rests on the operator's say (runAt is exempt)")
-	chainFile := flags.String("chain", "", "optional: the installation's chain of runs, as GET /v1/run-chain serves it, to check a version-4 export's entry along it")
+	chainFile := flags.String("chain", "", "optional: the installation's chain of runs, as GET /v1/run-chain serves it, to check a version-4 or version-5 export's entry along it")
 	var expect expectFlags
 	flags.Var(&expect, "expect", "optional, repeatable: a file of checkpoints held independently of the operator, one per line, that the run's entry and the chain must match")
 	requireWitnessed := flags.Bool("require-witnessed", false, "optional: refuse a run whose entry in the installation's chain of runs no held checkpoint covers")
+	publicKeyText := flags.String("public-key", "", "optional: the public key of the installation's signing key, 64 lowercase hexadecimal characters as `jpack audit key public` prints it, to check a version-5 export's record signature under; a key that is not the canonical encoding of a point of the curve whose order does not divide 8 is refused")
+	requireSigned := flags.Bool("require-signed", false, "optional: refuse a run whose audit record no valid signature under --public-key covers")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *file == "" || *profilesPath == "" || *release == "" || flags.NArg() != 0 {
 		return fmt.Errorf("file, profiles and release-digest are required")
 	}
-	// A version-3 or version-4 export may exceed 8 MiB by the record's bytes
-	// and the chain entry it carries.
+	// The key is held to the key check before anything signed with it is read.
+	publicKey, err := publicKeyOf(*publicKeyText, *requireSigned)
+	if err != nil {
+		return err
+	}
+	// A version-3, 4 or 5 export may exceed 8 MiB by the record's bytes, the
+	// chain entry and the signature sidecar it carries.
 	raw, err := readLimit(*file, runner.MaxExportSize)
 	if err != nil {
 		return err
@@ -127,16 +135,23 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	}
 	classes := verified.Classes
 	record := recordReportOf(verified)
-	// A version-4 export's entry in the installation's chain of runs is checked
-	// as far as the verifier can: alone, along a supplied chain, and against
-	// checkpoints held independently. A failure, or --require-witnessed, refuses
-	// the run before anything else is reported, and a re-execution does not run.
+	// A version-4 or version-5 export's entry in the installation's chain of
+	// runs is checked as far as the verifier can: alone, along a supplied
+	// chain, and against checkpoints held independently. A failure, or
+	// --require-witnessed, refuses the run before anything else is reported,
+	// and a re-execution does not run. So does a record signature that fails,
+	// or that --require-signed asks for and no valid one covers.
 	chain, err := checkChain(verified, *chainFile, expect, *requireWitnessed)
 	if err != nil {
 		return err
 	}
+	sig := checkSignature(verified, publicKey)
 	if status, err := chainRefusal(chain, *requireWitnessed); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		return err
+	}
+	if status, err := signatureRefusal(sig, *requireSigned); err != nil {
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	// An asserted target, and a parameter that its source's receipt does not
@@ -145,29 +160,29 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// which then does not run.
 	if *requireSourced {
 		if status, err := refuseUnsourced(classes, verified.Unsigned); err != nil {
-			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 			return err
 		}
 	}
 	if *runtime == "" {
 		// verified-inputs covers the inputs, not the result. Nothing here compares the
 		// retained disposition with an evaluation, and both outputs say so.
-		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned)+record.sentence()+chainSentence(chain))
-		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned)+record.sentence()+chainSentence(chain)+signatureSentence(sig, verified.ExportVersion()))
+		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 	}
 	// The release's own Runtime evaluates the verified inputs again, as a
 	// rehearsal. A different disposition is a failure with a report of its own.
 	scope := "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
 	err = verified.Disposition(context.Background(), *runtime)
 	if errors.Is(err, runner.ErrDispositionDiffers) {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned)+record.sentence()+chainSentence(chain))
-	return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned)+record.sentence()+chainSentence(chain)+signatureSentence(sig, verified.ExportVersion()))
+	return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 }
 
 // readLimit reads a verification input of at most limit bytes.
@@ -191,20 +206,23 @@ const inputsScope = "retained input derivation and audit binding; not sealed-ses
 type verifyReport struct {
 	recordReport
 	RetainedDisposition string `json:"retainedDisposition"`
-	// Present only for a version-4 export: what checking the run's entry in
-	// the installation's chain of runs found. Versions 2 and 3 carry no entry,
-	// and their report is what it was before the chain existed.
-	RunChain       *runner.RunChainReport `json:"runChain,omitempty"`
-	Scope          string                 `json:"scope"`
-	Status         string                 `json:"status"`
-	TargetsByClass runner.InputClasses    `json:"targetsByClass"`
+	// Present only for a version-4 or version-5 export: what checking the
+	// run's entry in the installation's chain of runs found. Versions 2 and 3
+	// carry no entry, and their report is what it was before the chain existed.
+	RunChain *runner.RunChainReport `json:"runChain,omitempty"`
+	Scope    string                 `json:"scope"`
+	// Present only for a version-5 export, or when --public-key is given:
+	// what checking the run's record signature found.
+	Signature      *runner.SignatureReport `json:"signature,omitempty"`
+	Status         string                  `json:"status"`
+	TargetsByClass runner.InputClasses     `json:"targetsByClass"`
 	// Present only when an acquired source's rule reads a parameter that its
 	// receipt does not commit.
 	UnsignedParameters []runner.UnsignedParameters `json:"unsignedParameters,omitempty"`
 }
 
 // recordReport is what the report says of the audit record's bytes, by which a
-// digest of the record is taken. A version-3 or version-4 export carries bytes,
+// digest of the record is taken. A version-3, 4 or 5 export carries bytes,
 // which parse to the record it exports; their SHA-256 is the digest a gateway
 // action receipt would name for those bytes. That they are the bytes the
 // Runtime wrote for this run is not shown without such a digest held

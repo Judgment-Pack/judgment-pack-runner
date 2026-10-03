@@ -494,7 +494,7 @@ newline, still parses, but no line of it is the record: Runner refuses such an
 evaluation, and the run fails rather than completing without the bytes. Runner
 0.4.0 recorded such a run completed, without them.
 
-The verification export has three versions:
+The verification export has four versions:
 
 - **Version 2**, served when no version is asked for and for `?version=2`, is
   the export Runner has always made, byte for byte. It carries no original
@@ -506,6 +506,10 @@ The verification export has three versions:
 - **Version 4**, served for `?version=4`, is version 3 with the run's entry in
   the installation's chain of runs ([below](#the-installations-chain-of-runs)).
   A run with no entry is exported as version 3, or version 2, even then.
+- **Version 5**, served for `?version=5`, is version 4 with the signature
+  sidecar of the run's audit record, `run.auditSignatures`
+  ([below](#record-signatures)). A run with no sidecar is exported as version
+  4, or 3, or 2, even then.
 
 Any other `version`, `version` asked for more than once, or a query that is not
 well formed, is refused with `invalid_version`.
@@ -514,10 +518,11 @@ Version 3 is larger than version 2 by the bytes, in base64. It is held to the
 8 MiB that version 2 is held to, beside the member carrying the bytes, which
 are held to the 8 MiB of an audit trail that Runner reads. So `verify-run`
 reads a version-3 export of up to about 18.7 MiB, and accepts as version 3 any
-export that it accepts as version 2.
+export that it accepts as version 2. Version 5's sidecar is held to 16 KiB
+beside that, and the export is held to 8 MiB beside it.
 
-`verify-run` accepts all three, and checks each as above. Of a version-3 or
-version-4 export it also checks that the bytes are one line, with neither a line
+`verify-run` accepts all four, and checks each as above. Of a version-3, 4 or 5
+export it also checks that the bytes are one line, with neither a line
 feed nor a carriage return, that they parse as strictly as the export does, and
 that they are the same JSON value as `run.audit`. Otherwise it refuses the
 export. Its report gives their SHA-256 as `recordDigest`, the digest a gateway
@@ -532,7 +537,7 @@ Of a version-2 export it reports `"exactBytes":"not-in-export"` and no
 `recordDigest`, and the line on standard error says that exact-byte checks were
 not possible, as in the examples above. What the line says of the bytes comes
 after what it says of asserted inputs and unsigned parameters, and before what
-it says of a version-4 export's entry in the chain of runs.
+it says of the run's entry in the chain of runs and of its record signature.
 
 What version 3 establishes is narrow. The bytes it carries are consistent with
 the record it exports, and their digest is the one a gateway receipt would name
@@ -706,6 +711,128 @@ trail (ADR-0047 §2a, C4). Hand the export's checkpoint, or that of any line of
 `GET /v1/run-chain` (its trail, sequence and SHA-256), to the counterparty, an
 auditor, or a store the operator does not control. A checkpoint the operator
 keeps proves nothing to anyone who does not trust the operator.
+
+### Record signatures
+
+With a signing key, the Runtime signs each chained record it writes (Runtime
+ADR-0047 §2b): it appends a line to `signatures.jsonl`, beside its trail, that
+signs the record's trail, its sequence and the SHA-256 of its exact line bytes
+with Ed25519. Runner gives each run's Runtime the installation's key, keeps the
+line, and `verify-run` checks it.
+
+**The key.** The boot line's `signingKey` names an Ed25519 seed, 64
+hexadecimal characters, the form `jpack audit key generate` and the gateway's
+`keygen` write. Runner holds its path to the placement the Runtime's guide
+states, and refuses to start otherwise:
+
+- the path is absolute and clean, with no symbolic link anywhere in it, so it
+  is the key's real path;
+- no directory on the way to it is Runner's state directory, compared by device
+  and inode, so it is outside every attempt's directory;
+- it is one regular file with one name, owned by the user Runner runs as, and
+  neither readable nor writable by its group or others.
+
+A refusal names neither the path nor anything of the key. Runner never opens
+the key, and never logs or stores its path. It passes the path to each
+operational evaluation's Runtime as `JPACK_SIGNING_KEY`, and to nothing else: no
+validation, lock, rehearsal or saved test is given it. The Runtime reads the
+variable whatever configVersion a project declares, so the release's
+configuration stays at configVersion `"3"`, unchanged. Naming the key in that
+configuration, `audit.signingKey`, would need configVersion `"6"`, which no
+released Runtime reads, and would put the path in every release and export.
+The Runtime checks the key again as it opens it, and signs nothing with a key it
+refuses. Runtime 0.25.0 and earlier do not sign, ignore the variable, and run
+as before. Signing never refuses a run: a record left unsigned is still
+recorded.
+
+**What Runner keeps.** After an operational evaluation, Runner reads the
+attempt's `audit/signatures.jsonl` as it reads the trail: a private regular
+file, here of at most 16 KiB. It keeps the file's bytes exactly, newlines
+included, as `run.auditSignatures`, in standard base64, in the transaction that
+records the run completed. With no file, or an empty one, it keeps none, and
+that is not an error. A file that cannot be read that way fails the run. What
+the file holds is read only when a run is verified: a line that does not sign
+the record leaves it unsigned, as a signature the Runtime could not write
+does. `GET /v1/runs/{run}` shows the sidecar; run lists and briefs leave it
+out. It is in the SQLite database, and is backed up and restored with it.
+
+**Version 5** of the export carries `run.auditSignatures`. Version 4's readers
+decode strictly and accept only versions 2 to 4, so the sidecar is a new
+version's, and versions 2, 3 and 4 are byte for byte what they were. A run with
+no sidecar is unsigned, and is exported as version 4 (or 3, or 2) whatever is
+asked.
+
+**Checking a signature.** `verify-run --public-key <hex>` checks the record's
+signature under the key it is given: 64 lowercase hexadecimal characters, as
+`jpack audit key public` prints them. The key is held to the guide's key check
+before anything signed with it is read. It must be the canonical encoding of a
+point of the curve whose order does not divide 8. Otherwise anyone could sign
+under it, or a lenient reader would take it for another key, so a key of small
+order, an encoding that is not canonical, and a value that is no point are
+refused. The check follows the guide's "Record signatures, exactly", with the
+trail known: an attempt's trail holds one record, the line `run.auditBytes`
+holds. One key is in force, the one given, and no key is revoked. Each sidecar
+line is read by the guide's rule, and each check it fails is a finding, with
+the Runtime's names: `signature-invalid`, `signature-record-mismatch`,
+`signature-no-record`, `rotation-invalid` and `sidecar-out-of-order`. A record
+line that is chained but not as a trail's first line is `sequence-mismatch` or
+`previous-mismatch`. A line of no shape the rule reads, a torn last line among
+them, is unreadable, and is not a failure. The signature is checked by RFC
+8032's equation without the cofactor and with a canonical scalar, as Go's
+`crypto/ed25519` checks it once the key has passed the key check.
+
+The report's `signature` member gives the status, the key's `keyId` and public
+key, the findings, and how many sidecar lines were readable and unreadable:
+
+```text
+"signature":{"findings":[],"findingsTotal":0,"keyId":"21fe31dfa154a261626bf854046fd227","publicKey":"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a","readableLines":1,"status":"signed","unreadableLines":0}
+```
+
+- **`signed`:** a valid signature under the key covers the record, and no check
+  failed.
+- **`unsigned`:** no valid signature covers it, and no check failed. The
+  sidecar holds no line that signs it, or the export carries none: an export
+  asked for as version 4 or below, or a run recorded unsigned. That is not a
+  failure, as a signature the Runtime could not write leaves its decision
+  recorded. `--require-signed` refuses it, with status `unsigned`.
+- **`invalid`:** a check failed. `verify-run` refuses the run, with status
+  `signature-invalid`, before a re-execution, which then does not run.
+- **`not-checked`:** a version-5 export checked without `--public-key`.
+  `--require-signed` needs `--public-key`.
+
+The member is in the report of a version-5 export, and of any export checked
+with `--public-key`. The line on standard error ends with what the check
+established.
+
+**What a signature establishes, and what it does not.** A valid signature shows
+that whoever held the key signed these exact bytes as the attempt's record.
+Bytes changed or re-encoded, and a record rewritten with its chain entry, fail
+it, unless signed again with the key. A signature binds the record, not the
+run: a record taken from another run with that run's sidecar verifies, and the
+run's entry in the chain of runs is what binds a record to its run. So:
+
+- **Nothing against the operator,** who holds the key. A record the operator
+  rewrote and signed again verifies like the one first written. Only a
+  checkpoint someone else holds shows the difference
+  ([above](#the-installations-chain-of-runs)).
+- **Nothing once the key is copied or stolen.** Whoever holds a copy signs what
+  they like. Each attempt starts a sidecar of its own, so a key is changed by
+  configuring a new one, not by a rotation line. A verifier then checks each run
+  under the key that was in force for it.
+- Not when the record was signed, nor that a run was ever recorded.
+
+**Reading the guide's rule for one record.** The rule depends on whether the
+trail's lines are chained records, "the chain's own rule", which the guide
+describes as being recognised by its members without stating their forms.
+Runner reads a line as a chained record when it is one JSON object naming
+`trail` (32 lowercase hexadecimal characters), `sequence` (an integer from 1 to
+2^53−2) and `previous` (`sha256:` and 64 lowercase hexadecimal characters), each
+once. Those are the forms the guide gives a sidecar line's trail and record,
+and the forms Runner holds its own chain's entries to. It reads an attempt's
+trail as chained from its first line, as a new trail is, so the line must be
+sequence 1, linked to the SHA-256 of nothing. A legacy prefix, and a repair's
+discontinuity, cannot occur in an attempt's directory, and are the Runtime's
+`audit verify`'s to read.
 
 ## Deferred scope
 

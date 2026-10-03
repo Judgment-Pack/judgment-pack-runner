@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
@@ -23,7 +24,12 @@ type Config struct {
 	// tests never ran. Off by default, when an explicitly reviewed untested
 	// release can become a job.
 	RequireTestedReleases bool
-	disableAutomation     bool
+	// SigningKey is the absolute path of an Ed25519 seed, held outside the
+	// state directory, that each operational evaluation's Runtime signs its
+	// audit record with (runtime ADR-0047 §2b). Runner passes the path, never
+	// the key, as JPACK_SIGNING_KEY. Empty, nothing is signed.
+	SigningKey        string
+	disableAutomation bool
 }
 type Service struct {
 	unhealthy              atomic.Bool
@@ -70,6 +76,11 @@ func Open(cfg Config) (_ *Service, err error) {
 	}
 	if err = privateDir(cfg.Dir); err != nil {
 		return nil, err
+	}
+	if cfg.SigningKey != "" {
+		if err = checkSigningKey(cfg.SigningKey, cfg.Dir); err != nil {
+			return nil, fmt.Errorf("the signing key is refused: %w", err)
+		}
 	}
 	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
 	defer func() {
@@ -476,9 +487,9 @@ func (s *Service) worker(ctx context.Context) {
 			}
 		}
 		if err == nil {
-			var trail []byte
-			r.Result, trail, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
-			r.retainAudit(trail)
+			var trail, signatures []byte
+			r.Result, trail, signatures, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+			r.retainAudit(trail, signatures)
 		}
 		r.FinishedAt = now()
 		if err == nil {

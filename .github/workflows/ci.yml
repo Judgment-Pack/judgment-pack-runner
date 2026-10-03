@@ -37,8 +37,10 @@ jobs:
       # other code. The name after it is the release the commit was taken
       # from when the pin was set: whoever moves one moves the other.
       # TestTheRuntimesVerifierReadsTheChainOfRuns skips under this pin, which
-      # has no `jpack audit verify`: move the pin to the first Runtime release
-      # that chains its trail, and see that the test runs (#35).
+      # has no `jpack audit verify`, and TestASignedRunKeepsItsSignature and
+      # TestVerifyRunChecksARunTheRuntimeSigned skip too, since it cannot sign
+      # (no `jpack audit key`): move the pin to the first Runtime release that
+      # chains and signs its trail, and see that the tests run (#35).
       - name: Check out tested Runtime
         uses: actions/checkout@v4
         with:
