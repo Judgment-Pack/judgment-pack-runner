@@ -87,6 +87,19 @@ asserted or derived from such a parameter. `--require-sourced` refuses such a ru
 only such parameter is `runAt`, the export's own verification time, which is exempt so that
 freshness checks that use it are not refused.
 
+**The chain of runs holds only against a checkpoint the operator did not supply.** Runner keeps a
+chain over its completed runs, by the Runtime's chain rules. Each entry binds a run's id to the
+SHA-256 of its audit record's exact bytes, and links to the entry before it
+([docs/MAPPING-V2.md](docs/MAPPING-V2.md#the-installations-chain-of-runs)). The chain is in the
+store, so whoever controls the store controls the chain. They can delete a run, remove entries,
+rewrite the chain from any point with every link recomputed, or restore an older copy, and what
+they hand over is consistent. `verify-run` says so when it checks one supplied entry or one supplied
+chain. Such a change is detected only by a verifier who holds a checkpoint the operator did not
+supply, covering the entries in question. Nothing here shows that a checkpoint was held
+independently, or when it was made. Nor does it show anything about entries after the last held
+checkpoint, or about runs that were never recorded: an operator who controls the runner when a
+decision is made controls what it records. Runs recorded before the chain existed have no entry.
+
 **A release whose tests never ran can become a job.** Such a release is labelled `not-run`, never
 passed, and requires explicit review as untested. A release whose tests ran and did not pass cannot.
 An installation can refuse untested releases too, with `requireTestedReleases` on its boot line; it

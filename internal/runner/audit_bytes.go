@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/url"
 )
 
@@ -11,7 +12,8 @@ import (
 // action receipt, is taken over the bytes the Runtime wrote. Runner encodes the
 // record it parses with other bytes: Go's encoder escapes &, < and >, which the
 // Runtime writes as they are. So a run keeps the record's line too, exactly,
-// and only a version-3 verification export carries it.
+// and only a verification export of version 3 or 4 carries it. Version 4 also
+// carries the run's entry in the installation's chain of runs (run_chain.go).
 
 // retainAudit keeps an operational evaluation's audit trail on its run: the
 // record parsed, as Runner has always kept it, and its line exactly.
@@ -38,7 +40,7 @@ func oneLine(b []byte) bool { return len(b) > 0 && !bytes.ContainsAny(b, "\r\n")
 
 // exportVersionAsked is the verification export version a caller asks for,
 // with ?version=. A caller that asks for none is served version 2, as it was
-// before version 3 existed. The query is parsed strictly: a malformed one,
+// before versions 3 and 4 existed. The query is parsed strictly: a malformed one,
 // which a lenient reader would drop entries of, is refused, since what it asks
 // for cannot be told.
 func exportVersionAsked(rawQuery string) (int, error) {
@@ -52,30 +54,49 @@ func exportVersionAsked(rawQuery string) (int, error) {
 		return 2, nil
 	case len(v) == 1 && v[0] == "3":
 		return 3, nil
+	case len(v) == 1 && v[0] == "4":
+		return 4, nil
 	}
-	return 0, &apiError{400, "invalid_version", "Ask once for verification export version 2 or 3, in a well-formed query."}
+	return 0, &apiError{400, "invalid_version", "Ask once for verification export version 2, 3 or 4, in a well-formed query."}
 }
 
 // auditBytesMember is what run.auditBytes adds to an export, around its
 // base64 text, as Runner encodes it.
 const auditBytesMember = `,"auditBytes":""`
 
+// chainMember is what a version-4 export's chain member adds to it, around the
+// entry's base64 text and the checkpoint; mostCheckpoint is the longest a
+// checkpoint encodes to.
+const (
+	chainMember    = `,"chain":{"entry":"","checkpoint":}`
+	mostCheckpoint = len(`{"checkpointVersion":"1","recordDigest":"sha256:","sequence":,"trail":""}`) + 64 + len("9007199254740990") + 32
+)
+
 // MaxExportSize is the most a verification export can hold: the 8 MiB that
-// version 2 has always been held to, and, in version 3, the member carrying the
-// audit record's bytes, at most maxOutput of them in base64. An export that
-// version 2 accepts is accepted as version 3 too.
-const MaxExportSize = 8<<20 + len(auditBytesMember) + (maxOutput+2)/3*4
+// version 2 has always been held to; in versions 3 and 4, the member carrying
+// the audit record's bytes, at most maxOutput of them in base64; and in version
+// 4, the member carrying the run's chain entry, at most maxChainLine bytes in
+// base64, and its checkpoint. An export that version 2 accepts is accepted as
+// versions 3 and 4 too.
+const MaxExportSize = 8<<20 + len(auditBytesMember) + (maxOutput+2)/3*4 + len(chainMember) + (maxChainLine+2)/3*4 + mostCheckpoint
 
 // exportWithinLimits holds a decoded export to 8 MiB, not counting a version-3
-// export's member that carries the record's bytes. Those are held to
-// maxOutput, the most of an audit trail Runner reads.
+// or version-4 export's member that carries the record's bytes, nor a version-4
+// export's chain member. The bytes are held to maxOutput, the most of an audit
+// trail Runner reads, and the chain entry to maxChainLine.
 func exportWithinLimits(raw []byte, b VerificationBundle) error {
 	size := len(raw)
-	if b.Version == 3 {
+	if b.Version == 3 || b.Version == 4 {
 		if len(b.Run.AuditBytes) > maxOutput {
 			return errors.New("the audit record's bytes exceed 8 MiB")
 		}
 		size -= len(auditBytesMember) + base64.StdEncoding.EncodedLen(len(b.Run.AuditBytes))
+	}
+	if b.Chain != nil {
+		if len(b.Chain.Entry) > maxChainLine {
+			return fmt.Errorf("the run's chain entry exceeds %d bytes", maxChainLine)
+		}
+		size -= len(`,"chain":`) + len(encode(b.Chain))
 	}
 	if size > 8<<20 {
 		return errors.New("verification bundle exceeds 8 MiB")
@@ -83,13 +104,13 @@ func exportWithinLimits(raw []byte, b VerificationBundle) error {
 	return nil
 }
 
-// verificationExport is a run's verification export in the version asked for.
-// Version 2 is the export Runner has always made. It carries no original bytes
-// of the audit record: its readers decode it strictly and would refuse a new
-// member. Version 3 carries them as run.auditBytes, beside the parsed
-// run.audit. A run that holds none, because it was recorded before Runner kept
-// them or has no audit record, is exported as version 2 whatever is asked:
-// nothing is made up in their place.
+// verificationExport is a run's verification export in the version asked for,
+// 2 or 3. Version 2 is the export Runner has always made. It carries no
+// original bytes of the audit record: its readers decode it strictly and would
+// refuse a new member. Version 3 carries them as run.auditBytes, beside the
+// parsed run.audit. A run that holds none, because it was recorded before
+// Runner kept them or has no audit record, is exported as version 2 whatever is
+// asked: nothing is made up in their place. Version 4 is chainedExport's.
 func verificationExport(release Release, run Run, asked int) VerificationBundle {
 	version := 2
 	if asked == 3 && len(run.AuditBytes) > 0 {
@@ -100,8 +121,30 @@ func verificationExport(release Release, run Run, asked int) VerificationBundle 
 	return VerificationBundle{Version: version, ReleaseDigest: releaseDigest(release), Release: release, Run: run}
 }
 
+// chainedExport is a run's version-4 export: version 3, with the run's entry in
+// the installation's chain of runs, exactly as stored, and the entry's
+// checkpoint. Version 3's readers decode strictly and accept only versions 2
+// and 3, so the entry is a new version's. A run with no entry, recorded before
+// Runner chained its runs, is exported as version 3 (or 2, without the
+// record's bytes) whatever is asked: it is unchained, and nothing is made up in
+// its entry's place. An entry is exported as it is stored, whatever it names:
+// verification holds it to the run, and a store whose entry does not read as
+// one is refused here rather than exported without it.
+func chainedExport(release Release, run Run, entry []byte) (VerificationBundle, error) {
+	b := verificationExport(release, run, 3)
+	if b.Version != 3 || len(entry) == 0 {
+		return b, nil
+	}
+	checkpoint, err := checkpointOf(entry)
+	if err != nil {
+		return VerificationBundle{}, fmt.Errorf("this run's chain entry is not one Runner writes: %w", err)
+	}
+	b.Version, b.Chain = 4, &RunChainExport{Entry: entry, Checkpoint: checkpoint}
+	return b, nil
+}
+
 // checkAuditBytes holds an export's original bytes of the audit record to the
-// record it carries. Version 2 carries none. Version 3 carries them for a
+// record it carries. Version 2 carries none. Versions 3 and 4 carry them for a
 // completed run, as one line, which must parse, as strictly as the export
 // does, to the same JSON value as the parsed record.
 func checkAuditBytes(b VerificationBundle) error {
@@ -112,7 +155,7 @@ func checkAuditBytes(b VerificationBundle) error {
 	case b.Version == 2:
 		return errors.New("a version-2 export carries no original bytes of the audit record")
 	case r.State != "completed" || !oneLine(r.AuditBytes):
-		return errors.New("a version-3 export carries the original bytes of a completed run's audit record, as one line")
+		return fmt.Errorf("a version-%d export carries the original bytes of a completed run's audit record, as one line", b.Version)
 	}
 	if _, e := readInputJSONDepth(r.AuditBytes, 64); e != nil || !sameJSON(r.AuditBytes, r.Audit) {
 		return errors.New("the audit record differs from its original bytes")
@@ -120,8 +163,39 @@ func checkAuditBytes(b VerificationBundle) error {
 	return nil
 }
 
-// ExportVersion is the verified export's version: 3 when it carries the audit
-// record's original bytes, and 2 when it carries none.
+// checkChainEntry holds a version-4 export's chain entry to its run: it is an
+// entry as Runner writes one, one line, naming this run and the SHA-256 of the
+// audit record's bytes the export carries, and the export's checkpoint is that
+// entry's. Versions 2 and 3 carry no entry. That the entry is the one the
+// installation's chain holds at its sequence, and that the chain was not
+// rewritten, is shown only along the chain and against a checkpoint held
+// independently (VerifiedRun.CheckRunChain).
+func checkChainEntry(b VerificationBundle) error {
+	switch {
+	case b.Version != 4 && b.Chain == nil:
+		return nil
+	case b.Version != 4:
+		return fmt.Errorf("a version-%d export carries no entry of the installation's chain of runs", b.Version)
+	case b.Chain == nil:
+		return errors.New("a version-4 export carries its run's entry in the installation's chain of runs")
+	}
+	e, err := ParseChainEntry(b.Chain.Entry)
+	switch {
+	case err != nil:
+		return fmt.Errorf("the run's chain entry is not one Runner writes: %v", err)
+	case e.Run != b.Run.ID:
+		return errors.New("the run's chain entry names another run")
+	case e.AuditDigest != digest(b.Run.AuditBytes):
+		return errors.New("the run's chain entry names other bytes of the audit record than the export carries")
+	case b.Chain.Checkpoint != Checkpoint{CheckpointVersion: CheckpointVersion, RecordDigest: digest(b.Chain.Entry), Sequence: e.Sequence, Trail: e.Trail}:
+		return errors.New("the export's checkpoint is not its run's chain entry's")
+	}
+	return nil
+}
+
+// ExportVersion is the verified export's version: 4 when it carries the run's
+// chain entry, 3 when it carries the audit record's original bytes and no
+// entry, and 2 when it carries neither.
 func (v VerifiedRun) ExportVersion() int { return v.bundle.Version }
 
 // RecordDigest is the SHA-256 of the audit record's bytes that a version-3
@@ -131,9 +205,10 @@ func (v VerifiedRun) ExportVersion() int { return v.bundle.Version }
 // wrote for this run is shown only by an equal digest held independently, such
 // as a receipt's: changed bytes change the digest. It is empty for version 2,
 // which carries no bytes to take it over. A digest of the parsed record would
-// be of a re-encoding, and is never given.
+// be of a re-encoding, and is never given. Version 4 carries the same bytes as
+// version 3.
 func (v VerifiedRun) RecordDigest() string {
-	if v.bundle.Version != 3 {
+	if v.bundle.Version != 3 && v.bundle.Version != 4 {
 		return ""
 	}
 	return digest(v.bundle.Run.AuditBytes)

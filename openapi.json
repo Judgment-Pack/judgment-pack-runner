@@ -466,7 +466,7 @@
     "/runs/{run}/verification": {
       "get": {
         "operationId": "exportInputVerification",
-        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth. Version 2 unless version 3 is asked for; version 3 adds the audit record's original bytes.",
+        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth. Version 2 unless version 3 or 4 is asked for; version 3 adds the audit record's original bytes, and version 4 adds the run's entry in the installation's chain of runs. A run the store no longer holds, whose entry the chain still names, is answered with 410 run_not_held, naming the entry's sequence.",
         "parameters": [
           {
             "name": "run",
@@ -480,12 +480,13 @@
             "name": "version",
             "in": "query",
             "required": false,
-            "description": "The export version asked for, at most once, in a well-formed query. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). Anything else, or a malformed query, is refused with invalid_version.",
+            "description": "The export version asked for, at most once, in a well-formed query. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). With 4: version 4 when the run also has an entry in the installation's chain of runs, and otherwise what 3 serves: a run recorded before Runner chained its runs has no entry and is unchained. Anything else, or a malformed query, is refused with invalid_version.",
             "schema": {
               "type": "integer",
               "enum": [
                 2,
-                3
+                3,
+                4
               ],
               "default": 2
             }
@@ -503,8 +504,39 @@
                     },
                     {
                       "$ref": "#/components/schemas/VerificationBundleV3"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VerificationBundleV4"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/run-chain": {
+      "get": {
+        "operationId": "getRunChain",
+        "description": "The installation's chain of runs: every entry's line, exactly as stored, each ended by a newline, in sequence order. An entry binds one completed run's id to the SHA-256 of its audit record's exact bytes, chained by the Runtime's rules (trail, sequence, previous over the exact bytes of the line before). It is a trail file as the Runtime's audit verify reads one, and verify-run --chain reads it. Read in pages, as it stood at some moment during the reading; a failure after the answer began aborts the transfer. The operator keeps the chain: against the operator it establishes nothing without a checkpoint held independently.",
+        "responses": {
+          "200": {
+            "description": "The chain, one entry per line",
+            "content": {
+              "application/jsonl": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -3013,6 +3045,99 @@
           "releaseDigest",
           "release",
           "run"
+        ],
+        "additionalProperties": false
+      },
+      "VerificationBundleV4": {
+        "type": "object",
+        "description": "Version 4: version 3 with the run's entry in the installation's chain of runs, as chain. Only a completed run that holds its audit record's bytes and has an entry is exported as version 4. verify-run checks that the entry names this run and the SHA-256 of run.auditBytes, and that the checkpoint is the entry's; along a supplied chain and against checkpoints held independently of the operator, it checks the entry's place in the chain. Without a held checkpoint it establishes nothing against the operator, who keeps the chain. Held to 8 MiB beside the run.auditBytes and chain members; the entry is held to 1024 bytes.",
+        "properties": {
+          "version": {
+            "const": 4
+          },
+          "releaseDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "release": {
+            "$ref": "#/components/schemas/Release"
+          },
+          "run": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Run"
+              },
+              {
+                "required": [
+                  "audit",
+                  "auditBytes"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "completed"
+                  }
+                }
+              }
+            ]
+          },
+          "chain": {
+            "$ref": "#/components/schemas/RunChainExport"
+          }
+        },
+        "required": [
+          "version",
+          "releaseDigest",
+          "release",
+          "run",
+          "chain"
+        ],
+        "additionalProperties": false
+      },
+      "RunChainExport": {
+        "type": "object",
+        "description": "A run's entry in the installation's chain of runs, and that entry's checkpoint, which a holder keeps. The checkpoint is a function of the entry's bytes.",
+        "properties": {
+          "entry": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "The entry's line exactly as stored, in standard base64: one JSON object of entryVersion \"1\", trail (32 lowercase hex characters), sequence (from 1), previous (the SHA-256 of the line before it, or of nothing for the first), kind \"run\", run (the run's id) and auditDigest (the SHA-256 of the run's audit record's exact bytes), in that order as Runner writes it. Read by its members, as JSON reads them."
+          },
+          "checkpoint": {
+            "$ref": "#/components/schemas/Checkpoint"
+          }
+        },
+        "required": [
+          "entry",
+          "checkpoint"
+        ],
+        "additionalProperties": false
+      },
+      "Checkpoint": {
+        "type": "object",
+        "description": "The Runtime's checkpoint (ADR-0047): a chain's identity, an entry's sequence, and the SHA-256 of that entry's exact line bytes. Its compact encoding, members in this order, is its RFC 8785 canonical form.",
+        "properties": {
+          "checkpointVersion": {
+            "const": "1"
+          },
+          "recordDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740990
+          },
+          "trail": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          }
+        },
+        "required": [
+          "checkpointVersion",
+          "recordDigest",
+          "sequence",
+          "trail"
         ],
         "additionalProperties": false
       },

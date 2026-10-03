@@ -15,6 +15,10 @@ type VerificationBundle struct {
 	ReleaseDigest string  `json:"releaseDigest"`
 	Release       Release `json:"release"`
 	Run           Run     `json:"run"`
+	// Chain is the run's entry in the installation's chain of runs, in
+	// version 4 only. It is omitted from versions 2 and 3, which are byte for
+	// byte what they were before it existed.
+	Chain *RunChainExport `json:"chain,omitempty"`
 }
 
 func releaseDigest(r Release) string { b, _ := canonical(encode(r)); return digest(b) }
@@ -171,10 +175,13 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if !sameJSON(raw, encode(b)) {
 		return b, prepared, errors.New("verification bundle is not in the runner's own encoding")
 	}
-	if (b.Version != 2 && b.Version != 3) || !validDigest(trustedReleaseDigest) || b.ReleaseDigest != trustedReleaseDigest || releaseDigest(b.Release) != trustedReleaseDigest {
+	if (b.Version != 2 && b.Version != 3 && b.Version != 4) || !validDigest(trustedReleaseDigest) || b.ReleaseDigest != trustedReleaseDigest || releaseDigest(b.Release) != trustedReleaseDigest {
 		return b, prepared, errors.New("release does not match the independently trusted digest")
 	}
 	if e = checkAuditBytes(b); e != nil {
+		return b, prepared, e
+	}
+	if e = checkChainEntry(b); e != nil {
 		return b, prepared, e
 	}
 	r := b.Run

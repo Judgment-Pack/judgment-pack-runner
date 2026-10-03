@@ -303,7 +303,9 @@ facts and evidence. No Runtime internals or semantic changes are introduced.
 
 `GET /v1/runs/{run}/verification` exports `{version:2,releaseDigest,release,run}`.
 With `?version=3` it exports version 3, which adds the audit record's original
-bytes ([below](#exact-bytes-of-the-audit-record)).
+bytes ([below](#exact-bytes-of-the-audit-record)). With `?version=4` it exports
+version 4, which also adds the run's entry in the installation's chain of runs
+([below](#the-installations-chain-of-runs)).
 Retain a trusted release digest independently, alongside the installation's public
 profiles. An untrusted export cannot establish its own public-key or release trust.
 
@@ -489,7 +491,7 @@ over. `GET /v1/runs/{run}` shows it; run lists and briefs leave it out. A run
 recorded before Runner kept the bytes has none, nor does a run without an audit
 record.
 
-The verification export has two versions:
+The verification export has three versions:
 
 - **Version 2**, served when no version is asked for and for `?version=2`, is
   the export Runner has always made, byte for byte. It carries no original
@@ -497,9 +499,13 @@ The verification export has two versions:
   member would break them.
 - **Version 3**, served for `?version=3`, carries `run.auditBytes` beside the
   parsed `run.audit`. A run that holds no bytes is exported as version 2 even
-  then: nothing is made up in their place. Any other `version`, `version` asked
-  for more than once, or a query that is not well formed, is refused with
-  `invalid_version`.
+  then: nothing is made up in their place.
+- **Version 4**, served for `?version=4`, is version 3 with the run's entry in
+  the installation's chain of runs ([below](#the-installations-chain-of-runs)).
+  A run with no entry is exported as version 3, or version 2, even then.
+
+Any other `version`, `version` asked for more than once, or a query that is not
+well formed, is refused with `invalid_version`.
 
 Version 3 is larger than version 2 by the bytes, in base64. It is held to the
 8 MiB that version 2 is held to, beside the member carrying the bytes, which
@@ -507,12 +513,12 @@ are held to the 8 MiB of an audit trail that Runner reads. So `verify-run`
 reads a version-3 export of up to about 18.7 MiB, and accepts as version 3 any
 export that it accepts as version 2.
 
-`verify-run` accepts both, and checks both as above. Of a version-3 export it
-also checks that the bytes are one line, with neither a line feed nor a carriage
-return, that they parse as strictly as the export does, and that they are the
-same JSON value as `run.audit`. Otherwise it refuses the export. Its report
-gives their SHA-256 as `recordDigest`, the digest a gateway receipt would name
-for those bytes:
+`verify-run` accepts all three, and checks each as above. Of a version-3 or
+version-4 export it also checks that the bytes are one line, with neither a line
+feed nor a carriage return, that they parse as strictly as the export does, and
+that they are the same JSON value as `run.audit`. Otherwise it refuses the
+export. Its report gives their SHA-256 as `recordDigest`, the digest a gateway
+receipt would name for those bytes. Of a version-3 export:
 
 ```text
 {"exactBytes":"matches-record","exportVersion":3,"recordDigest":"sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d","retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
@@ -522,7 +528,8 @@ verified-inputs: the run's inputs match its record. Its disposition was not chec
 Of a version-2 export it reports `"exactBytes":"not-in-export"` and no
 `recordDigest`, and the line on standard error says that exact-byte checks were
 not possible, as in the examples above. What the line says of the bytes comes
-last, after what it says of asserted inputs and unsigned parameters.
+after what it says of asserted inputs and unsigned parameters, and before what
+it says of a version-4 export's entry in the chain of runs.
 
 What version 3 establishes is narrow. The bytes it carries are consistent with
 the record it exports, and their digest is the one a gateway receipt would name
@@ -535,6 +542,164 @@ nothing binds the run to the record beyond the checks above. Another run of the
 same release with the same inputs could supply its own record and bytes. Bytes
 re-encoded without changing their value, with other whitespace or an escaped
 `&`, also verify, with another digest, without `run.audit` being rewritten.
+
+### The installation's chain of runs
+
+Each attempt has its own audit directory, never reused, so the Runtime's trail
+inside it holds one record: as a chain it says nothing about the installation's
+history (Runtime ADR-0047). Runner keeps a chain of its own over the runs it
+retains. Each completed run whose record's bytes Runner kept is given one entry,
+a line of compact JSON:
+
+```text
+{"entryVersion":"1","trail":"68e77cefed3b0f20750d9b61ffceec38","sequence":3,"previous":"sha256:…","kind":"run","run":"run_…","auditDigest":"sha256:…"}
+```
+
+- `trail` is the chain's identity, 128 random bits in hex, minted with the
+  first entry and carried by every entry after it.
+- `sequence` is the entry's place in the chain, from 1.
+- `previous` is the SHA-256 of the exact bytes of the entry before it, without
+  a newline, and of nothing for the first entry.
+- `run` is the run's id, and `auditDigest` the SHA-256 of its audit record's
+  exact bytes, `run.auditBytes`: the digest a gateway receipt's
+  `decision.recordDigest` names the record by.
+
+These are the Runtime's rules for its own trail, and the Runtime's checkpoint,
+`{"checkpointVersion":"1","recordDigest","sequence","trail"}` in its RFC 8785
+canonical form, names an entry the same way: the SHA-256 of the entry's line,
+its sequence and its trail. So one verifier's understanding carries over. A
+Runtime whose `jpack audit verify` takes `--trail` (after 0.25.0) reads Runner's
+chain as a chained trail, and holds it to the same checkpoints. An entry is read
+by its members, as JSON reads them, and every digest is over the bytes as
+stored, never over a re-encoding.
+
+**Where the chain lives, and how it holds.**
+
+- It is the `run_chain` table of the store's SQLite database: one row per
+  entry, holding its line's exact bytes. It is backed up and restored with the
+  rest of the store. A transaction covers the run and its entry, which a
+  separate file could not share.
+- An entry is appended in the transaction that records its run as completed,
+  after the evaluation, once the record's bytes are kept. A crash leaves both or
+  neither. If the append fails, the completion is not recorded either. The
+  dispatcher stops, as on any storage error, and after a restart the run reads
+  interrupted, like any run whose completion was not recorded.
+- Nothing is held in memory. Each append reads the last entry inside its
+  transaction, continues its trail and sequence, and links to its line, so a
+  restart changes nothing.
+- SQLite serializes write transactions. Runner holds the store's installation
+  lock, and its database handle has one connection, so two appends never read
+  the same last entry. The sequence is also the table's key, and a run's id is
+  unique in it. No sequence is repeated or skipped.
+- Runner does not chain after a last entry it did not write, or one that is not
+  at its own sequence. The dispatcher stops instead.
+- Failed, interrupted and expired runs are given no entry: Runner retains no
+  audit record for them, though an attempt's directory may hold one.
+- Runner writes no entry it would not read back. A run's id that would make one
+  is refused like a failed append.
+
+**Runs recorded before this release** have no entry, and are never given one:
+they are unchained. Asked for version 4, such a run's export is version 3, or
+version 2 without the record's bytes. Nothing is made up in the entry's place.
+`verify-run` reports such an export as before. It refuses `--chain`, `--expect`
+and `--require-witnessed` for it, and says the run is unchained.
+
+**A deleted run.** Runner deletes no run and no entry, and any future pruning
+of runs must keep their entries. A run removed from the store keeps its entry,
+which still names it, and asking for its export answers `410 run_not_held` with
+the entry's sequence. An entry removed leaves a gap, which fails the sequence
+and `previous` of the line after it. Some removals leave a consistent chain,
+which only a checkpoint held from before the change detects:
+
+- an entry removed with every later entry rewritten to close the gap
+  (`checkpoint-record-mismatch`, or `checkpoint-beyond-chain`);
+- the last entries removed, or an older copy of the store restored
+  (`checkpoint-beyond-chain`).
+
+**The export.** Version 4 is version 3 with one more member:
+
+```text
+"chain":{"entry":"<the entry's line, in base64>","checkpoint":{"checkpointVersion":"1","recordDigest":"sha256:…","sequence":3,"trail":"…"}}
+```
+
+The checkpoint is the entry's own. It is a function of the entry's bytes, so
+every export of the run carries the same one. Version 3's readers decode
+strictly and accept only versions 2 and 3, so the entry needed a new version,
+and versions 2 and 3 are byte for byte what they were. The entry is held to
+1024 bytes, beside the 8 MiB the rest of the export is held to.
+
+`GET /v1/run-chain` serves the whole chain as `application/jsonl`: every entry's
+line, exactly as stored, each ended by a newline. It is read in pages. Rows are
+only appended, so the answer is the chain as it stood at some moment during the
+reading. A failure after the answer began aborts the transfer rather than
+shortening the chain. Desk does not pass this route through yet.
+
+**Verification.** For a version-4 export `verify-run` checks the following:
+
+- The entry is one Runner writes, names this run and the SHA-256 of the
+  export's `run.auditBytes`, and the checkpoint is the entry's. Otherwise it
+  refuses the export.
+- With `--chain <file>`, the chain as `GET /v1/run-chain` served it. Every line
+  must be an entry at its own sequence, of the trail of the entry before it,
+  linked to that line's exact bytes (the first to the SHA-256 of nothing). No
+  run may be named twice. The line at the run's sequence must be the export's
+  entry, byte for byte.
+- With `--expect <file>`, which may be given more than once, the checkpoints a
+  holder kept, one per line, as the Runtime's `audit verify --expect` reads
+  them. Each must name an entry of its trail that has its digest. Without
+  `--chain`, each must name the run's own entry: one at another sequence is
+  checked only along the chain, and is refused without one. Along the chain, a
+  checkpoint beyond its end fails, as a chain cut short.
+- `--require-witnessed` refuses a run whose entry no held checkpoint covers.
+
+A check that fails refuses the run with `"status":"chain-invalid"` and its named
+findings, before any re-execution. `--require-witnessed` refuses with
+`"status":"unwitnessed"`. The report's `runChain` member says what was checked,
+and the line on standard error says what that establishes:
+
+```text
+{"exactBytes":"matches-record","exportVersion":4,"recordDigest":"sha256:…","retainedDisposition":"not-checked","runChain":{"checkpoint":{"checkpointVersion":"1","recordDigest":"sha256:…","sequence":1,"trail":"…"},"findings":[],"findingsTotal":0,"scope":"one-supplied-entry","status":"valid","witnessed":false},"scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+verified-inputs: … The export's entry in the installation's chain of runs, at sequence 1, binds this run to those bytes. Only that one supplied entry was checked, which establishes nothing against the operator, who keeps the chain and could have written the entry with the export: a checkpoint held independently, supplied with --expect, would. The report gives the entry's checkpoint, for a holder to keep from now on.
+```
+
+The scope is `one-supplied-entry` with neither flag, `one-supplied-chain` with
+a chain and no held checkpoint, and `checkpoint` with held checkpoints.
+`witnessed` is true only when every check passed and a held checkpoint at or
+after the entry's sequence covers it. With `--chain` the member also gives the
+chain's line count and the checkpoint of its last line, and with `--expect` how
+many checkpoints were supplied and matched, and the highest sequence they reach.
+
+**What the chain establishes, and what it does not.**
+
+- **Without a held checkpoint, nothing against the operator.** The operator
+  keeps the store and the chain. They can write an entry with the export, or
+  rewrite the chain from any point with every link recomputed, so that one
+  supplied entry, or one supplied chain, is consistent. `one-supplied-entry` and
+  `one-supplied-chain` show only that.
+- **With a checkpoint held independently of the operator that covers the run's
+  entry**, the entry is the one that existed when the checkpoint was made, and
+  so is the digest of the record's bytes it names. Rewriting the record, moving
+  the entry to another run, and removing or rewriting an entry the checkpoint
+  covers all fail.
+- **What no check here shows:**
+  - that a checkpoint was held independently: `verify-run` cannot tell who
+    supplied it;
+  - when a checkpoint was made;
+  - anything after the last held checkpoint: those entries are unwitnessed, and
+    entries removed from the end since are missed unless a held checkpoint
+    names them;
+  - that the record's bytes are the ones the Runtime wrote, beyond what Runner
+    kept;
+  - that the inputs or the policy are true, or anything about the run's result
+    that its record does not hold;
+  - anything about a run that never reached the chain: an operator who controls
+    Runner when a decision is made controls what it records.
+
+Getting a checkpoint to a holder is the operator's step, as for the Runtime's
+trail (ADR-0047 §2a, C4). Hand the export's checkpoint, or that of any line of
+`GET /v1/run-chain` (its trail, sequence and SHA-256), to the counterparty, an
+auditor, or a store the operator does not control. A checkpoint the operator
+keeps proves nothing to anyone who does not trust the operator.
 
 ## Deferred scope
 
