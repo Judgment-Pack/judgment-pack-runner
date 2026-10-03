@@ -36,16 +36,17 @@ jobs:
       # A commit is pinned and not a tag, since a commit cannot come to name
       # other code. The name after it is the release the commit was taken
       # from when the pin was set: whoever moves one moves the other.
-      # TestTheRuntimesVerifierReadsTheChainOfRuns skips under this pin, which
-      # has no `jpack audit verify`, and TestASignedRunKeepsItsSignature and
-      # TestVerifyRunChecksARunTheRuntimeSigned skip too, since it cannot sign
-      # (no `jpack audit key`): move the pin to the first Runtime release that
-      # chains and signs its trail, and see that the tests run (#35).
+      # v0.26.0 is the first Runtime release that chains and signs its trail,
+      # so TestTheRuntimesVerifierReadsTheChainOfRuns,
+      # TestASignedRunKeepsItsSignature and
+      # TestVerifyRunChecksARunTheRuntimeSigned run here and do not skip (#35).
+      # A pin moved to a Runtime without `jpack audit` would skip them again,
+      # and the step after the tests fails if any of them does not pass.
       - name: Check out tested Runtime
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-runtime
-          ref: bae473161b0039aae292f8e7c7605e7dbbce6ead # v0.24.0
+          ref: 1d38cda68e50b1bb0b9a40878f5c6ee8966c5f45 # v0.26.0
           path: .ci-runtime
           persist-credentials: false
       - name: Build Runtime
@@ -55,7 +56,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-gateway
-          ref: 7359458123506ccc8659ae5a2462d383935d74ca # v0.8.0
+          ref: 9a95e7f88e824bdd66d81335ceb0e4b649f43161 # v0.9.0
           path: .ci-gateway
           persist-credentials: false
       - name: Build Gateway and MCP adapter
@@ -70,6 +71,19 @@ jobs:
           JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
           JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
           go test -race ./...
+      # A skipped test passes `go test`; these three must run (#35).
+      - name: Chain and signature tests run under the pinned Runtime
+        run: |
+          out="$(JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
+            JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
+            JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
+            go test -count=1 -v \
+            -run '^(TestTheRuntimesVerifierReadsTheChainOfRuns|TestASignedRunKeepsItsSignature|TestVerifyRunChecksARunTheRuntimeSigned)$' \
+            ./internal/runner ./cmd/jpack-runner)" || { printf '%s\n' "$out"; exit 1; }
+          printf '%s\n' "$out"
+          for name in TestTheRuntimesVerifierReadsTheChainOfRuns TestASignedRunKeepsItsSignature TestVerifyRunChecksARunTheRuntimeSigned; do
+            printf '%s\n' "$out" | grep -q -- "^--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
+          done
       - name: Check API document
         run: python3 -m json.tool openapi.json > /dev/null
       - name: Build Runner

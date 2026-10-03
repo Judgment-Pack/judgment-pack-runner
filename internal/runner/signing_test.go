@@ -389,7 +389,7 @@ func TestASignedRunKeepsItsSignature(t *testing.T) {
 	}
 	if absent != "" {
 		t.Skipf("the Runtime under test answers `jpack audit key public` with %q: it cannot sign, as Runtime 0.25.0 and earlier cannot. "+
-			"This test needs a Runtime that signs its trail (runtime #209 and #216), and runs in CI once CI pins a Runtime release that does (runner #35)", absent)
+			"This test needs a Runtime that signs its trail (runtime #209 and #216): Runtime 0.26.0 or later, which CI pins (runner #35)", absent)
 	}
 	job, err := s.createJob("Signed", release.ID)
 	if err != nil {

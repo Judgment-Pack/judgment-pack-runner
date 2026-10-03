@@ -355,10 +355,11 @@ missing-evidence decisions, duplicate submissions across restart, queue recovery
 exclusive dispatcher ownership, Runtime drift, HTTP authority, and forced exit after
 a real audit append but before the runner records completion. Integration tests require
 `JPACK_TEST_BIN`; without it they report skipped rather than claim a real evaluation.
-Three tests need more than a released Runtime has: `TestTheRuntimesVerifierReadsTheChainOfRuns`,
-`TestASignedRunKeepsItsSignature` and `TestVerifyRunChecksARunTheRuntimeSigned` need
-a Runtime that chains and signs its trail. Under Runtime 0.25.0 and earlier they skip,
-and say why, from the Runtime's own answer that it has no such command (#35).
+Three tests, `TestTheRuntimesVerifierReadsTheChainOfRuns`,
+`TestASignedRunKeepsItsSignature` and `TestVerifyRunChecksARunTheRuntimeSigned`, need
+a Runtime that chains and signs its trail: Runtime 0.26.0 or later, which CI pins.
+Under Runtime 0.25.0 and earlier they skip, and say why, from the Runtime's own
+answer that it has no such command (#35).
 The fixture is a synthetic Apache-2.0 Runtime specification example, not business policy.
 
 ## License and contributions
