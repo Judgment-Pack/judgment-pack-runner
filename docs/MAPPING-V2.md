@@ -571,7 +571,9 @@ These are the Runtime's rules for its own trail, and the Runtime's checkpoint,
 canonical form, names an entry the same way: the SHA-256 of the entry's line,
 its sequence and its trail. So one verifier's understanding carries over. A
 Runtime whose `jpack audit verify` takes `--trail` (after 0.25.0) reads Runner's
-chain as a chained trail, and holds it to the same checkpoints. An entry is read
+chain as a chained trail, and holds it to the same checkpoints. A test holds
+Runner to such a Runtime, and skips under one without that command, as under
+the Runtime CI pins until a release has it (#35). An entry is read
 by its members, as JSON reads them, and every digest is over the bytes as
 stored, never over a re-encoding.
 
