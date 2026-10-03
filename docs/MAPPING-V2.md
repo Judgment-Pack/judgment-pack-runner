@@ -488,8 +488,11 @@ base64. Base64 rather than a JSON string: every JSON encoder passes it through
 unchanged; it carries any bytes, including bytes that are not UTF-8, which no
 JSON string can; and it decodes in one step to the bytes a digest is taken
 over. `GET /v1/runs/{run}` shows it; run lists and briefs leave it out. A run
-recorded before Runner kept the bytes has none, nor does a run without an audit
-record.
+recorded before Runner kept the bytes has none, nor does a run that did not
+complete. An attempt's trail that is not the record's one line, ended by a
+newline, still parses, but no line of it is the record: Runner refuses such an
+evaluation, and the run fails rather than completing without the bytes. Runner
+0.4.0 recorded such a run completed, without them.
 
 The verification export has three versions:
 
@@ -548,8 +551,7 @@ re-encoded without changing their value, with other whitespace or an escaped
 Each attempt has its own audit directory, never reused, so the Runtime's trail
 inside it holds one record: as a chain it says nothing about the installation's
 history (Runtime ADR-0047). Runner keeps a chain of its own over the runs it
-retains. Each completed run whose record's bytes Runner kept is given one entry,
-a line of compact JSON:
+retains. Each completed run is given one entry, a line of compact JSON:
 
 ```text
 {"entryVersion":"1","trail":"68e77cefed3b0f20750d9b61ffceec38","sequence":3,"previous":"sha256:…","kind":"run","run":"run_…","auditDigest":"sha256:…"}
@@ -580,10 +582,12 @@ stored, never over a re-encoding.
   rest of the store. A transaction covers the run and its entry, which a
   separate file could not share.
 - An entry is appended in the transaction that records its run as completed,
-  after the evaluation, once the record's bytes are kept. A crash leaves both or
-  neither. If the append fails, the completion is not recorded either. The
-  dispatcher stops, as on any storage error, and after a restart the run reads
-  interrupted, like any run whose completion was not recorded.
+  after the evaluation, once the record's bytes are kept. Every run recorded
+  completed has its entry. A crash leaves both or neither. If the append fails,
+  the completion is not recorded either. The dispatcher stops, as on any
+  storage error, and after a restart the run reads interrupted, like any run
+  whose completion was not recorded. A completion without the record's exact
+  bytes fails the same way, though the evaluation refuses such a trail first.
 - Nothing is held in memory. Each append reads the last entry inside its
   transaction, continues its trail and sequence, and links to its line, so a
   restart changes nothing.

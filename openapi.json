@@ -1591,7 +1591,7 @@
           "auditBytes": {
             "type": "string",
             "contentEncoding": "base64",
-            "description": "The audit record exactly as the Runtime wrote it, without the newline that ends its line, in standard base64: the bytes a digest of the record, such as a gateway receipt's decision.recordDigest, is taken over. audit is the same record parsed, which Runner encodes again with other bytes. Absent for a run recorded before Runner kept them, and for a run without an audit record. Not in run lists or briefs."
+            "description": "The audit record exactly as the Runtime wrote it, without the newline that ends its line, in standard base64: the bytes a digest of the record, such as a gateway receipt's decision.recordDigest, is taken over. audit is the same record parsed, which Runner encodes again with other bytes. Every run Runner now records completed has them: an evaluation whose trail is not that one line, ended by a newline, is refused and its run fails. Absent for a run recorded before Runner kept them, for one Runner 0.4.0 completed without them, and for a run that did not complete. Not in run lists or briefs."
           },
           "problem": {
             "type": "string"

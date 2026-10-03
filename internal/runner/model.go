@@ -80,8 +80,9 @@ type Run struct {
 	// AuditBytes is the audit record exactly as the Runtime wrote it, without
 	// the newline that ends its line: what a digest of the record is taken over.
 	// Audit is the same record parsed, which Runner encodes again, with other
-	// bytes. A []byte encodes as base64, which no JSON encoder changes. A run
-	// recorded before Runner kept them has none.
+	// bytes. A []byte encodes as base64, which no JSON encoder changes. Every
+	// run Runner now records completed has them; a run recorded before Runner
+	// kept them, or one Runner 0.4.0 completed without them, has none.
 	AuditBytes []byte `json:"auditBytes,omitempty"`
 	Problem    string `json:"problem,omitempty"`
 }

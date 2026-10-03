@@ -301,7 +301,8 @@ func TestConcurrentAppendsNeitherRepeatNorSkip(t *testing.T) {
 	runs := make([]string, 64)
 	records := map[string][]byte{}
 	for i := range runs {
-		runs[i], records[runs[i]] = syntheticRun(i)
+		run, record := syntheticRun(i)
+		runs[i], records[run] = run, record
 	}
 	var wg sync.WaitGroup
 	for _, run := range runs {

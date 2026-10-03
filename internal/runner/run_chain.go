@@ -27,9 +27,12 @@ import (
 // rules: trail, sequence, and previous over the exact bytes of the line before.
 //
 // The chain lives in the store, in the run_chain table: one row per entry,
-// holding the entry's line exactly as written. An entry is appended in the same
-// transaction that records its run as completed, so a crash leaves both or
-// neither, and nothing is held in memory between appends. Each append reads the
+// holding the entry's line exactly as written. Every run recorded completed is
+// given its entry in the same transaction, so a crash leaves both or neither,
+// and nothing is held in memory between appends. A run whose record's exact
+// bytes were not kept is not recorded completed: an evaluation whose trail is
+// not one line is refused, and a completion without the bytes fails as a failed
+// append does. Each append reads the
 // last row inside its transaction: the next entry continues its trail, its
 // sequence plus one, and links to its line's digest. SQLite serializes write
 // transactions, Runner holds the store's installation lock, and the store's
@@ -128,6 +131,10 @@ func newChainTrail() string {
 // Runner writes, or not at its own sequence.
 var errChainHead = errors.New("the last entry of the installation's chain of runs is not one Runner writes, at its own sequence; no entry is chained after it")
 
+// errNoAuditBytes is the refusal to chain a completed run without the exact
+// bytes of its audit record, one line, which its entry's digest is taken over.
+var errNoAuditBytes = errors.New("a completed run's audit record's exact bytes were not kept; it is not recorded completed without its entry")
+
 // errEntryUnreadable is the refusal to write an entry Runner would not read
 // back, which would stop the chain at the next append.
 var errEntryUnreadable = errors.New("the run's entry in the installation's chain of runs would not read as one")
@@ -137,6 +144,9 @@ var errEntryUnreadable = errors.New("the run's entry in the installation's chain
 // starts a chain at sequence 1, linked to the SHA-256 of nothing, under a new
 // identity.
 func appendRunEntry(tx *sql.Tx, run string, auditBytes []byte) error {
+	if !oneLine(auditBytes) {
+		return errNoAuditBytes
+	}
 	next := ChainEntry{EntryVersion: ChainEntryVersion, Kind: chainEntryKind, Run: run, AuditDigest: digest(auditBytes)}
 	var last int64
 	var line []byte
@@ -160,10 +170,11 @@ func appendRunEntry(tx *sql.Tx, run string, auditBytes []byte) error {
 	return err
 }
 
-// finishRun records a run's end. A completed run whose audit record's bytes
-// were kept is given its entry in the same transaction, so a run is never
-// recorded completed without its entry, nor an entry written for a run that is
-// not.
+// finishRun records a run's end. Every completed run is given its entry in the
+// same transaction, so a run is never recorded completed without its entry,
+// nor an entry written for a run that is not. A completion whose entry cannot
+// be appended, because the record's exact bytes were not kept or the append
+// failed, is not recorded: the error is returned, and the dispatcher stops.
 func (s *Service) finishRun(r Run) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -173,7 +184,7 @@ func (s *Service) finishRun(r Run) error {
 	if _, err = tx.Exec("UPDATE runs SET state=?,record=? WHERE id=?", r.State, string(encode(r)), r.ID); err != nil {
 		return err
 	}
-	if r.State == "completed" && len(r.AuditBytes) > 0 {
+	if r.State == "completed" {
 		if err = appendRunEntry(tx, r.ID, r.AuditBytes); err != nil {
 			return err
 		}

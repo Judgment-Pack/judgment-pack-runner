@@ -25,7 +25,8 @@ func (r *Run) retainAudit(trail []byte) {
 // recordLine is the one record an attempt's audit trail holds, as gateway SPEC
 // §4 step 6 reads a line of a .jsonl file and hashes it: without the newline
 // that ends it. The Runtime writes an attempt's trail as one such line. A trail
-// of another shape has no line that is the record, and nil is returned.
+// of another shape has no line that is the record, and nil is returned: an
+// operational evaluation whose trail has none is refused (evaluateWith).
 func recordLine(trail []byte) []byte {
 	line, ended := bytes.CutSuffix(trail, []byte("\n"))
 	if !ended || !oneLine(line) {
