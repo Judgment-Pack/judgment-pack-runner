@@ -18,8 +18,8 @@ import (
 // verifier reads one (runtime ADR-0047), and its checkpoints are the Runtime's.
 // The test below holds Runner's chain to `jpack audit verify --trail --expect`
 // of the Runtime under test. Runtime 0.25.0 and earlier have no such command
-// and do not chain their trail: under them the test skips, and it runs in CI
-// once CI pins a Runtime release that does (#35).
+// and do not chain their trail: under them the test skips. CI pins 0.26.0, the
+// first release that does, so it runs there (#35).
 
 // pinnedRuntime is the Runtime executable a release's runs execute: Runner's
 // pinned copy, named by the release's digest of it. A Runtime under test that
@@ -200,7 +200,7 @@ func TestTheRuntimesVerifierReadsTheChainOfRuns(t *testing.T) {
 	}
 	if absent != "" {
 		t.Skipf("the Runtime under test answers `jpack audit verify --trail --expect` with %q: it has no such command, as Runtime 0.25.0 and earlier have not. "+
-			"This test needs a Runtime that chains its trail (runtime #206 to #209), and runs in CI once CI pins a Runtime release that does (runner #35)", absent)
+			"This test needs a Runtime that chains its trail (runtime #206 to #209): Runtime 0.26.0 or later, which CI pins (runner #35)", absent)
 	}
 	job, e := s.createJob("Interoperable", release.ID)
 	if e != nil {
