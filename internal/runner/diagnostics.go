@@ -39,9 +39,10 @@ func diagnosticsStream(raw string) (string, error) {
 	return "", &apiError{400, "invalid_stream", "Ask once for the stream stderr or stdout, in a well-formed query."}
 }
 
-// diagnosticsHook, when a test sets it, runs between looking at a name and
-// opening it: at "attempt" before the run's directory is opened, and at
-// "stream" before the stream is.
+// diagnosticsHook, when a test sets it, runs at each step of a read: at
+// "attempt" between looking at the run's directory and opening it, at
+// "stream" between looking at the stream and opening it, and at "read" after
+// the opened stream was checked and before its bytes are read.
 var diagnosticsHook func(stage string)
 
 func diagnosticsPause(stage string) {
@@ -92,9 +93,13 @@ func private(looked, held os.FileInfo) bool {
 
 // readStream reads up to limit bytes from the start of a run's stream, and
 // says the whole stream's size. It goes through the attempts root Runner
-// holds, one name at a time, and follows no link: the run's directory and the
-// stream must each be the directory, and the regular file, that the name held
-// when Runner looked at it, and private to the operator. The bytes are read
+// holds, one name at a time, and serves only the objects it looked at and then
+// opened: the run's directory and the stream are each looked at without
+// following a link, opened, and held by os.SameFile on the opened descriptor
+// to what was looked at, a directory or a regular file private to the
+// operator. A name that resolves to any other object when opened is refused,
+// and one that vanishes in between is not retained; one that comes back to the
+// same object, through a link or otherwise, is that object. The bytes are read
 // from the descriptor that was checked, never by name again. A cut never ends
 // inside a character.
 func (s *Service) readStream(run, stream string, limit int) ([]byte, int64, error) {
@@ -151,6 +156,7 @@ func (s *Service) readStream(run, stream string, limit int) ([]byte, int64, erro
 	if !held.Mode().IsRegular() || !private(looked, held) {
 		return nil, 0, errNotPrivate
 	}
+	diagnosticsPause("read")
 	b, err := io.ReadAll(io.LimitReader(f, int64(limit)))
 	if err != nil {
 		return nil, 0, err
@@ -173,8 +179,8 @@ func (s *Service) readStream(run, stream string, limit int) ([]byte, int64, erro
 // X-Diagnostics-Bytes, the stream's whole size, and X-Diagnostics-Truncated.
 // A run still queued or running is refused. A run whose stream is not retained
 // answers 404 with its state and what the store records, never an inference
-// from the missing file; a stream that is not the run's own private file is
-// refused with 500, unread. A read changes nothing, and writes no entry in the
+// from the missing file; a name that resolves to any object but the run's own
+// private directory and file it looked at is refused with 500, unread. A read changes nothing, and writes no entry in the
 // journal of job activity.
 func (s *Service) diagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 	stream, err := diagnosticsStream(r.URL.RawQuery)

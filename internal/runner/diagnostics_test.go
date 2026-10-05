@@ -378,3 +378,49 @@ func TestMissingDiagnosticsAreNotTakenForARunNeverEvaluated(t *testing.T) {
 		t.Fatalf("a completed run's: %d %s", status, code)
 	}
 }
+
+// Runner serves the file it checked, from the descriptor it checked: a stream
+// replaced at its name after the check and before the read is not what is
+// served, and a name swapped for a link back to the same file is that file.
+func TestTheCheckedDescriptorIsWhatIsRead(t *testing.T) {
+	t.Cleanup(func() { diagnosticsHook = nil })
+	w := newCoverWorld(t)
+	run, dir := stored(w, "the run-own stderr")
+	stream := filepath.Join(dir, "evaluation.stderr")
+	diagnosticsHook = func(stage string) {
+		if stage == "read" {
+			diagnosticsHook = nil
+			must(t, os.WriteFile(filepath.Join(dir, "replacement"), []byte("AFTER-CHECK-SECRET"), 0600))
+			must(t, os.Rename(filepath.Join(dir, "replacement"), stream))
+		}
+	}
+	if status, code, _, body := diagnostics(w, run.ID, ""); status != 200 || string(body) != "the run-own stderr" {
+		t.Fatalf("a stream replaced after the check: %d %s %q", status, code, body)
+	}
+
+	w = newCoverWorld(t)
+	run, dir = stored(w, "the run-own stderr")
+	stream = filepath.Join(dir, "evaluation.stderr")
+	diagnosticsHook = func(stage string) {
+		if stage == "stream" {
+			diagnosticsHook = nil
+			must(t, os.Rename(stream, stream+".own"))
+			must(t, os.Symlink("evaluation.stderr.own", stream))
+		}
+	}
+	if status, code, _, body := diagnostics(w, run.ID, ""); status != 200 || string(body) != "the run-own stderr" {
+		t.Fatalf("a link back to the same file: %d %s %q", status, code, body)
+	}
+
+	w = newCoverWorld(t)
+	run, dir = stored(w, "the run-own stderr")
+	diagnosticsHook = func(stage string) {
+		if stage == "stream" {
+			diagnosticsHook = nil
+			must(t, os.Remove(filepath.Join(dir, "evaluation.stderr")))
+		}
+	}
+	if status, code, _, _ := diagnostics(w, run.ID, ""); status != 404 || !strings.HasPrefix(code, "no_diagnostics") {
+		t.Fatalf("a stream gone in between: %d %s", status, code)
+	}
+}

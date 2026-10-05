@@ -1109,15 +1109,18 @@ is never taken to say that the Runtime did not run: the files may be gone.
 Another `stream` is refused with 400 `invalid_stream`.
 
 The stream is read through the attempts directory Runner holds from its start,
-one name at a time, following no link. The run's directory and the stream
-must each be what the name held when Runner looked at it, a directory and a
-regular file private to the operator, and the bytes are read from the file
-Runner opened and checked. A link, at either name, to another run's file, to
-one beside it or to one outside the store, a file or directory others may
-read, and a name swapped between the look and the open are refused with 500
-`diagnostics_refused`, and nothing of them is served. Diagnostics are the
-Runtime's own words, kept in the operator's store: they explain a run, and
-establish nothing about it. A read changes nothing, and writes no entry.
+one name at a time, and Runner serves only the file it looked at and then
+opened. The run's directory and the stream are each looked at without
+following a link, opened, and checked on the opened descriptor to be the same
+object, a directory or a regular file private to the operator; the bytes are
+read from that descriptor, never by name again. A link at either name when
+Runner looks, a file or directory others may read, and a name that resolves to
+any other object when Runner opens it are refused with 500
+`diagnostics_refused`, and nothing of them is served. A name that vanishes in
+between answers 404. A name that comes back to the same object, for instance
+through a link to the same file, is that object, and is served. Diagnostics
+are the Runtime's own words, kept in the operator's store: they explain a run,
+and establish nothing about it. A read changes nothing, and writes no entry.
 
 **Stores from before the journal.** The first start of this Runner on a store
 writes `journal.began`, and raises the store's schema from `"1"` to `"2"`, in
