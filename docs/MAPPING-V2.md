@@ -1102,12 +1102,22 @@ its standard error, or with `?stream=stdout` its standard output, as written,
 as `text/plain`. It serves the first 65,536 bytes, cut before a character the
 bound would split, and says the stream's whole size in `X-Diagnostics-Bytes`
 and whether it was cut in `X-Diagnostics-Truncated`. A run still queued or
-running is refused with 409 `run_not_finished`. A run that kept no such stream
-answers 404 `no_diagnostics`, with the reason: it expired in the queue, it was
-never evaluated, or the Runtime was not invoked. Another `stream` is refused
-with 400 `invalid_stream`. Diagnostics are the Runtime's own words, kept in the
-operator's store: they explain a run, and establish nothing about it. A read
-changes nothing, and writes no entry.
+running is refused with 409 `run_not_finished`. A run whose stream is not
+retained answers 404 `no_diagnostics`, with its state and what the store
+records of it: that it expired in the queue, or never started. A missing file
+is never taken to say that the Runtime did not run: the files may be gone.
+Another `stream` is refused with 400 `invalid_stream`.
+
+The stream is read through the attempts directory Runner holds from its start,
+one name at a time, following no link. The run's directory and the stream
+must each be what the name held when Runner looked at it, a directory and a
+regular file private to the operator, and the bytes are read from the file
+Runner opened and checked. A link, at either name, to another run's file, to
+one beside it or to one outside the store, a file or directory others may
+read, and a name swapped between the look and the open are refused with 500
+`diagnostics_refused`, and nothing of them is served. Diagnostics are the
+Runtime's own words, kept in the operator's store: they explain a run, and
+establish nothing about it. A read changes nothing, and writes no entry.
 
 **Stores from before the journal.** The first start of this Runner on a store
 writes `journal.began`, and raises the store's schema from `"1"` to `"2"`, in

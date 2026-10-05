@@ -566,7 +566,7 @@
       ],
       "get": {
         "operationId": "getRunDiagnostics",
-        "description": "A finished run's attempt diagnostics: what its Runtime wrote to standard error, or standard output, when it evaluated the run, as written, up to the first 65,536 bytes (cut before a character the bound would split). A run still queued or running is refused with 409 run_not_finished; one that kept no such stream, because it was never evaluated or the Runtime was not invoked, answers 404 no_diagnostics with the reason. The Runtime's own words, kept in the operator's store: they explain a run and establish nothing about it. A read writes no entry in the journal of job activity.",
+        "description": "A finished run's attempt diagnostics: what its Runtime wrote to standard error, or standard output, when it evaluated the run, as written, up to the first 65,536 bytes (cut before a character the bound would split). A run still queued or running is refused with 409 run_not_finished. A run whose stream is not retained answers 404 no_diagnostics, with its state and what the store records of it (it expired in the queue, or never started); a missing file is never taken to say the Runtime did not run. The stream is read through the attempts directory Runner holds, following no link, and only when the run's directory and the stream are what their names held when Runner looked at them and private to the operator; otherwise it is refused with 500 diagnostics_refused and nothing of it is served. The Runtime's own words, kept in the operator's store: they explain a run and establish nothing about it. A read writes no entry in the journal of job activity.",
         "responses": {
           "200": {
             "description": "The stream's first bytes",
