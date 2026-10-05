@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-runtime
-          ref: 1d38cda68e50b1bb0b9a40878f5c6ee8966c5f45 # v0.26.0
+          ref: 3a5f031c2a15cd78a52a848bf2936af20e1dc7c6 # v0.27.0
           path: .ci-runtime
           persist-credentials: false
       - name: Build Runtime
@@ -56,7 +56,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-gateway
-          ref: 9a95e7f88e824bdd66d81335ceb0e4b649f43161 # v0.9.0
+          ref: 5b49e1e094b55fdd1deb9f613815c2beebd411f1 # v0.9.1
           path: .ci-gateway
           persist-credentials: false
       - name: Build Gateway and MCP adapter
