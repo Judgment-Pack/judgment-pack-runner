@@ -540,6 +540,76 @@
         }
       }
     },
+    "/runs/{run}/diagnostics": {
+      "parameters": [
+        {
+          "name": "run",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "stream",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "stderr",
+              "stdout"
+            ],
+            "default": "stderr"
+          },
+          "description": "The stream the Runtime wrote when it evaluated the run, at most once in a well-formed query. Anything else is refused with 400 invalid_stream."
+        }
+      ],
+      "get": {
+        "operationId": "getRunDiagnostics",
+        "description": "A finished run's attempt diagnostics: what its Runtime wrote to standard error, or standard output, when it evaluated the run, as written, up to the first 65,536 bytes (cut before a character the bound would split). A run still queued or running is refused with 409 run_not_finished. A run whose stream is not retained answers 404 no_diagnostics, with its state and what the store records of it (it expired in the queue, or never started); a missing file is never taken to say the Runtime did not run. The stream is read through the attempts directory Runner holds, and Runner serves only the file it looked at and then opened: the run's directory and the stream are each looked at without following a link, and checked on the opened descriptor to be that same object, a directory or a regular file private to the operator. A link when Runner looks, a file or directory others may read, or a name that resolves to any other object when opened is refused with 500 diagnostics_refused, and nothing of it is served; a name that vanishes in between answers 404. The Runtime's own words, kept in the operator's store: they explain a run and establish nothing about it. A read writes no entry in the journal of job activity.",
+        "responses": {
+          "200": {
+            "description": "The stream's first bytes",
+            "headers": {
+              "X-Diagnostics-Bytes": {
+                "description": "The whole stream's size in bytes.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "X-Diagnostics-Truncated": {
+                "description": "Whether the answer is shorter than the stream.",
+                "schema": {
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "maxLength": 65536
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/run-chain": {
       "get": {
         "operationId": "getRunChain",
@@ -1715,6 +1785,12 @@
           "interruptedAt": {
             "type": "string",
             "description": "When Runner saw this run stop, at an orderly stop: the moment the evaluation it was in was cancelled. finishedAt keeps its meaning, the time Runner recorded the run's end. A run found running at a restart has none, since Runner did not see it stop: its run.interrupted journal entry gives the window the stop lies in. Served with the run and in run lists; not in verification exports, whose version-2 readers decode strictly."
+          },
+          "reason": {
+            "enum": [
+              "queue-expired"
+            ],
+            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
           }
         }
       },

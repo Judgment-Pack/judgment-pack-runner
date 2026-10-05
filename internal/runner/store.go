@@ -47,11 +47,14 @@ type Service struct {
 	db                     *sql.DB
 	lock                   *os.File
 	runtime, runtimeDigest string
-	cancel                 context.CancelFunc
-	done                   chan struct{}
-	wake                   chan struct{}
-	previewGate            chan struct{}
-	closeOnce              sync.Once
+	// attempts is the store's attempts directory, held from start to close:
+	// diagnostics are read through it (diagnostics.go).
+	attempts    *os.Root
+	cancel      context.CancelFunc
+	done        chan struct{}
+	wake        chan struct{}
+	previewGate chan struct{}
+	closeOnce   sync.Once
 }
 
 func Open(cfg Config) (_ *Service, err error) {
@@ -94,6 +97,9 @@ func Open(cfg Config) (_ *Service, err error) {
 			if s.lock != nil {
 				s.lock.Close()
 			}
+			if s.attempts != nil {
+				s.attempts.Close()
+			}
 		}
 	}()
 	s.lock, err = instanceLock(filepath.Join(cfg.Dir, "runner.lock"))
@@ -104,6 +110,9 @@ func Open(cfg Config) (_ *Service, err error) {
 		if err = privateDir(filepath.Join(cfg.Dir, n)); err != nil {
 			return nil, err
 		}
+	}
+	if s.attempts, err = openHeldRoot(filepath.Join(cfg.Dir, "attempts")); err != nil {
+		return nil, err
 	}
 	dbpath := filepath.Join(cfg.Dir, "runs.sqlite")
 	f, e := os.OpenFile(dbpath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
@@ -186,6 +195,9 @@ func (s *Service) Close() {
 		s.background.Wait()
 		s.recordStop()
 		s.db.Close()
+		if s.attempts != nil {
+			s.attempts.Close()
+		}
 		s.lock.Close()
 	})
 }
@@ -470,6 +482,7 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.State = "failed"
 			r.FinishedAt = now()
 			r.Problem = "The automatic run expired in the queue before evaluation."
+			r.Reason = runQueueExpired
 			return true, s.changeRun(r)
 		}
 	}

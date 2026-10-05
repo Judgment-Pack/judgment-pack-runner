@@ -281,8 +281,9 @@ stored by Desk, outside Runner's job/run records.
 
 See [the HTTP contract](openapi.json). Desk exposes each `/v1/<suffix>` operation at
 `/api/operations/<suffix>` with its existing authenticated bearer, except
-`/v1/run-chain` and the journal of job activity's `/v1/events` and
-`/v1/jobs/{job}/events`, which it does not pass through yet. There is no secret
+`/v1/run-chain`, the journal of job activity's `/v1/events` and
+`/v1/jobs/{job}/events`, and `/v1/runs/{run}/diagnostics`, which it does not
+pass through yet. There is no secret
 in the URL. Example, with environment variables populated privately by the caller:
 
 ```sh
@@ -333,9 +334,11 @@ append and result commit, the next process retains the attempt files and marks t
 run interrupted. It does not automatically replay or claim the partial result was
 completed. A run Runner saw stop, at an orderly stop, keeps `interruptedAt` beside
 `finishedAt`; one found at a restart has none, and its journal entry gives the window
-its stop lies in. Inspect retained stdout/stderr and audit before choosing a new
-submission. There is no exactly-once claim, automatic recovery reconciliation, or
-automatic retry of a possibly evaluated invocation. External actions are not enabled.
+its stop lies in. Inspect the retained stdout and stderr, which
+`GET /v1/runs/{run}/diagnostics` serves up to 64 KiB each, and the audit before
+choosing a new submission. There is no exactly-once claim, automatic recovery
+reconciliation, or automatic retry of a possibly evaluated invocation. External
+actions are not enabled.
 
 ## State and backups
 
