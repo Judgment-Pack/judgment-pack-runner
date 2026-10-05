@@ -258,6 +258,11 @@ func must(t *testing.T, e error) {
 func journalSteps() []journalStep {
 	at := time.Now().UTC().Truncate(time.Second)
 	ctx := context.Background()
+	// One time for every delivery, so that a delivery repeated is the same
+	// payload whichever second it is sent in.
+	deliver := func(id string) EventDelivery {
+		return EventDelivery{ID: id, OccurredAt: at.Format(time.RFC3339), Input: journalInput()}
+	}
 	return []journalStep{
 		{"a new store begins its journal and records its start", func(w *journalWorld) {
 			w.s = openJournal(w.t, w.cfg)
@@ -327,7 +332,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"an event is delivered", func(w *journalWorld) {
-			o, _, e := w.s.event(w.event.ID, w.token, delivery("first"))
+			o, _, e := w.s.event(w.event.ID, w.token, deliver("first"))
 			must(w.t, e)
 			w.first = o
 		}, []string{"occurrence.received"}, func(w *journalWorld, added []Event) {
@@ -337,7 +342,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"the same event again changes nothing", func(w *journalWorld) {
-			if _, replay, e := w.s.event(w.event.ID, w.token, delivery("first")); e != nil || !replay {
+			if _, replay, e := w.s.event(w.event.ID, w.token, deliver("first")); e != nil || !replay {
 				w.t.Fatal(e, replay)
 			}
 		}, nil, nil},
@@ -361,7 +366,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"a second event is delivered", func(w *journalWorld) {
-			o, _, e := w.s.event(w.event.ID, w.token, delivery("second"))
+			o, _, e := w.s.event(w.event.ID, w.token, deliver("second"))
 			must(w.t, e)
 			w.second = o
 		}, []string{"occurrence.received"}, nil},
@@ -373,7 +378,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"a third event is delivered", func(w *journalWorld) {
-			o, _, e := w.s.event(w.event.ID, w.token, delivery("third"))
+			o, _, e := w.s.event(w.event.ID, w.token, deliver("third"))
 			must(w.t, e)
 			w.third = o
 		}, []string{"occurrence.received"}, nil},
@@ -524,7 +529,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"an event with a key no longer current is refused", func(w *journalWorld) {
-			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(delivery("stale"))), map[string]string{"X-Trigger-Token": w.oldToken}); got.Code != 401 {
+			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(deliver("stale"))), map[string]string{"X-Trigger-Token": w.oldToken}); got.Code != 401 {
 				w.t.Fatal(got.Code, got.Body)
 			}
 		}, []string{"admission.refused"}, func(w *journalWorld, added []Event) {
@@ -534,7 +539,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"the same refusal within a minute is not written again", func(w *journalWorld) {
-			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(delivery("stale"))), map[string]string{"X-Trigger-Token": w.oldToken}); got.Code != 401 {
+			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(deliver("stale"))), map[string]string{"X-Trigger-Token": w.oldToken}); got.Code != 401 {
 				w.t.Fatal(got.Code, got.Body)
 			}
 		}, nil, nil},
@@ -543,7 +548,7 @@ func journalSteps() []journalStep {
 			var e error
 			w.event, _, e = w.s.setTriggerState(tr.ID, tr.Revision, true, false)
 			must(w.t, e)
-			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(delivery("paused"))), map[string]string{"X-Trigger-Token": w.token}); got.Code != 409 {
+			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(deliver("paused"))), map[string]string{"X-Trigger-Token": w.token}); got.Code != 409 {
 				w.t.Fatal(got.Code, got.Body)
 			}
 		}, []string{"trigger.paused", "admission.refused"}, func(w *journalWorld, added []Event) {
