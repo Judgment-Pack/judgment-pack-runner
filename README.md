@@ -281,7 +281,8 @@ stored by Desk, outside Runner's job/run records.
 
 See [the HTTP contract](openapi.json). Desk exposes each `/v1/<suffix>` operation at
 `/api/operations/<suffix>` with its existing authenticated bearer, except
-`/v1/run-chain`, which it does not pass through yet. There is no secret
+`/v1/run-chain` and the journal of job activity's `/v1/events` and
+`/v1/jobs/{job}/events`, which it does not pass through yet. There is no secret
 in the URL. Example, with environment variables populated privately by the caller:
 
 ```sh
@@ -301,6 +302,8 @@ returns the existing job. Changing inputs invalidates the UI's preview approval.
 
 Lists return at most 50 records, newest first, with `next` as the next `after` cursor
 (or 0 at the end). Run lists omit raw inputs and audits; open a run for those records.
+The journal of job activity pages the other way, oldest first, with `after` meaning
+later than ([MAPPING-V2](docs/MAPPING-V2.md#the-journal-of-job-activity)).
 Input bodies are limited to 2 MiB, packs and matrices to 1 MiB each, pending work to 100 runs, and each
 Runtime invocation to 30 seconds. There is one dispatcher per private workspace store.
 
@@ -328,9 +331,11 @@ An evaluator refusal is **Failed**, with no published decision. Process interrup
 is **Interrupted**, not an invented failure decision. If a process dies between audit
 append and result commit, the next process retains the attempt files and marks the
 run interrupted. It does not automatically replay or claim the partial result was
-completed. Inspect retained stdout/stderr and audit before choosing a new submission.
-There is no exactly-once claim, automatic recovery reconciliation, or automatic retry
-of a possibly evaluated invocation. External actions are not enabled.
+completed. A run Runner saw stop, at an orderly stop, keeps `interruptedAt` beside
+`finishedAt`; one found at a restart has none, and its journal entry gives the window
+its stop lies in. Inspect retained stdout/stderr and audit before choosing a new
+submission. There is no exactly-once claim, automatic recovery reconciliation, or
+automatic retry of a possibly evaluated invocation. External actions are not enabled.
 
 ## State and backups
 
@@ -345,10 +350,13 @@ Jobs are **not included in Desk's chat/workspace backup**. For a complete pilot 
 stop Desk and the runner, then copy the entire Jobs workspace directory, including the
 SQLite database, any WAL files, pinned runtimes, releases and attempts. Restore the
 entire directory with its private permissions in the same installation/project scope.
-Do not copy a live SQLite file by itself. Retention/deletion and hosted backup are
-not implemented yet; plan disk capacity before sustained use. The installation's chain
-of runs is in the SQLite database too, and is backed up and restored with it, as are
-the record signatures runs keep. The signing key is not in the store: keep it, and any
+Do not copy a live SQLite file by itself. The journal of job activity is in the
+database too. A store this Runner opens is raised to schema 2, which every earlier
+Runner refuses: going back to one needs a copy of the store from before.
+Retention/deletion and hosted backup are not implemented yet; plan disk capacity
+before sustained use. The installation's chain of runs is in the SQLite database
+too, and is backed up and restored with it, as are the record signatures runs
+keep. The signing key is not in the store: keep it, and any
 backup of it, from whoever should not sign. A
 restored older copy rolls the chain back with the runs: a checkpoint someone else
 holds from after the copy is what shows it.
