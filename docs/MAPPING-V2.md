@@ -302,10 +302,34 @@ checks that Runtime's retained audit contains exactly the supplied citations,
 facts and evidence. No Runtime internals or semantic changes are introduced.
 
 `GET /v1/runs/{run}/verification` exports `{version:2,releaseDigest,release,run}`.
-With `?version=3` it exports version 3, which adds the audit record's original
-bytes ([below](#exact-bytes-of-the-audit-record)). With `?version=4` it exports
-version 4, which also adds the run's entry in the installation's chain of runs
-([below](#the-installations-chain-of-runs)).
+It accepts `?version=` 2, 3, 4 or 5, asked at most once, and serves version 2
+when none is asked for. Version 3 adds the audit record's original bytes
+([below](#exact-bytes-of-the-audit-record)), version 4 also the run's entry in
+the installation's chain of runs ([below](#the-installations-chain-of-runs)),
+and version 5 also the record's signature sidecar
+([below](#record-signatures)). Any other version, a version asked for more than
+once, or a query that is not well formed, is answered 400 `invalid_version`:
+"Ask once for verification export version 2, 3, 4 or 5, in a well-formed
+query."
+
+The version asked for is the most an export can be, not what it is. A run that
+lacks what a version adds is exported at the highest version whose material it
+holds, answered 200 like any other. The steps are taken in turn: version 5
+needs the record's signature sidecar, or the run is served as version 4;
+version 4 needs the run's entry in the chain of runs, or version 3; version 3
+needs the audit record's bytes, or version 2. So, asked for 5, a run with its
+entry and no sidecar answers 4, a run with no entry answers 3 or 2, and a run
+without the bytes, such as one that failed or has not finished, answers 2.
+Nothing but the export's own `version` says which was served: read `version`
+from the body, never from the request. What each version needs is
+[below](#exact-bytes-of-the-audit-record).
+
+A run of a job with no input mapping, or with a v1 mapping, is answered 422
+`not_verified_mapping`, "This run does not use mapping v2.", although a
+completed one has the audit record's bytes, an entry in the chain of runs and,
+under a signing key, a signature sidecar; whether it may have an export without
+the lineage is an open question (#44).
+
 Retain a trusted release digest independently, alongside the installation's public
 profiles. An untrusted export cannot establish its own public-key or release trust.
 
@@ -512,7 +536,9 @@ The verification export has four versions:
   4, or 3, or 2, even then.
 
 Any other `version`, `version` asked for more than once, or a query that is not
-well formed, is refused with `invalid_version`.
+well formed, is refused with `invalid_version`. How a caller tells which version
+it received, and which runs have no export, is
+[above](#release-checks-runtime-and-offline-verification).
 
 Version 3 is larger than version 2 by the bytes, in base64. It is held to the
 8 MiB that version 2 is held to, beside the member carrying the bytes, which
