@@ -1,9 +1,11 @@
 # A journal of job activity
 
-Status: proposed. Part of issue #41: this record first, then the route. Nothing
-here is built. Line references are to `main` at `db067e5`.
+Status: accepted on 2026-10-05, with the maintainer's answers recorded in
+section 10. Part of issue #41: this record first, then the build it plans
+(section 8). Nothing here is built yet. Line references are to `main` at
+`db067e5`.
 
-Runner keeps each job's records as their latest state. This record proposes a
+Runner keeps each job's records as their latest state. This record decides a
 journal beside them: one entry for each change of state Runner makes, written in
 the transaction that makes the change, and served in order with a cursor, so
 that Desk can show what happened to a job without inventing it. Everything
@@ -530,8 +532,9 @@ It is the operator's own log, kept beside the records it describes.
 - **Not who a person was.** `installation` is whoever holds the bearer.
 - **Not when.** `at` is the operator's clock, as a record's `at` is in Desk
   ADR-0010, section 7.
-- **Not what happened before `journalBegan`**, nor what an earlier Runner did
-  to the store, unless question 6 is accepted.
+- **Not what happened before `journalBegan`.** An earlier Runner cannot change
+  the store after it, since it refuses the store (question 6), but the operator
+  can, by other means (above).
 - **Not how often a sender was refused.** Identical refusals within 60 seconds
   of an entry are not entries.
 - **Not what a decision was, or that it was right.** A run's record, its exact
@@ -596,11 +599,11 @@ This record does not propose it (question 1).
 Each step is its own pull request, and meets the issue's acceptance criteria
 named with it.
 
-1. **This record**, proposed, then accepted with the maintainer's answers to
-   section 9 recorded in it.
+1. **This record**, accepted on 2026-10-05 with the maintainer's answers to
+   section 9 recorded in section 10.
 2. **The schema migration**: the journal's table, indexed by job, release and
    kind; `journal.began` in the migration's transaction; the `schema` metadata
-   raised to `"2"` if question 6 is accepted; a `key_revision` column beside
+   raised to `"2"` (question 6); a `key_revision` column beside
    `key_hash` in `triggers`. A test opens a store written by Runner v0.5.0 and
    finds `journal.began`, its counts, and no other entry.
 3. **The writers**, one per change in section 2, each in its change's
@@ -666,3 +669,29 @@ recorded on its pull request, as the issue asks.
 
 Out of scope, as the issue says: a tamper-evident journal, human review as a
 recorded act, and serving `evaluation.stderr` (#42).
+
+## 10. The maintainer's answers
+
+The maintainer answered on 2026-10-05 with "accept the recommendation", read
+as accepting each recommendation of section 9 as written. Each answer is
+recorded below; a later record may overrule any of them.
+
+1. **Tamper evidence: later.** The journal ships now, labelled as the
+   operator's own log. Chaining it waits for a holder who wants the Jobs
+   activity witnessed, and for a record of its own, which would revisit Desk
+   ADR-0010's Context and sections 5, 7 and 8.
+2. **Human review: not recorded** until a request carries an identity that
+   Runner has a reason to believe. `trigger.resumed` carries no review member.
+3. **A store-wide route: yes.** `GET /v1/events`, with a `job` filter, beside
+   `GET /v1/jobs/{job}/events` (section 5).
+4. **Retention: never pruned**, like the chain of runs. When retention of runs
+   is designed, it prunes both, and the journal records the pruning.
+5. **The interruption's time: beside `finishedAt`.** A run gains
+   `interruptedAt`, present when Runner saw it stop. `finishedAt` keeps its
+   meaning. A run found at a restart has no `interruptedAt`, and its
+   `run.interrupted` entry gives the window, from `lastKnownRunning` to the
+   restart (section 4).
+6. **Earlier Runners: refused.** The migration raises the store's `schema`
+   metadata to `"2"` (section 4), so every earlier Runner refuses a store the
+   journal began in. Going back to one needs a copy of the store from before
+   the migration.
