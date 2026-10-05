@@ -136,9 +136,6 @@ func Open(cfg Config) (_ *Service, err error) {
 	if _, err = s.db.Exec(runChainSchema); err != nil {
 		return nil, err
 	}
-	if _, err = s.db.Exec(eventsSchema); err != nil {
-		return nil, err
-	}
 	for _, k := range []struct{ key, value string }{{"workspace", cfg.Workspace}, {"owner", cfg.Owner}, {"inputRoot", cfg.InputRoot}} {
 		if _, err = s.db.Exec("INSERT OR IGNORE INTO metadata VALUES (?,?)", k.key, k.value); err != nil {
 			return nil, err

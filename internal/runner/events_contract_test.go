@@ -273,7 +273,7 @@ func TestAStandInDeskFollowsTheJournal(t *testing.T) {
 		if mine {
 			wantJob = append(wantJob, e.Sequence)
 		}
-		if e.Concerns.Job == w.job.ID || slices.Contains([]string{"journal.began", "runner.started", "runner.stopped"}, e.Kind) {
+		if mine || slices.Contains([]string{"journal.began", "runner.started", "runner.stopped"}, e.Kind) {
 			wantFiltered = append(wantFiltered, e.Sequence)
 		}
 	}

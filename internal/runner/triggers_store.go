@@ -92,7 +92,7 @@ func (s *Service) configureTrigger(jobID, triggerID string, revision int, c Trig
 		if t.Config.Kind != c.Kind {
 			return t, bad("trigger_kind_fixed", "Create another trigger to change its type.")
 		}
-		from, previous = triggerState(t.Paused), t.Revision
+		previous = t.Revision
 		t.Revision++
 	} else {
 		var count int
@@ -130,6 +130,8 @@ func (s *Service) configureTrigger(jobID, triggerID string, revision int, c Trig
 		if _, e = tx.Exec("INSERT INTO triggers(id,job_id,record)VALUES(?,?,?)", t.ID, t.JobID, string(encode(t))); e != nil {
 			return t, e
 		}
+	} else if from, e = triggerBefore(tx, t.ID, previous); e != nil {
+		return t, e
 	}
 	if e = saveTrigger(tx, t, hash, true); e != nil {
 		return t, e
@@ -240,6 +242,9 @@ func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
 		return e
 	}
 	defer tx.Rollback()
+	if c.from, e = triggerBefore(tx, t.ID, t.Revision-1); e != nil {
+		return e
+	}
 	if e = saveTrigger(tx, t, hash, true); e != nil {
 		return e
 	}
@@ -289,6 +294,18 @@ func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrenc
 	if len(token) != 64 || hash == "" || subtle.ConstantTimeCompare([]byte(digest([]byte(token))), []byte(hash)) != 1 {
 		return Occurrence{}, false, &apiError{401, "invalid_trigger_token", "The event credential is invalid."}
 	}
+	// The credential is authenticated: a refusal from here on is its own,
+	// named by the revision its key was issued at, whatever happens to the
+	// key before the refusal is recorded.
+	o, replay, e := s.admitEvent(t, hash, event)
+	if e != nil {
+		e = &credentialRefusal{err: e, by: credentialActor(t.ID, t.keyRevision)}
+	}
+	return o, replay, e
+}
+
+// admitEvent admits an event delivery whose credential event authenticated.
+func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occurrence, bool, error) {
 	if t.Config.Kind != "event" {
 		return Occurrence{}, false, bad("not_event_trigger", "This trigger does not accept event delivery.")
 	}

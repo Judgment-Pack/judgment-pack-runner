@@ -31,11 +31,30 @@ func failure(w http.ResponseWriter, err error) {
 	write(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "retryable": status == 429 || status == 503}})
 }
 func decode(w http.ResponseWriter, r *http.Request, dst any) error {
+	_, err := decodeRaw(w, r, dst)
+	return err
+}
+
+// decodeRaw is decode, which also returns the bytes it read, so that a
+// refusal can still name what the request named.
+func decodeRaw(w http.ResponseWriter, r *http.Request, dst any) ([]byte, error) {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBody))
 	if err != nil || strictJSON(raw, dst) != nil {
-		return &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
+		return raw, &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
 	}
-	return nil
+	return raw, nil
+}
+
+// releaseNamed is the release a job creation's body names, read leniently:
+// a body refused for an unsupported member or a duplicate still names one.
+func releaseNamed(raw []byte) string {
+	var named struct {
+		ReleaseID string `json:"releaseId"`
+	}
+	if json.Unmarshal(raw, &named) != nil {
+		return ""
+	}
+	return named.ReleaseID
 }
 func (s *Service) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
@@ -157,7 +176,8 @@ func (s *Service) Handler(token string) http.Handler {
 			Reviewed  bool           `json:"reviewed"`
 			Trigger   *TriggerConfig `json:"trigger,omitempty"`
 		}
-		if err := decode(w, r, &req); err != nil {
+		if raw, err := decodeRaw(w, r, &req); err != nil {
+			s.refusedJob(releaseNamed(raw), err)
 			failure(w, err)
 			return
 		}

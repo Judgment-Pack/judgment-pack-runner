@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -19,9 +18,10 @@ import (
 //
 // Runner keeps each record's latest state. The journal keeps one entry for
 // each change of state Runner makes, written in the transaction that makes the
-// change, so that a change and its entry commit together or not at all. Each
-// writer reads the record's stored state inside its transaction, and an entry
-// is written exactly when the state it writes differs from the state it read.
+// change, so that a change and its entry commit together or not at all. A
+// writer that changes a record reads its stored state inside its transaction,
+// and writes an entry exactly when the state it writes differs from the state
+// it read; one that creates a record writes from none.
 // Entries are only ever appended, are served in order of their sequence, and
 // are never pruned.
 //
@@ -301,6 +301,24 @@ func occurrenceChange(o Occurrence, from string, by EventActor) change {
 	return c
 }
 
+// triggerBefore reads, inside tx, the stored state of a trigger that a writer
+// is about to change from revision, and refuses the change if the store holds
+// another revision: the entry's from is the state the store held.
+func triggerBefore(tx *sql.Tx, id string, revision int) (string, error) {
+	var raw string
+	if err := tx.QueryRow("SELECT record FROM triggers WHERE id=?", id).Scan(&raw); err != nil {
+		return "", err
+	}
+	var held Trigger
+	if err := json.Unmarshal([]byte(raw), &held); err != nil {
+		return "", err
+	}
+	if held.Revision != revision {
+		return "", &apiError{409, "trigger_changed", "The trigger changed. Reload before updating it."}
+	}
+	return triggerState(held.Paused), nil
+}
+
 // recordRun writes a run's record inside tx, and the entry of its change of
 // state, if its state changed.
 func recordRun(tx *sql.Tx, r Run, by EventActor, detail EventDetail) error {
@@ -392,6 +410,11 @@ func (s *Service) migrateStore() error {
 	case "", "1":
 	default:
 		return errors.New("runner store belongs to another owner, workspace or schema")
+	}
+	// SQLite's schema changes are transactional: a migration that fails
+	// leaves no table, column or entry behind.
+	if _, err = tx.Exec(eventsSchema); err != nil {
+		return err
 	}
 	var held EventHeld
 	for table, count := range map[string]*int{"jobs": &held.Jobs, "triggers": &held.Triggers, "occurrences": &held.Occurrences, "runs": &held.Runs} {
@@ -569,11 +592,23 @@ func (s *Service) refusedRun(jobID string, err error) {
 	}
 }
 
+// credentialRefusal is the refusal of an event delivery whose credential was
+// authenticated. It carries the credential's identity as it was then, so that
+// the refusal is journaled as that credential's even if the key is rotated
+// before the refusal is recorded.
+type credentialRefusal struct {
+	err error
+	by  EventActor
+}
+
+func (e *credentialRefusal) Error() string { return e.err.Error() }
+func (e *credentialRefusal) Unwrap() error { return e.err }
+
 // refusedEvent journals a refused event delivery to a trigger the store
-// holds. It is the credential's when the token is the trigger's current key,
-// and the installation's otherwise.
-func (s *Service) refusedEvent(triggerID, token string, err error) {
-	t, hash, e := s.trigger(triggerID)
+// holds: the authenticated credential's, when the refusal says one was, and
+// otherwise the installation's. The token is not checked again here.
+func (s *Service) refusedEvent(triggerID string, err error) {
+	t, _, e := s.trigger(triggerID)
 	if e != nil {
 		return
 	}
@@ -582,8 +617,9 @@ func (s *Service) refusedEvent(triggerID, token string, err error) {
 		return
 	}
 	by := s.installation()
-	if len(token) == 64 && hash != "" && subtle.ConstantTimeCompare([]byte(digest([]byte(token))), []byte(hash)) == 1 {
-		by = credentialActor(t.ID, t.keyRevision)
+	var authenticated *credentialRefusal
+	if errors.As(err, &authenticated) {
+		by = authenticated.by
 	}
 	s.refused("deliver-event", err, by, EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID})
 }
@@ -683,8 +719,12 @@ func eventPageFrom(db *sql.DB, after int64, where string, args ...any) (EventPag
 	return page, err
 }
 
-// jobEventsHandler serves a job's entries: those naming it, and those naming
-// its release alone (its preview, a refused creation).
+// jobEntries selects a job's entries, given its id and its release's: those
+// naming the job, and those naming its release alone (its preview, a refused
+// creation). Both routes use it.
+const jobEntries = "job_id=? OR (job_id='' AND release_id=?)"
+
+// jobEventsHandler serves a job's entries.
 func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 	after, _, err := eventQuery(r.URL.RawQuery)
 	if err != nil {
@@ -696,7 +736,7 @@ func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	page, err := s.eventPageAfter(after, "job_id=? OR (job_id='' AND release_id=?)", j.ID, j.ReleaseID)
+	page, err := s.eventPageAfter(after, jobEntries, j.ID, j.ReleaseID)
 	if err != nil {
 		failure(w, err)
 		return
@@ -714,11 +754,13 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	where, args := "1=1", []any{}
 	if job != "" {
-		if _, err = s.job(job); err != nil {
+		j, err := s.job(job)
+		if err != nil {
 			failure(w, err)
 			return
 		}
-		where, args = "job_id=? OR kind IN ('journal.began','runner.started','runner.stopped')", []any{job}
+		// The job route's entries, and Runner's own.
+		where, args = jobEntries+" OR kind IN ('journal.began','runner.started','runner.stopped')", []any{j.ID, j.ReleaseID}
 	}
 	page, err := s.eventPageAfter(after, where, args...)
 	if err != nil {
