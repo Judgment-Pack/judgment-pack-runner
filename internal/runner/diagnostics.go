@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"unicode/utf8"
 )
 
@@ -38,26 +39,123 @@ func diagnosticsStream(raw string) (string, error) {
 	return "", &apiError{400, "invalid_stream", "Ask once for the stream stderr or stdout, in a well-formed query."}
 }
 
-// readHead reads up to limit bytes from the start of a private attempt file,
-// and says how large the whole file is. A cut never ends inside a character.
-func readHead(path string, limit int) ([]byte, int64, error) {
-	if err := privateFile(path); err != nil {
-		return nil, 0, err
+// diagnosticsHook, when a test sets it, runs between looking at a name and
+// opening it: at "attempt" before the run's directory is opened, and at
+// "stream" before the stream is.
+var diagnosticsHook func(stage string)
+
+func diagnosticsPause(stage string) {
+	if diagnosticsHook != nil {
+		diagnosticsHook(stage)
 	}
-	f, err := os.Open(path)
+}
+
+// errNotRetained is a stream the store does not hold.
+var errNotRetained = errors.New("no such stream is retained")
+
+// errNotPrivate is what is at a stream's name, or its directory's, when it is
+// not a private file, or directory, of the operator's own, or is not what the
+// name held when Runner looked at it. Nothing of it is read.
+var errNotPrivate = errors.New("not a private file in the run's own attempt directory")
+
+// openHeldRoot opens a private directory of the store as a root that Runner
+// holds: the directory the path names when it is opened, which a later
+// rename or link at that path does not change.
+func openHeldRoot(path string) (*os.Root, error) {
+	looked, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !looked.IsDir() {
+		return nil, errors.New("runner state must not use symlink directories")
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	held, err := root.Stat(".")
+	if err == nil && !os.SameFile(looked, held) {
+		err = errors.New("runner state changed while it was opened")
+	}
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	return root, nil
+}
+
+// private says whether an opened file is what its name held when Runner
+// looked at it, and is the operator's alone.
+func private(looked, held os.FileInfo) bool {
+	return os.SameFile(looked, held) && held.Mode().Perm()&0077 == 0 && checkOwner(held) == nil
+}
+
+// readStream reads up to limit bytes from the start of a run's stream, and
+// says the whole stream's size. It goes through the attempts root Runner
+// holds, one name at a time, and follows no link: the run's directory and the
+// stream must each be the directory, and the regular file, that the name held
+// when Runner looked at it, and private to the operator. The bytes are read
+// from the descriptor that was checked, never by name again. A cut never ends
+// inside a character.
+func (s *Service) readStream(run, stream string, limit int) ([]byte, int64, error) {
+	if s.attempts == nil {
+		return nil, 0, errors.New("the attempts directory is not held")
+	}
+	looked, err := s.attempts.Lstat(run)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, errNotRetained
+	}
 	if err != nil {
 		return nil, 0, err
+	}
+	if !looked.IsDir() {
+		return nil, 0, errNotPrivate
+	}
+	diagnosticsPause("attempt")
+	dir, err := s.attempts.OpenRoot(run)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, errNotRetained
+	}
+	if err != nil {
+		return nil, 0, errNotPrivate
+	}
+	defer dir.Close()
+	if held, err := dir.Stat("."); err != nil || !private(looked, held) {
+		return nil, 0, errNotPrivate
+	}
+	name := "evaluation." + stream
+	looked, err = dir.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, errNotRetained
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	if !looked.Mode().IsRegular() {
+		return nil, 0, errNotPrivate
+	}
+	diagnosticsPause("stream")
+	// Not blocking: a name that has become a pipe is refused, not waited on.
+	f, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, errNotRetained
+	}
+	if err != nil {
+		return nil, 0, errNotPrivate
 	}
 	defer f.Close()
-	st, err := f.Stat()
+	held, err := f.Stat()
 	if err != nil {
 		return nil, 0, err
+	}
+	if !held.Mode().IsRegular() || !private(looked, held) {
+		return nil, 0, errNotPrivate
 	}
 	b, err := io.ReadAll(io.LimitReader(f, int64(limit)))
 	if err != nil {
 		return nil, 0, err
 	}
-	if int64(len(b)) < st.Size() {
+	if int64(len(b)) < held.Size() {
 		for back := 1; back <= utf8.UTFMax && back <= len(b); back++ {
 			if utf8.RuneStart(b[len(b)-back]) {
 				if !utf8.FullRune(b[len(b)-back:]) {
@@ -67,15 +165,17 @@ func readHead(path string, limit int) ([]byte, int64, error) {
 			}
 		}
 	}
-	return b, st.Size(), nil
+	return b, held.Size(), nil
 }
 
 // diagnosticsHandler serves a finished run's attempt diagnostics as
 // text/plain: the first maxDiagnostics bytes of the stream asked for, with
 // X-Diagnostics-Bytes, the stream's whole size, and X-Diagnostics-Truncated.
-// A run still queued or running is refused; one that kept no such stream
-// answers 404 with the reason. A read changes nothing, and writes no entry in
-// the journal of job activity.
+// A run still queued or running is refused. A run whose stream is not retained
+// answers 404 with its state and what the store records, never an inference
+// from the missing file; a stream that is not the run's own private file is
+// refused with 500, unread. A read changes nothing, and writes no entry in the
+// journal of job activity.
 func (s *Service) diagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 	stream, err := diagnosticsStream(r.URL.RawQuery)
 	if err != nil {
@@ -91,23 +191,29 @@ func (s *Service) diagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, &apiError{409, "run_not_finished", "A run's diagnostics are served once it has finished."})
 		return
 	}
-	none := func(reason string) { failure(w, &apiError{404, "no_diagnostics", reason}) }
+	// A run's directory is named by its id, one path element.
+	var head []byte
+	var size int64
 	if run.ID == "" || run.ID == "." || run.ID == ".." || filepath.Base(run.ID) != run.ID {
-		none("This run kept no diagnostics.")
-		return
+		err = errNotRetained
+	} else {
+		head, size, err = s.readStream(run.ID, stream, maxDiagnostics)
 	}
-	attempt := filepath.Join(s.cfg.Dir, "attempts", run.ID)
-	if _, err = os.Lstat(attempt); errors.Is(err, fs.ErrNotExist) {
-		if run.Reason == runQueueExpired {
-			none("This run expired in the queue and was never evaluated, so it kept no diagnostics.")
-		} else {
-			none("This run was never evaluated, so it kept no diagnostics.")
+	if errors.Is(err, errNotRetained) {
+		// Only what the store records: a missing file says nothing of
+		// whether the Runtime ran.
+		known := ""
+		switch {
+		case run.Reason == runQueueExpired:
+			known = ": it expired in the queue (" + runQueueExpired + ") and never started"
+		case run.StartedAt == "":
+			known = ": it never started"
 		}
+		failure(w, &apiError{404, "no_diagnostics", "No " + stream + " is retained for this run, whose state is " + run.State + known + "."})
 		return
 	}
-	head, size, err := readHead(filepath.Join(attempt, "evaluation."+stream), maxDiagnostics)
-	if errors.Is(err, fs.ErrNotExist) {
-		none("This run's evaluation kept no " + stream + ": the Runtime was not invoked.")
+	if errors.Is(err, errNotPrivate) {
+		failure(w, &apiError{500, "diagnostics_refused", "This run's " + stream + " is not a private file in its own attempt directory, so it was not read."})
 		return
 	}
 	if err != nil {

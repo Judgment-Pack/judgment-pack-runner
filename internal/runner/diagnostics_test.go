@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -86,7 +87,8 @@ func TestARunsDiagnosticsAreServedOnceItHasFinished(t *testing.T) {
 	_, e = w.s.dispatchNext(context.Background())
 	must(t, e)
 
-	r := journalRelease(t, w.s, waitingRuntime(t, w.cfg.Dir, filepath.Join(t.TempDir(), "pid")))
+	pid := filepath.Join(t.TempDir(), "pid")
+	r := journalRelease(t, w.s, fakeRuntime(t, w.cfg.Dir, "echo 'written while running' >&2\necho $$ > '"+pid+"'\nexec sleep 30"))
 	j, e := w.s.createJob("Waits", r.ID)
 	must(t, e)
 	running, _, e := w.s.submit(j.ID, "running", journalInput())
@@ -95,6 +97,14 @@ func TestARunsDiagnosticsAreServedOnceItHasFinished(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, e := w.s.dispatchNext(stop); done <- e }()
 	waitForRunState(t, w.s, running.ID, "running")
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if b, e := os.ReadFile(filepath.Join(w.cfg.Dir, "attempts", running.ID, "evaluation.stderr")); e == nil && len(b) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the running evaluation wrote no stderr")
+		}
+	}
 	status, code, _, _ := diagnostics(w, running.ID, "")
 	cancel()
 	must(t, <-done)
@@ -107,7 +117,7 @@ func TestARunsDiagnosticsAreServedOnceItHasFinished(t *testing.T) {
 	must(t, e)
 	_, e = w.s.dispatchNext(context.Background())
 	must(t, e)
-	if status, code, _, _ := diagnostics(w, expired.ID, ""); status != 404 || code != "no_diagnostics: This run expired in the queue and was never evaluated, so it kept no diagnostics." {
+	if status, code, _, _ := diagnostics(w, expired.ID, ""); status != 404 || code != "no_diagnostics: No stderr is retained for this run, whose state is failed: it expired in the queue (queue-expired) and never started." {
 		t.Fatalf("an expired run: %d %s", status, code)
 	}
 	for query, want := range map[string]int{"?stream=audit": 400, "?stream=stderr&stream=stdout": 400, "?stream=%zz": 400} {
@@ -134,6 +144,10 @@ func TestARunsDiagnosticsAreServedUpToTheirBound(t *testing.T) {
 	status, _, h, body = diagnostics(w, straddling.ID, "")
 	if status != 200 || len(body) != maxDiagnostics-1 || h["X-Diagnostics-Bytes"] != "65637" || h["X-Diagnostics-Truncated"] != "true" || body[len(body)-1] != 'x' {
 		t.Fatalf("%d %v %d bytes, ending %q", status, h, len(body), body[len(body)-3:])
+	}
+	stdout := runOn(w, fakeRuntime(t, w.cfg.Dir, "head -c 65537 /dev/zero | tr '\\0' o\nexit 3"))
+	if status, _, h, body = diagnostics(w, stdout.ID, "?stream=stdout"); status != 200 || len(body) != maxDiagnostics || h["X-Diagnostics-Bytes"] != "65537" || h["X-Diagnostics-Truncated"] != "true" || !bytes.Equal(body, bytes.Repeat([]byte("o"), maxDiagnostics)) {
+		t.Fatalf("stdout: %d %v %d bytes", status, h, len(body))
 	}
 	exact := runOn(w, fakeRuntime(t, w.cfg.Dir, "head -c 65536 /dev/zero | tr '\\0' x >&2\nexit 3"))
 	if status, _, h, body = diagnostics(w, exact.ID, ""); status != 200 || len(body) != maxDiagnostics || h["X-Diagnostics-Truncated"] != "false" {
@@ -171,5 +185,196 @@ func TestAnExpiredQueueEntryHasItsOwnReason(t *testing.T) {
 	failed := runOn(w, failingRuntime(t, w.cfg.Dir))
 	if got := serve(t, w.s, "GET", "/v1/runs/"+failed.ID, "", nil); failed.State != "failed" || failed.Reason != "" || bytes.Contains(got.Body.Bytes(), []byte(`"reason"`)) {
 		t.Fatalf("a run that failed in evaluation: %+v %s", failed, got.Body)
+	}
+}
+
+// stored is a run whose stderr the Runtime wrote, and the path of its attempt
+// directory.
+func stored(w *coverWorld, stderr string) (Run, string) {
+	w.t.Helper()
+	run := runOn(w, talkingRuntime(w.t, w.cfg.Dir, stderr, "{}"))
+	return run, filepath.Join(w.cfg.Dir, "attempts", run.ID)
+}
+
+const diagnosticsSecrets = "SECRET"
+
+func refusedUnread(w *coverWorld, run string) {
+	w.t.Helper()
+	status, code, _, body := diagnostics(w, run, "")
+	if status != 500 || !strings.HasPrefix(code, "diagnostics_refused") || bytes.Contains(body, []byte(diagnosticsSecrets)) {
+		w.t.Fatalf("%d %s %q", status, code, body)
+	}
+}
+
+// Diagnostics are read only from the run's own attempt directory and its own
+// private files: a directory or a stream replaced by a link, to another
+// run's, to a file beside it or to one outside the store, and a stream or a
+// directory others may read, are refused, and nothing of them is served.
+func TestDiagnosticsAreReadOnlyFromTheRunsOwnPrivateFiles(t *testing.T) {
+	cases := map[string]func(w *coverWorld, dir, other string){
+		"its directory, a link to another run's": func(w *coverWorld, dir, other string) {
+			must(w.t, os.RemoveAll(dir))
+			must(w.t, os.Symlink(other, dir))
+		},
+		"its directory, a link outside the store": func(w *coverWorld, dir, _ string) {
+			outside := w.t.TempDir()
+			must(w.t, os.WriteFile(filepath.Join(outside, "evaluation.stderr"), []byte("OUTSIDE-SECRET"), 0600))
+			must(w.t, os.RemoveAll(dir))
+			must(w.t, os.Symlink(outside, dir))
+		},
+		"its stream, a link to a file beside it": func(w *coverWorld, dir, _ string) {
+			must(w.t, os.WriteFile(filepath.Join(dir, "beside"), []byte("BESIDE-SECRET"), 0600))
+			must(w.t, os.Remove(filepath.Join(dir, "evaluation.stderr")))
+			must(w.t, os.Symlink("beside", filepath.Join(dir, "evaluation.stderr")))
+		},
+		"its stream, a link to another run's": func(w *coverWorld, dir, other string) {
+			must(w.t, os.Remove(filepath.Join(dir, "evaluation.stderr")))
+			must(w.t, os.Symlink(filepath.Join(other, "evaluation.stderr"), filepath.Join(dir, "evaluation.stderr")))
+		},
+		"its stream, a link outside the store": func(w *coverWorld, dir, _ string) {
+			outside := filepath.Join(w.t.TempDir(), "outside")
+			must(w.t, os.WriteFile(outside, []byte("OUTSIDE-SECRET"), 0600))
+			must(w.t, os.Remove(filepath.Join(dir, "evaluation.stderr")))
+			must(w.t, os.Symlink(outside, filepath.Join(dir, "evaluation.stderr")))
+		},
+		"its stream, readable by others": func(w *coverWorld, dir, _ string) {
+			must(w.t, os.Chmod(filepath.Join(dir, "evaluation.stderr"), 0644))
+		},
+		"its directory, readable by others": func(w *coverWorld, dir, _ string) {
+			must(w.t, os.Chmod(dir, 0755))
+		},
+		"its stream, a directory": func(w *coverWorld, dir, _ string) {
+			must(w.t, os.Remove(filepath.Join(dir, "evaluation.stderr")))
+			must(w.t, os.Mkdir(filepath.Join(dir, "evaluation.stderr"), 0700))
+		},
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := newCoverWorld(t)
+			run, dir := stored(w, "the run-own stderr")
+			_, other := stored(w, "OTHER-RUN-SECRET")
+			if status, _, _, body := diagnostics(w, run.ID, ""); status != 200 || string(body) != "the run-own stderr" {
+				t.Fatal(status, string(body))
+			}
+			change(w, dir, other)
+			refusedUnread(w, run.ID)
+		})
+	}
+}
+
+// What a name holds when Runner looks at it is what Runner reads, or it reads
+// nothing: a run's directory or stream swapped between the look and the open,
+// for a link or for another file, is refused.
+func TestASwapBetweenTheLookAndTheOpenIsRefused(t *testing.T) {
+	t.Cleanup(func() { diagnosticsHook = nil })
+	cases := map[string]struct {
+		stage string
+		swap  func(w *coverWorld, dir, other string)
+	}{
+		"the stream, for a link to a file beside it": {"stream", func(w *coverWorld, dir, _ string) {
+			must(w.t, os.WriteFile(filepath.Join(dir, "beside"), []byte("BESIDE-SECRET"), 0600))
+			must(w.t, os.Symlink("beside", filepath.Join(dir, "link")))
+			must(w.t, os.Rename(filepath.Join(dir, "link"), filepath.Join(dir, "evaluation.stderr")))
+		}},
+		"the stream, for another file": {"stream", func(w *coverWorld, dir, _ string) {
+			must(w.t, os.WriteFile(filepath.Join(dir, "replacement"), []byte("REPLACEMENT-SECRET"), 0600))
+			must(w.t, os.Rename(filepath.Join(dir, "replacement"), filepath.Join(dir, "evaluation.stderr")))
+		}},
+		"the directory, for a link to another run's": {"attempt", func(w *coverWorld, dir, other string) {
+			must(w.t, os.Symlink(other, dir+".link"))
+			must(w.t, os.Rename(dir, dir+".gone"))
+			must(w.t, os.Rename(dir+".link", dir))
+		}},
+		"the directory, for another run's": {"attempt", func(w *coverWorld, dir, other string) {
+			must(w.t, os.Rename(dir, dir+".gone"))
+			must(w.t, os.Rename(other, dir))
+		}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := newCoverWorld(t)
+			run, dir := stored(w, "the run-own stderr")
+			_, other := stored(w, "OTHER-RUN-SECRET")
+			if status, _, _, body := diagnostics(w, run.ID, ""); status != 200 || string(body) != "the run-own stderr" {
+				t.Fatal(status, string(body))
+			}
+			diagnosticsHook = func(stage string) {
+				if stage == c.stage {
+					diagnosticsHook = nil
+					c.swap(w, dir, other)
+				}
+			}
+			refusedUnread(w, run.ID)
+		})
+	}
+}
+
+// Under a stream swapped back and forth with a link while it is read, every
+// answer is the run's own bytes or a refusal.
+func TestAStreamSwappedWhileItIsReadIsServedWhollyOrNotAtAll(t *testing.T) {
+	w := newCoverWorld(t)
+	run, dir := stored(w, "the run-own stderr")
+	stream := filepath.Join(dir, "evaluation.stderr")
+	must(t, os.WriteFile(filepath.Join(dir, "beside"), []byte("BESIDE-SECRET"), 0600))
+	must(t, os.Link(stream, filepath.Join(dir, "own")))
+	stop := make(chan struct{})
+	swapped := make(chan struct{})
+	go func() {
+		defer close(swapped)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				os.Remove(filepath.Join(dir, "next"))
+				os.Link(filepath.Join(dir, "own"), filepath.Join(dir, "next"))
+				os.Rename(filepath.Join(dir, "next"), stream)
+				return
+			default:
+			}
+			os.Remove(filepath.Join(dir, "next"))
+			if i%2 == 0 {
+				os.Symlink("beside", filepath.Join(dir, "next"))
+			} else {
+				os.Link(filepath.Join(dir, "own"), filepath.Join(dir, "next"))
+			}
+			os.Rename(filepath.Join(dir, "next"), stream)
+		}
+	}()
+	served, refused := 0, 0
+	for i := 0; i < 300; i++ {
+		status, code, _, body := diagnostics(w, run.ID, "")
+		switch {
+		case status == 200 && string(body) == "the run-own stderr":
+			served++
+		case status == 500 && strings.HasPrefix(code, "diagnostics_refused"), status == 404:
+			refused++
+		default:
+			close(stop)
+			<-swapped
+			t.Fatalf("answer %d: %d %s %q", i, status, code, body)
+		}
+	}
+	close(stop)
+	<-swapped
+	t.Logf("%d served whole, %d refused", served, refused)
+}
+
+// A run whose diagnostics are gone is said to have none retained, with its
+// state and what the store records of it: never that it was not evaluated.
+func TestMissingDiagnosticsAreNotTakenForARunNeverEvaluated(t *testing.T) {
+	w := newCoverWorld(t)
+	run, dir := stored(w, "the run-own stderr")
+	must(t, os.Remove(filepath.Join(dir, "evaluation.stderr")))
+	want := "no_diagnostics: No stderr is retained for this run, whose state is failed."
+	if status, code, _, _ := diagnostics(w, run.ID, ""); status != 404 || code != want {
+		t.Fatalf("a stream gone: %d %s", status, code)
+	}
+	must(t, os.RemoveAll(dir))
+	if status, code, _, _ := diagnostics(w, run.ID, ""); status != 404 || code != want {
+		t.Fatalf("a directory gone: %d %s", status, code)
+	}
+	completed := runOn(w, completingRuntime(t, w.cfg.Dir))
+	must(t, os.RemoveAll(filepath.Join(w.cfg.Dir, "attempts", completed.ID)))
+	if status, code, _, _ := diagnostics(w, completed.ID, "?stream=stdout"); status != 404 || code != "no_diagnostics: No stdout is retained for this run, whose state is completed." {
+		t.Fatalf("a completed run's: %d %s", status, code)
 	}
 }
