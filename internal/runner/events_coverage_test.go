@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -671,5 +672,33 @@ func TestARestartCommitsItsMarksWithTheirEntries(t *testing.T) {
 				t.Fatal(got)
 			}
 		})
+	}
+}
+
+// A trigger writer reads the trigger's stored revision and state inside its
+// transaction: the entry's from is what the store held, whatever the writer
+// read before, and a change from a revision the store no longer holds is
+// refused, with neither the change nor an entry.
+func TestATriggerWriterReadsTheStoredTriggerInItsTransaction(t *testing.T) {
+	w := newCoverWorld(t)
+	tr, _ := w.eventTrigger("queue")
+	before := len(w.entries())
+	stale := tr
+	stale.Revision += 2
+	stale.Paused = true
+	err := w.s.writeTriggerChange(stale, "", change{kind: "trigger.paused", by: w.s.installation(), revision: stale.Revision, states: true, from: "paused", to: "paused"})
+	var api *apiError
+	if !errors.As(err, &api) || api.Code != "trigger_changed" {
+		t.Fatal("a change from another revision was not refused:", err)
+	}
+	if held, _ := storedTrigger(t, w.s, tr.ID); held.Revision != tr.Revision || held.Paused || len(w.entries()) != before {
+		t.Fatal("the refused change was written")
+	}
+	next := tr
+	next.Revision++
+	next.Paused = true
+	must(t, w.s.writeTriggerChange(next, "", change{kind: "trigger.paused", by: w.s.installation(), revision: next.Revision, states: true, from: "paused", to: "paused"}))
+	if added := w.entries()[before:]; len(added) != 1 || string(added[0].From) != `"enabled"` {
+		t.Fatalf("the entry's from is not what the store held: %+v", added)
 	}
 }
