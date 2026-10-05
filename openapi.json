@@ -568,6 +568,100 @@
         }
       }
     },
+    "/jobs/{job}/events": {
+      "parameters": [
+        {
+          "name": "job",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Later than: the sequence of the last entry read, or 0, the default, from the start. Unlike run and occurrence lists, which page newest first, the journal pages oldest first, as the chain of runs is read."
+        }
+      ],
+      "get": {
+        "operationId": "listJobEvents",
+        "description": "A job's entries in the journal of job activity: those naming the job, and those naming its release alone (its preview, a refused creation). Entries are oldest first, at most 50 after the cursor, in the order their changes committed. A reader that has caught up asks again with next. The operator's own log: not chained, not signed, and binding nothing against the operator. A job the store does not hold is answered 404 not_found.",
+        "responses": {
+          "200": {
+            "description": "A page of the journal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "parameters": [
+        {
+          "name": "after",
+          "in": "query",
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Later than: the sequence of the last entry read, or 0, the default, from the start. Unlike run and occurrence lists, which page newest first, the journal pages oldest first, as the chain of runs is read."
+        },
+        {
+          "name": "job",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          },
+          "description": "Only this job's entries, and Runner's own (journal.began, runner.started, runner.stopped), which concern no job but explain a gap in every job's. A job the store does not hold is answered 404 not_found."
+        }
+      ],
+      "get": {
+        "operationId": "listEvents",
+        "description": "Every entry of the journal of job activity, including those that concern no job: Runner's own, a release never made into a job, a refusal that names nothing else. Entries are oldest first, at most 50 after the cursor, in the order their changes committed. A reader that has caught up asks again with next. The operator's own log: not chained, not signed, and binding nothing against the operator.",
+        "responses": {
+          "200": {
+            "description": "A page of the journal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/inputs/next": {
       "post": {
         "operationId": "planNextInputSource",
@@ -1617,6 +1711,10 @@
           },
           "trigger": {
             "$ref": "#/components/schemas/TriggerOrigin"
+          },
+          "interruptedAt": {
+            "type": "string",
+            "description": "When Runner saw this run stop, at an orderly stop: the moment the evaluation it was in was cancelled. finishedAt keeps its meaning, the time Runner recorded the run's end. A run found running at a restart has none, since Runner did not see it stop: its run.interrupted journal entry gives the window the stop lies in. Served with the run and in run lists; not in verification exports, whose version-2 readers decode strictly."
           }
         }
       },
@@ -3995,6 +4093,406 @@
           "pointer"
         ],
         "additionalProperties": false
+      },
+      "JournalActor": {
+        "description": "Who Runner can say initiated a change. Never a person: Runner cannot know one. installation is whoever holds the owner bearer, named by the boot line's owner; a trigger acts at a revision; a trigger-credential is an event delivery whose X-Trigger-Token was the trigger's current key, named by the revision the key was issued at (null for a key issued before the journal began), never by the token or its digest; a cloud-connection is a cloud signal Runner discarded; runner is Runner itself.",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "owner"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "installation"
+              },
+              "owner": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "trigger",
+              "revision"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "trigger"
+              },
+              "trigger": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "trigger",
+              "keyRevision"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "trigger-credential"
+              },
+              "trigger": {
+                "type": "string"
+              },
+              "keyRevision": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "connection"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "cloud-connection"
+              },
+              "connection": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "runner"
+              }
+            }
+          }
+        ]
+      },
+      "JournalConcerns": {
+        "type": "object",
+        "description": "The ids a change is about, each present only where it applies. An entry that names a job also names its release.",
+        "additionalProperties": false,
+        "properties": {
+          "job": {
+            "type": "string"
+          },
+          "release": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "occurrence": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string"
+          }
+        }
+      },
+      "JournalInterruption": {
+        "type": "object",
+        "description": "An interruption's own time. seen true: Runner saw the stop, at at. seen false: Runner found the work at a restart and cannot know when it stopped; it was running at lastKnownRunning, the last time Runner recorded it alive (absent when the journal holds no such time), and had stopped by the restart, the runner.started entry at sequence restart.",
+        "required": [
+          "seen"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "seen": {
+            "type": "boolean"
+          },
+          "at": {
+            "type": "string"
+          },
+          "lastKnownRunning": {
+            "type": "string"
+          },
+          "restart": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "JournalEntry": {
+        "type": "object",
+        "description": "One entry of the journal of job activity (docs/design/activity-journal.md): one change of state Runner made, written in the transaction that made it, or a refused request to start work. The operator's own log: not chained, not signed, and binding nothing against the operator. It holds no inputs, secrets, tokens or digests of either. The members after reason are particular to kinds, as their descriptions say; a member added later raises entryVersion.",
+        "required": [
+          "sequence",
+          "entryVersion",
+          "kind",
+          "at",
+          "by",
+          "concerns"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The entry's place in the journal, from 1, in the order changes committed: the cursor."
+          },
+          "entryVersion": {
+            "const": "1"
+          },
+          "kind": {
+            "enum": [
+              "trigger.configured",
+              "trigger.paused",
+              "trigger.resumed",
+              "trigger.key-rotated",
+              "occurrence.received",
+              "occurrence.skipped",
+              "occurrence.preparing",
+              "occurrence.ready",
+              "occurrence.submitted",
+              "occurrence.failed",
+              "occurrence.expired",
+              "occurrence.needs-attention",
+              "occurrence.cancelled",
+              "occurrence.reconciled",
+              "run.queued",
+              "run.started",
+              "run.expired",
+              "run.completed",
+              "run.failed",
+              "run.interrupted",
+              "release.previewed",
+              "job.created",
+              "admission.refused",
+              "journal.began",
+              "runner.started",
+              "runner.stopped"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "description": "When Runner wrote the entry, by its own clock. Order is sequence, never at."
+          },
+          "by": {
+            "$ref": "#/components/schemas/JournalActor"
+          },
+          "concerns": {
+            "$ref": "#/components/schemas/JournalConcerns"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The trigger revision: after the change, for a change of a trigger; the one an occurrence was admitted under, for the occurrence and its run."
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The record's state before the change, for triggers (paused or enabled), occurrences and runs; null when the change created the record. Absent for a kind that concerns no record with a state."
+          },
+          "to": {
+            "type": "string",
+            "description": "The record's state after the change. Absent for a kind that concerns no record with a state."
+          },
+          "reason": {
+            "type": "string",
+            "description": "The reason or problem text Runner recorded with the change, where the record serves one, cut at 1,024 bytes; for a discarded cloud signal, the reason Runner gives."
+          },
+          "previousRevision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "trigger.*: the trigger's revision before the change; null for a new trigger. The values of both are the trigger's snapshots, never copied here."
+          },
+          "triggerKind": {
+            "enum": [
+              "schedule",
+              "event",
+              "file",
+              "cloud"
+            ],
+            "description": "trigger.configured: the kind of trigger."
+          },
+          "keyIssued": {
+            "const": true,
+            "description": "trigger.resumed: the event trigger's first key was issued at this revision. The key is in the answer to the request, never here."
+          },
+          "nextAt": {
+            "type": "string",
+            "description": "trigger.resumed, for a schedule: its next time."
+          },
+          "occurrenceKind": {
+            "enum": [
+              "schedule",
+              "event",
+              "file",
+              "cloud"
+            ],
+            "description": "An occurrence's admission (from null): the kind of trigger it came from."
+          },
+          "scheduledAt": {
+            "type": "string",
+            "description": "An occurrence's admission: as the occurrence holds it."
+          },
+          "missedFrom": {
+            "type": "string",
+            "description": "An occurrence's admission: as the occurrence holds it."
+          },
+          "missedThrough": {
+            "type": "string",
+            "description": "An occurrence's admission: as the occurrence holds it."
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "An occurrence's admission: as the occurrence holds it."
+          },
+          "deadline": {
+            "type": "string",
+            "description": "occurrence.preparing, for a durable preparation: its deadline."
+          },
+          "readyUntil": {
+            "type": "string",
+            "description": "occurrence.ready, for a durable preparation: until when its run may be admitted."
+          },
+          "chainSequence": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "run.completed: the sequence of the run's entry in the installation's chain of runs, appended in the same transaction."
+          },
+          "interruption": {
+            "$ref": "#/components/schemas/JournalInterruption"
+          },
+          "packId": {
+            "type": "string",
+            "description": "release.previewed."
+          },
+          "packVersion": {
+            "type": "string",
+            "description": "release.previewed."
+          },
+          "packDigest": {
+            "type": "string",
+            "description": "release.previewed."
+          },
+          "runtimeDigest": {
+            "type": "string",
+            "description": "release.previewed: the release's Runtime; runner.started: the Runtime this process pinned."
+          },
+          "tests": {
+            "type": "string",
+            "description": "release.previewed: the state of the release's saved tests."
+          },
+          "request": {
+            "enum": [
+              "submit-run",
+              "deliver-event",
+              "create-job",
+              "cloud-signal"
+            ],
+            "description": "admission.refused: the request refused."
+          },
+          "status": {
+            "enum": [
+              400,
+              401,
+              409,
+              422,
+              429
+            ],
+            "description": "admission.refused: the HTTP status the request was answered with. Absent for a cloud signal."
+          },
+          "code": {
+            "type": "string",
+            "description": "admission.refused: the error code the request was answered with. Absent for a cloud signal."
+          },
+          "coalescedSeconds": {
+            "const": 60,
+            "description": "admission.refused: identical refusals in this many seconds after the entry are not entries."
+          },
+          "held": {
+            "type": "object",
+            "description": "journal.began: what the store held when its journal began, none of which has an entry.",
+            "required": [
+              "jobs",
+              "triggers",
+              "occurrences",
+              "runs"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "jobs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "triggers": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "occurrences": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "runs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "version": {
+            "type": "string",
+            "description": "runner.started: the Runner build."
+          }
+        }
+      },
+      "JournalPage": {
+        "type": "object",
+        "required": [
+          "journalBegan",
+          "items",
+          "next",
+          "more"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "journalBegan": {
+            "type": "string",
+            "description": "When the store's journal began. Nothing before it has an entry, and nothing is back-filled."
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/JournalEntry"
+            }
+          },
+          "next": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The sequence of the page's last entry, or the cursor given when the page is empty: the after of the next request. It never resets to 0."
+          },
+          "more": {
+            "type": "boolean",
+            "description": "Another page is already available."
+          }
+        }
       }
     }
   }

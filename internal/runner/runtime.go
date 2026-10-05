@@ -251,8 +251,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		r.TestEvidence = s.checkReleaseTests(ctx, r, req.Matrix, req.TestSource, filepath.Join(dir, "tests"))
 		r.Tests = r.TestEvidence.Status
 	}
-	_, err = s.db.Exec("INSERT INTO releases(id,record) VALUES (?,?)", r.ID, string(encode(r)))
-	return r, err
+	return r, s.saveRelease(r)
 }
 func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, []byte, error) {
 	if input.Source != nil && input.Source.Mapping.Version == 2 {

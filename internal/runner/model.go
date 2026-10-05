@@ -91,7 +91,32 @@ type Run struct {
 	// without a key, or before Runner kept the sidecar, has none.
 	AuditSignatures []byte `json:"auditSignatures,omitempty"`
 	Problem         string `json:"problem,omitempty"`
+	// InterruptedAt is when Runner saw this run stop, at an orderly stop: the
+	// moment the evaluation it was in was cancelled. FinishedAt keeps its
+	// meaning, the time Runner recorded the run's end. A run found running at
+	// a restart has none, since Runner did not see it stop; its journal entry
+	// gives the window the stop lies in. It is kept and served with the run
+	// (storedRun), and is not part of a verification export, whose version-2
+	// readers decode strictly and would refuse a new member.
+	InterruptedAt string `json:"-"`
 }
+
+// storedRun is a run as the store keeps it and the run routes serve it: the
+// run, and when Runner saw it interrupted. A run without InterruptedAt encodes
+// exactly as Run does.
+type storedRun struct {
+	Run
+	InterruptedAt string `json:"interruptedAt,omitempty"`
+}
+
+func runText(r Run) string { return string(encode(storedRun{r, r.InterruptedAt})) }
+func decodeRun(b []byte) (Run, error) {
+	var held storedRun
+	e := json.Unmarshal(b, &held)
+	held.Run.InterruptedAt = held.InterruptedAt
+	return held.Run, e
+}
+
 type apiError struct {
 	Status        int
 	Code, Message string

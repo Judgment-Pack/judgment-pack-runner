@@ -36,6 +36,10 @@ type Trigger struct {
 	Problem   string        `json:"problem,omitempty"`
 	// Persistent file observer cursor, excluded from public API responses.
 	observed, pending, pendingAt string
+	// keyRevision is the revision at which the trigger's current event key
+	// was issued: the key's identity in the journal, never the key or its
+	// digest. Nil for a key issued before the journal began, or no key.
+	keyRevision *int
 }
 type TriggerOrigin struct {
 	OccurrenceID    string `json:"occurrenceId"`

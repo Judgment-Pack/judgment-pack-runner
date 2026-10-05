@@ -30,6 +30,9 @@ type Config struct {
 	// the key, as JPACK_SIGNING_KEY. Empty, nothing is signed.
 	SigningKey        string
 	disableAutomation bool
+	// disableDispatcher leaves queued runs for a test to dispatch, one at a
+	// time, with dispatchNext.
+	disableDispatcher bool
 }
 type Service struct {
 	unhealthy              atomic.Bool
@@ -133,17 +136,26 @@ func Open(cfg Config) (_ *Service, err error) {
 	if _, err = s.db.Exec(runChainSchema); err != nil {
 		return nil, err
 	}
-	for k, v := range map[string]string{"schema": "1", "workspace": cfg.Workspace, "owner": cfg.Owner, "inputRoot": cfg.InputRoot} {
-		if _, err = s.db.Exec("INSERT OR IGNORE INTO metadata VALUES (?,?)", k, v); err != nil {
+	if _, err = s.db.Exec(eventsSchema); err != nil {
+		return nil, err
+	}
+	for _, k := range []struct{ key, value string }{{"workspace", cfg.Workspace}, {"owner", cfg.Owner}, {"inputRoot", cfg.InputRoot}} {
+		if _, err = s.db.Exec("INSERT OR IGNORE INTO metadata VALUES (?,?)", k.key, k.value); err != nil {
 			return nil, err
 		}
 		var held string
-		if err = s.db.QueryRow("SELECT value FROM metadata WHERE key=?", k).Scan(&held); err != nil {
+		if err = s.db.QueryRow("SELECT value FROM metadata WHERE key=?", k.key).Scan(&held); err != nil {
 			return nil, err
 		}
-		if held != v {
+		if held != k.value {
 			return nil, errors.New("runner store belongs to another owner, workspace or schema")
 		}
+	}
+	// A store an earlier Runner kept, at schema "1", or a new one, begins its
+	// journal here and is raised to schema "2", which every earlier Runner
+	// refuses (docs/design/activity-journal.md, section 4).
+	if err = s.migrateStore(); err != nil {
+		return nil, err
 	}
 	s.runtime, s.runtimeDigest, err = s.pinRuntime(cfg.Runtime)
 	if err != nil {
@@ -151,43 +163,16 @@ func Open(cfg Config) (_ *Service, err error) {
 	}
 	// Holding the process lock proves the old dispatcher is gone. Never replay an
 	// invocation that may have appended an operational audit before crashing.
-	rows, e := s.db.Query("SELECT record FROM runs WHERE state='running'")
-	if e != nil {
-		return nil, e
-	}
-	var interrupted []Run
-	for rows.Next() {
-		var b []byte
-		var r Run
-		if e = rows.Scan(&b); e != nil {
-			break
-		}
-		if e = json.Unmarshal(b, &r); e != nil {
-			break
-		}
-		interrupted = append(interrupted, r)
-	}
-	if e == nil {
-		e = rows.Err()
-	}
-	rows.Close()
-	if e != nil {
-		return nil, e
-	}
-	for _, r := range interrupted {
-		r.State = "interrupted"
-		r.FinishedAt = now()
-		r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
-		if err = s.saveRun(r); err != nil {
-			return nil, err
-		}
-	}
-	if _, err = s.db.Exec(`UPDATE occurrences SET state='failed',record=json_set(record,'$.state','failed','$.reason','Source acquisition was interrupted. It was not repeated automatically.','$.pendingInput',NULL) WHERE state='preparing'`); err != nil {
+	if err = s.restart(); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
-	go s.worker(ctx)
+	if cfg.disableDispatcher {
+		close(s.done)
+	} else {
+		go s.worker(ctx)
+	}
 	if cfg.disableAutomation {
 		close(s.automationDone)
 	} else {
@@ -202,13 +187,10 @@ func (s *Service) Close() {
 		<-s.done
 		<-s.automationDone
 		s.background.Wait()
+		s.recordStop()
 		s.db.Close()
 		s.lock.Close()
 	})
-}
-func (s *Service) saveRun(r Run) error {
-	_, err := s.db.Exec("UPDATE runs SET state=?,record=? WHERE id=?", r.State, string(encode(r)), r.ID)
-	return err
 }
 func (s *Service) release(id string) (Release, error) {
 	var r Release
@@ -233,7 +215,7 @@ func (s *Service) run(id string) (Run, error) {
 	var b []byte
 	e := s.db.QueryRow("SELECT record FROM runs WHERE id=?", id).Scan(&b)
 	if e == nil {
-		e = json.Unmarshal(b, &r)
+		r, e = decodeRun(b)
 	}
 	return r, e
 }
@@ -306,6 +288,14 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	if _, err = tx.Exec("INSERT INTO jobs(id,release_id,record)VALUES(?,?,?)", j.ID, j.ReleaseID, string(encode(j))); err != nil {
 		return Job{}, err
 	}
+	if _, err = appendEvent(tx, change{kind: "job.created", by: s.installation(), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}}); err != nil {
+		return Job{}, err
+	}
+	if c != nil {
+		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.installation(), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: j.InitialTriggerID}, revision: 1, states: true, to: "paused", detail: EventDetail{PreviousRevision: revisionValue(0), TriggerKind: c.Kind}}); err != nil {
+			return Job{}, err
+		}
+	}
 	return j, tx.Commit()
 }
 func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
@@ -335,8 +325,7 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 			if held != requestHash {
 				return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
 			}
-			var r Run
-			e = json.Unmarshal([]byte(before), &r)
+			r, e := decodeRun([]byte(before))
 			return r, true, e
 		}
 		if !errors.Is(e, sql.ErrNoRows) {
@@ -381,8 +370,7 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 		if held != hash {
 			return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
 		}
-		var r Run
-		err = json.Unmarshal([]byte(before), &r)
+		r, err := decodeRun([]byte(before))
 		return r, true, err
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -415,8 +403,15 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 		return Run{}, false, &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 	}
 	r := Run{Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller}
-	_, err = tx.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, caller, key, hash, r.State, string(encode(r)))
+	_, err = tx.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, caller, key, hash, r.State, runText(r))
 	if err != nil {
+		return Run{}, false, err
+	}
+	by := s.installation()
+	if origin != nil {
+		by = triggerActor(origin.TriggerID, origin.TriggerRevision)
+	}
+	if _, err = appendEvent(tx, runChange(r, "", by, EventDetail{})); err != nil {
 		return Run{}, false, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -441,74 +436,83 @@ func (s *Service) worker(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		var b []byte
-		err := s.db.QueryRow("SELECT record FROM runs WHERE state='queued' ORDER BY seq LIMIT 1").Scan(&b)
-		if errors.Is(err, sql.ErrNoRows) {
+		worked, err := s.dispatchNext(ctx)
+		if err != nil {
+			return
+		}
+		if !worked {
 			select {
 			case <-ctx.Done():
 				return
 			case <-s.wake:
 			case <-ticker.C:
 			}
-			continue
-		}
-		if err != nil {
-			return
-		}
-		var r Run
-		if json.Unmarshal(b, &r) != nil {
-			return
-		}
-		if r.Trigger != nil && r.Trigger.ExpiresAt != "" {
-			deadline, e := time.Parse(time.RFC3339Nano, r.Trigger.ExpiresAt)
-			if e != nil || !time.Now().Before(deadline) {
-				r.State = "failed"
-				r.FinishedAt = now()
-				r.Problem = "The automatic run expired in the queue before evaluation."
-				if s.saveRun(r) != nil {
-					return
-				}
-				continue
-			}
-		}
-		r.State = "running"
-		r.StartedAt = now()
-		r.Attempt = 1
-		if s.saveRun(r) != nil {
-			return
-		}
-		release, err := s.release(r.ReleaseID)
-		if err == nil && r.Trigger != nil && r.Input.Source != nil && r.Input.Source.Mapping.Version == 2 {
-			// Queue time must not silently outlive source freshness. Verify now,
-			// while retaining the exact input snapshot frozen at admission.
-			err = s.checkReleaseProfiles(release)
-			if err == nil {
-				_, err = s.normalizeInput(r.Input)
-			}
-		}
-		if err == nil {
-			var trail, signatures []byte
-			r.Result, trail, signatures, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
-			r.retainAudit(trail, signatures)
-		}
-		r.FinishedAt = now()
-		if err == nil {
-			r.State = "completed"
-		} else {
-			r.State = "failed"
-			r.Problem = err.Error()
-			if ctx.Err() != nil {
-				r.State = "interrupted"
-				r.Problem = "The runner stopped during evaluation. This run was not automatically repeated."
-			}
-		}
-		// A completed run is recorded with its entry in the installation's
-		// chain of runs, or not at all: a failed append stops the dispatcher as
-		// any storage error does, and the run reads interrupted after a restart.
-		if s.finishRun(r) != nil {
-			return
 		}
 	}
+}
+
+// dispatchNext takes the oldest queued run, if any, through evaluation to its
+// end, and says whether there was one. An error is a storage error, which
+// stops the dispatcher.
+func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
+	var b []byte
+	err := s.db.QueryRow("SELECT record FROM runs WHERE state='queued' ORDER BY seq LIMIT 1").Scan(&b)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	r, err := decodeRun(b)
+	if err != nil {
+		return false, err
+	}
+	if r.Trigger != nil && r.Trigger.ExpiresAt != "" {
+		deadline, e := time.Parse(time.RFC3339Nano, r.Trigger.ExpiresAt)
+		if e != nil || !time.Now().Before(deadline) {
+			r.State = "failed"
+			r.FinishedAt = now()
+			r.Problem = "The automatic run expired in the queue before evaluation."
+			return true, s.changeRun(r)
+		}
+	}
+	r.State = "running"
+	r.StartedAt = now()
+	r.Attempt = 1
+	if err = s.changeRun(r); err != nil {
+		return true, err
+	}
+	release, err := s.release(r.ReleaseID)
+	if err == nil && r.Trigger != nil && r.Input.Source != nil && r.Input.Source.Mapping.Version == 2 {
+		// Queue time must not silently outlive source freshness. Verify now,
+		// while retaining the exact input snapshot frozen at admission.
+		err = s.checkReleaseProfiles(release)
+		if err == nil {
+			_, err = s.normalizeInput(r.Input)
+		}
+	}
+	if err == nil {
+		var trail, signatures []byte
+		r.Result, trail, signatures, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+		r.retainAudit(trail, signatures)
+	}
+	r.FinishedAt = now()
+	if err == nil {
+		r.State = "completed"
+	} else {
+		r.State = "failed"
+		r.Problem = err.Error()
+		if ctx.Err() != nil {
+			// Runner saw this stop: the interruption has its own time.
+			r.State = "interrupted"
+			r.Problem = "The runner stopped during evaluation. This run was not automatically repeated."
+			r.InterruptedAt = r.FinishedAt
+		}
+	}
+	// A completed run is recorded with its entry in the installation's
+	// chain of runs, or not at all: a failed append stops the dispatcher as
+	// any storage error does, and the run reads interrupted after a restart.
+	return true, s.finishRun(r)
 }
 func (s *Service) records(kind, jobID string, after int64) ([]json.RawMessage, int64, error) {
 	return s.filteredRecords(kind, jobID, after, recordFilter{})
