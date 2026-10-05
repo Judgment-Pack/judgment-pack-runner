@@ -75,25 +75,29 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
-		if run.Input.Preparation == nil {
-			failure(w, bad("not_verified_mapping", "This run does not use mapping v2."))
-			return
-		}
-		if version < 4 {
-			write(w, 200, verificationExport(release, run, version))
-			return
-		}
-		entry, err := s.runEntry(run.ID)
 		var bundle VerificationBundle
-		if err == nil {
-			bundle, err = chainedExport(release, run, entry)
+		if version < 4 {
+			bundle = verificationExport(release, run, version)
+		} else {
+			entry, err := s.runEntry(run.ID)
+			if err == nil {
+				bundle, err = chainedExport(release, run, entry)
+			}
+			if err != nil {
+				failure(w, err)
+				return
+			}
+			if version == 5 {
+				bundle = signedExport(bundle, run)
+			}
 		}
-		if err != nil {
-			failure(w, err)
-			return
-		}
-		if version == 5 {
-			bundle = signedExport(bundle, run)
+		// A run of a job with no input mapping, or a v1 file mapping, has no
+		// lineage, and is exported without it, saying so.
+		if run.Input.Preparation == nil {
+			if bundle, err = notMappedExport(bundle); err != nil {
+				failure(w, err)
+				return
+			}
 		}
 		write(w, 200, bundle)
 	})

@@ -308,7 +308,7 @@ func TestUnsignedParametersAreNamedAndRefusedByKind(t *testing.T) {
 			if got := unsignedSentence(c.classes, c.unsigned); got != c.sentence {
 				t.Fatal(got)
 			}
-			status, err := refuseUnsourced(c.classes, c.unsigned)
+			status, err := refuseUnsourced("", c.classes, c.unsigned)
 			if status != c.status || c.refusal == "" && err != nil || c.refusal != "" && (err == nil || err.Error() != c.refusal) {
 				t.Fatal(status, err)
 			}

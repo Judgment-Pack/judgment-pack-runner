@@ -466,7 +466,7 @@
     "/runs/{run}/verification": {
       "get": {
         "operationId": "exportInputVerification",
-        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth. Version 2, 3, 4 or 5 may be asked for, at most once (none asked is 2), and the run is served at the highest version up to the one asked whose material it holds, answered 200 either way, so read version from the body: version 3 adds the audit record's original bytes, version 4 also the run's entry in the installation's chain of runs, and version 5 also the record's signature sidecar. A run the store no longer holds, whose entry the chain still names, is answered with 410 run_not_held, naming the entry's sequence.",
+        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth. Version 2, 3, 4 or 5 may be asked for, at most once (none asked is 2), and the run is served at the highest version up to the one asked whose material it holds, answered 200 either way, so read version from the body: version 3 adds the audit record's original bytes, version 4 also the run's entry in the installation's chain of runs, and version 5 also the record's signature sidecar. A run the store no longer holds, whose entry the chain still names, is answered with 410 run_not_held, naming the entry's sequence. A run of a job with no input mapping, or a v1 file mapping, has no lineage: it is served from version 3 on, by the same steps, with inputs: not-mapped and no preparation, and is refused with 422 not_verified_mapping when it holds no audit record's bytes or version 2 (or none) is asked.",
         "parameters": [
           {
             "name": "run",
@@ -480,7 +480,7 @@
             "name": "version",
             "in": "query",
             "required": false,
-            "description": "The export version asked for, at most once, in a well-formed query. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). With 4: version 4 when the run also has an entry in the installation's chain of runs, and otherwise what 3 serves: a run recorded before Runner chained its runs has no entry and is unchained. With 5: version 5 when the run also keeps the signature sidecar of its audit record, and otherwise what 4 serves: a run recorded without a signing key, by a Runtime that cannot sign, or before Runner kept the sidecar, is unsigned. Anything else, or a malformed query, is refused with invalid_version.",
+            "description": "The export version asked for, at most once, in a well-formed query. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). With 4: version 4 when the run also has an entry in the installation's chain of runs, and otherwise what 3 serves: a run recorded before Runner chained its runs has no entry and is unchained. With 5: version 5 when the run also keeps the signature sidecar of its audit record, and otherwise what 4 serves: a run recorded without a signing key, by a Runtime that cannot sign, or before Runner kept the sidecar, is unsigned. Anything else, or a malformed query, is refused with invalid_version. A run without lineage (no input mapping, or a v1 file mapping) has no version-2 export: with none or 2 it is refused with 422 not_verified_mapping, and with 3, 4 or 5 it is served as above, from version 3.",
             "schema": {
               "type": "integer",
               "enum": [
@@ -513,6 +513,16 @@
                       "$ref": "#/components/schemas/VerificationBundleV5"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not_verified_mapping: the run's job has no input mapping, or a v1 file mapping, so its export has no lineage, and the run holds no audit record's bytes (it failed, was interrupted, expired or has not finished, or was recorded before Runner kept them) or version 2, or none, was asked. Message: \"This run does not use mapping v2, and an export without lineage carries the audit record's bytes: ask for version 3, 4 or 5 of a completed run that holds them.\"",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -3030,6 +3040,10 @@
           "release": {
             "$ref": "#/components/schemas/Release"
           },
+          "inputs": {
+            "const": "not-mapped",
+            "description": "Present only in the export of a run whose job has no input mapping, or a v1 file mapping: the run has no lineage, and its run.input has no preparation. Absent from a mapping-v2 run's export. verify-run checks such an export's bytes, chain entry and signature as any export's, and in place of lineage that the release froze no mapping v2, the run names the release and its mapping, and the audit record evaluated the run's facts and evidence with no citation; it reports inputs: not-mapped and no targetsByClass."
+          },
           "run": {
             "allOf": [
               {
@@ -3070,6 +3084,10 @@
           },
           "release": {
             "$ref": "#/components/schemas/Release"
+          },
+          "inputs": {
+            "const": "not-mapped",
+            "description": "Present only in the export of a run whose job has no input mapping, or a v1 file mapping: the run has no lineage, and its run.input has no preparation. Absent from a mapping-v2 run's export. verify-run checks such an export's bytes, chain entry and signature as any export's, and in place of lineage that the release froze no mapping v2, the run names the release and its mapping, and the audit record evaluated the run's facts and evidence with no citation; it reports inputs: not-mapped and no targetsByClass."
           },
           "run": {
             "allOf": [
@@ -3115,6 +3133,10 @@
           },
           "release": {
             "$ref": "#/components/schemas/Release"
+          },
+          "inputs": {
+            "const": "not-mapped",
+            "description": "Present only in the export of a run whose job has no input mapping, or a v1 file mapping: the run has no lineage, and its run.input has no preparation. Absent from a mapping-v2 run's export. verify-run checks such an export's bytes, chain entry and signature as any export's, and in place of lineage that the release froze no mapping v2, the run names the release and its mapping, and the audit record evaluated the run's facts and evidence with no citation; it reports inputs: not-mapped and no targetsByClass."
           },
           "run": {
             "allOf": [

@@ -215,6 +215,16 @@ to the exported record and reports their SHA-256. That shows they are the bytes 
 Runtime wrote for this run only when compared with a digest held independently, such
 as a gateway receipt's. Of version 2 it says that exact-byte checks were not possible.
 
+A run of a job with no input mapping, or with a v1 file mapping, has no lineage. Asked
+for version 3, 4 or 5, its export carries the same record's bytes, chain entry and
+signature sidecar as a mapping-v2 run's would, without lineage, and says so with
+`"inputs":"not-mapped"`. `verify-run` checks what is present as it does for any export,
+reports `"inputs":"not-mapped"` and counts no targets, and `--require-sourced` refuses
+such a run. One that holds no record's bytes, or that is asked for version 2, is
+refused with 422 `not_verified_mapping`. The
+[rule and its table](docs/MAPPING-V2.md#exports-without-lineage) are with the rest of
+the v2 contract.
+
 Runner keeps a chain of its completed runs, by the Runtime's chain rules (ADR-0047):
 each entry binds a run's id to the SHA-256 of its audit record's exact bytes, and
 links to the entry before it. Version 4 of the export (`?version=4`) adds the run's

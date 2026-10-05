@@ -183,6 +183,34 @@ func signedExport(b VerificationBundle, run Run) VerificationBundle {
 	return b
 }
 
+// InputsNotMapped is the inputs member of the verification export of a run
+// whose job has no input mapping, or a v1 file mapping. Such a run has no
+// lineage, no mapping digest of mapping v2, no preparation and no citations,
+// and its export carries none of them; the member says so, and that nothing
+// derived the run's inputs from a source.
+const InputsNotMapped = "not-mapped"
+
+// errNotMapped is the refusal of an export without lineage that would carry
+// no audit record's bytes.
+var errNotMapped = bad("not_verified_mapping", "This run does not use mapping v2, and an export without lineage carries the audit record's bytes: ask for version 3, 4 or 5 of a completed run that holds them.")
+
+// notMappedExport is the export of a run whose job has no input mapping, or a
+// v1 file mapping, in the version made for it as for any run: version 3 with
+// the audit record's bytes, 4 also with the run's chain entry, 5 also with the
+// signature sidecar. What it carries is what the run holds, as for a
+// mapping-v2 run; its inputs member says that it carries no lineage. Without
+// lineage, an export of no record's bytes would hold nothing a verifier could
+// check the run by beyond its release: a run that holds none, because it did
+// not complete or was recorded before Runner kept them, and an export asked
+// for as version 2, are refused with 422 not_verified_mapping.
+func notMappedExport(b VerificationBundle) (VerificationBundle, error) {
+	if b.Version < 3 {
+		return VerificationBundle{}, errNotMapped
+	}
+	b.Inputs = InputsNotMapped
+	return b, nil
+}
+
 // checkAuditSignatures holds an export's record signature sidecar to its
 // version: version 5 carries one, not empty and at most maxSidecar bytes, and
 // earlier versions carry none. Whether it signs the record is checked only
