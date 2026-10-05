@@ -466,7 +466,7 @@
     "/runs/{run}/verification": {
       "get": {
         "operationId": "exportInputVerification",
-        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth. Version 2 unless version 3 or 4 is asked for; version 3 adds the audit record's original bytes, and version 4 adds the run's entry in the installation's chain of runs. A run the store no longer holds, whose entry the chain still names, is answered with 410 run_not_held, naming the entry's sequence.",
+        "description": "Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth. Version 2, 3, 4 or 5 may be asked for, at most once (none asked is 2), and the run is served at the highest version up to the one asked whose material it holds, answered 200 either way, so read version from the body: version 3 adds the audit record's original bytes, version 4 also the run's entry in the installation's chain of runs, and version 5 also the record's signature sidecar. A run the store no longer holds, whose entry the chain still names, is answered with 410 run_not_held, naming the entry's sequence.",
         "parameters": [
           {
             "name": "run",
