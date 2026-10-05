@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +16,11 @@ type VerificationBundle struct {
 	ReleaseDigest string  `json:"releaseDigest"`
 	Release       Release `json:"release"`
 	Run           Run     `json:"run"`
+	// Inputs is InputsNotMapped in the export of a run whose job has no input
+	// mapping or a v1 file mapping, which has no lineage (notMappedExport). It
+	// is omitted from a mapping-v2 run's export, which is byte for byte what it
+	// was before it existed.
+	Inputs string `json:"inputs,omitempty"`
 	// Chain is the run's entry in the installation's chain of runs, in
 	// versions 4 and 5. It is omitted from versions 2 and 3, which are byte for
 	// byte what they were before it existed.
@@ -85,8 +91,19 @@ func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if e != nil {
 		return VerifiedRun{}, e
 	}
+	if b.Inputs == InputsNotMapped {
+		// No lineage records a class for any target, and no rule reads a
+		// parameter: there is nothing to count.
+		return VerifiedRun{bundle: b, prepared: prepared}, nil
+	}
 	return VerifiedRun{classesOf(prepared.Preparation.Lineage), unsignedParameters(b.Run.Input.Source.Mapping, prepared.Preparation), b, prepared}, nil
 }
+
+// Inputs is InputsNotMapped for an export of a run whose job has no input
+// mapping or a v1 file mapping: it has no lineage, its Classes count nothing
+// and nothing derived its inputs from a source. It is empty for a mapping-v2
+// run's export, whose inputs were derived again from its lineage.
+func (v VerifiedRun) Inputs() string { return v.bundle.Inputs }
 
 // ErrDispositionDiffers means that the release's Runtime, given a run's
 // verified inputs again, decided other than the run's record says it did.
@@ -187,6 +204,14 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if e = checkAuditSignatures(b); e != nil {
 		return b, prepared, e
 	}
+	switch b.Inputs {
+	case "":
+	case InputsNotMapped:
+		prepared, e = verifyNotMapped(b)
+		return b, prepared, e
+	default:
+		return b, prepared, errors.New(`the export's inputs member is not one Runner writes: only "not-mapped" is`)
+	}
 	r := b.Run
 	release := b.Release
 	if r.ReleaseID != release.ID || digest([]byte(release.Pack)) != release.PackDigest || r.Input.Preparation == nil || !mappingMatchesRelease(release, r.Input) {
@@ -212,15 +237,49 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if !sameJSON(encode(prepared.Preparation), encode(r.Input.Preparation)) {
 		return b, prepared, errors.New("retained lineage does not match recomputation")
 	}
-	if r.State == "completed" {
-		a := r.Audit
-		var kind, packDigest string
-		var supplied bool
-		if json.Unmarshal(member(a, "kind"), &kind) != nil || json.Unmarshal(member(a, "pack", "digest"), &packDigest) != nil || json.Unmarshal(member(a, "inputs", "evidenceSupplied"), &supplied) != nil || kind != "evaluation" || packDigest != release.PackDigest || !sameJSON(member(a, "inputs", "facts"), prepared.Facts) || supplied != (len(prepared.Evidence) > 0) || len(prepared.Evidence) > 0 && !sameJSON(member(a, "inputs", "evidence"), prepared.Evidence) || !auditCitesMatch(member(a, "cites"), prepared.Preparation.Cites) {
-			return b, prepared, errors.New("retained audit inputs or citations do not match verified inputs")
-		}
+	if r.State == "completed" && !auditRecordsInputs(r.Audit, release, prepared, prepared.Preparation.Cites) {
+		return b, prepared, errors.New("retained audit inputs or citations do not match verified inputs")
 	}
 	return b, prepared, nil
+}
+
+// auditRecordsInputs says whether a completed run's audit record is an
+// evaluation of the release's pack whose inputs and citations are these.
+func auditRecordsInputs(a json.RawMessage, release Release, inputs Input, cites []Citation) bool {
+	var kind, packDigest string
+	var supplied bool
+	if json.Unmarshal(member(a, "kind"), &kind) != nil || json.Unmarshal(member(a, "pack", "digest"), &packDigest) != nil || json.Unmarshal(member(a, "inputs", "evidenceSupplied"), &supplied) != nil || kind != "evaluation" || packDigest != release.PackDigest || !sameJSON(member(a, "inputs", "facts"), inputs.Facts) || supplied != (len(inputs.Evidence) > 0) || len(inputs.Evidence) > 0 && !sameJSON(member(a, "inputs", "evidence"), inputs.Evidence) || !auditCitesMatch(member(a, "cites"), cites) {
+		return false
+	}
+	return true
+}
+
+// verifyNotMapped is verifyInputs's check of an export without lineage, once
+// its record's bytes, chain entry and signature sidecar have been held to it
+// as any export's are. Such an export is of a completed run, from version 3
+// on, of a release that froze no mapping or a v1 file mapping, and the run
+// names that release and mapping. Nothing derives the run's inputs again:
+// they are the facts and evidence the run retains, as given or as its v1
+// mapping read them from the file it retains, and its audit record must name
+// them as the inputs it evaluated, with no citation. Those inputs are what a
+// re-execution evaluates.
+func verifyNotMapped(b VerificationBundle) (Input, error) {
+	r, release := b.Run, b.Release
+	switch {
+	case b.Version < 3:
+		return Input{}, fmt.Errorf("an export without lineage carries its audit record's bytes, from version 3 on: a version-%d export of it is not one Runner makes", b.Version)
+	case r.Input.Preparation != nil:
+		return Input{}, errors.New(`an export with lineage is not "not-mapped"`)
+	case release.InputMapping != nil && release.InputMapping.Version == 2:
+		return Input{}, errors.New("the release froze a mapping v2, and its runs are exported with their lineage")
+	case r.ReleaseID != release.ID || digest([]byte(release.Pack)) != release.PackDigest || !mappingMatchesRelease(release, r.Input):
+		return Input{}, errors.New("run and frozen release differ")
+	}
+	inputs := Input{Facts: r.Input.Facts, Evidence: r.Input.Evidence}
+	if !auditRecordsInputs(r.Audit, release, inputs, nil) {
+		return Input{}, errors.New("retained audit inputs or citations do not match the run's inputs")
+	}
+	return inputs, nil
 }
 
 // Runtime omits cites when there are none. Omission is equivalent only to an

@@ -133,7 +133,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	classes := verified.Classes
+	classes, scope := targetsOf(verified), scopeOf(verified, inputsScope)
 	record := recordReportOf(verified)
 	// A version-4 or version-5 export's entry in the installation's chain of
 	// runs is checked as far as the verifier can: alone, along a supplied
@@ -147,32 +147,33 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	}
 	sig := checkSignature(verified, publicKey)
 	if status, err := chainRefusal(chain, *requireWitnessed); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	if status, err := signatureRefusal(sig, *requireSigned); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	// An asserted target, and a parameter that its source's receipt does not
 	// commit, are checked against nothing but the export, which an operator can
-	// rewrite consistently. The refusal comes before a re-execution,
-	// which then does not run.
+	// rewrite consistently, and so are the inputs of a run without lineage.
+	// The refusal comes before a re-execution, which then does not run.
 	if *requireSourced {
-		if status, err := refuseUnsourced(classes, verified.Unsigned); err != nil {
-			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		if status, err := refuseUnsourced(verified.Inputs(), verified.Classes, verified.Unsigned); err != nil {
+			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 			return err
 		}
 	}
+	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + notMappedSentence(verified.Inputs()) + record.sentence() + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion())
 	if *runtime == "" {
 		// verified-inputs covers the inputs, not the result. Nothing here compares the
 		// retained disposition with an evaluation, and both outputs say so.
-		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned)+record.sentence()+chainSentence(chain)+signatureSentence(sig, verified.ExportVersion()))
-		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: inputsScope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+said)
+		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 	}
 	// The release's own Runtime evaluates the verified inputs again, as a
 	// rehearsal. A different disposition is a failure with a report of its own.
-	scope := "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
+	scope = scopeOf(verified, reExecutedScope)
 	err = verified.Disposition(context.Background(), *runtime)
 	if errors.Is(err, runner.ErrDispositionDiffers) {
 		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
@@ -181,7 +182,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+assertedSentence(classes)+unsignedSentence(classes, verified.Unsigned)+record.sentence()+chainSentence(chain)+signatureSentence(sig, verified.ExportVersion()))
+	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+said)
 	return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 }
 
@@ -199,7 +200,36 @@ func readLimit(path string, limit int) ([]byte, error) {
 	return b, e
 }
 
-const inputsScope = "retained input derivation and audit binding; not sealed-session completeness or policy truth"
+const (
+	inputsScope     = "retained input derivation and audit binding; not sealed-session completeness or policy truth"
+	reExecutedScope = "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
+	// The scopes of an export without lineage, whose inputs nothing derives.
+	notMappedScope           = "audit binding of the retained inputs, which no lineage derives; not input derivation, sealed-session completeness or policy truth"
+	notMappedReExecutedScope = "audit binding of the retained inputs, which no lineage derives, and the retained disposition against a re-execution by the release's Runtime; not input derivation, sealed-session completeness or policy truth"
+)
+
+// scopeOf is the report's scope: the one given for an export with lineage,
+// and its counterpart without input derivation for one without.
+func scopeOf(v runner.VerifiedRun, withLineage string) string {
+	switch {
+	case v.Inputs() != runner.InputsNotMapped:
+		return withLineage
+	case withLineage == reExecutedScope:
+		return notMappedReExecutedScope
+	}
+	return notMappedScope
+}
+
+// targetsOf is the report's targetsByClass: the counts of an export's
+// targets by the class its lineage records, and nil for an export without
+// lineage, which records none. Counts of zero would read as no asserted
+// target.
+func targetsOf(v runner.VerifiedRun) *runner.InputClasses {
+	if v.Inputs() == runner.InputsNotMapped {
+		return nil
+	}
+	return &v.Classes
+}
 
 // verifyReport is verify-run's report on standard output. Its members encode
 // sorted by name, as they did when the report was a map; the counts sort last.
@@ -213,9 +243,10 @@ type verifyReport struct {
 	Scope    string                 `json:"scope"`
 	// Present only for a version-5 export, or when --public-key is given:
 	// what checking the run's record signature found.
-	Signature      *runner.SignatureReport `json:"signature,omitempty"`
-	Status         string                  `json:"status"`
-	TargetsByClass runner.InputClasses     `json:"targetsByClass"`
+	Signature *runner.SignatureReport `json:"signature,omitempty"`
+	Status    string                  `json:"status"`
+	// Absent only for an export without lineage, whose inputs member says so.
+	TargetsByClass *runner.InputClasses `json:"targetsByClass,omitempty"`
 	// Present only when an acquired source's rule reads a parameter that its
 	// receipt does not commit.
 	UnsignedParameters []runner.UnsignedParameters `json:"unsignedParameters,omitempty"`
@@ -227,18 +258,30 @@ type verifyReport struct {
 // action receipt would name for those bytes. That they are the bytes the
 // Runtime wrote for this run is not shown without such a digest held
 // independently. A version-2 export carries none, and nothing about them could
-// be checked.
+// be checked. Inputs is "not-mapped" for an export without lineage, as the
+// export's own member says, and absent for one with lineage: it sorts here.
 type recordReport struct {
 	ExactBytes    string `json:"exactBytes"`
 	ExportVersion int    `json:"exportVersion"`
+	Inputs        string `json:"inputs,omitempty"`
 	RecordDigest  string `json:"recordDigest,omitempty"`
 }
 
 func recordReportOf(v runner.VerifiedRun) recordReport {
 	if v.ExportVersion() >= 3 {
-		return recordReport{ExactBytes: "matches-record", ExportVersion: v.ExportVersion(), RecordDigest: v.RecordDigest()}
+		return recordReport{ExactBytes: "matches-record", ExportVersion: v.ExportVersion(), Inputs: v.Inputs(), RecordDigest: v.RecordDigest()}
 	}
-	return recordReport{ExactBytes: "not-in-export", ExportVersion: v.ExportVersion()}
+	return recordReport{ExactBytes: "not-in-export", ExportVersion: v.ExportVersion(), Inputs: v.Inputs()}
+}
+
+// notMappedSentence is what the line on standard error says of an export
+// without lineage, after what it says of asserted inputs, which no lineage
+// counts here. It adds nothing for an export with lineage.
+func notMappedSentence(inputs string) string {
+	if inputs != runner.InputsNotMapped {
+		return ""
+	}
+	return " The run's job has no mapping v2, so its export carries no lineage: its inputs are the operator's own, and nothing here derives them from a source or checks them against one."
 }
 
 // sentence is what the line on standard error says of the bytes.

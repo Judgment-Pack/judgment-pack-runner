@@ -324,11 +324,18 @@ Nothing but the export's own `version` says which was served: read `version`
 from the body, never from the request. What each version needs is
 [below](#exact-bytes-of-the-audit-record).
 
-A run of a job with no input mapping, or with a v1 mapping, is answered 422
-`not_verified_mapping`, "This run does not use mapping v2.", although a
-completed one has the audit record's bytes, an entry in the chain of runs and,
-under a signing key, a signature sidecar; whether it may have an export without
-the lineage is an open question (#44).
+A run of a job with no input mapping, or with a v1 file mapping, has no
+lineage: no `preparation`, so no mapping digest of mapping v2, no lineage
+entries and no citations. Its export carries none of them and says so, with
+`"inputs":"not-mapped"`, and is made by the same steps from version 3 on: what
+a verifier checks such a run by is its record's bytes, its entry in the chain
+of runs and its signature sidecar ([below](#exports-without-lineage)). A run of
+such a job that holds no record's bytes, because it failed, was interrupted,
+expired or has not finished, or was recorded before Runner kept them, is
+answered 422 `not_verified_mapping` whatever version is asked, and so is any
+such run asked for version 2 or for no version: "This run does not use mapping
+v2, and an export without lineage carries the audit record's bytes: ask for
+version 3, 4 or 5 of a completed run that holds them."
 
 Retain a trusted release digest independently, alongside the installation's public
 profiles. An untrusted export cannot establish its own public-key or release trust.
@@ -347,7 +354,9 @@ It verifies what a reader of the export reads: the export must be exactly what
 the runner encodes, so a member named like one of its fields but for case is
 refused, and the retained result and audit record are read by exact member names.
 Without `--runtime` it reports `verified-inputs`, not policy truth or evaluator
-re-execution.
+re-execution. An export without lineage is checked as
+[below](#exports-without-lineage): without input derivation, and with a report
+that says so.
 
 The retained disposition is then not read. A record whose inputs are intact and
 whose disposition was changed after the run still verifies. The report says so, on
@@ -534,6 +543,10 @@ The verification export has four versions:
   sidecar of the run's audit record, `run.auditSignatures`
   ([below](#record-signatures)). A run with no sidecar is exported as version
   4, or 3, or 2, even then.
+
+An export of a run without lineage is version 3, 4 or 5 with one more member,
+`"inputs":"not-mapped"`, and never version 2
+([below](#exports-without-lineage)).
 
 Any other `version`, `version` asked for more than once, or a query that is not
 well formed, is refused with `invalid_version`. How a caller tells which version
@@ -859,6 +872,95 @@ trail as chained from its first line, as a new trail is, so the line must be
 sequence 1, linked to the SHA-256 of nothing. A legacy prefix, and a repair's
 discontinuity, cannot occur in an attempt's directory, and are the Runtime's
 `audit verify`'s to read.
+
+### Exports without lineage
+
+A run of a job with no input mapping, whose facts and evidence were typed in or
+sent by an API caller, or of a job with a v1 file mapping, which read them from
+a file the run retains, has no lineage. It has no `preparation`, and so none of
+the members of mapping v2 that it holds: the mapping digest, the lineage
+entries, the source outcomes and the citations. Its operational evaluation was
+given no `--cites`. What it does have, once it completed, is what any completed
+run has: its audit record's exact bytes, its entry in the chain of runs, and,
+under a signing key, its record's signature sidecar.
+
+Its export is made by the same steps as any run's, and has one more member,
+`"inputs":"not-mapped"`, beside `run`, which says that it carries no lineage
+and that nothing derived the run's inputs from a source:
+
+```text
+{"version":5,"releaseDigest":"sha256:…","release":{…},"run":{…,"input":{"facts":{…},"evidence":{…},"source":{…}},…,"auditBytes":"…","auditSignatures":"…"},"inputs":"not-mapped","chain":{"entry":"…","checkpoint":{…}}}
+```
+
+A version-2 export carries no record's bytes, and without lineage it would hold
+nothing a verifier could check the run by beyond its release, so an export
+without lineage is version 3, 4 or 5, never 2. What is served, by what the run
+holds and what is asked:
+
+| The run holds | none or `?version=2` | `?version=3` | `?version=4` | `?version=5` |
+| --- | --- | --- | --- | --- |
+| no record's bytes: failed, interrupted, expired, not finished, or recorded before Runner kept them | 422 | 422 | 422 | 422 |
+| the record's bytes, and no entry in the chain of runs | 422 | 3 | 3 | 3 |
+| the bytes and an entry, and no signature sidecar | 422 | 3 | 4 | 4 |
+| the bytes, an entry and a sidecar | 422 | 3 | 4 | 5 |
+
+Each 422 is `not_verified_mapping`, with the message
+[above](#release-checks-runtime-and-offline-verification). A mapping-v2 run's
+export has no `inputs` member, and every version of it is byte for byte what it
+was before the member existed. Every reader of the export before this one
+decodes strictly and refuses a member it does not know, so none of them reads an
+export without lineage as one with it.
+
+**Verification.** `verify-run` holds an export without lineage to everything it
+holds any export to: the runner's own encoding, the size limits, the trusted
+release digest, the record's bytes ([above](#exact-bytes-of-the-audit-record)),
+the chain entry along `--chain` and against `--expect`, `--require-witnessed`
+([above](#the-installations-chain-of-runs)), and the record's signature under
+`--public-key`, and `--require-signed` ([above](#record-signatures)). Then, in
+place of lineage, it checks that:
+
+- the export is version 3 or later, and its run has no `preparation`;
+- the release froze no mapping v2: an export of a mapping-v2 run stripped of
+  its lineage and marked `not-mapped` is refused;
+- the run names the release, whose pack has its digest, and the release froze
+  the run's mapping: none for a run with none, the same v1 mapping for a run
+  with one;
+- the audit record is an evaluation of the release's pack whose facts and
+  evidence are the ones the run retains, and names no citation.
+
+An `inputs` member on an export with lineage, a member of another value, and an
+export without lineage that lacks the member, are refused. Nothing derives the
+run's inputs again: a v1 run's file and mapping are exported as the run holds
+them, and `verify-run` does not read the file again. `--runtime` evaluates the
+inputs the run retains, as it evaluates the verified inputs of a run with
+lineage, and compares the disposition the same way.
+
+The report says `"inputs":"not-mapped"`, after `exportVersion`, and has no
+`targetsByClass`, since no lineage records a class for any target: counts of
+zero would read as a run with no asserted input. Its scope names audit binding
+without input derivation, and the line on standard error says that the run's
+inputs are the operator's own. Of the v1 vector the tests keep, checked along
+its chain, against its held checkpoint and under its key:
+
+```text
+{"exactBytes":"matches-record","exportVersion":5,"inputs":"not-mapped","recordDigest":"sha256:8d98…","retainedDisposition":"not-checked","runChain":{…,"scope":"checkpoint","status":"valid","witnessed":true},"scope":"audit binding of the retained inputs, which no lineage derives; not input derivation, sealed-session completeness or policy truth","signature":{…,"status":"signed",…},"status":"verified-inputs"}
+verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's job has no mapping v2, so its export carries no lineage: its inputs are the operator's own, and nothing here derives them from a source or checks them against one. The export's bytes of the audit record parse to the record. …
+```
+
+With `--runtime` the scope is "audit binding of the retained inputs, which no
+lineage derives, and the retained disposition against a re-execution by the
+release's Runtime; not input derivation, sealed-session completeness or policy
+truth". `--require-sourced` refuses such a run, before any re-execution, with
+`"status":"inputs-not-mapped"`:
+
+```text
+runner: inputs-not-mapped: the run's job has no mapping v2, so its export carries no lineage, and --require-sourced refuses it: its inputs are the operator's own, and nothing here checks them against a source
+```
+
+What it establishes is what the record's bytes, the chain entry and the
+signature establish of any run, and no more: nothing about where the inputs
+came from, and nothing against the operator without a checkpoint held
+independently.
 
 ## Deferred scope
 

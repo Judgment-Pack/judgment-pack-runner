@@ -54,10 +54,18 @@ func unsignedSentence(c runner.InputClasses, unsigned []runner.UnsignedParameter
 	return s
 }
 
+// errInputsNotMapped is --require-sourced's refusal of a run without lineage:
+// nothing derived its inputs from a source.
+var errInputsNotMapped = errors.New("inputs-not-mapped")
+
 // refuseUnsourced is --require-sourced's check, and the status of its refusal:
-// an asserted target first, then a target derived by a rule that reads an
-// unsigned parameter resting on what the operator supplied.
-func refuseUnsourced(c runner.InputClasses, unsigned []runner.UnsignedParameters) (string, error) {
+// a run without lineage, whose inputs no source gave, then an asserted target,
+// then a target derived by a rule that reads an unsigned parameter resting on
+// what the operator supplied.
+func refuseUnsourced(inputs string, c runner.InputClasses, unsigned []runner.UnsignedParameters) (string, error) {
+	if inputs == runner.InputsNotMapped {
+		return "inputs-not-mapped", fmt.Errorf("%w: the run's job has no mapping v2, so its export carries no lineage, and --require-sourced refuses it: its inputs are the operator's own, and nothing here checks them against a source", errInputsNotMapped)
+	}
 	if err := requireSourcedInputs(c); err != nil {
 		return "inputs-asserted", err
 	}
