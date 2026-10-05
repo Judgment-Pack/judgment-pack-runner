@@ -967,10 +967,12 @@ independently.
 Runner keeps each record's latest state, and beside it a journal: one entry for
 each change of state it makes, written in the transaction that makes the change
 ([design record](design/activity-journal.md)). A change and its entry commit
-together or not at all: each writer reads the record's stored state inside its
-transaction, and writes an entry exactly when the state it writes is another.
-A request that changes nothing, such as a repeated submission or event, writes
-none. Entries are only appended, and never pruned.
+together or not at all. A writer that changes a record reads its stored state
+inside its transaction, a trigger's with its revision, which must be the one
+the request named, and writes an entry exactly when the state it writes is
+another; a writer that creates a record writes from none. A request that
+changes nothing, such as a repeated submission or event, writes none. Entries
+are only appended, and never pruned.
 
 ```http
 GET /v1/jobs/{job}/events?after=<sequence>
@@ -979,9 +981,9 @@ GET /v1/events?after=<sequence>&job=<job>
 
 - The job's route serves the entries that name the job, and those that name
   its release alone: its preview, and a refused creation. The store-wide route
-  serves every entry; with `job`, that job's entries and Runner's own
-  (`journal.began`, `runner.started`, `runner.stopped`), which concern no job
-  but explain a gap in every job's.
+  serves every entry; with `job`, the entries the job's route serves and
+  Runner's own (`journal.began`, `runner.started`, `runner.stopped`), which
+  concern no job but explain a gap in every job's.
 - A page holds at most 50 entries after the cursor, oldest first, in the order
   their changes committed. `after` means later than, as the chain of runs is
   read: the sequence of the last entry read, or 0, the default, from the start.
@@ -1037,7 +1039,9 @@ with every member its kind can carry. `at` is Runner's clock: order is
 - `trigger-credential`: an event delivery whose `X-Trigger-Token` was the
   trigger's current key, named by `keyRevision`, the trigger revision at which
   that key was issued; null for a key issued before the journal began. Never
-  the token or its digest.
+  the token or its digest. A delivery refused after its credential was
+  authenticated is that credential's, as it was then, even if the key is
+  rotated before the refusal is recorded.
 - `cloud-connection`: a cloud signal Runner discarded.
 - `runner`: Runner itself.
 
@@ -1050,11 +1054,15 @@ key is shown once, in the answer to the request.
 (`submit-run`, `deliver-event` or `create-job`) answered 400, 401, 409, 422 or
 429 that names a job, trigger or release the store holds, with its `status` and
 `code`, and every cloud signal Runner discards (`cloud-signal`), with its
-`reason`. A 404 names nothing held and a 5xx says Runner or its store failed:
-neither is journaled, nor is a request without the owner bearer. An identical
-refusal within 60 seconds of one written, as `coalescedSeconds` says, is not
-written again, so a sender refused again and again cannot grow the journal
-without limit.
+`reason`. A job creation whose body is refused is journaled when the body
+still names a release the store holds. A 404 names nothing held and a 5xx says
+Runner or its store failed: neither is journaled, nor is a request without the
+owner bearer. An identical refusal within 60 seconds of one written, as
+`coalescedSeconds` says, is not written again. That bounds how often a sender
+refused again and again is recorded, not how much: it still writes an entry a
+minute, and the journal is never pruned. A refusal's entry is written after the
+refusal, in a transaction of its own, and is best effort: if the store cannot
+write it, the refusal is answered as it was and has no entry.
 
 **A run's times.** `finishedAt` is when Runner recorded the run's end.
 `interruptedAt`, beside it, is when Runner saw the run stop, at an orderly
@@ -1081,13 +1089,15 @@ run that expired in the queue is `failed`, as before, and its entry is
 `run.expired`.
 
 **Stores from before the journal.** The first start of this Runner on a store
-writes `journal.began`, with what the store held then in `held`, and raises the
-store's schema from `"1"` to `"2"`. Nothing is back-filled: a record from
-before has no entry, even where it holds a time. Every page answers
-`journalBegan`, the time of that entry. An earlier Runner refuses a store at
-schema `"2"` ("runner store belongs to another owner, workspace or schema"), so
-none that writes no entries changes it after the journal began. Going back to
-one needs a copy of the store from before.
+writes `journal.began`, and raises the store's schema from `"1"` to `"2"`, in
+one transaction: a migration that fails leaves the store as it was, with no
+journal. `held` counts the jobs, triggers, occurrences and runs the store held
+then; not releases, by design, since a job names its release. Nothing is
+back-filled: a record from before has no entry, even where it holds a time.
+Every page answers `journalBegan`, the time of that entry. An earlier Runner
+refuses a store at schema `"2"` ("runner store belongs to another owner,
+workspace or schema"), so none that writes no entries changes it after the
+journal began. Going back to one needs a copy of the store from before.
 
 **What the journal does not establish.** It is the operator's own log: not
 chained, not signed, and binding nothing against the operator, who keeps the

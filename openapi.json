@@ -632,7 +632,7 @@
           "schema": {
             "type": "string"
           },
-          "description": "Only this job's entries, and Runner's own (journal.began, runner.started, runner.stopped), which concern no job but explain a gap in every job's. A job the store does not hold is answered 404 not_found."
+          "description": "Only the entries the job's route serves, those naming the job and those naming its release alone, and Runner's own (journal.began, runner.started, runner.stopped), which concern no job but explain a gap in every job's. A job the store does not hold is answered 404 not_found."
         }
       ],
       "get": {
@@ -4095,7 +4095,7 @@
         "additionalProperties": false
       },
       "JournalActor": {
-        "description": "Who Runner can say initiated a change. Never a person: Runner cannot know one. installation is whoever holds the owner bearer, named by the boot line's owner; a trigger acts at a revision; a trigger-credential is an event delivery whose X-Trigger-Token was the trigger's current key, named by the revision the key was issued at (null for a key issued before the journal began), never by the token or its digest; a cloud-connection is a cloud signal Runner discarded; runner is Runner itself.",
+        "description": "Who Runner can say initiated a change. Never a person: Runner cannot know one. installation is whoever holds the owner bearer, named by the boot line's owner; a trigger acts at a revision; a trigger-credential is an event delivery whose X-Trigger-Token was the trigger's current key, named by the revision the key was issued at (null for a key issued before the journal began), never by the token or its digest; a delivery refused after its credential was authenticated is that credential's, as it was then, even if the key is rotated before the refusal is recorded; a cloud-connection is a cloud signal Runner discarded; runner is Runner itself.",
         "oneOf": [
           {
             "type": "object",
@@ -4407,7 +4407,7 @@
               "create-job",
               "cloud-signal"
             ],
-            "description": "admission.refused: the request refused."
+            "description": "admission.refused: the request refused. A refusal's entry is best effort: if the store cannot write it, the refusal is answered as it was and has no entry."
           },
           "status": {
             "enum": [
