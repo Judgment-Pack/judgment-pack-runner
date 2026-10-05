@@ -470,6 +470,7 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.State = "failed"
 			r.FinishedAt = now()
 			r.Problem = "The automatic run expired in the queue before evaluation."
+			r.Reason = runQueueExpired
 			return true, s.changeRun(r)
 		}
 	}

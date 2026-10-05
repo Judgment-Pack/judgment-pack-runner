@@ -99,21 +99,36 @@ type Run struct {
 	// (storedRun), and is not part of a verification export, whose version-2
 	// readers decode strictly and would refuse a new member.
 	InterruptedAt string `json:"-"`
+	// Reason says, as a code, why a run ended without an evaluation:
+	// queue-expired, for an automatic run whose queue time ran out before the
+	// dispatcher reached it. Its state stays failed, and its problem the
+	// sentence it was. A run that expired before Runner kept the code has
+	// none, and is not given one. Kept and served as InterruptedAt is, and
+	// not part of a verification export.
+	Reason string `json:"-"`
 }
 
+// runQueueExpired is the Reason of an automatic run whose queue time ran out
+// before evaluation: the code an occurrence's own expiry carries.
+const runQueueExpired = "queue-expired"
+
 // storedRun is a run as the store keeps it and the run routes serve it: the
-// run, and when Runner saw it interrupted. A run without InterruptedAt encodes
-// exactly as Run does.
+// run, when Runner saw it interrupted, and why it ended without an
+// evaluation. A run with neither encodes exactly as Run does.
 type storedRun struct {
 	Run
 	InterruptedAt string `json:"interruptedAt,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 }
 
-func runText(r Run) string { return string(encode(storedRun{r, r.InterruptedAt})) }
+func served(r Run) storedRun {
+	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason}
+}
+func runText(r Run) string { return string(encode(served(r))) }
 func decodeRun(b []byte) (Run, error) {
 	var held storedRun
 	e := json.Unmarshal(b, &held)
-	held.Run.InterruptedAt = held.InterruptedAt
+	held.Run.InterruptedAt, held.Run.Reason = held.InterruptedAt, held.Reason
 	return held.Run, e
 }
 
