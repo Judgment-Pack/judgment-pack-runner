@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/cloudgoogle"
 )
 
 const journalBearer = "journal-test-bearer-6d1f0c2b9e8a7f3d5c4b2a1908f7e6d5"
@@ -124,11 +126,22 @@ func journalEntries(t *testing.T, cfg Config) []Event {
 		if e != nil {
 			t.Fatal(e)
 		}
+		for _, e := range page.Items {
+			if e.Sequence <= after {
+				t.Fatalf("entry %d is served after cursor %d", e.Sequence, after)
+			}
+			after = e.Sequence
+		}
+		if page.Next != after {
+			t.Fatalf("next is %d after entry %d", page.Next, after)
+		}
 		all = append(all, page.Items...)
 		if !page.More {
 			return all
 		}
-		after = page.Next
+		if len(page.Items) == 0 {
+			t.Fatalf("an empty page after %d says there is more", after)
+		}
 	}
 }
 
@@ -547,6 +560,25 @@ func journalSteps() []journalStep {
 				w.t.Fatalf("%+v", e)
 			}
 		}},
+		{"a cloud signal is discarded", func(w *journalWorld) {
+			var d cloudgoogle.Delivery
+			d.Message.Data = strings.Repeat("A", 5000)
+			if ack, e := w.s.receiveCloud(CloudConnection{ID: "scheduler"}, d); !ack || e == nil {
+				w.t.Fatal(ack, e)
+			}
+		}, []string{"admission.refused"}, func(w *journalWorld, added []Event) {
+			e := added[0]
+			if e.Request != "cloud-signal" || e.By.Kind != "cloud-connection" || e.By.Connection != "scheduler" || e.Reason != "A cloud signal exceeded its size limit." || e.Status != 0 || e.Code != "" || e.Concerns != (EventConcerns{}) {
+				w.t.Fatalf("%+v", e)
+			}
+		}},
+		{"the same signal again within a minute is not written again", func(w *journalWorld) {
+			var d cloudgoogle.Delivery
+			d.Message.Data = strings.Repeat("A", 5000)
+			if ack, e := w.s.receiveCloud(CloudConnection{ID: "scheduler"}, d); !ack || e == nil {
+				w.t.Fatal(ack, e)
+			}
+		}, nil, nil},
 		{"a submission to a job the store does not hold is answered, and not journaled", func(w *journalWorld) {
 			if got := serve(w.t, w.s, "POST", "/v1/jobs/job_unknown/runs", `{"facts":{}}`, map[string]string{"Idempotency-Key": "k"}); got.Code != 404 {
 				w.t.Fatal(got.Code, got.Body)
