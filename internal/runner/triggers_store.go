@@ -23,16 +23,25 @@ const triggerSchema = `
 func (s *Service) trigger(id string) (Trigger, string, error) {
 	var t Trigger
 	var raw, hash, observed, pending, pendingAt string
-	e := s.db.QueryRow("SELECT record,key_hash,observed,pending,pending_at FROM triggers WHERE id=?", id).Scan(&raw, &hash, &observed, &pending, &pendingAt)
+	var keyRevision sql.NullInt64
+	e := s.db.QueryRow("SELECT record,key_hash,observed,pending,pending_at,key_revision FROM triggers WHERE id=?", id).Scan(&raw, &hash, &observed, &pending, &pendingAt, &keyRevision)
 	if e == nil {
 		e = json.Unmarshal([]byte(raw), &t)
 		t.HasKey = hash != ""
 		t.observed, t.pending, t.pendingAt = observed, pending, pendingAt
+		if keyRevision.Valid {
+			v := int(keyRevision.Int64)
+			t.keyRevision = &v
+		}
 	}
 	return t, hash, e
 }
 func saveTrigger(tx *sql.Tx, t Trigger, hash string, history bool) error {
-	_, e := tx.Exec("UPDATE triggers SET record=?,key_hash=?,observed=?,pending=?,pending_at=? WHERE id=?", string(encode(t)), hash, t.observed, t.pending, t.pendingAt, t.ID)
+	var keyRevision any
+	if t.keyRevision != nil {
+		keyRevision = *t.keyRevision
+	}
+	_, e := tx.Exec("UPDATE triggers SET record=?,key_hash=?,observed=?,pending=?,pending_at=?,key_revision=? WHERE id=?", string(encode(t)), hash, t.observed, t.pending, t.pendingAt, keyRevision, t.ID)
 	if e != nil {
 		return e
 	}
@@ -68,6 +77,7 @@ func (s *Service) configureTrigger(jobID, triggerID string, revision int, c Trig
 	}
 	var t Trigger
 	hash := ""
+	from, previous := "", 0
 	if triggerID != "" {
 		t, hash, e = s.trigger(triggerID)
 		if e != nil {
@@ -82,6 +92,7 @@ func (s *Service) configureTrigger(jobID, triggerID string, revision int, c Trig
 		if t.Config.Kind != c.Kind {
 			return t, bad("trigger_kind_fixed", "Create another trigger to change its type.")
 		}
+		previous = t.Revision
 		t.Revision++
 	} else {
 		var count int
@@ -119,8 +130,13 @@ func (s *Service) configureTrigger(jobID, triggerID string, revision int, c Trig
 		if _, e = tx.Exec("INSERT INTO triggers(id,job_id,record)VALUES(?,?,?)", t.ID, t.JobID, string(encode(t))); e != nil {
 			return t, e
 		}
+	} else if from, e = triggerBefore(tx, t.ID, previous); e != nil {
+		return t, e
 	}
 	if e = saveTrigger(tx, t, hash, true); e != nil {
+		return t, e
+	}
+	if _, e = appendEvent(tx, change{kind: "trigger.configured", by: s.installation(), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}}); e != nil {
 		return t, e
 	}
 	return t, tx.Commit()
@@ -195,12 +211,47 @@ func (s *Service) setTriggerState(triggerID string, revision int, paused, review
 	} else {
 		t.NextAt = ""
 	}
+	job, e := s.job(t.JobID)
+	if e != nil {
+		return t, "", e
+	}
+	from := triggerState(t.Paused)
 	t.Paused = paused
 	t.Revision++
 	t.UpdatedAt = now()
 	t.Problem = ""
-	e = s.writeTrigger(t, hash, true)
+	detail := EventDetail{PreviousRevision: revisionValue(t.Revision - 1), KeyIssued: secret != ""}
+	if secret != "" {
+		issued := t.Revision
+		t.keyRevision = &issued
+	}
+	kind := "trigger.paused"
+	if !paused {
+		kind = "trigger.resumed"
+		detail.NextAt = t.NextAt
+	}
+	e = s.writeTriggerChange(t, hash, change{kind: kind, by: s.installation(), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: triggerState(t.Paused), detail: detail})
 	return t, secret, e
+}
+
+// writeTriggerChange writes a trigger's new revision, its snapshot and the
+// change's entry in one transaction.
+func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
+	tx, e := s.db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if c.from, e = triggerBefore(tx, t.ID, t.Revision-1); e != nil {
+		return e
+	}
+	if e = saveTrigger(tx, t, hash, true); e != nil {
+		return e
+	}
+	if _, e = appendEvent(tx, c); e != nil {
+		return e
+	}
+	return tx.Commit()
 }
 func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, string, error) {
 	s.automationMu.Lock()
@@ -219,11 +270,18 @@ func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, str
 	if _, e = rand.Read(key[:]); e != nil {
 		return t, "", e
 	}
+	job, e := s.job(t.JobID)
+	if e != nil {
+		return t, "", e
+	}
 	secret := hex.EncodeToString(key[:])
 	t.HasKey = true
 	t.Revision++
 	t.UpdatedAt = now()
-	e = s.writeTrigger(t, digest([]byte(secret)), true)
+	issued := t.Revision
+	t.keyRevision = &issued
+	state := triggerState(t.Paused)
+	e = s.writeTriggerChange(t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.installation(), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{PreviousRevision: revisionValue(t.Revision - 1)}})
 	return t, secret, e
 }
 func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
@@ -236,6 +294,18 @@ func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrenc
 	if len(token) != 64 || hash == "" || subtle.ConstantTimeCompare([]byte(digest([]byte(token))), []byte(hash)) != 1 {
 		return Occurrence{}, false, &apiError{401, "invalid_trigger_token", "The event credential is invalid."}
 	}
+	// The credential is authenticated: a refusal from here on is its own,
+	// named by the revision its key was issued at, whatever happens to the
+	// key before the refusal is recorded.
+	o, replay, e := s.admitEvent(t, hash, event)
+	if e != nil {
+		e = &credentialRefusal{err: e, by: credentialActor(t.ID, t.keyRevision)}
+	}
+	return o, replay, e
+}
+
+// admitEvent admits an event delivery whose credential event authenticated.
+func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occurrence, bool, error) {
 	if t.Config.Kind != "event" {
 		return Occurrence{}, false, bad("not_event_trigger", "This trigger does not accept event delivery.")
 	}
@@ -384,10 +454,22 @@ func (s *Service) admitOccurrence(tx *sql.Tx, t Trigger, o *Occurrence, identity
 		o.Input = nil
 		o.PendingInput = nil
 	}
-	_, e := tx.Exec("INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES(?,?,?,?,?,?,?)", o.ID, o.JobID, o.TriggerID, identity, payload, o.State, string(encode(o)))
+	if _, e := tx.Exec("INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES(?,?,?,?,?,?,?)", o.ID, o.JobID, o.TriggerID, identity, payload, o.State, string(encode(o))); e != nil {
+		return e
+	}
+	// An event delivery is the credential's that the delivery carried, the
+	// trigger's current key; a schedule, a file change or a cloud signal is
+	// the trigger's, at its revision.
+	by := triggerActor(t.ID, t.Revision)
+	if o.Kind == "event" {
+		by = credentialActor(t.ID, t.keyRevision)
+	}
+	_, e := appendEvent(tx, occurrenceChange(*o, "", by))
 	return e
 }
+
+// saveOccurrence records an occurrence, and the entry of its change of state,
+// if any, in one transaction. Runner made the change.
 func (s *Service) saveOccurrence(o Occurrence) error {
-	_, e := s.db.Exec("UPDATE occurrences SET state=?,record=? WHERE id=?", o.State, string(encode(o)), o.ID)
-	return e
+	return s.changeOccurrence(o, "", runnerActor)
 }

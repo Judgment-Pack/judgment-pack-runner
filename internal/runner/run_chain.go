@@ -175,19 +175,28 @@ func appendRunEntry(tx *sql.Tx, run string, auditBytes []byte) error {
 // nor an entry written for a run that is not. A completion whose entry cannot
 // be appended, because the record's exact bytes were not kept or the append
 // failed, is not recorded: the error is returned, and the dispatcher stops.
+// The run's entry in the journal of job activity (events.go) is written in the
+// same transaction too, and names the chain entry's sequence.
 func (s *Service) finishRun(r Run) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("UPDATE runs SET state=?,record=? WHERE id=?", r.State, string(encode(r)), r.ID); err != nil {
-		return err
-	}
+	var detail EventDetail
 	if r.State == "completed" {
 		if err = appendRunEntry(tx, r.ID, r.AuditBytes); err != nil {
 			return err
 		}
+		if err = tx.QueryRow("SELECT sequence FROM run_chain WHERE run=?", r.ID).Scan(&detail.ChainSequence); err != nil {
+			return err
+		}
+	}
+	if r.State == "interrupted" && r.InterruptedAt != "" {
+		detail.Interruption = &EventInterruption{Seen: true, At: r.InterruptedAt}
+	}
+	if err = recordRun(tx, r, runnerActor, detail); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

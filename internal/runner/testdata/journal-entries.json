@@ -1,0 +1,534 @@
+[
+ {
+  "sequence": 1,
+  "entryVersion": "1",
+  "kind": "journal.began",
+  "at": "2026-10-06T09:01:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {},
+  "held": {
+   "jobs": 0,
+   "triggers": 0,
+   "occurrences": 0,
+   "runs": 0
+  }
+ },
+ {
+  "sequence": 2,
+  "entryVersion": "1",
+  "kind": "runner.started",
+  "at": "2026-10-06T09:02:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {},
+  "version": "v0.6.0",
+  "runtimeDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "sequence": 3,
+  "entryVersion": "1",
+  "kind": "release.previewed",
+  "at": "2026-10-06T09:03:00.000001Z",
+  "by": {
+   "kind": "installation",
+   "owner": "installation-owner"
+  },
+  "concerns": {
+   "release": "release_22222222222222222222222222222222"
+  },
+  "packId": "intake",
+  "packVersion": "1.0.0",
+  "packDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "runtimeDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tests": "passed"
+ },
+ {
+  "sequence": 4,
+  "entryVersion": "1",
+  "kind": "job.created",
+  "at": "2026-10-06T09:04:00.000001Z",
+  "by": {
+   "kind": "installation",
+   "owner": "installation-owner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222"
+  }
+ },
+ {
+  "sequence": 5,
+  "entryVersion": "1",
+  "kind": "trigger.configured",
+  "at": "2026-10-06T09:05:00.000001Z",
+  "by": {
+   "kind": "installation",
+   "owner": "installation-owner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333"
+  },
+  "revision": 2,
+  "from": "enabled",
+  "to": "paused",
+  "previousRevision": 1,
+  "triggerKind": "schedule"
+ },
+ {
+  "sequence": 6,
+  "entryVersion": "1",
+  "kind": "trigger.paused",
+  "at": "2026-10-06T09:06:00.000001Z",
+  "by": {
+   "kind": "installation",
+   "owner": "installation-owner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333"
+  },
+  "revision": 3,
+  "from": "enabled",
+  "to": "paused",
+  "previousRevision": 2
+ },
+ {
+  "sequence": 7,
+  "entryVersion": "1",
+  "kind": "trigger.resumed",
+  "at": "2026-10-06T09:07:00.000001Z",
+  "by": {
+   "kind": "installation",
+   "owner": "installation-owner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333"
+  },
+  "revision": 4,
+  "from": "paused",
+  "to": "enabled",
+  "previousRevision": 3,
+  "keyIssued": true,
+  "nextAt": "2026-10-06T09:01:00Z"
+ },
+ {
+  "sequence": 8,
+  "entryVersion": "1",
+  "kind": "trigger.key-rotated",
+  "at": "2026-10-06T09:08:00.000001Z",
+  "by": {
+   "kind": "installation",
+   "owner": "installation-owner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333"
+  },
+  "revision": 5,
+  "from": "enabled",
+  "to": "enabled",
+  "previousRevision": 4
+ },
+ {
+  "sequence": 9,
+  "entryVersion": "1",
+  "kind": "occurrence.received",
+  "at": "2026-10-06T09:09:00.000001Z",
+  "by": {
+   "kind": "trigger-credential",
+   "trigger": "trg_33333333333333333333333333333333",
+   "keyRevision": 2
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": null,
+  "to": "accepted",
+  "reason": "latest-after-missed",
+  "occurrenceKind": "schedule",
+  "scheduledAt": "2026-10-06T09:00:00Z",
+  "missedFrom": "2026-10-06T08:58:00Z",
+  "missedThrough": "2026-10-06T09:00:00Z",
+  "expiresAt": "2026-10-06T10:00:00Z"
+ },
+ {
+  "sequence": 10,
+  "entryVersion": "1",
+  "kind": "occurrence.skipped",
+  "at": "2026-10-06T09:10:00.000001Z",
+  "by": {
+   "kind": "trigger",
+   "trigger": "trg_33333333333333333333333333333333",
+   "revision": 3
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": null,
+  "to": "skipped",
+  "reason": "missed",
+  "occurrenceKind": "schedule",
+  "scheduledAt": "2026-10-06T09:00:00Z",
+  "missedFrom": "2026-10-06T08:58:00Z",
+  "missedThrough": "2026-10-06T09:00:00Z",
+  "expiresAt": "2026-10-06T10:00:00Z"
+ },
+ {
+  "sequence": 11,
+  "entryVersion": "1",
+  "kind": "occurrence.preparing",
+  "at": "2026-10-06T09:11:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "accepted",
+  "to": "waiting",
+  "reason": "Waiting.",
+  "deadline": "2026-10-06T10:00:00Z"
+ },
+ {
+  "sequence": 12,
+  "entryVersion": "1",
+  "kind": "occurrence.ready",
+  "at": "2026-10-06T09:12:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "waiting",
+  "to": "accepted",
+  "reason": "Ready.",
+  "readyUntil": "2026-10-06T10:00:00Z"
+ },
+ {
+  "sequence": 13,
+  "entryVersion": "1",
+  "kind": "occurrence.submitted",
+  "at": "2026-10-06T09:13:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "accepted",
+  "to": "submitted",
+  "reason": "Submitted."
+ },
+ {
+  "sequence": 14,
+  "entryVersion": "1",
+  "kind": "occurrence.failed",
+  "at": "2026-10-06T09:14:00.000001Z",
+  "by": {
+   "kind": "trigger",
+   "trigger": "trg_33333333333333333333333333333333",
+   "revision": 3
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": null,
+  "to": "failed",
+  "reason": "Source acquisition was interrupted. It was not repeated automatically.",
+  "occurrenceKind": "schedule",
+  "scheduledAt": "2026-10-06T09:00:00Z",
+  "missedFrom": "2026-10-06T08:58:00Z",
+  "missedThrough": "2026-10-06T09:00:00Z",
+  "expiresAt": "2026-10-06T10:00:00Z",
+  "interruption": {
+   "seen": false,
+   "lastKnownRunning": "2026-10-06T09:58:40.771Z",
+   "restart": 24
+  }
+ },
+ {
+  "sequence": 15,
+  "entryVersion": "1",
+  "kind": "occurrence.expired",
+  "at": "2026-10-06T09:15:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "accepted",
+  "to": "expired",
+  "reason": "queue-expired",
+  "occurrenceKind": "schedule",
+  "scheduledAt": "2026-10-06T09:00:00Z",
+  "missedFrom": "2026-10-06T08:58:00Z",
+  "missedThrough": "2026-10-06T09:00:00Z",
+  "expiresAt": "2026-10-06T10:00:00Z"
+ },
+ {
+  "sequence": 16,
+  "entryVersion": "1",
+  "kind": "occurrence.needs-attention",
+  "at": "2026-10-06T09:16:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "waiting",
+  "to": "needs-attention",
+  "reason": "A required source is unavailable."
+ },
+ {
+  "sequence": 17,
+  "entryVersion": "1",
+  "kind": "occurrence.cancelled",
+  "at": "2026-10-06T09:17:00.000001Z",
+  "by": {
+   "kind": "installation",
+   "owner": "installation-owner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "needs-attention",
+  "to": "cancelled",
+  "reason": "Cancelled locally. Provider cancellation is best effort; late results will not be evaluated."
+ },
+ {
+  "sequence": 18,
+  "entryVersion": "1",
+  "kind": "occurrence.reconciled",
+  "at": "2026-10-06T09:18:00.000001Z",
+  "by": {
+   "kind": "installation",
+   "owner": "installation-owner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "needs-attention",
+  "to": "waiting",
+  "reason": "Reconciled."
+ },
+ {
+  "sequence": 19,
+  "entryVersion": "1",
+  "kind": "run.queued",
+  "at": "2026-10-06T09:19:00.000001Z",
+  "by": {
+   "kind": "trigger",
+   "trigger": "trg_33333333333333333333333333333333",
+   "revision": 3
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": null,
+  "to": "queued",
+  "reason": "Queued."
+ },
+ {
+  "sequence": 20,
+  "entryVersion": "1",
+  "kind": "run.started",
+  "at": "2026-10-06T09:20:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "queued",
+  "to": "running",
+  "reason": "Started."
+ },
+ {
+  "sequence": 21,
+  "entryVersion": "1",
+  "kind": "run.expired",
+  "at": "2026-10-06T09:21:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "queued",
+  "to": "failed",
+  "reason": "The automatic run expired in the queue before evaluation."
+ },
+ {
+  "sequence": 22,
+  "entryVersion": "1",
+  "kind": "run.completed",
+  "at": "2026-10-06T09:22:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "running",
+  "to": "completed",
+  "reason": "Completed.",
+  "chainSequence": 7
+ },
+ {
+  "sequence": 23,
+  "entryVersion": "1",
+  "kind": "run.failed",
+  "at": "2026-10-06T09:23:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "running",
+  "to": "failed",
+  "reason": "Runtime refused or could not complete this invocation."
+ },
+ {
+  "sequence": 24,
+  "entryVersion": "1",
+  "kind": "run.interrupted",
+  "at": "2026-10-06T09:24:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "running",
+  "to": "interrupted",
+  "reason": "The runner stopped during evaluation. This run was not automatically repeated.",
+  "interruption": {
+   "seen": true,
+   "at": "2026-10-06T09:58:51.12Z"
+  }
+ },
+ {
+  "sequence": 25,
+  "entryVersion": "1",
+  "kind": "admission.refused",
+  "at": "2026-10-06T09:25:00.000001Z",
+  "by": {
+   "kind": "trigger-credential",
+   "trigger": "trg_33333333333333333333333333333333",
+   "keyRevision": 2
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333"
+  },
+  "reason": "A signal from a replaced cloud connection was discarded.",
+  "request": "deliver-event",
+  "status": 409,
+  "code": "trigger_paused",
+  "coalescedSeconds": 60
+ },
+ {
+  "sequence": 26,
+  "entryVersion": "1",
+  "kind": "runner.stopped",
+  "at": "2026-10-06T09:26:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {}
+ }
+]

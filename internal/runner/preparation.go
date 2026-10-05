@@ -194,17 +194,14 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 	}
 	return e
 }
+
+// savePreparation records a waiting occurrence's progress, and the entry of
+// its change of state, if any, in one transaction that first reads the stored
+// state: a cancellation or other final state wins.
 func (s *Service) savePreparation(o Occurrence) error {
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	current, e := s.occurrence(o.ID)
-	if e != nil {
-		return e
-	}
-	if current.State != "waiting" {
-		return errPreparationStopped
-	} // cancellation/terminal state wins
-	return s.saveOccurrence(o)
+	return s.changeOccurrence(o, "waiting", runnerActor)
 }
 func (s *Service) stopPreparation(o Occurrence, state, reason string) error {
 	o.State = state
@@ -410,7 +407,7 @@ func (s *Service) cancelOccurrence(ctx context.Context, id string) (Occurrence, 
 			}
 			o.Reason = "Cancelled locally. Provider cancellation is best effort; late results will not be evaluated."
 			o.PendingInput = nil
-			e = s.saveOccurrence(o)
+			e = s.changeOccurrence(o, "", s.installation())
 		}
 	}
 	s.automationMu.Unlock()
@@ -442,5 +439,5 @@ func (s *Service) reconcileOccurrence(id string) (Occurrence, error) {
 	o.State = "waiting"
 	o.Reason = ""
 	o.Preparation.NextCheck = ""
-	return o, s.saveOccurrence(o)
+	return o, s.changeOccurrence(o, "", s.installation())
 }

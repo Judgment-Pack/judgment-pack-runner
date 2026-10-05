@@ -31,11 +31,30 @@ func failure(w http.ResponseWriter, err error) {
 	write(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "retryable": status == 429 || status == 503}})
 }
 func decode(w http.ResponseWriter, r *http.Request, dst any) error {
+	_, err := decodeRaw(w, r, dst)
+	return err
+}
+
+// decodeRaw is decode, which also returns the bytes it read, so that a
+// refusal can still name what the request named.
+func decodeRaw(w http.ResponseWriter, r *http.Request, dst any) ([]byte, error) {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBody))
 	if err != nil || strictJSON(raw, dst) != nil {
-		return &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
+		return raw, &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
 	}
-	return nil
+	return raw, nil
+}
+
+// releaseNamed is the release a job creation's body names, read leniently:
+// a body refused for an unsupported member or a duplicate still names one.
+func releaseNamed(raw []byte) string {
+	var named struct {
+		ReleaseID string `json:"releaseId"`
+	}
+	if json.Unmarshal(raw, &named) != nil {
+		return ""
+	}
+	return named.ReleaseID
 }
 func (s *Service) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
@@ -102,12 +121,14 @@ func (s *Service) Handler(token string) http.Handler {
 		write(w, 200, bundle)
 	})
 	mux.HandleFunc("GET /v1/run-chain", s.runChainHandler)
+	mux.HandleFunc("GET /v1/jobs/{job}/events", s.jobEventsHandler)
+	mux.HandleFunc("GET /v1/events", s.eventsHandler)
 	mux.HandleFunc("GET /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("POST /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs"}})
+		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal"}})
 	})
 	mux.HandleFunc("POST /v1/inputs/next", func(w http.ResponseWriter, r *http.Request) {
 		var input Input
@@ -155,17 +176,21 @@ func (s *Service) Handler(token string) http.Handler {
 			Reviewed  bool           `json:"reviewed"`
 			Trigger   *TriggerConfig `json:"trigger,omitempty"`
 		}
-		if err := decode(w, r, &req); err != nil {
+		if raw, err := decodeRaw(w, r, &req); err != nil {
+			s.refusedJob(releaseNamed(raw), err)
 			failure(w, err)
 			return
 		}
 		req.Name = strings.TrimSpace(req.Name)
 		if req.Name == "" || len(req.Name) > 160 || !req.Reviewed {
-			failure(w, bad("review_required", "Enter a job name and review its fixed release and sample result."))
+			err := bad("review_required", "Enter a job name and review its fixed release and sample result.")
+			s.refusedJob(req.ReleaseID, err)
+			failure(w, err)
 			return
 		}
 		j, err := s.createJobConfigured(req.Name, req.ReleaseID, req.Trigger)
 		if err != nil {
+			s.refusedJob(req.ReleaseID, err)
 			failure(w, err)
 			return
 		}
@@ -196,16 +221,20 @@ func (s *Service) Handler(token string) http.Handler {
 	mux.HandleFunc("POST /v1/jobs/{job}/runs", func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("Idempotency-Key")
 		if len(key) < 1 || len(key) > 128 || strings.IndexFunc(key, func(c rune) bool { return c < 33 || c > 126 }) >= 0 {
-			failure(w, &apiError{400, "idempotency_key_required", "Supply an Idempotency-Key of 1 to 128 visible ASCII characters."})
+			err := &apiError{400, "idempotency_key_required", "Supply an Idempotency-Key of 1 to 128 visible ASCII characters."}
+			s.refusedRun(r.PathValue("job"), err)
+			failure(w, err)
 			return
 		}
 		var input Input
 		if err := decode(w, r, &input); err != nil {
+			s.refusedRun(r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
 		run, replayed, err := s.submit(r.PathValue("job"), key, input)
 		if err != nil {
+			s.refusedRun(r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
@@ -213,7 +242,7 @@ func (s *Service) Handler(token string) http.Handler {
 		if replayed {
 			status = 200
 		}
-		write(w, status, run)
+		write(w, status, storedRun{run, run.InterruptedAt})
 	})
 	mux.HandleFunc("GET /v1/runs/{run}", func(w http.ResponseWriter, r *http.Request) {
 		run, err := s.run(r.PathValue("run"))
@@ -221,7 +250,7 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
-		write(w, 200, run)
+		write(w, 200, storedRun{run, run.InterruptedAt})
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

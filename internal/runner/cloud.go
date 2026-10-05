@@ -96,20 +96,26 @@ func (s *Service) cloudWorker(ctx context.Context, c CloudConnection) {
 	}
 }
 func (s *Service) receiveCloud(c CloudConnection, d cloudgoogle.Delivery) (bool, error) {
+	// A signal discarded is acknowledged, reported as the connection's
+	// problem, and journaled as a refused admission.
+	discard := func(t *Trigger, reason string) (bool, error) {
+		s.refusedCloudSignal(c.ID, t, reason)
+		return true, errors.New(reason)
+	}
 	if len(d.Message.Data) > 4096 {
-		return true, errors.New("A cloud signal exceeded its size limit.")
+		return discard(nil, "A cloud signal exceeded its size limit.")
 	}
 	raw, e := base64.StdEncoding.DecodeString(d.Message.Data)
 	if e != nil || len(raw) > 2048 {
-		return true, errors.New("A cloud signal was discarded because its envelope was invalid.")
+		return discard(nil, "A cloud signal was discarded because its envelope was invalid.")
 	}
 	var signal cloudgoogle.Signal
 	if strictJSON(raw, &signal) != nil || signal.Version != 1 || !cloudgoogle.Job.MatchString(signal.Job) {
-		return true, errors.New("A cloud signal was discarded because its identity was invalid.")
+		return discard(nil, "A cloud signal was discarded because its identity was invalid.")
 	}
 	at, e := time.Parse(time.RFC3339Nano, signal.ScheduledAt)
 	if e != nil || time.Until(at) > 30*time.Second || at.Year() < 2000 || at.Year() > 2200 {
-		return true, errors.New("A cloud signal was discarded because its timestamp was invalid.")
+		return discard(nil, "A cloud signal was discarded because its timestamp was invalid.")
 	}
 	signal.ScheduledAt = at.UTC().Format(time.RFC3339Nano)
 	s.automationMu.Lock()
@@ -120,7 +126,7 @@ func (s *Service) receiveCloud(c CloudConnection, d cloudgoogle.Delivery) (bool,
 	var triggerID string
 	e = s.db.QueryRow(`SELECT id FROM triggers WHERE json_extract(record,'$.config.cloud.connection')=? AND json_extract(record,'$.config.cloud.job')=?`, c.ID, signal.Job).Scan(&triggerID)
 	if errors.Is(e, sql.ErrNoRows) {
-		return true, errors.New("An unbound cloud signal was discarded. Check the Scheduler job name.")
+		return discard(nil, "An unbound cloud signal was discarded. Check the Scheduler job name.")
 	}
 	if e != nil {
 		return false, e
@@ -130,7 +136,7 @@ func (s *Service) receiveCloud(c CloudConnection, d cloudgoogle.Delivery) (bool,
 		return false, e
 	}
 	if t.Config.Kind != "cloud" || t.Config.Cloud.Subscription != c.Subscription {
-		return true, errors.New("A signal from a replaced cloud connection was discarded.")
+		return discard(&t, "A signal from a replaced cloud connection was discarded.")
 	}
 	identity := "cloud:" + digest(encode(signal))
 	if _, _, e = s.findOccurrence(t.ID, identity); e == nil {

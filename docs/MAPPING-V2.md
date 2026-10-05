@@ -962,6 +962,152 @@ signature establish of any run, and no more: nothing about where the inputs
 came from, and nothing against the operator without a checkpoint held
 independently.
 
+## The journal of job activity
+
+Runner keeps each record's latest state, and beside it a journal: one entry for
+each change of state it makes, written in the transaction that makes the change
+([design record](design/activity-journal.md)). A change and its entry commit
+together or not at all. A writer that changes a record reads its stored state
+inside its transaction, a trigger's with its revision, which must be the one
+the request named, and writes an entry exactly when the state it writes is
+another; a writer that creates a record writes from none. A request that
+changes nothing, such as a repeated submission or event, writes none. Entries
+are only appended, and never pruned.
+
+```http
+GET /v1/jobs/{job}/events?after=<sequence>
+GET /v1/events?after=<sequence>&job=<job>
+```
+
+- The job's route serves the entries that name the job, and those that name
+  its release alone: its preview, and a refused creation. The store-wide route
+  serves every entry; with `job`, the entries the job's route serves and
+  Runner's own (`journal.began`, `runner.started`, `runner.stopped`), which
+  concern no job but explain a gap in every job's.
+- A page holds at most 50 entries after the cursor, oldest first, in the order
+  their changes committed. `after` means later than, as the chain of runs is
+  read: the sequence of the last entry read, or 0, the default, from the start.
+  `next` is the sequence of the page's last entry, or the cursor given when the
+  page is empty, and never resets to 0. `more` says another page is already
+  available. Run and occurrence lists page the other way: newest first, `after`
+  meaning older than, and `next` 0 at the end.
+- A cursor that is not a decimal integer from 0, or is given twice, is refused
+  with 400 `invalid_cursor`, a `job` given twice with 400 `invalid_filter`, and
+  a job the store does not hold with 404 `not_found`.
+
+```json
+{
+  "journalBegan": "2026-10-06T08:00:00.000000Z",
+  "items": [
+    {
+      "sequence": 118,
+      "entryVersion": "1",
+      "kind": "occurrence.needs-attention",
+      "at": "2026-10-06T09:14:03.218734Z",
+      "by": {"kind": "runner"},
+      "concerns": {"job": "job_…", "release": "release_…",
+                   "trigger": "trg_…", "occurrence": "occ_…"},
+      "revision": 3,
+      "from": "waiting",
+      "to": "needs-attention",
+      "reason": "A required source is unavailable."
+    }
+  ],
+  "next": 118,
+  "more": false
+}
+```
+
+Every entry has `sequence`, `entryVersion` (`"1"`), `kind`, `at`, `by` and
+`concerns`. `revision` is the trigger revision, where an entry concerns a
+trigger. `from` and `to` are the record's state before and after, for
+triggers (`paused` or `enabled`), occurrences and runs; `from` is null when the
+change created the record. `reason` is the reason or problem text the record
+serves, cut at 1,024 bytes. The other members belong to particular kinds. The
+API document's `JournalEntry` names the 26 kinds and every member, and
+`internal/runner/testdata/journal-entries.json` holds one entry of each kind,
+with every member its kind can carry. `at` is Runner's clock: order is
+`sequence`, never `at`.
+
+**Who.** `by` names what Runner can know initiated a change, never a person:
+
+- `installation`: a request with the owner bearer, which Desk holds. `owner`
+  is the boot line's owner, the installation's name, as a run's `requestedBy`
+  is.
+- `trigger`: Runner acting for a trigger at a revision: a schedule falling due,
+  a watched file changing, a cloud signal arriving.
+- `trigger-credential`: an event delivery whose `X-Trigger-Token` was the
+  trigger's current key, named by `keyRevision`, the trigger revision at which
+  that key was issued; null for a key issued before the journal began. Never
+  the token or its digest. A delivery refused after its credential was
+  authenticated is that credential's, as it was then, even if the key is
+  rotated before the refusal is recorded.
+- `cloud-connection`: a cloud signal Runner discarded.
+- `runner`: Runner itself.
+
+**Configuration** is named by revision only. A trigger's entry carries
+`revision` and `previousRevision`. The values are the trigger's snapshots,
+which no entry copies. A key's issue and rotation name the revision alone: the
+key is shown once, in the answer to the request.
+
+**Refused admissions.** `admission.refused` records a request to start work
+(`submit-run`, `deliver-event` or `create-job`) answered 400, 401, 409, 422 or
+429 that names a job, trigger or release the store holds, with its `status` and
+`code`, and every cloud signal Runner discards (`cloud-signal`), with its
+`reason`. A job creation whose body is refused is journaled when the body
+still names a release the store holds. A 404 names nothing held and a 5xx says
+Runner or its store failed: neither is journaled, nor is a request without the
+owner bearer. An identical refusal within 60 seconds of one written, as
+`coalescedSeconds` says, is not written again. That bounds how often a sender
+refused again and again is recorded, not how much: it still writes an entry a
+minute, and the journal is never pruned. A refusal's entry is written after the
+refusal, in a transaction of its own, and is best effort: if the store cannot
+write it, the refusal is answered as it was and has no entry.
+
+**A run's times.** `finishedAt` is when Runner recorded the run's end.
+`interruptedAt`, beside it, is when Runner saw the run stop, at an orderly
+stop: the moment the evaluation was cancelled. A run Runner finds running when
+it starts again has no `interruptedAt`, and its `finishedAt` is the time of
+that start: Runner did not see it stop, and cannot know when it did. Its
+`run.interrupted` entry gives the window instead, as an `interruption`:
+
+```json
+"interruption": {
+  "seen": false,
+  "lastKnownRunning": "2026-10-06T09:58:40.771Z",
+  "restart": 56
+}
+```
+
+The run was running at `lastKnownRunning`, its `startedAt`, and had stopped by
+the restart, the `runner.started` entry at sequence `restart`, which has its
+own time. An entry for a stop Runner saw carries `{"seen": true, "at": …}`.
+A legacy preparation found `preparing` at a start fails with the same member.
+`interruptedAt` is served with the run and in run lists, and is not in a
+verification export, whose version-2 readers decode strictly. An automatic
+run that expired in the queue is `failed`, as before, and its entry is
+`run.expired`.
+
+**Stores from before the journal.** The first start of this Runner on a store
+writes `journal.began`, and raises the store's schema from `"1"` to `"2"`, in
+one transaction: a migration that fails leaves the store as it was, with no
+journal. `held` counts the jobs, triggers, occurrences and runs the store held
+then; not releases, by design, since a job names its release. Nothing is
+back-filled: a record from before has no entry, even where it holds a time.
+Every page answers `journalBegan`, the time of that entry. An earlier Runner
+refuses a store at schema `"2"` ("runner store belongs to another owner,
+workspace or schema"), so none that writes no entries changes it after the
+journal began. Going back to one needs a copy of the store from before.
+
+**What the journal does not establish.** It is the operator's own log: not
+chained, not signed, and binding nothing against the operator, who keeps the
+store and can rewrite, remove or renumber its rows, or restore an older copy.
+It does not say who a person was, nor when anything happened beyond Runner's
+clock, nor how often a sender was refused within a minute of an entry, nor
+anything about a decision: a run's record, its exact bytes, its entry in the
+chain of runs and its signature do what the sections above say. Desk does not
+pass these routes through yet.
+
 ## Deferred scope
 
 Preparation sessions that Runner issues to a caller, seal verification, HTTP catalog support,
