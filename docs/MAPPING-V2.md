@@ -1064,7 +1064,9 @@ minute, and the journal is never pruned. A refusal's entry is written after the
 refusal, in a transaction of its own, and is best effort: if the store cannot
 write it, the refusal is answered as it was and has no entry.
 
-**A run's times.** `finishedAt` is when Runner recorded the run's end.
+**A run's times.** `createdAt` is when Runner admitted the run, and
+`startedAt` when the dispatcher took it to evaluation; a run that expired in
+the queue has none. `finishedAt` is when Runner recorded the run's end.
 `interruptedAt`, beside it, is when Runner saw the run stop, at an orderly
 stop: the moment the evaluation was cancelled. A run Runner finds running when
 it starts again has no `interruptedAt`, and its `finishedAt` is the time of
@@ -1084,9 +1086,28 @@ the restart, the `runner.started` entry at sequence `restart`, which has its
 own time. An entry for a stop Runner saw carries `{"seen": true, "at": …}`.
 A legacy preparation found `preparing` at a start fails with the same member.
 `interruptedAt` is served with the run and in run lists, and is not in a
-verification export, whose version-2 readers decode strictly. An automatic
-run that expired in the queue is `failed`, as before, and its entry is
-`run.expired`.
+verification export, whose version-2 readers decode strictly. This settles
+#42's question of an interruption's time otherwise than #42 first proposed,
+which would have put the restart's time in `interruptedAt`: the restart's time
+stays in `finishedAt`, and in the restart's own entry. An automatic run that
+expired in the queue is `failed`, as before, and its entry is `run.expired`;
+the run also carries `"reason": "queue-expired"`, so that a reader need not
+parse its `problem`. A run that expired before Runner kept the code has none,
+and is not given one. `reason` is served as `interruptedAt` is, and is not in
+a verification export either.
+
+**A run's diagnostics.** `GET /v1/runs/{run}/diagnostics` serves what the
+Runtime wrote when it evaluated a run, kept in the run's attempt directory:
+its standard error, or with `?stream=stdout` its standard output, as written,
+as `text/plain`. It serves the first 65,536 bytes, cut before a character the
+bound would split, and says the stream's whole size in `X-Diagnostics-Bytes`
+and whether it was cut in `X-Diagnostics-Truncated`. A run still queued or
+running is refused with 409 `run_not_finished`. A run that kept no such stream
+answers 404 `no_diagnostics`, with the reason: it expired in the queue, it was
+never evaluated, or the Runtime was not invoked. Another `stream` is refused
+with 400 `invalid_stream`. Diagnostics are the Runtime's own words, kept in the
+operator's store: they explain a run, and establish nothing about it. A read
+changes nothing, and writes no entry.
 
 **Stores from before the journal.** The first start of this Runner on a store
 writes `journal.began`, and raises the store's schema from `"1"` to `"2"`, in
