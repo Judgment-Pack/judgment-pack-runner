@@ -72,11 +72,12 @@ valid receipt attests to acquisition, not to the truth of what was acquired.
 
 **`verify-run` checks retained inputs, and the result only when asked.** Without `--runtime` it
 reports `verified-inputs`, not policy truth or evaluator re-execution
-([docs/MAPPING-V2.md](docs/MAPPING-V2.md)). Its report says that the disposition was not checked: a
-record whose disposition was changed after the run still verifies. With `--runtime`, the executable
-is refused unless its digest is the release's Runtime digest; it evaluates the verified inputs again
-as a rehearsal in a temporary directory, writing nothing to the runner's store, and the report is
-`verified-disposition` only if the disposition matches the retained one. Neither report says more
+([docs/MAPPING-V2.md](docs/MAPPING-V2.md)). It holds the retained disposition to the audit record,
+and, under `--public-key`, to the signed audit bytes, but does not check the evaluator's decision.
+With `--runtime`, the executable is refused unless its digest is the release's Runtime digest; it
+evaluates the verified inputs again as a rehearsal in a temporary directory, writing nothing to the
+runner's store, and the report is `verified-disposition` only if the disposition matches the
+retained one. Neither report says more
 of an asserted input than that the export is consistent with itself, nor of a parameter that a rule
 reads and the source's own request does not carry unambiguously (as a whole value, not in text that
 names another parameter), nor a calculator's signed answer echo: changing one can change a derived

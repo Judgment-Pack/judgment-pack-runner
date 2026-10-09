@@ -191,8 +191,9 @@ receipt verification, exact request commitments, trusted source classifications,
 validated dependency chaining and per-target lineage. Releases freeze the mapping
 and operator profiles; operational evaluations retain matching Runtime citations.
 An offline `verify-run` command checks retained inputs against independently trusted
-profiles and a release digest. Its report says that the run's disposition was not
-checked. Given the release's own Runtime executable (`--runtime`), it also evaluates
+profiles and a release digest, and always compares the retained disposition with
+the audit record, refusing a difference as `audit-disposition-mismatch`. Given the
+release's own Runtime executable (`--runtime`), it also evaluates
 the verified inputs again as a rehearsal, and reports `verified-disposition` only
 when the disposition matches the retained one. The report also counts the run's fact
 and evidence targets by the class of the source each is mapped from, those without a

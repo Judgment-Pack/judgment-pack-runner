@@ -452,3 +452,23 @@ func TestV2RealRuntimeWithoutExternalCitations(t *testing.T) {
 		t.Fatal("null is not Runtime's omitted or empty citation array")
 	}
 }
+
+func TestInputProfilesRefuseMalformedReceiptKeys(t *testing.T) {
+	p, _ := testProfile(t)
+	if _, e := ParseInputProfiles(encode([]InputProfile{p})); e != nil {
+		t.Fatal(e)
+	}
+	for name, key := range map[string]string{
+		"identity":      "01" + strings.Repeat("00", 31),
+		"non-canonical": "ed" + strings.Repeat("ff", 30) + "7f",
+		"off-curve":     "02" + strings.Repeat("00", 31),
+	} {
+		t.Run(name, func(t *testing.T) {
+			q := p
+			q.PublicKey = key
+			if _, e := ParseInputProfiles(encode([]InputProfile{q})); e == nil {
+				t.Fatal("accepted malformed receipt key")
+			}
+		})
+	}
+}

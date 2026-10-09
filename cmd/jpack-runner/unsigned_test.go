@@ -30,7 +30,7 @@ const (
 	clockRead      = " derived by a rule that reads runAt, or a value derived from it, which rests on the export's own verification time."
 	unsignedLine   = " 1 of the run's 3 inputs was" + operatorRead + " 2 of the run's 3 inputs were" + clockRead + notInExport + "\n"
 	unsignedRefuse = "parameters-unsigned: 1 of the run's 3 inputs was derived by a rule that reads a parameter resting on the operator's say, which its source's receipt does not commit, and --require-sourced refuses it: nothing here checks that parameter against a source"
-	inputsLine     = "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."
+	inputsLine     = "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."
 	dispositionLn  = "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."
 )
 
@@ -154,7 +154,7 @@ func TestVerifyRunReportsUnsignedParametersEndToEnd(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	runtime := "--runtime=" + os.Getenv("JPACK_TEST_BIN")
 	out, human, err := verifyWith(t, bundle, digest, profiles)
-	if err != nil || out != withUnsigned(report("verified-inputs", "not-checked", inputsOnly, 0, 3, 0)) || human != inputsLine+unsignedLine {
+	if err != nil || out != withUnsigned(report("verified-inputs", "matches-audit", inputsOnly, 0, 3, 0)) || human != inputsLine+unsignedLine {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verifyWith(t, bundle, digest, profiles, runtime)
@@ -162,7 +162,7 @@ func TestVerifyRunReportsUnsignedParametersEndToEnd(t *testing.T) {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verifyWith(t, bundle, digest, profiles, "--require-sourced")
-	if !errors.Is(err, errParametersUnsigned) || err.Error() != unsignedRefuse || out != withUnsigned(report("parameters-unsigned", "not-checked", inputsOnly, 0, 3, 0)) || human != "" {
+	if !errors.Is(err, errParametersUnsigned) || err.Error() != unsignedRefuse || out != withUnsigned(report("parameters-unsigned", "matches-audit", inputsOnly, 0, 3, 0)) || human != "" {
 		t.Fatal(err, out, human)
 	}
 	var run map[string]json.RawMessage
@@ -176,7 +176,7 @@ func TestVerifyRunReportsUnsignedParametersEndToEnd(t *testing.T) {
 	run["result"] = changed
 	bundle["run"], _ = json.Marshal(run)
 	out, human, err = verifyWith(t, bundle, digest, profiles, runtime)
-	if !errors.Is(err, runner.ErrDispositionDiffers) || out != withUnsigned(report("disposition-differs", "differs-from-re-execution", reExecuted, 0, 3, 0)) || human != "" {
+	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
 		t.Fatal(err, out, human)
 	}
 }
@@ -195,11 +195,11 @@ func TestVerifyRunRefusesAnAssertedTargetBeforeAnUnsignedOne(t *testing.T) {
 	member := `,"unsignedParameters":[{"source":"registry","parameters":[{"name":"region","kind":"case"}],"targets":2}]}` + "\n"
 	both := func(report string) string { return strings.TrimSuffix(report, "}\n") + member }
 	out, human, err := verifyWith(t, bundle, digest, []runner.InputProfile{s.profile})
-	if err != nil || out != both(report("verified-inputs", "not-checked", inputsOnly, 1, 2, 0)) || human != inputsLine+" 1 of the run's 3 inputs is the operator's own: nothing here checks it against a source. 2 of the run's 3 inputs were"+operatorRead+notInExport+"\n" {
+	if err != nil || out != both(report("verified-inputs", "matches-audit", inputsOnly, 1, 2, 0)) || human != inputsLine+" 1 of the run's 3 inputs is the operator's own: nothing here checks it against a source. 2 of the run's 3 inputs were"+operatorRead+notInExport+"\n" {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verifyWith(t, bundle, digest, []runner.InputProfile{s.profile}, "--require-sourced")
-	if !errors.Is(err, errInputsAsserted) || err.Error() != "inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source" || out != both(report("inputs-asserted", "not-checked", inputsOnly, 1, 2, 0)) || human != "" {
+	if !errors.Is(err, errInputsAsserted) || err.Error() != "inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source" || out != both(report("inputs-asserted", "matches-audit", inputsOnly, 1, 2, 0)) || human != "" {
 		t.Fatal(err, out, human)
 	}
 }
@@ -215,11 +215,11 @@ func TestVerifyRunReportsUnsignedParameters(t *testing.T) {
 	}
 	digest := strings.TrimSpace(string(trusted))
 	out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", digest)
-	if err != nil || out != withUnsigned(report("verified-inputs", "not-checked", inputsOnly, 0, 3, 0)) || human != inputsLine+unsignedLine {
+	if err != nil || out != withUnsigned(report("verified-inputs", "matches-audit", inputsOnly, 0, 3, 0)) || human != inputsLine+unsignedLine {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verifyFiles(dir+"run.json", dir+"profiles.json", digest, "--require-sourced")
-	if !errors.Is(err, errParametersUnsigned) || err.Error() != unsignedRefuse || out != withUnsigned(report("parameters-unsigned", "not-checked", inputsOnly, 0, 3, 0)) || human != "" {
+	if !errors.Is(err, errParametersUnsigned) || err.Error() != unsignedRefuse || out != withUnsigned(report("parameters-unsigned", "matches-audit", inputsOnly, 0, 3, 0)) || human != "" {
 		t.Fatal(err, out, human)
 	}
 }

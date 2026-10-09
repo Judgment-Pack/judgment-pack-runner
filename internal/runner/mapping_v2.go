@@ -143,7 +143,8 @@ func normalizeV2(i Input, profiles []InputProfile, at time.Time) (Input, error) 
 	return normalizeV2Mode(i, profiles, at, false)
 }
 func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool) (Input, error) {
-	if e := validateProfiles(profiles); e != nil {
+	profileKeys, e := validateProfileKeys(profiles)
+	if e != nil {
 		return i, e
 	}
 	if i.Source == nil || i.Source.Mapping.Version != 2 {
@@ -354,7 +355,7 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 				}
 				artifact = doc
 				if verified {
-					result, citation, err := verifyAcquisition([]byte(snap.Proof.Response), args, profile, at, source.MaxAge)
+					result, citation, err := verifyAcquisition([]byte(snap.Proof.Response), args, profile, profileKeys[profile.ID], at, source.MaxAge)
 					if err != nil {
 						return fail(err)
 					}
@@ -375,7 +376,7 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 				if len(value.Snapshot) > 0 {
 					return fail(errors.New("operations must supply a response only"))
 				}
-				result, citation, err := verifyAcquisition(value.Response, args, profile, at, source.MaxAge)
+				result, citation, err := verifyAcquisition(value.Response, args, profile, profileKeys[profile.ID], at, source.MaxAge)
 				if err != nil {
 					return fail(err)
 				}

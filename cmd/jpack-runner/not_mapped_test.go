@@ -94,10 +94,10 @@ func TestVerifyRunChecksAnExportWithoutLineage(t *testing.T) {
 			record := sha(v.line)
 			runChain := fmt.Sprintf(`{"chain":{"head":%s,"lines":%d},"checkpoint":%s,"findings":[],"findingsTotal":0,"held":{"matched":1,"supplied":1,"through":%d},"scope":"checkpoint","status":"valid","witnessed":true}`, v.checkpoint, v.lines, v.checkpoint, v.sequence)
 			out, said, err := v.verify(append([]string{"--chain", v.chain, "--expect", v.held, "--require-witnessed", "--public-key", key1}, c.extra...)...)
-			if err != nil || out != notMappedReport(c.version, record, "not-checked", runChain, notMappedInputs, c.signature, "verified-inputs") {
+			if err != nil || out != notMappedReport(c.version, record, "matches-audit", runChain, notMappedInputs, c.signature, "verified-inputs") {
 				t.Fatal(err, out)
 			}
-			want := "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says." + notMappedSaid +
+			want := "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed." + notMappedSaid +
 				" The export's bytes of the audit record parse to the record. Their SHA-256 is " + record + ": a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run." +
 				fmt.Sprintf(" The export's entry in the installation's chain of runs, at sequence %d, binds this run to those bytes, and the held checkpoints, through sequence %d, cover it: it is the entry that existed when they were made, if they were held independently of the operator. Nothing here shows when that was, or that the chain is complete after sequence %d.", v.sequence, v.sequence, v.sequence) +
 				c.said + "\n"
@@ -156,7 +156,7 @@ func TestVerifyRunRefusesWhatAnExportWithoutLineageCannotShow(t *testing.T) {
 			if !errors.Is(err, c.is) || err.Error() != c.refusal || said != "" {
 				t.Fatal(err, said)
 			}
-			if !strings.HasPrefix(out, `{"exactBytes":"matches-record","exportVersion":`) || !strings.Contains(out, `,"inputs":"not-mapped","recordDigest":"`+sha(c.v.line)+`","retainedDisposition":"not-checked",`) || !strings.Contains(out, `,"scope":"`+notMappedInputs+`",`) || !strings.HasSuffix(out, `,"status":"`+c.status+`"}`+"\n") || strings.Contains(out, "targetsByClass") {
+			if !strings.HasPrefix(out, `{"exactBytes":"matches-record","exportVersion":`) || !strings.Contains(out, `,"inputs":"not-mapped","recordDigest":"`+sha(c.v.line)+`","retainedDisposition":"matches-audit",`) || !strings.Contains(out, `,"scope":"`+notMappedInputs+`",`) || !strings.HasSuffix(out, `,"status":"`+c.status+`"}`+"\n") || strings.Contains(out, "targetsByClass") {
 				t.Fatal(out)
 			}
 		})
@@ -189,7 +189,7 @@ func TestVerifyRunReExecutesARunWithoutLineage(t *testing.T) {
 	run["result"] = bytes.Replace(run["result"], []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`), 1)
 	e.bundle["run"], _ = json.Marshal(run)
 	out, said, err = verify(t, e.bundle, e.digest, runtime)
-	if !errors.Is(err, runner.ErrDispositionDiffers) || !strings.Contains(out, `"retainedDisposition":"differs-from-re-execution",`) || !strings.HasSuffix(out, `"scope":"`+notMappedReExecuted+`","status":"disposition-differs"}`+"\n") || said != "" {
+	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || said != "" {
 		t.Fatal(err, out, said)
 	}
 }

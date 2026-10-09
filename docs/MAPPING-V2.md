@@ -17,9 +17,15 @@ asserted. For authenticated sources the installation, not a mapping/API caller,
 supplies a trusted profile. A profile pins source, authority, gateway public key,
 adapter name/version/digest, shape, endpoint, class and permitted read tools. Its
 canonical digest is frozen into the mapping; the release retains the profile.
+Profile admission requires the public key to be the canonical encoding of a
+point on the curve whose order does not divide 8, as record signing keys do.
 The receipt signature authenticates the corresponding acquisition identity; the
 operator profile supplies classification. This is not a new signed Gateway
 class field. A profile cannot give one gateway source conflicting classifications.
+
+**Upgrade note.** An installation whose trusted profile contains a malformed
+public key that an earlier Runner accepted now refuses to start. A release or
+verification export that freezes such a profile no longer runs or verifies.
 
 `record` identifies the acquisition channel, not the authorship or truth of every
 byte stored in that system. Endpoint and adapter metadata remain Gateway/adapter
@@ -358,13 +364,36 @@ re-execution. An export without lineage is checked as
 [below](#exports-without-lineage): without input derivation, and with a report
 that says so.
 
-The retained disposition is then not read. A record whose inputs are intact and
-whose disposition was changed after the run still verifies. The report says so, on
-standard output for a program and on standard error for a person:
+Every retained result disposition must match the audit record, independently of
+--runtime; a difference fails with audit-disposition-mismatch. The record
+signature covers the exact audit bytes, not the export envelope: version,
+releaseDigest, release, inputs, chain (entry and checkpoint), run.trigger,
+run.schemaVersion, run.id, run.jobId, run.releaseId, run.revision, run.state,
+run.input (including source and preparation.verifiedAt), run.createdAt,
+run.startedAt, run.finishedAt, run.requestedBy, run.attempt, run.problem, or
+run.result members other than disposition (outputVersion, tool, command, status,
+experimental, reviewed, reviewedSet, conformanceClaimReference, specVersion,
+evaluatorSpecVersion, packId, packVersion, trace, artifact, and any additional
+members) are not signed by it. run.audit is checked against run.auditBytes;
+run.auditSignatures carries the signature, not a signature over itself. Separate
+release-digest, input, chain and checkpoint checks bind only what their
+documented scope states.
+
+The audit-disposition mismatch exits 1 with this report:
 
 ```text
-{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
-verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by.
+{"retainedDisposition":"differs-from-audit","status":"audit-disposition-mismatch"}
+```
+
+A completed run whose result and audit dispositions are both `null` is refused
+as having no disposition; it is not reported as a difference.
+
+Without replay the report says `matches-audit`, which does not establish that the
+evaluator decided correctly:
+
+```text
+{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by.
 ```
 
 Verification recomputes every input the same way, but what that establishes
@@ -444,7 +473,7 @@ that parameter against a source.` and `2 of the run's 3 inputs were derived by a
 rule that reads runAt, or a value derived from it, which rests on the export's
 own verification time.` When there is neither, the line is as it was.
 
-Add `--runtime /absolute/path/to/jpack` to check the disposition too, for a
+Add `--runtime /absolute/path/to/jpack` to replay the disposition too, for a
 completed run. The executable's bytes are hashed and it is refused unless the
 digest is the release's `runtimeDigest`; the copy that was hashed is the one run.
 It evaluates the verified facts and evidence under the release's frozen pack,
@@ -460,7 +489,7 @@ run's result retains and the one its audit record retains:
 verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by.
 ```
 
-When either differs, the command exits 1, reports `"status":"disposition-differs"`
+When the replay differs, the command exits 1, reports `"status":"disposition-differs"`
 with `"retainedDisposition":"differs-from-re-execution"`, and names the failure
 on standard error. `verified-disposition` adds one statement to `verified-inputs`:
 the release's Runtime, given the verified inputs, decides what the record says.
@@ -475,7 +504,7 @@ targets it refuses. It comes before any re-execution, so with `--runtime` the
 executable is not run:
 
 ```text
-{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
+{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
 runner: inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source
 ```
 
@@ -568,8 +597,8 @@ export. Its report gives their SHA-256 as `recordDigest`, the digest a gateway
 receipt would name for those bytes. Of a version-3 export:
 
 ```text
-{"exactBytes":"matches-record","exportVersion":3,"recordDigest":"sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d","retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
-verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source. The export's bytes of the audit record parse to the record. Their SHA-256 is sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d: a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run.
+{"exactBytes":"matches-record","exportVersion":3,"recordDigest":"sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d","retainedDisposition":"matches-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source. The export's bytes of the audit record parse to the record. Their SHA-256 is sha256:58ceb36b8c45956df5d6efb6d5b0fcce47e7f5c4ced7f39fa4c11c3286e12a6d: a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run.
 ```
 
 Of a version-2 export it reports `"exactBytes":"not-in-export"` and no
@@ -708,7 +737,7 @@ findings, before any re-execution. `--require-witnessed` refuses with
 and the line on standard error says what that establishes:
 
 ```text
-{"exactBytes":"matches-record","exportVersion":4,"recordDigest":"sha256:…","retainedDisposition":"not-checked","runChain":{"checkpoint":{"checkpointVersion":"1","recordDigest":"sha256:…","sequence":1,"trail":"…"},"findings":[],"findingsTotal":0,"scope":"one-supplied-entry","status":"valid","witnessed":false},"scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+{"exactBytes":"matches-record","exportVersion":4,"recordDigest":"sha256:…","retainedDisposition":"matches-audit","runChain":{"checkpoint":{"checkpointVersion":"1","recordDigest":"sha256:…","sequence":1,"trail":"…"},"findings":[],"findingsTotal":0,"scope":"one-supplied-entry","status":"valid","witnessed":false},"scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
 verified-inputs: … The export's entry in the installation's chain of runs, at sequence 1, binds this run to those bytes. Only that one supplied entry was checked, which establishes nothing against the operator, who keeps the chain and could have written the entry with the export: a checkpoint held independently, supplied with --expect, would. The report gives the entry's checkpoint, for a holder to keep from now on.
 ```
 
@@ -943,8 +972,8 @@ inputs are the operator's own. Of the v1 vector the tests keep, checked along
 its chain, against its held checkpoint and under its key:
 
 ```text
-{"exactBytes":"matches-record","exportVersion":5,"inputs":"not-mapped","recordDigest":"sha256:8d98…","retainedDisposition":"not-checked","runChain":{…,"scope":"checkpoint","status":"valid","witnessed":true},"scope":"audit binding of the retained inputs, which no lineage derives; not input derivation, sealed-session completeness or policy truth","signature":{…,"status":"signed",…},"status":"verified-inputs"}
-verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's job has no mapping v2, so its export carries no lineage: its inputs are the operator's own, and nothing here derives them from a source or checks them against one. The export's bytes of the audit record parse to the record. …
+{"exactBytes":"matches-record","exportVersion":5,"inputs":"not-mapped","recordDigest":"sha256:8d98…","retainedDisposition":"matches-audit","runChain":{…,"scope":"checkpoint","status":"valid","witnessed":true},"scope":"audit binding of the retained inputs, which no lineage derives; not input derivation, sealed-session completeness or policy truth","signature":{…,"status":"signed",…},"status":"verified-inputs"}
+verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's job has no mapping v2, so its export carries no lineage: its inputs are the operator's own, and nothing here derives them from a source or checks them against one. The export's bytes of the audit record parse to the record. …
 ```
 
 With `--runtime` the scope is "audit binding of the retained inputs, which no
