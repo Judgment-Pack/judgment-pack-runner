@@ -156,7 +156,7 @@ func TestVerifyRunRefusesWhatAnExportWithoutLineageCannotShow(t *testing.T) {
 			if !errors.Is(err, c.is) || err.Error() != c.refusal || said != "" {
 				t.Fatal(err, said)
 			}
-			if !strings.HasPrefix(out, `{"exactBytes":"matches-record","exportVersion":`) || !strings.Contains(out, `,"inputs":"not-mapped","recordDigest":"`+sha(c.v.line)+`","retainedDisposition":"not-checked",`) || !strings.Contains(out, `,"scope":"`+notMappedInputs+`",`) || !strings.HasSuffix(out, `,"status":"`+c.status+`"}`+"\n") || strings.Contains(out, "targetsByClass") {
+			if !strings.HasPrefix(out, `{"exactBytes":"matches-record","exportVersion":`) || !strings.Contains(out, `,"inputs":"not-mapped","recordDigest":"`+sha(c.v.line)+`","retainedDisposition":"matches-audit",`) || !strings.Contains(out, `,"scope":"`+notMappedInputs+`",`) || !strings.HasSuffix(out, `,"status":"`+c.status+`"}`+"\n") || strings.Contains(out, "targetsByClass") {
 				t.Fatal(out)
 			}
 		})

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,17 +32,30 @@ func TestVerifyRunBindsASignedDisposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := bytes.Clone(bundle.Run.Result)
+	originalAudit := bytes.Clone(bundle.Run.Audit)
 	for name, disposition := range map[string]json.RawMessage{
-		"fabricated": json.RawMessage(`{"kind":"outcome","outcomeId":"fabricated-approval"}`),
-		"missing":    nil,
-		"null":       json.RawMessage(`null`),
+		"fabricated":          json.RawMessage(`{"kind":"outcome","outcomeId":"fabricated-approval"}`),
+		"missing":             nil,
+		"null":                json.RawMessage(`null`),
+		"result case sibling": json.RawMessage(`{"kind":"outcome","outcomeId":"proceed"}`),
+		"audit case sibling":  json.RawMessage(`{"kind":"outcome","outcomeId":"proceed"}`),
 	} {
 		t.Run(name, func(t *testing.T) {
+			bundle.Run.Audit = bytes.Clone(originalAudit)
 			var result map[string]json.RawMessage
 			if err := json.Unmarshal(original, &result); err != nil {
 				t.Fatal(err)
 			}
-			if disposition == nil {
+			if name == "result case sibling" {
+				result["Disposition"] = json.RawMessage(`{"kind":"outcome","outcomeId":"fabricated-approval"}`)
+			} else if name == "audit case sibling" {
+				var audit map[string]json.RawMessage
+				if err := json.Unmarshal(originalAudit, &audit); err != nil {
+					t.Fatal(err)
+				}
+				audit["Disposition"] = json.RawMessage(`{"kind":"outcome","outcomeId":"fabricated-approval"}`)
+				bundle.Run.Audit, _ = json.Marshal(audit)
+			} else if disposition == nil {
 				delete(result, "disposition")
 			} else {
 				result["disposition"] = disposition
@@ -61,7 +75,11 @@ func TestVerifyRunBindsASignedDisposition(t *testing.T) {
 					args = append(args, "--runtime", filepath.Join(t.TempDir(), "must-not-run"))
 				}
 				out, human, err := verifyFiles(file, v.dir+"profiles.json", v.digest, args...)
-				if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
+				if strings.Contains(name, "case sibling") {
+					if !errors.Is(err, runner.ErrDispositionMemberName) || out != "" || human != "" {
+						t.Fatal(err, out, human)
+					}
+				} else if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
 					t.Fatal(err, out, human)
 				}
 			}
@@ -81,6 +99,24 @@ func TestVerificationCoverageInHelpAndGuide(t *testing.T) {
 	for name, text := range map[string]string{"help": help.String(), "guide": string(doc)} {
 		if !strings.Contains(strings.Join(strings.Fields(text), " "), verificationCoverage) {
 			t.Fatalf("%s omits the verification coverage sentences", name)
+		}
+	}
+	for name, check := range map[string]struct {
+		typeOf reflect.Type
+		want   []string
+	}{
+		"verification bundle": {reflect.TypeOf(runner.VerificationBundle{}), []string{"version", "releaseDigest", "release", "run", "inputs", "chain"}},
+		"run":                 {reflect.TypeOf(runner.Run{}), []string{"trigger", "schemaVersion", "id", "jobId", "releaseId", "revision", "state", "input", "createdAt", "startedAt", "finishedAt", "requestedBy", "attempt", "result", "audit", "auditBytes", "auditSignatures", "problem"}},
+	} {
+		var got []string
+		for i := 0; i < check.typeOf.NumField(); i++ {
+			tag := strings.Split(check.typeOf.Field(i).Tag.Get("json"), ",")[0]
+			if tag != "-" {
+				got = append(got, tag)
+			}
+		}
+		if !reflect.DeepEqual(got, check.want) {
+			t.Fatalf("%s export members changed: got %v; update verification coverage and this list together", name, got)
 		}
 	}
 }

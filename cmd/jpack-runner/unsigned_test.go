@@ -162,7 +162,7 @@ func TestVerifyRunReportsUnsignedParametersEndToEnd(t *testing.T) {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verifyWith(t, bundle, digest, profiles, "--require-sourced")
-	if !errors.Is(err, errParametersUnsigned) || err.Error() != unsignedRefuse || out != withUnsigned(report("parameters-unsigned", "not-checked", inputsOnly, 0, 3, 0)) || human != "" {
+	if !errors.Is(err, errParametersUnsigned) || err.Error() != unsignedRefuse || out != withUnsigned(report("parameters-unsigned", "matches-audit", inputsOnly, 0, 3, 0)) || human != "" {
 		t.Fatal(err, out, human)
 	}
 	var run map[string]json.RawMessage
@@ -199,7 +199,7 @@ func TestVerifyRunRefusesAnAssertedTargetBeforeAnUnsignedOne(t *testing.T) {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verifyWith(t, bundle, digest, []runner.InputProfile{s.profile}, "--require-sourced")
-	if !errors.Is(err, errInputsAsserted) || err.Error() != "inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source" || out != both(report("inputs-asserted", "not-checked", inputsOnly, 1, 2, 0)) || human != "" {
+	if !errors.Is(err, errInputsAsserted) || err.Error() != "inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source" || out != both(report("inputs-asserted", "matches-audit", inputsOnly, 1, 2, 0)) || human != "" {
 		t.Fatal(err, out, human)
 	}
 }
@@ -219,7 +219,7 @@ func TestVerifyRunReportsUnsignedParameters(t *testing.T) {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verifyFiles(dir+"run.json", dir+"profiles.json", digest, "--require-sourced")
-	if !errors.Is(err, errParametersUnsigned) || err.Error() != unsignedRefuse || out != withUnsigned(report("parameters-unsigned", "not-checked", inputsOnly, 0, 3, 0)) || human != "" {
+	if !errors.Is(err, errParametersUnsigned) || err.Error() != unsignedRefuse || out != withUnsigned(report("parameters-unsigned", "matches-audit", inputsOnly, 0, 3, 0)) || human != "" {
 		t.Fatal(err, out, human)
 	}
 }

@@ -113,7 +113,7 @@ func TestVerifyRunRefusesAnEntryItCannotHold(t *testing.T) {
 	absent := "--runtime=" + filepath.Join(t.TempDir(), "absent")
 	out, human, err := verify(t, e.bundle, e.digest, "--require-witnessed", absent)
 	if !errors.Is(err, errUnwitnessed) || err.Error() != "unwitnessed: no held checkpoint covers the run's entry, at sequence 1, and --require-witnessed refuses it: nothing here establishes the entry against the operator, who keeps the chain" || human != "" ||
-		out != reportV4(record, "unwitnessed", "not-checked", inputsOnly, `{"checkpoint":`+string(cp)+`,"findings":[],"findingsTotal":0,"scope":"one-supplied-entry","status":"valid","witnessed":false}`) {
+		out != reportV4(record, "unwitnessed", "matches-audit", inputsOnly, `{"checkpoint":`+string(cp)+`,"findings":[],"findingsTotal":0,"scope":"one-supplied-entry","status":"valid","witnessed":false}`) {
 		t.Fatal(err, out, human)
 	}
 	// A chain whose one line is another entry, and a checkpoint of another one.
@@ -135,7 +135,7 @@ func TestVerifyRunRefusesAnEntryItCannotHold(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, human, err := verify(t, e.bundle, e.digest, c.extra...)
-			if !errors.Is(err, errChainInvalid) || err.Error() != c.refusal || human != "" || out != reportV4(record, "chain-invalid", "not-checked", inputsOnly, c.runChain) {
+			if !errors.Is(err, errChainInvalid) || err.Error() != c.refusal || human != "" || out != reportV4(record, "chain-invalid", "matches-audit", inputsOnly, c.runChain) {
 				t.Fatal(err, "\n", out, human)
 			}
 		})

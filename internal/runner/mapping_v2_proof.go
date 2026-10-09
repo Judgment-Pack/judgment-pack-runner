@@ -35,45 +35,56 @@ func flatToken(s string) bool {
 	return true
 }
 func validateProfiles(profiles []InputProfile) error {
+	_, err := validateProfileKeys(profiles)
+	return err
+}
+
+// validateProfileKeys admits profiles and retains the public keys that passed
+// admission, so receipt verification cannot accidentally use a merely decoded
+// key if a future caller reaches it by another path.
+func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey, error) {
 	if len(profiles) > 16 {
-		return errors.New("at most 16 input profiles")
+		return nil, errors.New("at most 16 input profiles")
 	}
 	ids := map[string]bool{}
 	identities := map[string]string{}
+	keys := map[string]ed25519.PublicKey{}
 	for _, p := range profiles {
 		if len(encode(p)) > 32<<10 {
-			return errors.New("input profile exceeds 32 KiB")
+			return nil, errors.New("input profile exceeds 32 KiB")
 		}
 		if !mappingName.MatchString(p.ID) || ids[p.ID] || (p.Class != "record" && p.Class != "generated") || p.Source == "" || len(p.Source) > 256 || p.Authority == "" || len(p.Authority) > 256 || p.Adapter.Name == "" || p.Adapter.Version == "" || !validDigest(p.Adapter.Digest) || p.Shape != "mcp" && p.Shape != "command" && p.Shape != "http" {
-			return errors.New("invalid installation input profile")
+			return nil, errors.New("invalid installation input profile")
 		}
-		if _, e := ParsePublicKey(p.PublicKey); e != nil {
-			return fmt.Errorf("invalid installation input profile public key: %w", e)
+		key, e := ParsePublicKey(p.PublicKey)
+		if e != nil {
+			return nil, fmt.Errorf("invalid installation input profile public key: %w", e)
 		}
+		keys[p.ID] = key
 		if p.Endpoint != nil && len(*p.Endpoint) > 2048 || len(p.Tools) > 64 {
-			return errors.New("input profile exceeds limit")
+			return nil, errors.New("input profile exceeds limit")
 		}
 		if c := p.Calculator; c != nil && (p.Class != "record" || p.Shape != "mcp" || c.Name == "" || len(c.Name) > 256 || c.Version == "" || len(c.Version) > 256) {
-			return errors.New("a calculator profile is a record MCP profile naming its calculator and version")
+			return nil, errors.New("a calculator profile is a record MCP profile naming its calculator and version")
 		}
 		identity := p.PublicKey + "\n" + p.Source + "\n" + p.Authority
 		if c, ok := identities[identity]; ok && c != p.Class {
-			return errors.New("one trusted source cannot have conflicting output classes")
+			return nil, errors.New("one trusted source cannot have conflicting output classes")
 		}
 		identities[identity] = p.Class
 		ids[p.ID] = true
 		seen := map[string]bool{}
 		for _, t := range p.Tools {
 			if t == "" || len(t) > 256 || seen[t] {
-				return errors.New("invalid profile tool allowlist")
+				return nil, errors.New("invalid profile tool allowlist")
 			}
 			seen[t] = true
 		}
 		if p.Shape == "mcp" && len(p.Tools) == 0 {
-			return errors.New("MCP profiles require an operator-reviewed read tool allowlist")
+			return nil, errors.New("MCP profiles require an operator-reviewed read tool allowlist")
 		}
 	}
-	return nil
+	return keys, nil
 }
 func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) {
 	for _, p := range profiles {
@@ -95,7 +106,7 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 
 // verifyAcquisition verifies a single retained v3 acquisition, not a sealed
 // session/store. Unknown signed fields remain covered by the signature.
-func verifyAcquisition(raw, args []byte, p InputProfile, at time.Time, maxAge int) (json.RawMessage, *Citation, error) {
+func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int) (json.RawMessage, *Citation, error) {
 	fail := func(s string) (json.RawMessage, *Citation, error) { return nil, nil, errors.New(s) }
 	var response struct {
 		Result  json.RawMessage `json:"result"`
@@ -213,7 +224,6 @@ func verifyAcquisition(raw, args []byte, p InputProfile, at time.Time, maxAge in
 		return fail("adapter or endpoint differs from the trusted profile")
 	}
 	sig, _ := hex.DecodeString(str("signature"))
-	public, _ := hex.DecodeString(p.PublicKey)
 	delete(r, "signature")
 	unsigned, e := proofCanon(encode(r))
 	if e != nil || !ed25519.Verify(public, append([]byte("judgment-pack-gateway/receipt/3:"), unsigned...), sig) {

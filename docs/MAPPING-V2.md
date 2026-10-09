@@ -17,11 +17,15 @@ asserted. For authenticated sources the installation, not a mapping/API caller,
 supplies a trusted profile. A profile pins source, authority, gateway public key,
 adapter name/version/digest, shape, endpoint, class and permitted read tools. Its
 canonical digest is frozen into the mapping; the release retains the profile.
-Profile admission applies the same `ParsePublicKey` checks as record signing keys:
-curve membership, canonical encoding and rejection of small-order points.
+Profile admission requires the public key to be the canonical encoding of a
+point on the curve whose order does not divide 8, as record signing keys do.
 The receipt signature authenticates the corresponding acquisition identity; the
 operator profile supplies classification. This is not a new signed Gateway
 class field. A profile cannot give one gateway source conflicting classifications.
+
+**Upgrade note.** An installation whose trusted profile contains a malformed
+public key that an earlier Runner accepted now refuses to start. A release or
+verification export that freezes such a profile no longer runs or verifies.
 
 `record` identifies the acquisition channel, not the authorship or truth of every
 byte stored in that system. Endpoint and adapter metadata remain Gateway/adapter
@@ -375,6 +379,15 @@ run.auditSignatures carries the signature, not a signature over itself. Separate
 release-digest, input, chain and checkpoint checks bind only what their
 documented scope states.
 
+The audit-disposition mismatch exits 1 with this report:
+
+```text
+{"retainedDisposition":"differs-from-audit","status":"audit-disposition-mismatch"}
+```
+
+A completed run whose result and audit dispositions are both `null` is refused
+as having no disposition; it is not reported as a difference.
+
 Without replay the report says `matches-audit`, which does not establish that the
 evaluator decided correctly:
 
@@ -491,7 +504,7 @@ targets it refuses. It comes before any re-execution, so with `--runtime` the
 executable is not run:
 
 ```text
-{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"not-checked","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
+{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
 runner: inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source
 ```
 

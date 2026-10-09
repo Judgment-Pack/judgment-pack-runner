@@ -169,11 +169,11 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	}
 	sig := checkSignature(verified, publicKey)
 	if status, err := chainRefusal(chain, *requireWitnessed); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	if status, err := signatureRefusal(sig, *requireSigned); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	// An asserted target, and a parameter that its source's receipt does not
@@ -182,7 +182,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// The refusal comes before a re-execution, which then does not run.
 	if *requireSourced {
 		if status, err := refuseUnsourced(verified.Inputs(), verified.Classes, verified.Unsigned); err != nil {
-			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "not-checked", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 			return err
 		}
 	}

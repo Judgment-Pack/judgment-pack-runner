@@ -222,6 +222,22 @@ func TestVerifyRunChecksTheRetainedDisposition(t *testing.T) {
 	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
 		t.Fatal(err, out, human)
 	}
+	var result, audit map[string]json.RawMessage
+	if err := json.Unmarshal(run["result"], &result); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(run["audit"], &audit); err != nil {
+		t.Fatal(err)
+	}
+	result["disposition"] = json.RawMessage(`null`)
+	audit["disposition"] = json.RawMessage(`null`)
+	run["result"], _ = json.Marshal(result)
+	run["audit"], _ = json.Marshal(audit)
+	bundle["run"], _ = json.Marshal(run)
+	out, human, err = verify(t, bundle, digest)
+	if err == nil || err.Error() != "a completed run's result and audit disposition must not be null" || out != "" || human != "" {
+		t.Fatal(err, out, human)
+	}
 }
 
 const auditDispositionMismatchReport = `{"retainedDisposition":"differs-from-audit","status":"audit-disposition-mismatch"}` + "\n"
@@ -244,9 +260,10 @@ func TestVerifyRunReExecutesWithTheReleaseRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	run["result"] = bytes.Replace(run["result"], []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`), 1)
+	run["audit"] = bytes.Replace(run["audit"], []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`), 1)
 	bundle["run"], _ = json.Marshal(run)
 	out, human, err = verify(t, bundle, digest, runtime)
-	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
+	if !errors.Is(err, runner.ErrDispositionDiffers) || out != report("disposition-differs", "differs-from-re-execution", reExecuted, 3, 0, 0) || human != "" {
 		t.Fatal(err, out, human)
 	}
 }
@@ -273,7 +290,7 @@ func TestVerifyRunSaysWhenInputsAreAsserted(t *testing.T) {
 			if !errors.Is(err, errInputsAsserted) || err.Error() != "inputs-asserted: the run's inputs are all asserted, 3 of 3, and --require-sourced refuses them: nothing here checks them against a source" {
 				t.Fatal(err)
 			}
-			if out != report("inputs-asserted", "not-checked", inputsOnly, 3, 0, 0) || human != "" {
+			if out != report("inputs-asserted", "matches-audit", inputsOnly, 3, 0, 0) || human != "" {
 				t.Fatal(out, human)
 			}
 		})
@@ -350,7 +367,7 @@ func TestVerifyRunRefusesAbsentAssertedInputs(t *testing.T) {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verify(t, bundle, digest, "--require-sourced")
-	if !errors.Is(err, errInputsAsserted) || out != report("inputs-asserted", "not-checked", inputsOnly, 3, 0, 0) || human != "" {
+	if !errors.Is(err, errInputsAsserted) || out != report("inputs-asserted", "matches-audit", inputsOnly, 3, 0, 0) || human != "" {
 		t.Fatal(err, out, human)
 	}
 }
