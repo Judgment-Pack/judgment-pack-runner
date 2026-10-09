@@ -462,6 +462,83 @@ func TestASignedRunKeepsItsSignature(t *testing.T) {
 	}
 }
 
+// Desk keeps Runner's public key in a one-line public-key list. Replacing the
+// live seed after Runner opened does not add a key to that list: a run made
+// before replacement verifies under the listed key, while one made afterward
+// is refused with the signature-invalid finding (and is demonstrably signed
+// under the unlisted replacement key).
+func TestALiveKeyReplacementCannotPassDesksPublicKeyList(t *testing.T) {
+	cfg := testConfig(t)
+	keyPath := signingKey(t)
+	cfg.SigningKey = keyPath
+	cfg.Runtime = signingRuntimeWithKey(t, cfg.Runtime, filepath.Join(t.TempDir(), "signing.log"), keyPath)
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	release := testRelease(t, s)
+	job, err := s.createJob("Desk-listed signing key", release.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(identity string) []byte {
+		t.Helper()
+		r, _, err := s.submit(job.ID, identity, sample())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done := waitRun(t, s, r.ID); done.State != "completed" {
+			t.Fatal(done.State, done.Problem)
+		}
+		return get(t, s.Handler("test"), "/v1/runs/"+r.ID+"/verification?version=5", 200)
+	}
+	listedRun := run("listed")
+
+	// RFC 8032's second seed has vectorKey2 as its public half. Rename a new
+	// regular private file over the checked path, as the audit's live
+	// replacement scenario does.
+	const seed2 = "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"
+	replacement := keyPath + ".replacement"
+	if err = os.WriteFile(replacement, []byte(seed2+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(replacement, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	replacedRun := run("replaced")
+
+	// This is Desk's public list spelling, retained independently of the live
+	// seed path. Read the key from the list instead of from either seed.
+	list := []byte(`{"publicKey":"` + vectorKey1 + `","keyId":"` + vectorKeyID1 + `","at":0}` + "\n")
+	var listed struct {
+		PublicKey string `json:"publicKey"`
+		KeyID     string `json:"keyId"`
+		At        int64  `json:"at"`
+	}
+	if err = json.Unmarshal(bytes.TrimSuffix(list, []byte("\n")), &listed); err != nil || listed.PublicKey != vectorKey1 || listed.KeyID != vectorKeyID1 || listed.At != 0 {
+		t.Fatalf("Desk's retained public-key list changed shape: %v %s", err, list)
+	}
+	listedKey := mustKey(t, listed.PublicKey)
+	verify := func(raw []byte) VerifiedRun {
+		t.Helper()
+		v, err := VerifyInputs(raw, nil, releaseDigest(release))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if report := verify(listedRun).CheckSignature(listedKey); report.Status != SignatureSigned || report.KeyID != listed.KeyID || report.FindingsTotal != 0 {
+		t.Fatalf("the run under Desk's listed key was not accepted: %+v", report)
+	}
+	if report := verify(replacedRun).CheckSignature(listedKey); report.Status != SignatureInvalid || report.FindingsTotal != 1 || report.Findings[0].Name != FindingSignatureInvalid {
+		t.Fatalf("the run under the replaced key was not refused against Desk's list: %+v", report)
+	}
+	if report := verify(replacedRun).CheckSignature(mustKey(t, vectorKey2)); report.Status != SignatureSigned || report.KeyID != vectorKeyID2 || report.FindingsTotal != 0 {
+		t.Fatalf("the replacement did not make a run under its own unlisted key: %+v", report)
+	}
+}
+
 // A version-5 export carries the record's signature sidecar, not empty and at
 // most the 16 KiB Runner keeps, and earlier versions carry none. Version 5 is
 // held to the 8 MiB version 2 is held to, beside its members.
