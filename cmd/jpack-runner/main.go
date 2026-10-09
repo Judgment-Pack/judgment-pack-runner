@@ -91,8 +91,26 @@ func serve() error {
 	return nil
 }
 
+const verificationCoverage = "Every retained result disposition must match the audit record, independently of --runtime; a " +
+	"difference fails with audit-disposition-mismatch. The record signature covers the exact audit bytes, " +
+	"not the export envelope: version, releaseDigest, release, inputs, chain (entry and checkpoint), " +
+	"run.trigger, run.schemaVersion, run.id, run.jobId, run.releaseId, run.revision, run.state, run.input " +
+	"(including source and preparation.verifiedAt), run.createdAt, run.startedAt, run.finishedAt, " +
+	"run.requestedBy, run.attempt, run.problem, or run.result members other than disposition " +
+	"(outputVersion, tool, command, status, experimental, reviewed, reviewedSet, " +
+	"conformanceClaimReference, specVersion, evaluatorSpecVersion, packId, packVersion, trace, artifact, " +
+	"and any additional members) are not signed by it. run.audit is checked against run.auditBytes; " +
+	"run.auditSignatures carries the signature, not a signature over itself. Separate release-digest, " +
+	"input, chain and checkpoint checks bind only what their documented scope states."
+
 func verifyRun(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("verify-run", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		fmt.Fprintln(stderr, "Usage: jpack-runner verify-run [flags]")
+		fmt.Fprintln(stderr, verificationCoverage)
+		flags.PrintDefaults()
+	}
 	file := flags.String("file", "", "retained verification export")
 	profilesPath := flags.String("profiles", "", "independently trusted input profiles JSON")
 	release := flags.String("release-digest", "", "independently trusted frozen release digest")
@@ -130,6 +148,10 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	verified, err := runner.VerifyInputs(raw, profiles, *release)
+	if errors.Is(err, runner.ErrAuditDispositionMismatch) {
+		json.NewEncoder(stdout).Encode(map[string]string{"status": "audit-disposition-mismatch", "retainedDisposition": "differs-from-audit"})
+		return err
+	}
 	if err != nil {
 		return err
 	}
@@ -166,10 +188,9 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	}
 	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + notMappedSentence(verified.Inputs()) + record.sentence() + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion())
 	if *runtime == "" {
-		// verified-inputs covers the inputs, not the result. Nothing here compares the
-		// retained disposition with an evaluation, and both outputs say so.
-		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+said)
-		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-inputs", RetainedDisposition: "not-checked", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		// The retained answer matches the audit record; no evaluator was replayed.
+		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+said)
+		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-inputs", RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
 	}
 	// The release's own Runtime evaluates the verified inputs again, as a
 	// rehearsal. A different disposition is a failure with a report of its own.

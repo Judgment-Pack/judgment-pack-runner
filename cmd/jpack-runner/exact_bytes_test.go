@@ -41,10 +41,10 @@ func TestVerifyRunReportsTheRecordsDigest(t *testing.T) {
 	want := "sha256:" + hex.EncodeToString(sum[:])
 	said := " The export's bytes of the audit record parse to the record. Their SHA-256 is " + want + ": a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run.\n"
 	out, human, err := verify(t, bundle, digest)
-	if err != nil || out != reportV3(want, "verified-inputs", "not-checked", inputsOnly, 3, 0, 0) {
+	if err != nil || out != reportV3(want, "verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) {
 		t.Fatal(err, out)
 	}
-	if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source."+said {
+	if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source."+said {
 		t.Fatal("human output:", human)
 	}
 	t.Setenv("TMPDIR", t.TempDir())
@@ -70,7 +70,7 @@ func TestVerifyRunSaysVersion2CarriesNoBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", strings.TrimSpace(string(trusted)))
-	if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, notInExport+"\n") {
+	if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, notInExport+"\n") {
 		t.Fatal(err, out, human)
 	}
 	// The same export claiming version 3 carries no bytes, and is refused.

@@ -105,6 +105,9 @@ func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 // run's export, whose inputs were derived again from its lineage.
 func (v VerifiedRun) Inputs() string { return v.bundle.Inputs }
 
+// ErrAuditDispositionMismatch means the retained answer differs from the audit record.
+var ErrAuditDispositionMismatch = errors.New("audit-disposition-mismatch: the retained result disposition differs from the audit record")
+
 // ErrDispositionDiffers means that the release's Runtime, given a run's
 // verified inputs again, decided other than the run's record says it did.
 var ErrDispositionDiffers = errors.New("the retained disposition differs from a re-execution of the verified inputs by the release's Runtime")
@@ -203,6 +206,16 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	}
 	if e = checkAuditSignatures(b); e != nil {
 		return b, prepared, e
+	}
+	// Bind the retained answer before either mapped or unmapped input checks,
+	// even if no Runtime is supplied for replay. An unfinished historical run
+	// can have neither disposition; one present on either side must match.
+	resultDisposition := member(b.Run.Result, "disposition")
+	auditDisposition := member(b.Run.Audit, "disposition")
+	if b.Run.State == "completed" || len(resultDisposition) > 0 || len(auditDisposition) > 0 {
+		if len(resultDisposition) == 0 || string(resultDisposition) == "null" || !sameJSON(resultDisposition, auditDisposition) {
+			return b, prepared, ErrAuditDispositionMismatch
+		}
 	}
 	switch b.Inputs {
 	case "":

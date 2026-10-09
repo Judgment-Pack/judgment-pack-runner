@@ -201,11 +201,13 @@ const (
 	reExecuted = "retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth"
 )
 
-// verified-inputs must not be readable as covering the result. A retained
-// disposition changed after the run is not detected, and the report says it was
-// not checked, in the members a program reads and in the sentence a person reads.
-func TestVerifyRunSaysTheDispositionWasNotChecked(t *testing.T) {
+// Audit binding does not need evaluator replay, including for historical exports.
+func TestVerifyRunChecksTheRetainedDisposition(t *testing.T) {
 	bundle, digest := exportedRun(t)
+	out, human, err := verify(t, bundle, digest)
+	if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.Contains(human, "retained disposition matches its audit record") {
+		t.Fatal(err, out, human)
+	}
 	var run map[string]json.RawMessage
 	if err := json.Unmarshal(bundle["run"], &run); err != nil {
 		t.Fatal(err)
@@ -214,23 +216,15 @@ func TestVerifyRunSaysTheDispositionWasNotChecked(t *testing.T) {
 	if bytes.Equal(changed, run["result"]) {
 		t.Fatal("fixture has no disposition to change")
 	}
-	for name, result := range map[string]json.RawMessage{"retained": run["result"], "changed after the run": changed} {
-		t.Run(name, func(t *testing.T) {
-			run["result"] = result
-			bundle["run"], _ = json.Marshal(run)
-			out, human, err := verify(t, bundle, digest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) {
-				t.Fatal(out)
-			}
-			if !strings.Contains(human, "disposition was not checked") || !strings.Contains(human, "does not say the run decided what its record says") {
-				t.Fatal("human output:", human)
-			}
-		})
+	run["result"] = changed
+	bundle["run"], _ = json.Marshal(run)
+	out, human, err = verify(t, bundle, digest)
+	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
+		t.Fatal(err, out, human)
 	}
 }
+
+const auditDispositionMismatchReport = `{"retainedDisposition":"differs-from-audit","status":"audit-disposition-mismatch"}` + "\n"
 
 // With the release's Runtime the report says the disposition was checked, and
 // a disposition changed after the run is a failure with a report of its own.
@@ -252,7 +246,7 @@ func TestVerifyRunReExecutesWithTheReleaseRuntime(t *testing.T) {
 	run["result"] = bytes.Replace(run["result"], []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`), 1)
 	bundle["run"], _ = json.Marshal(run)
 	out, human, err = verify(t, bundle, digest, runtime)
-	if !errors.Is(err, runner.ErrDispositionDiffers) || out != report("disposition-differs", "differs-from-re-execution", reExecuted, 3, 0, 0) || human != "" {
+	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
 		t.Fatal(err, out, human)
 	}
 }
@@ -264,10 +258,10 @@ func TestVerifyRunReExecutesWithTheReleaseRuntime(t *testing.T) {
 func TestVerifyRunSaysWhenInputsAreAsserted(t *testing.T) {
 	bundle, digest := exportedRun(t)
 	out, human, err := verify(t, bundle, digest)
-	if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) {
+	if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) {
 		t.Fatal(err, out)
 	}
-	if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n" {
+	if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n" {
 		t.Fatal("human output:", human)
 	}
 	// The executable named does not exist: a refusal after the re-execution
@@ -297,10 +291,10 @@ func TestVerifyRunAcceptsInputsDerivedFromReceipts(t *testing.T) {
 	}
 	for _, extra := range [][]string{nil, {"--require-sourced"}} {
 		out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", strings.TrimSpace(string(trusted)), extra...)
-		if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 0, 3, 0) {
+		if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 0, 3, 0) {
 			t.Fatal(extra, err, out)
 		}
-		if human != "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says."+notInExport+"\n" {
+		if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+notInExport+"\n" {
 			t.Fatal(extra, "human output:", human)
 		}
 	}
@@ -352,7 +346,7 @@ func TestVerifyRunRefusesAbsentAssertedInputs(t *testing.T) {
 		}
 	}
 	out, human, err := verify(t, bundle, digest)
-	if err != nil || out != report("verified-inputs", "not-checked", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n") {
+	if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n") {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verify(t, bundle, digest, "--require-sourced")

@@ -44,8 +44,11 @@ func validateProfiles(profiles []InputProfile) error {
 		if len(encode(p)) > 32<<10 {
 			return errors.New("input profile exceeds 32 KiB")
 		}
-		if !mappingName.MatchString(p.ID) || ids[p.ID] || !validHex(p.PublicKey, 32) || (p.Class != "record" && p.Class != "generated") || p.Source == "" || len(p.Source) > 256 || p.Authority == "" || len(p.Authority) > 256 || p.Adapter.Name == "" || p.Adapter.Version == "" || !validDigest(p.Adapter.Digest) || p.Shape != "mcp" && p.Shape != "command" && p.Shape != "http" {
+		if !mappingName.MatchString(p.ID) || ids[p.ID] || (p.Class != "record" && p.Class != "generated") || p.Source == "" || len(p.Source) > 256 || p.Authority == "" || len(p.Authority) > 256 || p.Adapter.Name == "" || p.Adapter.Version == "" || !validDigest(p.Adapter.Digest) || p.Shape != "mcp" && p.Shape != "command" && p.Shape != "http" {
 			return errors.New("invalid installation input profile")
+		}
+		if _, e := ParsePublicKey(p.PublicKey); e != nil {
+			return fmt.Errorf("invalid installation input profile public key: %w", e)
 		}
 		if p.Endpoint != nil && len(*p.Endpoint) > 2048 || len(p.Tools) > 64 {
 			return errors.New("input profile exceeds limit")

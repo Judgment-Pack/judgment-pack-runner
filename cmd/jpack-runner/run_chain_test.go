@@ -66,7 +66,7 @@ func TestVerifyRunChecksTheRunsEntry(t *testing.T) {
 	cp, _ := json.Marshal(checkpoint)
 	bytesSaid := " The export's bytes of the audit record parse to the record. Their SHA-256 is " + record + ": a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run."
 	entrySaid := " The export's entry in the installation's chain of runs, at sequence 1, binds this run to those bytes"
-	inputs := "verified-inputs: the run's inputs match its record. Its disposition was not checked: this does not say the run decided what its record says. The run's inputs are the operator's own: nothing here checks them against a source." + bytesSaid + entrySaid
+	inputs := "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source." + bytesSaid + entrySaid
 	held := file(t, "held.jsonl", append(cp, '\n'))
 	chain := file(t, "chain.jsonl", e.chain)
 	head := `{"head":` + string(cp) + `,"lines":1}`
@@ -86,7 +86,7 @@ func TestVerifyRunChecksTheRunsEntry(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, human, err := verify(t, e.bundle, e.digest, c.extra...)
-			if err != nil || out != reportV4(record, "verified-inputs", "not-checked", inputsOnly, c.runChain) {
+			if err != nil || out != reportV4(record, "verified-inputs", "matches-audit", inputsOnly, c.runChain) {
 				t.Fatal(err, out)
 			}
 			if human != c.human {
@@ -168,7 +168,7 @@ func TestVerifyRunSaysAnUnchainedRunHasNoEntry(t *testing.T) {
 	}
 	record := sha(bytes.TrimSuffix(trail, []byte("\n")))
 	out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", strings.TrimSpace(string(trusted)))
-	if err != nil || out != reportV3(record, "verified-inputs", "not-checked", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " shows whether they are the bytes the Runtime wrote for this run.\n") {
+	if err != nil || out != reportV3(record, "verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " shows whether they are the bytes the Runtime wrote for this run.\n") {
 		t.Fatal(err, out, human)
 	}
 	held := file(t, "held.jsonl", []byte(`{"checkpointVersion":"1","recordDigest":"`+record+`","sequence":1,"trail":"`+strings.Repeat("a", 32)+`"}`+"\n"))

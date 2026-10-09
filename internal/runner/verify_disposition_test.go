@@ -203,17 +203,17 @@ func TestVerifyDispositionRefusesWhatItCannotStandBehind(t *testing.T) {
 	t.Run("result changed after the run", func(t *testing.T) {
 		b := bundle
 		b.Run.Result = bytes.Replace(b.Run.Result, decided, other, 1)
-		if e := VerifyRun(encode(b), profiles, b.ReleaseDigest); e != nil {
-			t.Fatal("inputs are intact", e)
+		if e := VerifyRun(encode(b), profiles, b.ReleaseDigest); !errors.Is(e, ErrAuditDispositionMismatch) {
+			t.Fatal("changed answer accepted", e)
 		}
-		if e := check(b, bin); !errors.Is(e, ErrDispositionDiffers) {
+		if e := check(b, bin); !errors.Is(e, ErrAuditDispositionMismatch) {
 			t.Fatal(e)
 		}
 	})
 	t.Run("audit record changed after the run", func(t *testing.T) {
 		b := bundle
 		b.Run.Audit = bytes.Replace(b.Run.Audit, decided, other, 1)
-		if e := check(b, bin); !errors.Is(e, ErrDispositionDiffers) {
+		if e := check(b, bin); !errors.Is(e, ErrAuditDispositionMismatch) {
 			t.Fatal(e)
 		}
 	})
