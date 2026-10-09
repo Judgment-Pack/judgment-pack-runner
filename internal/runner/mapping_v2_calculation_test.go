@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -455,5 +456,129 @@ func TestCalculatedRunIsEvaluatedAndVerifiedOffline(t *testing.T) {
 	l.Calculation.AsOf["ecb-rates"] = at.Format(time.RFC3339)
 	if e = VerifyRun(encode(bundle), []InputProfile{p}, bundle.ReleaseDigest); e == nil {
 		t.Fatal("an altered calculation lineage verified")
+	}
+}
+
+// calculatedSignedExport completes a calculated run under Runner's signing
+// key and returns the version-5 export after requiring both protections Desk
+// presents: the record is signed under its listed key, and its chain entry is
+// witnessed by a checkpoint retained apart from the served chain.
+func calculatedSignedExport(t *testing.T, status string) (VerificationBundle, InputProfile) {
+	t.Helper()
+	cfg := testConfig(t)
+	keyPath := signingKey(t)
+	cfg.SigningKey = keyPath
+	cfg.Runtime = signingRuntimeWithKey(t, cfg.Runtime, filepath.Join(t.TempDir(), "signing.log"), keyPath)
+	input, profile, key, at := calculatorFixture(t)
+	cfg.InputProfiles = []InputProfile{profile}
+	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{
+		Facts:    []FactMapping{{"/request", "/facts/request"}},
+		Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}},
+	}}
+	input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
+	calc := calculation(at)
+	result := map[string]any{"calculation": calc}
+	if status == "computed" {
+		_ = json.Unmarshal(encode(sample()), &result)
+	} else {
+		calc["status"] = status
+		delete(calc["inputs"].(map[string]any), "currency")
+		calc["asOf"].(map[string]any)["ecb-rates"] = at.Add(-400 * 24 * time.Hour).Format(time.RFC3339)
+	}
+	input.Source.Sources["fx"] = SourceValue{Response: signResponse(t, profile, key, []byte(calculatorArgs), encode(result), at, 0)}
+
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	pack, err := os.ReadFile("testdata/triage.pack.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := s.preview(context.Background(), PreviewRequest{Pack: string(pack), Input: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.createJob("Calculated, signed and witnessed", release.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := s.submit(job.ID, status, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitRun(t, s, run.ID)
+	if done.State != "completed" {
+		t.Fatal(done.State, done.Problem)
+	}
+	raw := get(t, s.Handler("test"), "/v1/runs/"+run.ID+"/verification?version=5", 200)
+	verified, err := VerifyInputs(raw, []InputProfile{profile}, releaseDigest(release))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signature := verified.CheckSignature(mustKey(t, vectorKey1)); signature.Status != SignatureSigned || signature.FindingsTotal != 0 {
+		t.Fatalf("the required signature did not hold: %+v", signature)
+	}
+	var bundle VerificationBundle
+	if err = json.Unmarshal(raw, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	chain := chainOf(t, s)
+	check, err := verified.CheckRunChain(bytes.NewReader(chain), []Checkpoint{bundle.Chain.Checkpoint})
+	if err != nil || check.Status != "valid" || !check.Witnessed || check.FindingsTotal != 0 {
+		t.Fatalf("the required held checkpoint did not witness the run: %+v %v", check, err)
+	}
+	return bundle, profile
+}
+
+// A calculated export does not escape either protection because its sources
+// carry calculator testimony: after its signature and independently held
+// checkpoint pass, changing its displayed answer has the disposition finding,
+// and changing its retained table time has the lineage finding.
+func TestACalculatedSignedAndWitnessedRunRefusesAnswerAndTableTimeTampering(t *testing.T) {
+	bundle, profile := calculatedSignedExport(t, "computed")
+
+	answer := bundle
+	answer.Run.Result = bytes.Replace(answer.Run.Result, []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"fabricated-approval"`), 1)
+	if err := VerifyRun(encode(answer), []InputProfile{profile}, answer.ReleaseDigest); !errors.Is(err, ErrAuditDispositionMismatch) {
+		t.Fatalf("answer tampering did not have finding %q: %v", "audit-disposition-mismatch", err)
+	}
+
+	var changed VerificationBundle
+	if err := json.Unmarshal(encode(bundle), &changed); err != nil {
+		t.Fatal(err)
+	}
+	changed.Run.Input.Preparation.Lineage[0].Calculation.AsOf["ecb-rates"] = changed.Run.Input.Preparation.VerifiedAt
+	if err := VerifyRun(encode(changed), []InputProfile{profile}, changed.ReleaseDigest); err == nil || err.Error() != "retained lineage does not match recomputation" {
+		t.Fatalf("table-time tampering did not have the retained-lineage finding: %v", err)
+	}
+}
+
+// A calculation that could not compute still makes a completed, signed and
+// witnessed decision whose lineage retains that exact status. The same
+// combined export cannot be re-read under a forged small-order receipt pin.
+func TestAFailedCalculationIsSignedAndWitnessedAndAMalformedReceiptPinIsRefused(t *testing.T) {
+	bundle, profile := calculatedSignedExport(t, "cannot-compute")
+	found := false
+	for _, lineage := range bundle.Run.Input.Preparation.Lineage {
+		if lineage.Source == "fx" {
+			found = true
+			if lineage.Status != "unknown" || lineage.Reason != "calculation-cannot-compute" || lineage.Calculation == nil || lineage.Calculation.Status != "cannot-compute" {
+				t.Fatalf("the failed calculation was not retained exactly: %s", encode(lineage))
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the failed calculation has no lineage")
+	}
+	profile.PublicKey = "01" + strings.Repeat("00", 31)
+	at, err := time.Parse("2006-01-02T15:04:05Z", bundle.Run.Input.Preparation.VerifiedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = normalizeV2(bundle.Run.Input, []InputProfile{profile}, at)
+	if err == nil || err.Error() != "invalid installation input profile public key: the public key is a point of small order, under which anyone can sign" {
+		t.Fatalf("the combined run's malformed receipt pin was not refused by name: %v", err)
 	}
 }

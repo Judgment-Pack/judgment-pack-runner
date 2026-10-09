@@ -3,11 +3,13 @@ package runner
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,10 +62,24 @@ func signAttempt(dir string) error {
 		}
 		link.trail = syntheticTrail
 	}
-	seed, _ := hex.DecodeString(vectorSeed1)
+	seedText := vectorSeed1
+	if keyPath := os.Getenv("RUNNER_TEST_SIGNING_KEY"); keyPath != "" {
+		encoded, readErr := os.ReadFile(keyPath)
+		if readErr != nil {
+			return readErr
+		}
+		seedText = strings.TrimSpace(string(encoded))
+	}
+	seed, err := hex.DecodeString(seedText)
+	if err != nil || len(seed) != ed25519.SeedSize || hex.EncodeToString(seed) != seedText {
+		return errors.New("the helper's signing seed is malformed")
+	}
+	public := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	keyDigest := sha256.Sum256(public)
+	keyID := hex.EncodeToString(keyDigest[:])[:32]
 	record := digest(line)
 	signature := ed25519.Sign(ed25519.NewKeyFromSeed(seed), fmt.Appendf(nil, `judgment-pack-runtime/record-signature/1:{"record":"%s","sequence":1,"trail":"%s"}`, record, link.trail))
-	sidecar := fmt.Sprintf(`{"keyId":%q,"kind":"record-signature","record":%q,"sequence":1,"sidecarVersion":"1","signature":%q,"trail":%q}`, vectorKeyID1, record, hex.EncodeToString(signature), link.trail) + "\n"
+	sidecar := fmt.Sprintf(`{"keyId":%q,"kind":"record-signature","record":%q,"sequence":1,"sidecarVersion":"1","signature":%q,"trail":%q}`, keyID, record, hex.EncodeToString(signature), link.trail) + "\n"
 	return os.WriteFile(filepath.Join(dir, "audit", "signatures.jsonl"), []byte(sidecar), 0600)
 }
 
@@ -71,6 +87,14 @@ func signAttempt(dir string) error {
 // evaluation this test binary signs the attempt, as signAttempt does. Its
 // output goes to log, never to the Runtime's answer Runner reads.
 func signingRuntime(t *testing.T, real, log string) string {
+	return signingRuntimeWithKey(t, real, log, "")
+}
+
+// signingRuntimeWithKey is signingRuntime with a socket-free signer's live
+// seed path. It is used where the sandbox's ownership of / makes the published
+// Runtime refuse native key opening; the helper still signs the real Runtime's
+// exact record, and reads the named seed anew for every attempt.
+func signingRuntimeWithKey(t *testing.T, real, log, key string) string {
 	t.Helper()
 	real, err := filepath.Abs(real)
 	if err != nil {
@@ -80,7 +104,7 @@ func signingRuntime(t *testing.T, real, log string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n'" + real + "' \"$@\" || exit $?\n[ -f audit/evaluations.jsonl ] || exit 0\nRUNNER_TEST_SIGN_ATTEMPT=1 '" + self + "' >> '" + log + "' 2>&1\n"
+	script := "#!/bin/sh\nunset JPACK_SIGNING_KEY\n'" + real + "' \"$@\" || exit $?\n[ -f audit/evaluations.jsonl ] || exit 0\nRUNNER_TEST_SIGN_ATTEMPT=1 RUNNER_TEST_SIGNING_KEY='" + key + "' '" + self + "' >> '" + log + "' 2>&1\n"
 	path := filepath.Join(t.TempDir(), "signing-runtime")
 	if err = os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)

@@ -315,6 +315,109 @@ func TestTheRuntimesVerifierReadsTheChainOfRuns(t *testing.T) {
 	}
 }
 
+// Desk hands Runner's chain over from a private snapshot, using the Runtime's
+// `audit checkpoint --trail --since` output as the holder's exact files. A
+// later read can grow while the first snapshot and its handed-over bytes stay
+// fixed; independently retained batches from both reads witness the later
+// snapshot together.
+func TestDeskCheckpointSinceHandsOverChangingChainSnapshotsExactly(t *testing.T) {
+	bin := os.Getenv("JPACK_TEST_BIN")
+	if bin == "" {
+		t.Skip("set JPACK_TEST_BIN to exercise the published Runtime")
+	}
+	if !filepath.IsAbs(bin) {
+		t.Fatal("JPACK_TEST_BIN must name the published Runtime by absolute path")
+	}
+	cfg := testConfig(t)
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	release := testRelease(t, s)
+	if absent, err := probeAuditVerify(bin, t.TempDir()); err != nil {
+		t.Fatal(err)
+	} else if absent != "" {
+		t.Skipf("the Runtime under test has no audit checkpoint/verify contract: %s", absent)
+	}
+	job, err := s.createJob("Desk checkpoint hand-over", release.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(first, count int) {
+		t.Helper()
+		for i := range count {
+			run, _, err := s.submit(job.ID, fmt.Sprintf("handover-%d", first+i), sample())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if done := waitRun(t, s, run.ID); done.State != "completed" {
+				t.Fatal(done.State, done.Problem)
+			}
+		}
+	}
+	dir := t.TempDir()
+	write := func(name string, data []byte) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	checkpointSince := func(snapshot string, since int64) []byte {
+		t.Helper()
+		cmd := exec.Command(bin, "audit", "checkpoint", "--trail", snapshot, "--since", fmt.Sprint(since), "--limit", "300")
+		cmd.Env, cmd.Dir = []string{"LANG=C", "LC_ALL=C"}, dir
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil || stderr.Len() != 0 {
+			t.Fatalf("audit checkpoint --since %d: %v: %s", since, err, stderr.Bytes())
+		}
+		return stdout.Bytes()
+	}
+	expected := func(rows []chainRow) []byte {
+		t.Helper()
+		var checkpoints [][]byte
+		for _, row := range rows {
+			checkpoint, err := checkpointOf(row.line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkpoints = append(checkpoints, encode(checkpoint))
+		}
+		return joinLines(checkpoints...)
+	}
+
+	add(0, 2)
+	firstBytes := chainOf(t, s)
+	firstSnapshot := write("private-first.jsonl", firstBytes)
+	firstHeldBytes := checkpointSince(firstSnapshot, 0)
+	if want := expected(chainRows(t, s)); !bytes.Equal(firstHeldBytes, want) {
+		t.Fatalf("the first hand-over is not the Runtime's exact checkpoint files:\n%s\n%s", firstHeldBytes, want)
+	}
+	firstHeld := write("holder-first.jsonl", firstHeldBytes)
+
+	add(2, 2)
+	laterRows := chainRows(t, s)
+	laterBytes := chainOf(t, s)
+	laterSnapshot := write("private-later.jsonl", laterBytes)
+	if still, err := os.ReadFile(firstSnapshot); err != nil || !bytes.Equal(still, firstBytes) || !bytes.HasPrefix(laterBytes, firstBytes) {
+		t.Fatalf("the private first snapshot changed, or is not the later snapshot's exact prefix: %v", err)
+	}
+	laterHeldBytes := checkpointSince(laterSnapshot, 2)
+	if want := expected(laterRows[2:]); !bytes.Equal(laterHeldBytes, want) {
+		t.Fatalf("the later hand-over is not the Runtime's exact checkpoint files:\n%s\n%s", laterHeldBytes, want)
+	}
+	laterHeld := write("holder-later.jsonl", laterHeldBytes)
+
+	report, code := auditVerify(t, bin, laterSnapshot, firstHeld, laterHeld)
+	if code != 0 || report.Status != "valid" || report.Scope != "checkpoint" || report.Lines != 4 || report.Coverage.Witnessed != 4 || report.Coverage.Unwitnessed != 0 ||
+		report.Held == nil || report.Held.Supplied != 4 || report.Held.Matched != 4 || report.Held.Failed != 0 || len(report.Findings) != 0 {
+		t.Fatalf("the later snapshot was not verified against both independently retained batches: %+v %d", report, code)
+	}
+}
+
 // The probe asks the Runtime the runs execute, and takes only the Runtime's
 // own answer for an unknown command or flag as the command's absence. A copy
 // of the Runtime under test of mode 0600, which cannot be executed, fails the
