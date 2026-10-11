@@ -52,9 +52,13 @@ jobs:
           ref: 8270e9999a53ccf0d8ce9e3277b8dd7646cea98a # v0.30.0
           path: .ci-runtime
           persist-credentials: false
+      # The build names the pin's release, as the release build does, so a
+      # test can tell what the Runtime under test answers by its release
+      # (TestTheRuntimesVerifierReadsTheChainOfRuns). Whoever moves the pin
+      # moves the version with it.
       - name: Build Runtime
         working-directory: .ci-runtime
-        run: go build -trimpath -o "$RUNNER_TEMP/jpack" ./cmd/jpack
+        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.30.0" -o "$RUNNER_TEMP/jpack" ./cmd/jpack
       # A Runtime that signs and does not know the expected key, as every
       # release from v0.26.0 to v0.29.x: Runner must name the key a replaced
       # seed signed under (TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed,
@@ -68,7 +72,7 @@ jobs:
           persist-credentials: false
       - name: Build the earlier Runtime
         working-directory: .ci-runtime-earlier
-        run: go build -trimpath -o "$RUNNER_TEMP/jpack-earlier" ./cmd/jpack
+        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.27.1" -o "$RUNNER_TEMP/jpack-earlier" ./cmd/jpack
       - name: Check out durable Gateway contract
         uses: actions/checkout@v4
         with:

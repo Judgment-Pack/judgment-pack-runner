@@ -397,6 +397,9 @@ needs Runtime 0.30.0 or later, which CI pins, and fails under an earlier one.
 `TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed` needs
 `JPACK_EARLIER_TEST_BIN`, a Runtime that signs and does not know the expected key
 (0.26.0 to 0.29.x; CI builds 0.27.1), and skips without it (#54).
+`TestTheRuntimesVerifierReadsTheChainOfRuns` tells the scope the Runtime names from the
+release it reports, so a Runtime built from source must name its release, as CI's are:
+`go build -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=<release>"`.
 The fixture is a synthetic Apache-2.0 Runtime specification example, not business policy.
 
 ## License and contributions

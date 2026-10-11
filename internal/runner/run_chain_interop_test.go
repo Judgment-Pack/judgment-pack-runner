@@ -159,6 +159,58 @@ func auditVerify(t *testing.T, bin, trail string, held ...string) (auditVerifyRe
 	return r, code
 }
 
+// chainScope is the scope the Runtime at bin names a verification of one
+// supplied chain with no checkpoint by: one-supplied-chain before 0.28.0, and
+// committed-prefix from 0.28.0 on (runtime #240). It is told from the release
+// the Runtime names in its own `version` answer. A Runtime that names none, as
+// one built without its release's -ldflags does (0.0.0-dev), fails the test:
+// which scope it names cannot be told.
+func chainScope(t *testing.T, bin string) string {
+	t.Helper()
+	cmd := exec.Command(bin, "version", "--format", "json")
+	cmd.Env, cmd.Dir = []string{"LANG=C", "LC_ALL=C"}, t.TempDir()
+	out, err := cmd.Output()
+	var answer struct {
+		Tool struct {
+			Version string `json:"version"`
+		} `json:"tool"`
+	}
+	if err != nil || json.Unmarshal(out, &answer) != nil {
+		t.Fatalf("the Runtime under test did not answer `version`: %v %s", err, out)
+	}
+	var major, minor, patch int
+	if _, err = fmt.Sscanf(answer.Tool.Version, "%d.%d.%d", &major, &minor, &patch); err != nil || major == 0 && minor == 0 {
+		t.Fatalf("the Runtime under test names its release %q, which does not tell the scope it names: "+
+			"build it with -ldflags \"-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=<release>\", as its releases and CI are", answer.Tool.Version)
+	}
+	if major > 0 || minor >= 28 {
+		return "committed-prefix"
+	}
+	return "one-supplied-chain"
+}
+
+// readsAsChainedTrail says whether the Runtime's report of a chain supplied
+// with no checkpoint reads it as one chained trail: valid, under scope, of
+// lines lines of trail, every one chained and none witnessed, the last being
+// head.
+func readsAsChainedTrail(got auditVerifyReport, code int, scope string, lines int64, trail string, head Checkpoint) bool {
+	return code == 0 && got.Status == "valid" && got.Scope == scope && got.Lines == lines && got.Trail == trail && got.Head != nil && *got.Head == head &&
+		got.Coverage.LegacyPrefix == 0 && got.Coverage.Chained == lines && got.Coverage.Unchained == 0 && got.Coverage.Uncovered == 0 && got.Coverage.Damaged == 0 && got.Coverage.Witnessed == 0
+}
+
+// scopeSwappingRuntime is the Runtime at bin, whose answers name each of the
+// two scopes of one supplied chain by the other, its exit status kept.
+func scopeSwappingRuntime(t *testing.T, bin string) string {
+	t.Helper()
+	script := "#!/bin/sh\nPATH=/usr/bin:/bin\nout=\"$('" + bin + "' \"$@\")\"\ncode=$?\n" +
+		"printf '%s\\n' \"$out\" | sed -e 's/committed-prefix/@@/g' -e 's/one-supplied-chain/committed-prefix/g' -e 's/@@/one-supplied-chain/g'\nexit $code\n"
+	path := filepath.Join(t.TempDir(), "scope-swapping-runtime")
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // relinked is a chain of the entries given, as an operator who rewrote the
 // chain would write it to look whole: each at its place, linked to the line
 // before it, under the same trail.
@@ -261,12 +313,16 @@ func TestTheRuntimesVerifierReadsTheChainOfRuns(t *testing.T) {
 	chain := write("chain.jsonl", chainOf(t, s))
 	held := write("held.jsonl", joinLines(encode(second), encode(last)))
 
-	// The Runtime names this scope one-supplied-chain before 0.28.0, and
-	// committed-prefix from 0.28.0 on (runtime #240), for the same check.
+	// The scope is the one the Runtime under test names, by its release.
+	scope := chainScope(t, bin)
 	got, code := auditVerify(t, bin, chain)
-	if code != 0 || got.Status != "valid" || !slices.Contains([]string{"one-supplied-chain", "committed-prefix"}, got.Scope) || got.Lines != 4 || got.Trail != entries[0].Trail || got.Head == nil || *got.Head != last ||
-		got.Coverage.LegacyPrefix != 0 || got.Coverage.Chained != 4 || got.Coverage.Unchained != 0 || got.Coverage.Uncovered != 0 || got.Coverage.Damaged != 0 || got.Coverage.Witnessed != 0 {
-		t.Fatalf("the Runtime does not read the chain as a chained trail: %+v %d", got, code)
+	if !readsAsChainedTrail(got, code, scope, 4, entries[0].Trail, last) {
+		t.Fatalf("the Runtime does not read the chain as a chained trail under scope %s: %+v %d", scope, got, code)
+	}
+	// A report naming the scope as the other releases do is not taken for
+	// this Runtime's.
+	if got, code := auditVerify(t, scopeSwappingRuntime(t, bin), chain); got.Scope == scope || readsAsChainedTrail(got, code, scope, 4, entries[0].Trail, last) {
+		t.Fatalf("a report under scope %s was taken for this Runtime's, which names %s", got.Scope, scope)
 	}
 	got, code = auditVerify(t, bin, chain, held)
 	if code != 0 || got.Status != "valid" || got.Scope != "checkpoint" || got.Coverage.Witnessed != 4 || got.Coverage.Unwitnessed != 0 || got.Held == nil || got.Held.Supplied != 2 || got.Held.Matched != 2 || got.Held.Failed != 0 || len(got.Findings) != 0 {
