@@ -78,7 +78,8 @@ Desk resumes queued work and marks previously running work interrupted. A shut d
 computer does not execute jobs. This is not a hosted scheduler or a Vercel function.
 
 The executable receives one bounded JSON boot line on stdin with `dir`, `runtime`,
-`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, `requireTestedReleases` ([below](#release-readiness)), and an absolute `signingKey`
+`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, `requireTestedReleases` ([below](#release-readiness)), an absolute `signingKey`
+and the `signingPublicKey` it is expected to have
 ([below](#verified-mapping-v2-runner-and-desk)). It binds an ephemeral IPv4 loopback port,
 prints `{"protocol":"jobs/1","url":"http://127.0.0.1:..."}`, and stays alive until
 stdin closes. The bearer is never printed, passed in argv, read from a project file,
@@ -247,7 +248,10 @@ that signs (after 0.25.0) writes a line signing the record to a sidecar beside i
 trail, and Runner keeps the sidecar exactly, with the run. The expected key is fixed
 at start and passed to the Runtime: Runtime 0.30.0 and later refuse to sign with a
 seed replaced at its path, and earlier ones ignore it, so Runner detects such a
-signature without preventing it. A run signed under another key, or not at all,
+signature without preventing it. The boot line's optional `signingPublicKey` names the
+expected key independently of the key's file, as Desk can from its list of public keys
+(Desk #345): the key read at start must have it, or Runner refuses to start, and a key
+changed while Runner reads it refuses the start too. A run signed under another key, or not at all,
 completes with its decision and an explicit signing failure, `signing` beside its
 sidecar in the run and run lists; a signed one names the key it was signed under.
 Rotating the key is a separate change (Desk #238). Version 5 of the export

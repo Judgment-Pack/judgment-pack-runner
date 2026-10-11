@@ -33,12 +33,10 @@ func main() {
 		os.Exit(1)
 	}
 }
-func serve() error {
-	input := bufio.NewReaderSize(os.Stdin, 128<<10)
-	line, err := input.ReadSlice('\n')
-	if err != nil || len(line) > 128<<10 {
-		return fmt.Errorf("bounded boot configuration required")
-	}
+
+// bootConfig reads the boot line: the service's configuration and the
+// bearer.
+func bootConfig(line []byte) (runner.Config, string, error) {
 	var boot struct {
 		Dir                string                     `json:"dir"`
 		Runtime            string                     `json:"runtime"`
@@ -51,11 +49,25 @@ func serve() error {
 		InputProfiles      []runner.InputProfile      `json:"inputProfiles,omitempty"`
 		RequireTested      bool                       `json:"requireTestedReleases,omitempty"`
 		SigningKey         string                     `json:"signingKey,omitempty"`
+		SigningPublicKey   string                     `json:"signingPublicKey,omitempty"`
 	}
-	if json.Unmarshal([]byte(line), &boot) != nil || len(boot.Token) < 32 {
-		return fmt.Errorf("invalid boot configuration")
+	if json.Unmarshal(line, &boot) != nil || len(boot.Token) < 32 {
+		return runner.Config{}, "", fmt.Errorf("invalid boot configuration")
 	}
-	service, err := runner.Open(runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, SigningKey: boot.SigningKey})
+	return runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, SigningKey: boot.SigningKey, SigningPublicKey: boot.SigningPublicKey}, boot.Token, nil
+}
+
+func serve() error {
+	input := bufio.NewReaderSize(os.Stdin, 128<<10)
+	line, err := input.ReadSlice('\n')
+	if err != nil || len(line) > 128<<10 {
+		return fmt.Errorf("bounded boot configuration required")
+	}
+	cfg, token, err := bootConfig(line)
+	if err != nil {
+		return err
+	}
+	service, err := runner.Open(cfg)
 	if err != nil {
 		return err
 	}
@@ -66,7 +78,7 @@ func serve() error {
 	}
 	// A release check can run validation, lock, rehearsal and saved tests, each
 	// with a 30-second subprocess deadline. Allow the bounded sequence to finish.
-	server := &http.Server{Handler: service.Handler(boot.Token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 135 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Handler: service.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 135 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	defer server.Close()
 	if err = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": "http://" + listener.Addr().String(), "protocol": "jobs/1"}); err != nil {
 		return err

@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // vectorSeed2 is RFC 8032's second seed, whose public half is vectorKey2.
@@ -233,4 +235,187 @@ func TestAnUnreadableSidecarFailsOnlyTheSigning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withKeyHook runs hook between the key's checks on its open handle and the
+// read of its seed, for the rest of the test.
+func withKeyHook(t *testing.T, hook func()) {
+	t.Helper()
+	afterKeyCheck = hook
+	t.Cleanup(func() { afterKeyCheck = nil })
+}
+
+// agedKey is signingKey, with its file's times set an hour back, as a key
+// made before Runner starts has them: a change made now gives it another
+// modification time, whatever the filesystem's timestamp granularity.
+func agedKey(t *testing.T) string {
+	t.Helper()
+	key := signingKey(t)
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(key, past, past); err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+// A key file changed in place between its checks and the end of the read of
+// its seed, through the one handle both use, refuses the start: its contents
+// rewritten (the same size, the same inode), a name added, its mode changed,
+// or bytes added. The refusal names neither the path nor any byte. A file
+// left alone starts, under its own key.
+func TestAKeyChangedWhileItIsReadRefusesTheStart(t *testing.T) {
+	for name, change := range map[string]func(key string) error{
+		"rewritten in place":  func(key string) error { return os.WriteFile(key, []byte(vectorSeed2+"\n"), 0600) },
+		"given a second name": func(key string) error { return os.Link(key, key+".copy") },
+		"its mode changed":    func(key string) error { return os.Chmod(key, 0400) },
+		"added to": func(key string) error {
+			f, err := os.OpenFile(key, os.O_WRONLY|os.O_APPEND, 0)
+			if err == nil {
+				_, err = f.WriteString("\n")
+				f.Close()
+			}
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			key := agedKey(t)
+			withKeyHook(t, func() {
+				if err := change(key); err != nil {
+					t.Error(err)
+				}
+			})
+			s, err := Open(keyConfig(t, key))
+			if err == nil {
+				defer s.Close()
+				t.Fatalf("the start was not refused, and expects %x", s.expectedKey)
+			}
+			if said := err.Error(); said != "the signing key is refused: it changed while it was read" || strings.Contains(said, key) || strings.Contains(said, vectorSeed2) {
+				t.Fatal(said)
+			}
+		})
+	}
+	t.Run("left alone", func(t *testing.T) {
+		key := agedKey(t)
+		ran := false
+		withKeyHook(t, func() { ran = true })
+		s, err := Open(keyConfig(t, key))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		if !ran || hex.EncodeToString(s.expectedKey) != vectorKey1 {
+			t.Fatalf("the hook ran: %v; the expected key is %x", ran, s.expectedKey)
+		}
+	})
+}
+
+// The seed is read through the handle the checks were made on, never by the
+// path again: with the key's directory swapped for one holding another seed
+// after the checks, the expected key is still the checked file's. That file is
+// unchanged, so the start goes on; a Runtime given the path then finds another
+// key there, and refuses it (0.30.0 and later) or signs under it, and each run
+// says so.
+func TestTheSeedIsReadThroughTheHandleItWasCheckedOn(t *testing.T) {
+	key := agedKey(t)
+	dir := filepath.Dir(key)
+	withKeyHook(t, func() {
+		if err := os.Rename(dir, dir+".checked"); err != nil {
+			t.Error(err)
+		}
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Error(err)
+		}
+		if err := os.WriteFile(key, []byte(vectorSeed2+"\n"), 0600); err != nil {
+			t.Error(err)
+		}
+	})
+	s, err := Open(keyConfig(t, key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if hex.EncodeToString(s.expectedKey) != vectorKey1 {
+		t.Fatalf("the expected key is %x, not the checked file's", s.expectedKey)
+	}
+}
+
+// An installation may name the expected key itself, as Desk can from its list
+// of public keys. The key read at start must have it: a seed replaced before
+// start, or before the read, cannot become the expectation. The named key is
+// held to the key check before any seed is read, and is never echoed. Named
+// without a signing key, it refuses the start.
+func TestAConfiguredExpectedKeyIsHeldAtStart(t *testing.T) {
+	t.Run("the key at the path has it", func(t *testing.T) {
+		cfg := keyConfig(t, signingKey(t))
+		cfg.SigningPublicKey = vectorKey1
+		s, err := Open(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		if hex.EncodeToString(s.expectedKey) != vectorKey1 {
+			t.Fatalf("the expected key is %x", s.expectedKey)
+		}
+	})
+	for name, c := range map[string]struct {
+		named   string
+		prepare func(t *testing.T, key string)
+		refusal string
+	}{
+		"another key named":                  {vectorKey2, nil, errNotTheExpectedKey.Error()},
+		"the seed replaced before the start": {vectorKey1, func(t *testing.T, key string) { replaceSeed(t, key, vectorSeed2) }, errNotTheExpectedKey.Error()},
+		"the seed rewritten before the read": {vectorKey1, func(t *testing.T, key string) {
+			withKeyHook(t, func() { os.WriteFile(key, []byte(vectorSeed2+"\n"), 0600) })
+		}, "the signing key is refused: it changed while it was read"},
+		"in upper case":     {strings.ToUpper(vectorKey1), nil, "the expected signing key is refused: " + errKeyForm.Error()},
+		"with a newline":    {vectorKey1 + "\n", nil, "the expected signing key is refused: " + errKeyForm.Error()},
+		"a character short": {vectorKey1[1:], nil, "the expected signing key is refused: " + errKeyForm.Error()},
+		"of small order":    {smallOrderKeys[0], nil, "the expected signing key is refused: " + errKeySmallOrder.Error()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			key := agedKey(t)
+			if c.prepare != nil {
+				c.prepare(t, key)
+			}
+			cfg := keyConfig(t, key)
+			cfg.SigningPublicKey = c.named
+			s, err := Open(cfg)
+			if err == nil {
+				defer s.Close()
+				t.Fatalf("the start was not refused, and expects %x", s.expectedKey)
+			}
+			said := err.Error()
+			if said != c.refusal || strings.Contains(said, key) || strings.Contains(said, vectorSeed1) || strings.Contains(said, vectorSeed2) || strings.Contains(said, strings.TrimSpace(c.named)) {
+				t.Fatal(said)
+			}
+		})
+	}
+	t.Run("without a signing key", func(t *testing.T) {
+		cfg := keyConfig(t, "")
+		cfg.SigningPublicKey = vectorKey1
+		if s, err := Open(cfg); err == nil {
+			s.Close()
+			t.Fatal("the start was not refused")
+		} else if err.Error() != "the expected signing key is named without a signing key" {
+			t.Fatal(err)
+		}
+	})
+	t.Run("for the service's lifetime", func(t *testing.T) {
+		key := signingKey(t)
+		cfg := keyConfig(t, key)
+		cfg.SigningPublicKey = vectorKey1
+		s, err := Open(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		replaceSeed(t, key, vectorSeed2)
+		record := []byte(vectorTrail1)
+		if got := s.signingOf(record, nil, false); *got != (RunSigning{Status: SigningFailed, Reason: signingRuntimeSignedNothing}) {
+			t.Fatalf("%+v", got)
+		}
+		if got := s.signingOf(record, []byte(sidecarLineUnder(vectorSeed2, record)), false); *got != (RunSigning{Status: SigningFailed, Reason: signingOtherKey}) {
+			t.Fatalf("%+v", got)
+		}
+	})
 }

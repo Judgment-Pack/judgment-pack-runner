@@ -71,12 +71,18 @@ func keyFilePrivate(info os.FileInfo) error {
 }
 
 // signingPublicKey holds the signing key to its placement (checkSigningKey),
-// then reads it, once, and answers its public key. The file opened must be
-// the one checked, by device and inode, and still hold to the placement; it is
-// opened without following a link and without blocking, and read up to the
-// bound the Runtime reads a seed to (seedPublicKey). Nothing read is kept,
-// logged or put in an error: a refusal never names the path or any byte of the
-// key.
+// then reads it, once, through one handle, and answers its public key. The
+// file is opened without following a link and without blocking. It must be the
+// one checked at the path, by device and inode, and the handle's own
+// attributes are held to the placement. The seed is read from that handle, up
+// to the bound the Runtime reads a seed to (seedPublicKey), and the handle's
+// attributes are read again: if its identity, size, links, mode, owner,
+// modification time or change time differ from those checked, the file
+// changed between the check and the end of the read, and the key is refused.
+// A change made within the filesystem's timestamp granularity of the file's
+// last change before the check, that keeps its size, is not seen. Nothing read
+// is kept, logged or put in an error: a refusal never names the path or any
+// byte of the key.
 func signingPublicKey(path, stateDir string) (ed25519.PublicKey, error) {
 	seen, err := checkSigningKey(path, stateDir)
 	if err != nil {
@@ -87,15 +93,36 @@ func signingPublicKey(path, stateDir string) (ed25519.PublicKey, error) {
 		return nil, errors.New("it could not be opened")
 	}
 	defer file.Close()
-	info, err := file.Stat()
+	checked, err := file.Stat()
 	switch {
 	case err != nil:
 		return nil, errors.New("it could not be opened")
-	case !os.SameFile(seen, info):
+	case !os.SameFile(seen, checked):
 		return nil, errors.New("it was replaced while it was opened")
 	}
-	if err = keyFilePrivate(info); err != nil {
+	if err = keyFilePrivate(checked); err != nil {
 		return nil, err
 	}
-	return seedPublicKey(file)
+	if afterKeyCheck != nil {
+		afterKeyCheck()
+	}
+	key, readErr := seedPublicKey(file)
+	if after, err := file.Stat(); err != nil || !unchangedFile(checked, after) {
+		return nil, errChangedWhileRead
+	}
+	return key, readErr
+}
+
+// errChangedWhileRead is a key file that changed between its checks and the
+// end of the read of its seed.
+var errChangedWhileRead = errors.New("it changed while it was read")
+
+// unchangedFile says whether two reads of one handle's attributes agree on
+// the file's identity, size, links, mode, owner, modification time and change
+// time.
+func unchangedFile(before, after os.FileInfo) bool {
+	b, ok := before.Sys().(*syscall.Stat_t)
+	a, ok2 := after.Sys().(*syscall.Stat_t)
+	return ok && ok2 && b.Dev == a.Dev && b.Ino == a.Ino && b.Size == a.Size && b.Nlink == a.Nlink &&
+		b.Mode == a.Mode && b.Uid == a.Uid && before.ModTime().Equal(after.ModTime()) && changeTime(b) == changeTime(a)
 }

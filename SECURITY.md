@@ -113,7 +113,9 @@ checks where the key is before it starts, and reads it then, once, for its publi
 key. It never logs the key, keeps it or keeps its path in the store, but the Runtime it starts reads
 it, and anyone who can run that Runtime as Runner's user can sign with it, or replace it at its
 path. The expected key is fixed at start and passed to the Runtime, and Runtime 0.30.0 and later
-sign nothing with a replaced seed; a run signed under another key, or not at all, completes with
+sign nothing with a replaced seed. Without the boot line's `signingPublicKey`, the expected key is
+whatever key is at the path when Runner reads it, so a key replaced before Runner starts becomes the
+expectation; with it, such a key refuses the start; a run signed under another key, or not at all, completes with
 its decision and an explicit signing failure. Rotating the key is a separate change (Desk #238). A
 run that no valid signature covers is unsigned, never failed, unless `--require-signed` asks for
 one.

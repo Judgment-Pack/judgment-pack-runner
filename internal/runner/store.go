@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
@@ -31,7 +30,14 @@ type Config struct {
 	// start, for its public key, the expected key, and passes the path, never
 	// the key, as JPACK_SIGNING_KEY, with the expected key as
 	// JPACK_SIGNING_PUBLIC_KEY. Empty, nothing is signed.
-	SigningKey        string
+	SigningKey string
+	// SigningPublicKey is the public key the signing key is expected to
+	// have, 64 lowercase hexadecimal characters, supplied independently of
+	// the key's file, as Desk can from its list of public keys. Optional.
+	// When given, the key read at start must have it, or Runner refuses to
+	// start, and it is the expected key for as long as Runner runs. Without
+	// it, the expected key is the one read at start.
+	SigningPublicKey  string
 	disableAutomation bool
 	// disableDispatcher leaves queued runs for a test to dispatch, one at a
 	// time, with dispatchNext.
@@ -90,11 +96,9 @@ func Open(cfg Config) (_ *Service, err error) {
 	if err = privateDir(cfg.Dir); err != nil {
 		return nil, err
 	}
-	var expectedKey ed25519.PublicKey
-	if cfg.SigningKey != "" {
-		if expectedKey, err = signingPublicKey(cfg.SigningKey, cfg.Dir); err != nil {
-			return nil, fmt.Errorf("the signing key is refused: %w", err)
-		}
+	expectedKey, err := expectedSigningKey(cfg)
+	if err != nil {
+		return nil, err
 	}
 	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, expectedKey: expectedKey, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
 	defer func() {

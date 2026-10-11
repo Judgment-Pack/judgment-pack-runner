@@ -223,3 +223,20 @@ func TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed(t *testing.T) {
 		t.Fatalf("the run is not signed under the replacement's key: %v %s", err, out)
 	}
 }
+
+// The boot line's signingPublicKey reaches the service as the expected key it
+// names, beside signingKey; without it, none is named.
+func TestTheBootLineNamesTheExpectedSigningKey(t *testing.T) {
+	token := strings.Repeat("t", 32)
+	cfg, bearer, err := bootConfig([]byte(`{"dir":"/state","runtime":"/jpack","workspace":"w","owner":"o","token":"` + token + `","signingKey":"/keys/decisions.seed","signingPublicKey":"` + key1 + `"}` + "\n"))
+	if err != nil || bearer != token || cfg.SigningKey != "/keys/decisions.seed" || cfg.SigningPublicKey != key1 {
+		t.Fatalf("%v %+v", err, cfg)
+	}
+	cfg, _, err = bootConfig([]byte(`{"dir":"/state","runtime":"/jpack","workspace":"w","owner":"o","token":"` + token + `","signingKey":"/keys/decisions.seed"}` + "\n"))
+	if err != nil || cfg.SigningKey != "/keys/decisions.seed" || cfg.SigningPublicKey != "" {
+		t.Fatalf("%v %+v", err, cfg)
+	}
+	if _, _, err = bootConfig([]byte(`{"token":"short"}`)); err == nil || err.Error() != "invalid boot configuration" {
+		t.Fatal(err)
+	}
+}

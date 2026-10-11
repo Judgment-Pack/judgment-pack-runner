@@ -815,12 +815,27 @@ left unsigned is still recorded.
 **The expected key.** Runner reads the key once, at start, after the checks
 above: it opens the file it checked, without following a link, holds the open
 file to the same checks, and reads at most 4096 bytes, the most the Runtime
-reads of a seed. The file must be the Runtime's seed form, 64 hexadecimal
-characters of a 32-byte Ed25519 seed with nothing else but surrounding
-whitespace, or Runner refuses to start, saying which and naming neither the
-path nor anything the file holds. The seed's public key, as 64 lowercase
-hexadecimal characters, is the expected key for as long as Runner runs; the
-seed is not kept. Each operational evaluation's Runtime is given it, beside the
+reads of a seed, through that one handle. It then reads the handle's
+attributes again, and refuses to start if the file's identity, size, links,
+mode, owner, modification time or change time differ from those it checked:
+the file changed between the check and the end of the read. The file must be
+the Runtime's seed form, 64 hexadecimal characters of a 32-byte Ed25519 seed
+with nothing else but surrounding whitespace, or Runner refuses to start,
+saying which and naming neither the path nor anything the file holds. The
+seed's public key, as 64 lowercase hexadecimal characters, is the expected key
+for as long as Runner runs; the seed is not kept.
+
+The boot line may also name the expected key, as `signingPublicKey`, 64
+lowercase hexadecimal characters held to the key check below, independently of
+the key's file. Desk holds the list of public keys a Runner's runs may be
+signed under, and can pass it (Desk #345). The key read at start must then
+have it, or Runner refuses to start (`the signing key at its path is not the
+expected key`), and the named key is the expected key for as long as Runner
+runs. A seed replaced before Runner reads it then cannot become the
+expectation. Without it, the expected key is whatever key Runner read at
+start. A value that fails the key check refuses the start without being
+repeated, and naming it without `signingKey` refuses the start too. A Runner
+before this release ignores the member. Each operational evaluation's Runtime is given it, beside the
 path, as `JPACK_SIGNING_PUBLIC_KEY`, and rehearsals neither. A Runtime of 0.30.0
 or later refuses to sign with a seed whose public key is another (runtime
 #255): a key replaced at its path after Runner's start signs nothing, and the

@@ -5,13 +5,16 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 )
 
 // The expected key, and each run's signing (runner #54).
 //
 // Runner reads the signing key once, at start, and fixes its public key as
-// the expected key for as long as it runs. Each operational evaluation's
+// the expected key for as long as it runs. An installation may also name the
+// expected key itself (Config.SigningPublicKey), independently of the key's
+// file: the key read at start must then have it. Each operational evaluation's
 // Runtime is given the key's path, as JPACK_SIGNING_KEY, and the expected key,
 // as JPACK_SIGNING_PUBLIC_KEY. A Runtime that knows the variable (0.30.0 and
 // later) refuses to sign with a seed whose public key is another, so a key
@@ -22,6 +25,48 @@ import (
 // key or failed with its reason. The decision is never withheld for it. Where
 // no line signs the record, Runner reads the key at the path again, only to
 // say why; the expected key stays the one read at start.
+
+// errNotTheExpectedKey is a key read at start whose public key is not the one
+// the installation named as expected (Config.SigningPublicKey).
+var errNotTheExpectedKey = errors.New("the signing key is refused: the signing key at its path is not the expected key")
+
+// expectedSigningKey is the expected key Runner fixes at start, or nil
+// without a signing key. A configured expected key is held to the key check
+// before the seed is read, and the seed's public key must be it: it is then
+// the expectation, supplied independently of the file, so a seed replaced
+// before the read cannot become one. Without it, the expectation is the
+// seed's public key, as read at start.
+func expectedSigningKey(cfg Config) (ed25519.PublicKey, error) {
+	var named ed25519.PublicKey
+	if cfg.SigningPublicKey != "" {
+		if cfg.SigningKey == "" {
+			return nil, errors.New("the expected signing key is named without a signing key")
+		}
+		key, err := ParsePublicKey(cfg.SigningPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("the expected signing key is refused: %w", err)
+		}
+		named = key
+	}
+	if cfg.SigningKey == "" {
+		return nil, nil
+	}
+	read, err := signingPublicKey(cfg.SigningKey, cfg.Dir)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("the signing key is refused: %w", err)
+	case named == nil:
+		return read, nil
+	case !read.Equal(named):
+		return nil, errNotTheExpectedKey
+	}
+	return named, nil
+}
+
+// afterKeyCheck, when a test sets it, runs after the key's checks on its open
+// handle and before its seed is read: where a same-user process could change
+// the file in place (signingPublicKey). It is nil otherwise.
+var afterKeyCheck func()
 
 // maxSeedFile is the most of a seed file the Runtime reads: a longer file is
 // not a seed.
