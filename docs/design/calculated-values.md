@@ -143,6 +143,15 @@ is no answer to describe, and its entries carry no `calculation`.
   past it.
 - That an `asOf` instant is true. It too is the calculator's statement; Runner
   holds it to the limit the mapping states.
+- That the tables were fresh at the instant Runner admitted the run. Each
+  `asOf` is held to its limit before `preparation.verifiedAt`, the instant the
+  export supplies, which no signature covers, and verification recomputes
+  against whatever instant the export carries. So freshness is consistent with
+  the instant the export supplies; nothing establishes that instant was the
+  admission instant. `verify-run` names the dependency, as `unsignedFreshness`,
+  for every calculator that computed, whether a rule or a copy reads its answer
+  (runner #55). Committing the instant needs a member of the Runtime's record
+  that a caller can fill (runtime #263).
 
 ## Compatibility
 

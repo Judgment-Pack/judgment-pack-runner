@@ -473,6 +473,34 @@ that parameter against a source.` and `2 of the run's 3 inputs were derived by a
 rule that reads runAt, or a value derived from it, which rests on the export's
 own verification time.` When there is neither, the line is as it was.
 
+`unsignedFreshness` names the instant freshness was judged against (#55).
+Preparation judges each verified acquisition's observation and serving times,
+and each table of a calculator that computed, against one instant, which it
+retains as `preparation.verifiedAt`, and verification recomputes the
+preparation at the instant the export supplies. No signature covers that
+member: the record signature covers the audit record's bytes, which do not
+carry it, a receipt signs its own source's times, and the chain entry binds
+the record's digest. A preparation recomputed at another instant, its facts,
+evidence and citations unchanged, verifies as the original does, signed and
+witnessed. So freshness is consistent with the instant the export supplies;
+nothing establishes that instant was the admission instant. The member is
+present for every run any source of which was acquired, whatever reads the
+source, a copy as much as a rule. It gives the member it names, the instant,
+and each such source in the mapping's order, with its `checks`
+(`acquisition`, and `calculation` for a calculator that computed) and how
+many targets it maps, with a value or without. The line adds, for example,
+`Acquisition and calculator freshness for 1 source were judged against
+preparation.verifiedAt, which the export supplies and no signature covers:
+freshness is consistent with the instant the export supplies; nothing
+establishes that instant was the admission instant.` It is a report, not a
+refusal: the exit code and `--require-signed`, `--require-witnessed` and
+`--require-sourced` are unchanged. Committing the instant to signed material
+needs a member of the Runtime's record that a caller can fill (runtime #263).
+
+```text
+"unsignedFreshness":{"against":"preparation.verifiedAt","verifiedAt":"2026-10-11T12:00:00Z","sources":[{"source":"fx","checks":["acquisition","calculation"],"targets":3}]}
+```
+
 Add `--runtime /absolute/path/to/jpack` to replay the disposition too, for a
 completed run. The executable's bytes are hashed and it is refused unless the
 digest is the release's `runtimeDigest`; the copy that was hashed is the one run.

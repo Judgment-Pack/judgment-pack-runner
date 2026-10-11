@@ -75,29 +75,34 @@ func classesOf(lineage []TargetLineage) (c InputClasses) {
 }
 
 // VerifiedRun is an export whose inputs verified: its targets by class, the
-// parameters its acquired sources' rules read unsigned, and the inputs that
-// were recomputed, which a re-execution evaluates.
+// parameters its acquired sources' rules read unsigned, the sources whose
+// freshness was judged against the instant the export supplies, and the inputs
+// that were recomputed, which a re-execution evaluates.
 type VerifiedRun struct {
 	Classes  InputClasses
 	Unsigned []UnsignedParameters
-	bundle   VerificationBundle
-	prepared Input
+	// Freshness is nil for an export without lineage, and for a run none of
+	// whose sources was acquired: nothing was judged against an instant.
+	Freshness *UnsignedFreshness
+	bundle    VerificationBundle
+	prepared  Input
 }
 
 // VerifyInputs is VerifyRun, and returns what it verified. The classes are
 // counted from the recomputed lineage, which is the retained lineage: an export
 // whose lineage differs from the recomputation is refused.
 func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string) (VerifiedRun, error) {
-	b, prepared, e := verifyInputs(raw, profiles, trustedReleaseDigest)
+	var judged []judgedFreshness
+	b, prepared, e := verifyInputs(raw, profiles, trustedReleaseDigest, &judged)
 	if e != nil {
 		return VerifiedRun{}, e
 	}
 	if b.Inputs == InputsNotMapped {
-		// No lineage records a class for any target, and no rule reads a
-		// parameter: there is nothing to count.
+		// No lineage records a class for any target, no rule reads a
+		// parameter, and no freshness was judged: there is nothing to count.
 		return VerifiedRun{bundle: b, prepared: prepared}, nil
 	}
-	return VerifiedRun{classesOf(prepared.Preparation.Lineage), unsignedParameters(b.Run.Input.Source.Mapping, prepared.Preparation), b, prepared}, nil
+	return VerifiedRun{classesOf(prepared.Preparation.Lineage), unsignedParameters(b.Run.Input.Source.Mapping, prepared.Preparation), unsignedFreshness(prepared.Preparation, judged), b, prepared}, nil
 }
 
 // Inputs is InputsNotMapped for an export of a run whose job has no input
@@ -183,8 +188,9 @@ func member(raw json.RawMessage, path ...string) json.RawMessage {
 }
 
 // verifyInputs is VerifyRun's check. It returns the export and the inputs it
-// recomputed, which a re-execution evaluates.
-func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string) (b VerificationBundle, prepared Input, e error) {
+// recomputed, which a re-execution evaluates, and lists in judged what the
+// recomputation judged against the export's instant.
+func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string, judged *[]judgedFreshness) (b VerificationBundle, prepared Input, e error) {
 	if len(raw) > MaxExportSize {
 		return b, prepared, errors.New("verification bundle exceeds 8 MiB")
 	}
@@ -257,7 +263,7 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if e != nil {
 		return b, prepared, e
 	}
-	prepared, e = normalizeV2(r.Input, profiles, at)
+	prepared, e = prepareV2(r.Input, profiles, at, false, judged)
 	if e != nil {
 		return b, prepared, e
 	}

@@ -54,6 +54,28 @@ func unsignedSentence(c runner.InputClasses, unsigned []runner.UnsignedParameter
 	return s
 }
 
+// freshnessSentence is what the line on standard error adds when a source's
+// freshness was judged against preparation.verifiedAt: how many acquisitions,
+// and how many calculators' tables, and that the export supplies the instant.
+// It adds nothing when no source was acquired.
+func freshnessSentence(f *runner.UnsignedFreshness) string {
+	if f == nil {
+		return ""
+	}
+	sources := fmt.Sprintf("%d sources", len(f.Sources))
+	if len(f.Sources) == 1 {
+		sources = "1 source"
+	}
+	judged := "Acquisition freshness for " + sources + " was judged"
+	switch calculations := f.Calculations(); {
+	case calculations == len(f.Sources):
+		judged = "Acquisition and calculator freshness for " + sources + " were judged"
+	case calculations > 0:
+		judged = fmt.Sprintf("Acquisition freshness for %s, and calculator freshness for %d of them, were judged", sources, calculations)
+	}
+	return " " + judged + " against " + f.Against + ", which the export supplies and no signature covers: freshness is consistent with the instant the export supplies; nothing establishes that instant was the admission instant."
+}
+
 // errInputsNotMapped is --require-sourced's refusal of a run without lineage:
 // nothing derived its inputs from a source.
 var errInputsNotMapped = errors.New("inputs-not-mapped")

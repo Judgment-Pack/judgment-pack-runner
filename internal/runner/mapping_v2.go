@@ -143,6 +143,15 @@ func normalizeV2(i Input, profiles []InputProfile, at time.Time) (Input, error) 
 	return normalizeV2Mode(i, profiles, at, false)
 }
 func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool) (Input, error) {
+	return prepareV2(i, profiles, at, planning, nil)
+}
+
+// prepareV2 is normalizeV2Mode. Given judged, it also lists there, in the
+// mapping's order of sources, each source whose freshness it judged against
+// at (mapping_v2_freshness.go): every verified acquisition, and whether the
+// source is a calculator that computed, whose tables were judged too. What it
+// lists is meaningful only when it returns no error.
+func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, judged *[]judgedFreshness) (Input, error) {
 	profileKeys, e := validateProfileKeys(profiles)
 	if e != nil {
 		return i, e
@@ -428,6 +437,12 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 		}
 		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite, calc); e != nil {
 			return fail(e)
+		}
+		// A verified source that was not skipped had its acquisition's times
+		// judged against at, and a calculator that computed its tables'
+		// instants too: either failure would have failed preparation above.
+		if verified && !unavailable && judged != nil {
+			*judged = append(*judged, judgedFreshness{source.Name, calc != nil && calc.Status == calculationComputed})
 		}
 		claims[source.Name] = claim
 		prep.Outcomes = append(prep.Outcomes, SourceOutcome{source.Name, claim.Status, claim.Reason, encode(params), args, encode(claim)})

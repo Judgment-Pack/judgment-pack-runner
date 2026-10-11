@@ -300,18 +300,21 @@ func TestVerifyRunSaysWhenInputsAreAsserted(t *testing.T) {
 // A run whose inputs were all derived from signed receipts reads as before,
 // with its counts, and --require-sourced accepts it. The export was written by
 // an earlier Runner; its case parameter, which chose the request, is not counted.
+// Its one acquisition's freshness was judged against the instant the export
+// supplies, and the report and the line say so.
 func TestVerifyRunAcceptsInputsDerivedFromReceipts(t *testing.T) {
 	dir := "../../internal/runner/testdata/mapping-v2-before-calculators/"
 	trusted, err := os.ReadFile(dir + "release-digest.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
+	judged := freshnessMember("2026-10-01T18:48:51Z", `[{"source":"vendor","checks":["acquisition"],"targets":3}]`)
 	for _, extra := range [][]string{nil, {"--require-sourced"}} {
 		out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", strings.TrimSpace(string(trusted)), extra...)
-		if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 0, 3, 0) {
+		if err != nil || out != strings.TrimSuffix(report("verified-inputs", "matches-audit", inputsOnly, 0, 3, 0), "}\n")+judged+"}\n" {
 			t.Fatal(extra, err, out)
 		}
-		if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+notInExport+"\n" {
+		if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+oneAcquisition+notInExport+"\n" {
 			t.Fatal(extra, "human output:", human)
 		}
 	}

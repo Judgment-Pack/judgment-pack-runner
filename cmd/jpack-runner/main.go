@@ -181,11 +181,11 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	}
 	sig := checkSignature(verified, publicKey)
 	if status, err := chainRefusal(chain, *requireWitnessed); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	if status, err := signatureRefusal(sig, *requireSigned); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	// An asserted target, and a parameter that its source's receipt does not
@@ -194,29 +194,29 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// The refusal comes before a re-execution, which then does not run.
 	if *requireSourced {
 		if status, err := refuseUnsourced(verified.Inputs(), verified.Classes, verified.Unsigned); err != nil {
-			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
 			return err
 		}
 	}
-	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + notMappedSentence(verified.Inputs()) + record.sentence() + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion())
+	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + freshnessSentence(verified.Freshness) + notMappedSentence(verified.Inputs()) + record.sentence() + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion())
 	if *runtime == "" {
 		// The retained answer matches the audit record; no evaluator was replayed.
 		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+said)
-		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-inputs", RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-inputs", RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
 	}
 	// The release's own Runtime evaluates the verified inputs again, as a
 	// rehearsal. A different disposition is a failure with a report of its own.
 	scope = scopeOf(verified, reExecutedScope)
 	err = verified.Disposition(context.Background(), *runtime)
 	if errors.Is(err, runner.ErrDispositionDiffers) {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
 		return err
 	}
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+said)
-	return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedParameters: verified.Unsigned})
+	return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
 }
 
 // readLimit reads a verification input of at most limit bytes.
@@ -280,6 +280,10 @@ type verifyReport struct {
 	Status    string                  `json:"status"`
 	// Absent only for an export without lineage, whose inputs member says so.
 	TargetsByClass *runner.InputClasses `json:"targetsByClass,omitempty"`
+	// Present only when a source was acquired: its freshness was judged
+	// against preparation.verifiedAt, which the export supplies and no
+	// signature covers.
+	UnsignedFreshness *runner.UnsignedFreshness `json:"unsignedFreshness,omitempty"`
 	// Present only when an acquired source's rule reads a parameter that its
 	// receipt does not commit.
 	UnsignedParameters []runner.UnsignedParameters `json:"unsignedParameters,omitempty"`
