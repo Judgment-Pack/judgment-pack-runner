@@ -164,6 +164,9 @@ type EventPage struct {
 	Items        []Event `json:"items"`
 	Next         int64   `json:"next"`
 	More         bool    `json:"more"`
+	// Before is the cursor of the next older page, and is present only in an
+	// answer to a backward request (tail or before).
+	Before *int64 `json:"before,omitempty"`
 }
 
 // change is an entry as a writer gives it.
@@ -644,26 +647,55 @@ func (s *Service) refusedCloudSignal(connection string, t *Trigger, reason strin
 	s.journalRefusal(c)
 }
 
-// eventQuery reads a journal request's cursor and job: at most one of each, in
-// a well-formed query, the cursor a decimal integer from 0.
-func eventQuery(raw string) (int64, string, error) {
+// eventRequest is what a journal request asks for: forward from a cursor (the
+// default), the newest page (tail) or the page before a sequence (before).
+type eventRequest struct {
+	after    int64
+	job      string
+	backward bool
+	before   int64 // the end, when tail
+	tail     bool
+}
+
+// eventQuery reads a journal request: at most one of each parameter, in a
+// well-formed query, each cursor a decimal integer from 0. tail=true and
+// before name a backward read; they exclude each other and after.
+func eventQuery(raw string) (eventRequest, error) {
+	var r eventRequest
 	q, err := url.ParseQuery(raw)
-	if err != nil || len(q["after"]) > 1 {
-		return 0, "", &apiError{400, "invalid_cursor", "Invalid page cursor."}
+	if err != nil || len(q["after"]) > 1 || len(q["before"]) > 1 {
+		return r, &apiError{400, "invalid_cursor", "Invalid page cursor."}
 	}
 	if len(q["job"]) > 1 {
-		return 0, "", &apiError{400, "invalid_filter", "Name at most one job."}
+		return r, &apiError{400, "invalid_filter", "Name at most one job."}
 	}
-	var after int64
-	if v := q.Get("after"); v != "" {
-		if strings.Trim(v, "0123456789") != "" || len(v) > 18 {
-			return 0, "", &apiError{400, "invalid_cursor", "Invalid page cursor."}
-		}
-		if after, err = strconv.ParseInt(v, 10, 64); err != nil {
-			return 0, "", &apiError{400, "invalid_cursor", "Invalid page cursor."}
-		}
+	if len(q["tail"]) > 1 || (len(q["tail"]) == 1 && q.Get("tail") != "true" && q.Get("tail") != "false") {
+		return r, &apiError{400, "invalid_tail", "Send tail as true or false, once."}
 	}
-	return after, q.Get("job"), nil
+	cursor := func(name string) (int64, error) {
+		v := q.Get(name)
+		if strings.Trim(v, "0123456789") != "" || len(v) > 18 || (v == "" && q.Has(name) && name == "before") {
+			return 0, &apiError{400, "invalid_cursor", "Invalid page cursor."}
+		}
+		if v == "" {
+			return 0, nil
+		}
+		return strconv.ParseInt(v, 10, 64)
+	}
+	if r.after, err = cursor("after"); err != nil {
+		return r, err
+	}
+	r.tail = q.Get("tail") == "true"
+	hasBefore := q.Has("before")
+	if r.before, err = cursor("before"); err != nil {
+		return r, err
+	}
+	if r.tail && (hasBefore || q.Get("after") != "") || hasBefore && q.Get("after") != "" {
+		return r, &apiError{400, "invalid_paging", "Send at most one of tail, before and after."}
+	}
+	r.backward = r.tail || hasBefore
+	r.job = q.Get("job")
+	return r, nil
 }
 
 // eventPageAfter is up to eventPage entries after a sequence, oldest first,
@@ -672,10 +704,46 @@ func (s *Service) eventPageAfter(after int64, where string, args ...any) (EventP
 	return eventPageFrom(s.db, after, where, args...)
 }
 
+// eventPageFor answers a request: forward from its cursor, or backward.
+func (s *Service) eventPageFor(r eventRequest, where string, args ...any) (EventPage, error) {
+	if r.backward {
+		return eventPageBefore(s.db, r.tail, r.before, where, args...)
+	}
+	return eventPageFrom(s.db, r.after, where, args...)
+}
+
+const eventColumns = "sequence,entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail"
+
+// scanEvent reads one entry from a row of eventColumns.
+func scanEvent(rows *sql.Rows) (Event, error) {
+	var e Event
+	var by, concerns, detail string
+	var revision sql.NullInt64
+	var from, to sql.NullString
+	if err := rows.Scan(&e.Sequence, &e.EntryVersion, &e.Kind, &e.At, &by, &concerns, &revision, &from, &to, &e.Reason, &detail); err != nil {
+		return e, err
+	}
+	if err := errors.Join(json.Unmarshal([]byte(by), &e.By), json.Unmarshal([]byte(concerns), &e.Concerns), json.Unmarshal([]byte(detail), &e.EventDetail)); err != nil {
+		return e, err
+	}
+	if revision.Valid {
+		v := int(revision.Int64)
+		e.Revision = &v
+	}
+	if to.Valid {
+		e.To = encode(to.String)
+		e.From = json.RawMessage("null")
+		if from.Valid {
+			e.From = encode(from.String)
+		}
+	}
+	return e, nil
+}
+
 // eventPageFrom reads a page of the journal from a store's database.
 func eventPageFrom(db *sql.DB, after int64, where string, args ...any) (EventPage, error) {
 	page := EventPage{Items: []Event{}, Next: after}
-	rows, err := db.Query("SELECT sequence,entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail FROM events WHERE sequence>? AND ("+where+") ORDER BY sequence LIMIT ?", append(append([]any{after}, args...), eventPage+1)...)
+	rows, err := db.Query("SELECT "+eventColumns+" FROM events WHERE sequence>? AND ("+where+") ORDER BY sequence LIMIT ?", append(append([]any{after}, args...), eventPage+1)...)
 	if err != nil {
 		return page, err
 	}
@@ -684,28 +752,10 @@ func eventPageFrom(db *sql.DB, after int64, where string, args ...any) (EventPag
 			page.More = true
 			break
 		}
-		var e Event
-		var by, concerns, detail string
-		var revision sql.NullInt64
-		var from, to sql.NullString
-		if err = rows.Scan(&e.Sequence, &e.EntryVersion, &e.Kind, &e.At, &by, &concerns, &revision, &from, &to, &e.Reason, &detail); err != nil {
+		e, err := scanEvent(rows)
+		if err != nil {
 			rows.Close()
 			return page, err
-		}
-		if err = errors.Join(json.Unmarshal([]byte(by), &e.By), json.Unmarshal([]byte(concerns), &e.Concerns), json.Unmarshal([]byte(detail), &e.EventDetail)); err != nil {
-			rows.Close()
-			return page, err
-		}
-		if revision.Valid {
-			v := int(revision.Int64)
-			e.Revision = &v
-		}
-		if to.Valid {
-			e.To = encode(to.String)
-			e.From = json.RawMessage("null")
-			if from.Valid {
-				e.From = encode(from.String)
-			}
 		}
 		page.Items = append(page.Items, e)
 		page.Next = e.Sequence
@@ -719,6 +769,57 @@ func eventPageFrom(db *sql.DB, after int64, where string, args ...any) (EventPag
 	return page, err
 }
 
+// eventPageBefore reads the newest page (tail), or the page immediately before
+// a sequence, among the entries the condition selects. The entries are in the
+// journal's order, oldest first, as a forward page's are. More says an older
+// entry exists, Before is the cursor for it, and Next is the forward cursor:
+// the sequence of the page's last entry, or 0 for an empty page, so that
+// following it forward starts from the beginning and skips nothing.
+func eventPageBefore(db *sql.DB, tail bool, before int64, where string, args ...any) (EventPage, error) {
+	page := EventPage{Items: []Event{}}
+	query := "SELECT " + eventColumns + " FROM events WHERE (" + where + ")"
+	if !tail {
+		query += " AND sequence<?"
+		args = append(args, before)
+	}
+	rows, err := db.Query(query+" ORDER BY sequence DESC LIMIT ?", append(args, eventPage+1)...)
+	if err != nil {
+		return page, err
+	}
+	var newestFirst []Event
+	for rows.Next() {
+		if len(newestFirst) == eventPage {
+			page.More = true
+			break
+		}
+		e, err := scanEvent(rows)
+		if err != nil {
+			rows.Close()
+			return page, err
+		}
+		newestFirst = append(newestFirst, e)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return page, err
+	}
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		page.Items = append(page.Items, newestFirst[i])
+	}
+	cursor := before
+	if tail {
+		cursor = 0
+	}
+	if len(page.Items) > 0 {
+		cursor = page.Items[0].Sequence
+		page.Next = page.Items[len(page.Items)-1].Sequence
+	}
+	page.Before = &cursor
+	err = db.QueryRow("SELECT at FROM events WHERE kind='journal.began' ORDER BY sequence LIMIT 1").Scan(&page.JournalBegan)
+	return page, err
+}
+
 // jobEntries selects a job's entries, given its id and its release's: those
 // naming the job, and those naming its release alone (its preview, a refused
 // creation). Both routes use it.
@@ -726,7 +827,7 @@ const jobEntries = "job_id=? OR (job_id='' AND release_id=?)"
 
 // jobEventsHandler serves a job's entries.
 func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
-	after, _, err := eventQuery(r.URL.RawQuery)
+	req, err := eventQuery(r.URL.RawQuery)
 	if err != nil {
 		failure(w, err)
 		return
@@ -736,7 +837,7 @@ func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	page, err := s.eventPageAfter(after, jobEntries, j.ID, j.ReleaseID)
+	page, err := s.eventPageFor(req, jobEntries, j.ID, j.ReleaseID)
 	if err != nil {
 		failure(w, err)
 		return
@@ -747,14 +848,14 @@ func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 // eventsHandler serves every entry; with a job, that job's entries and
 // Runner's own, which concern no job but explain a gap in every job's.
 func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
-	after, job, err := eventQuery(r.URL.RawQuery)
+	req, err := eventQuery(r.URL.RawQuery)
 	if err != nil {
 		failure(w, err)
 		return
 	}
 	where, args := "1=1", []any{}
-	if job != "" {
-		j, err := s.job(job)
+	if req.job != "" {
+		j, err := s.job(req.job)
 		if err != nil {
 			failure(w, err)
 			return
@@ -762,7 +863,7 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		// The job route's entries, and Runner's own.
 		where, args = jobEntries+" OR kind IN ('journal.began','runner.started','runner.stopped')", []any{j.ID, j.ReleaseID}
 	}
-	page, err := s.eventPageAfter(after, where, args...)
+	page, err := s.eventPageFor(req, where, args...)
 	if err != nil {
 		failure(w, err)
 		return

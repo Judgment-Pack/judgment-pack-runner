@@ -515,6 +515,24 @@ already available.
 `docs/MAPPING-V2.md` and the README describe the routes, the README where it
 lists what Desk passes through.
 
+**Reading from the end.** A reader that wants the latest activity need not page
+through the journal (issue #51). `tail=true` answers the newest page: the last up
+to 50 entries. `before=<sequence>` answers the up to 50 entries immediately
+before that sequence, not including it. Either answer keeps the journal's order
+within the page, oldest first, and carries `journalBegan` as every page does, so
+a reader that began at the end can still say there is no journal before it.
+The two parameters exclude each other and `after`: any pair is a 400
+`invalid_paging`; `tail=false` is the same as no `tail`. In a forward answer,
+`more` says later entries exist and `next` is the `after` for them. In a
+backward answer, `more` says older entries exist before the page, and the added
+member `before`, the sequence of the page's first entry, is the `before` for
+them; `next` is still the sequence of the page's last entry, so a reader can turn
+around and follow the journal forward from any page. An empty backward page has
+`more` false, the cursor given as `before` (0 for `tail`), and `next` 0. A
+request that sends neither parameter is answered as before, without the
+`before` member. A Runner that accepts the parameters lists `journal-backward`
+among its capabilities.
+
 ## 6. What the journal establishes, and what it does not
 
 It is the operator's own log, kept beside the records it describes.

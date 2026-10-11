@@ -40,7 +40,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before."
       }
     },
     "/previews": {
@@ -656,11 +657,28 @@
             "minimum": 0
           },
           "description": "Later than: the sequence of the last entry read, or 0, the default, from the start. Unlike run and occurrence lists, which page newest first, the journal pages oldest first, as the chain of runs is read."
+        },
+        {
+          "name": "tail",
+          "in": "query",
+          "schema": {
+            "type": "boolean"
+          },
+          "description": "true answers the newest page: the last up to 50 entries, in the journal's order, with more and before for the entries older than it. Capability journal-backward. false is the same as leaving it out. Not with after or before: 400 invalid_paging."
+        },
+        {
+          "name": "before",
+          "in": "query",
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Earlier than: the answer is the up to 50 entries immediately before this sequence, in the journal's order (oldest first within the page), with more true when older entries exist and before, the sequence of the page's first entry, for the next older page. A value beyond the end answers the newest page; 0 answers an empty page. Capability journal-backward. Not with after or tail: 400 invalid_paging."
         }
       ],
       "get": {
         "operationId": "listJobEvents",
-        "description": "A job's entries in the journal of job activity: those naming the job, and those naming its release alone (its preview, a refused creation). Entries are oldest first, at most 50 after the cursor, in the order their changes committed. A reader that has caught up asks again with next. The operator's own log: not chained, not signed, and binding nothing against the operator. A job the store does not hold is answered 404 not_found.",
+        "description": "A job's entries in the journal of job activity: those naming the job, and those naming its release alone (its preview, a refused creation). Entries are oldest first, at most 50 after the cursor, in the order their changes committed. A reader that has caught up asks again with next. The operator's own log: not chained, not signed, and binding nothing against the operator. A job the store does not hold is answered 404 not_found. With tail=true or before=<sequence> the page is read from the end: the entries stay in the journal's order within the page, more says older entries exist before the page, before is the cursor for them, and next still follows the journal forward from the page's last entry. Capability journal-backward in GET /v1/status.",
         "responses": {
           "200": {
             "description": "A page of the journal",
@@ -703,11 +721,28 @@
             "type": "string"
           },
           "description": "Only the entries the job's route serves, those naming the job and those naming its release alone, and Runner's own (journal.began, runner.started, runner.stopped), which concern no job but explain a gap in every job's. A job the store does not hold is answered 404 not_found."
+        },
+        {
+          "name": "tail",
+          "in": "query",
+          "schema": {
+            "type": "boolean"
+          },
+          "description": "true answers the newest page: the last up to 50 entries, in the journal's order, with more and before for the entries older than it. Capability journal-backward. false is the same as leaving it out. Not with after or before: 400 invalid_paging."
+        },
+        {
+          "name": "before",
+          "in": "query",
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Earlier than: the answer is the up to 50 entries immediately before this sequence, in the journal's order (oldest first within the page), with more true when older entries exist and before, the sequence of the page's first entry, for the next older page. A value beyond the end answers the newest page; 0 answers an empty page. Capability journal-backward. Not with after or tail: 400 invalid_paging."
         }
       ],
       "get": {
         "operationId": "listEvents",
-        "description": "Every entry of the journal of job activity, including those that concern no job: Runner's own, a release never made into a job, a refusal that names nothing else. Entries are oldest first, at most 50 after the cursor, in the order their changes committed. A reader that has caught up asks again with next. The operator's own log: not chained, not signed, and binding nothing against the operator.",
+        "description": "Every entry of the journal of job activity, including those that concern no job: Runner's own, a release never made into a job, a refusal that names nothing else. Entries are oldest first, at most 50 after the cursor, in the order their changes committed. A reader that has caught up asks again with next. The operator's own log: not chained, not signed, and binding nothing against the operator. With tail=true or before=<sequence> the page is read from the end: the entries stay in the journal's order within the page, more says older entries exist before the page, before is the cursor for them, and next still follows the journal forward from the page's last entry. Capability journal-backward in GET /v1/status.",
         "responses": {
           "200": {
             "description": "A page of the journal",
@@ -4594,11 +4629,16 @@
           "next": {
             "type": "integer",
             "minimum": 0,
-            "description": "The sequence of the page's last entry, or the cursor given when the page is empty: the after of the next request. It never resets to 0."
+            "description": "The sequence of the page's last entry, or the cursor given when a forward page is empty (0 when a backward page is empty): the after of the next forward request. It never resets to 0 on a forward page."
           },
           "more": {
             "type": "boolean",
-            "description": "Another page is already available."
+            "description": "Another page is already available: after a forward page, later entries; after a backward page (tail or before), entries older than the page."
+          },
+          "before": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Only in the answer to a request with tail or before: the sequence of the page's first entry, the before of the request for the next older page (the cursor given, or 0 for the newest page, when the page is empty). Forward answers do not carry it."
           }
         }
       }
