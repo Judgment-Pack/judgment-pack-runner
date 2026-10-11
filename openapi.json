@@ -1791,6 +1791,38 @@
               "queue-expired"
             ],
             "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
+          },
+          "signing": {
+            "type": "object",
+            "description": "Whether the run's audit record is signed under the expected key: the public key of the installation's signing key as Runner read it at start, fixed for as long as it runs, and passed to each operational evaluation's Runtime as JPACK_SIGNING_PUBLIC_KEY. Held to the record's bytes the run keeps and the sidecar as kept (auditSignatures), by the check verify-run --public-key makes: signed when a valid signature under that key covers the record and no check failed, failed otherwise, with the reason in these exact words. A failed signing never withholds the decision: the run completes as an unsigned one does. Every run recorded completed with a signing key has it; absent for a run recorded without a key, one that did not complete, and one recorded before Runner kept it. Served with the run and in run lists; not in verification exports, which carry the sidecar itself.",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "signed",
+                  "failed"
+                ]
+              },
+              "publicKey": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "The expected key, which a signed record is signed under. Present only when signed."
+              },
+              "reason": {
+                "enum": [
+                  "The record's signature sidecar could not be read.",
+                  "The record's signature sidecar names a key that is not the expected one.",
+                  "The record's signature sidecar does not verify under the expected key.",
+                  "The Runtime signed nothing: the key at the signing key's path is not the expected key.",
+                  "The Runtime signed nothing, and the key at the signing key's path could not be read as a key.",
+                  "The record carries no signature."
+                ],
+                "description": "Why the signing failed. A sidecar that could not be read is never taken for no sidecar. Where no line signs the record, the key at the signing key's path, read again after the evaluation, says which of the last three: Runtime 0.30.0 and later refuse to sign with a seed that is not the expected key. Present only when failed. It names no path and no key."
+              }
+            },
+            "additionalProperties": false
           }
         }
       },

@@ -2,10 +2,13 @@
 
 package runner
 
-import "errors"
+import (
+	"crypto/ed25519"
+	"errors"
+)
 
-// checkSigningKey refuses every key where a file's privacy cannot be read from
-// unix ownership and modes, as the Runtime refuses to sign there.
-func checkSigningKey(path, stateDir string) error {
-	return errors.New("a signing key's privacy cannot be checked on this platform, and the Runtime signs nothing here")
+// signingPublicKey refuses every key where a file's privacy cannot be read
+// from unix ownership and modes, as the Runtime refuses to sign there.
+func signingPublicKey(path, stateDir string) (ed25519.PublicKey, error) {
+	return nil, errors.New("a signing key's privacy cannot be checked on this platform, and the Runtime signs nothing here")
 }

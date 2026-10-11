@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -278,8 +279,24 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 	if err != nil || digest(b) != r.RuntimeDigest {
 		return nil, nil, nil, errors.New("pinned Runtime is missing or changed")
 	}
-	return evaluateWith(ctx, bin, r, input, dir, rehearsal, s.cfg.SigningKey)
+	signing := signingInputs{}
+	if s.expectedKey != nil {
+		signing = signingInputs{path: s.cfg.SigningKey, publicKey: hex.EncodeToString(s.expectedKey)}
+	}
+	return evaluateWith(ctx, bin, r, input, dir, rehearsal, signing)
 }
+
+// signingInputs is what an operational evaluation's Runtime is given to sign
+// with: the signing key's path, and the public key Runner read from it at
+// start, as 64 lowercase hexadecimal characters. Both are empty without a
+// key.
+type signingInputs struct{ path, publicKey string }
+
+// errSidecarUnread is an operational evaluation, given a signing key, whose
+// answer and trail were read and checked and whose signature sidecar could not
+// be read. evaluateWith returns it with the answer and the trail: the record's
+// signing fails, and the decision is kept (signingOf).
+var errSidecarUnread = errors.New("operational audit signatures could not be read, and the record's signing fails")
 
 // evaluateWith invokes the pinned Runtime at bin on the release's frozen pack,
 // configuration and lock, and on one input, and checks what it answers. Only
@@ -287,9 +304,13 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 // it returns the trail's bytes, as read, beside the answer, and the bytes of
 // the trail's signature sidecar, if the Runtime wrote one. Only it is given
 // the signing key, when there is one: as JPACK_SIGNING_KEY, which names the
-// key's path for the Runtime to read, whatever configVersion the release's
-// configuration declares. A Runtime that cannot sign ignores it.
-func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signingKey string) (json.RawMessage, json.RawMessage, []byte, error) {
+// key's path for the Runtime to read, and JPACK_SIGNING_PUBLIC_KEY, the
+// public key the key is expected to have, whatever configVersion the
+// release's configuration declares. A Runtime that cannot sign ignores both,
+// and one that signs and does not know the expected key (before 0.30.0)
+// ignores the second. A sidecar that cannot be read fails the evaluation
+// without a key, as it always has, and with one is errSidecarUnread.
+func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs) (json.RawMessage, json.RawMessage, []byte, error) {
 	// The directory is exclusively created per invocation and never reused.
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, nil, nil, err
@@ -317,8 +338,8 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 		args = append(args, "--rehearsal")
 	}
 	var env []string
-	if !rehearsal && signingKey != "" {
-		env = []string{"JPACK_SIGNING_KEY=" + signingKey}
+	if !rehearsal && signing.path != "" {
+		env = []string{"JPACK_SIGNING_KEY=" + signing.path, "JPACK_SIGNING_PUBLIC_KEY=" + signing.publicKey}
 	}
 	out, err := invokeWith(ctx, bin, dir, "evaluation", env, args...)
 	if err != nil {
@@ -382,7 +403,10 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 		return nil, nil, nil, errors.New("operational audit citations do not match verified input")
 	}
 	signatures, err := readSidecar(filepath.Join(dir, "audit", "signatures.jsonl"))
-	if err != nil {
+	switch {
+	case err != nil && signing.path != "":
+		return out, audit, nil, errSidecarUnread
+	case err != nil:
 		return nil, nil, nil, errors.New("operational audit signatures could not be read")
 	}
 	return out, audit, signatures, nil
@@ -391,9 +415,10 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 // readSidecar reads an attempt's signature sidecar, held as the trail is: a
 // private file of Runner's attempt directory, here of at most maxSidecar
 // bytes. There is none when signing is off, or the Runtime cannot sign, and
-// none is not an error. What the sidecar holds is read only when a run is
-// verified: a sidecar that holds no valid signature leaves the record unsigned,
-// as a signature the Runtime could not write does.
+// none is not an error. What the sidecar holds is read when the run completes,
+// with a signing key, to hold the record to the expected key (signingOf), and
+// when a run is verified: a sidecar that holds no valid signature leaves the
+// record unsigned, as a signature the Runtime could not write does.
 func readSidecar(path string) ([]byte, error) {
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

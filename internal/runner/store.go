@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -26,8 +27,10 @@ type Config struct {
 	RequireTestedReleases bool
 	// SigningKey is the absolute path of an Ed25519 seed, held outside the
 	// state directory, that each operational evaluation's Runtime signs its
-	// audit record with (runtime ADR-0047 §2b). Runner passes the path, never
-	// the key, as JPACK_SIGNING_KEY. Empty, nothing is signed.
+	// audit record with (runtime ADR-0047 §2b). Runner reads it once, at
+	// start, for its public key, the expected key, and passes the path, never
+	// the key, as JPACK_SIGNING_KEY, with the expected key as
+	// JPACK_SIGNING_PUBLIC_KEY. Empty, nothing is signed.
 	SigningKey        string
 	disableAutomation bool
 	// disableDispatcher leaves queued runs for a test to dispatch, one at a
@@ -47,6 +50,10 @@ type Service struct {
 	db                     *sql.DB
 	lock                   *os.File
 	runtime, runtimeDigest string
+	// expectedKey is the public key of the signing key as Runner read it at
+	// start, fixed for as long as it runs: the key each run's record must be
+	// signed under. Nil without a signing key.
+	expectedKey ed25519.PublicKey
 	// attempts is the store's attempts directory, held from start to close:
 	// diagnostics are read through it (diagnostics.go).
 	attempts    *os.Root
@@ -83,12 +90,13 @@ func Open(cfg Config) (_ *Service, err error) {
 	if err = privateDir(cfg.Dir); err != nil {
 		return nil, err
 	}
+	var expectedKey ed25519.PublicKey
 	if cfg.SigningKey != "" {
-		if err = checkSigningKey(cfg.SigningKey, cfg.Dir); err != nil {
+		if expectedKey, err = signingPublicKey(cfg.SigningKey, cfg.Dir); err != nil {
 			return nil, fmt.Errorf("the signing key is refused: %w", err)
 		}
 	}
-	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
+	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, expectedKey: expectedKey, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
 	defer func() {
 		if err != nil {
 			if s.db != nil {
@@ -504,7 +512,16 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	if err == nil {
 		var trail, signatures []byte
 		r.Result, trail, signatures, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+		// A sidecar that could not be read, with a signing key, fails the
+		// record's signing and not the run (evaluateWith).
+		unread := errors.Is(err, errSidecarUnread)
+		if unread {
+			err = nil
+		}
 		r.retainAudit(trail, signatures)
+		if err == nil && s.expectedKey != nil {
+			r.Signing = s.signingOf(r.AuditBytes, r.AuditSignatures, unread)
+		}
 	}
 	r.FinishedAt = now()
 	if err == nil {

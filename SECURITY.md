@@ -109,10 +109,14 @@ The operator holds the key, and can rewrite a record and sign it again, so again
 shows nothing; nor after the key is copied or stolen, when its holder can sign what they like. It
 does not show when the record was signed, and it binds nothing but the record: the chain of runs,
 and a checkpoint someone else holds, are what bind a run to the installation's history. Runner
-checks where the key is before it starts. It never reads the key, logs it or keeps its path in the
-store, but the Runtime it starts reads it, and anyone who can run that Runtime as Runner's user can
-sign with it. A run that no valid signature covers is unsigned, never failed, unless
-`--require-signed` asks for one.
+checks where the key is before it starts, and reads it then, once, for its public key, the expected
+key. It never logs the key, keeps it or keeps its path in the store, but the Runtime it starts reads
+it, and anyone who can run that Runtime as Runner's user can sign with it, or replace it at its
+path. The expected key is fixed at start and passed to the Runtime, and Runtime 0.30.0 and later
+sign nothing with a replaced seed; a run signed under another key, or not at all, completes with
+its decision and an explicit signing failure. Rotating the key is a separate change (Desk #238). A
+run that no valid signature covers is unsigned, never failed, unless `--require-signed` asks for
+one.
 
 **A release whose tests never ran can become a job.** Such a release is labelled `not-run`, never
 passed, and requires explicit review as untested. A release whose tests ran and did not pass cannot.

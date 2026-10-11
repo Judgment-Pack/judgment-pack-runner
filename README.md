@@ -240,10 +240,17 @@ are with the rest of the v2 contract.
 With a signing key, the Runtime each run starts signs the run's audit record
 (ADR-0047 §2b). The boot line's `signingKey` names an Ed25519 seed by its absolute
 real path, outside Runner's state directory, readable and writable by its owner
-alone. Runner checks where the key is and refuses to start otherwise; it never reads
-the key, and passes its path to each run's Runtime as `JPACK_SIGNING_KEY`. A Runtime
+alone. Runner checks where the key is, and reads it once, at start, for its public
+key, and refuses to start otherwise. It passes the key's path to each run's Runtime as
+`JPACK_SIGNING_KEY`, and that public key as `JPACK_SIGNING_PUBLIC_KEY`. A Runtime
 that signs (after 0.25.0) writes a line signing the record to a sidecar beside its
-trail, and Runner keeps the sidecar exactly, with the run. Version 5 of the export
+trail, and Runner keeps the sidecar exactly, with the run. The expected key is fixed
+at start and passed to the Runtime: Runtime 0.30.0 and later refuse to sign with a
+seed replaced at its path, and earlier ones ignore it, so Runner detects such a
+signature without preventing it. A run signed under another key, or not at all,
+completes with its decision and an explicit signing failure, `signing` beside its
+sidecar in the run and run lists; a signed one names the key it was signed under.
+Rotating the key is a separate change (Desk #238). Version 5 of the export
 (`?version=5`) adds it. `verify-run --public-key <hex>` checks it by the Runtime
 guide's rule, and `--require-signed` refuses a run that no valid signature covers. A
 signature shows only that whoever held the key signed these exact bytes. It
@@ -379,9 +386,13 @@ a real audit append but before the runner records completion. Integration tests 
 `JPACK_TEST_BIN`; without it they report skipped rather than claim a real evaluation.
 Three tests, `TestTheRuntimesVerifierReadsTheChainOfRuns`,
 `TestASignedRunKeepsItsSignature` and `TestVerifyRunChecksARunTheRuntimeSigned`, need
-a Runtime that chains and signs its trail: Runtime 0.26.0 or later, which CI pins.
+a Runtime that chains and signs its trail: Runtime 0.26.0 or later.
 Under Runtime 0.25.0 and earlier they skip, and say why, from the Runtime's own
-answer that it has no such command (#35).
+answer that it has no such command (#35). `TestASeedReplacedAfterStartSignsNothing`
+needs Runtime 0.30.0 or later, which CI pins, and fails under an earlier one.
+`TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed` needs
+`JPACK_EARLIER_TEST_BIN`, a Runtime that signs and does not know the expected key
+(0.26.0 to 0.29.x; CI builds 0.27.1), and skips without it (#54).
 The fixture is a synthetic Apache-2.0 Runtime specification example, not business policy.
 
 ## License and contributions

@@ -151,7 +151,7 @@ func (v VerifiedRun) Disposition(ctx context.Context, runtime string) error {
 		return errors.New("this executable is not the Runtime the release froze")
 	}
 	work := filepath.Join(dir, "evaluation")
-	out, _, _, e := evaluateWith(ctx, bin, b.Release, Input{Facts: prepared.Facts, Evidence: prepared.Evidence}, work, true, "")
+	out, _, _, e := evaluateWith(ctx, bin, b.Release, Input{Facts: prepared.Facts, Evidence: prepared.Evidence}, work, true, signingInputs{})
 	if e != nil {
 		return e
 	}

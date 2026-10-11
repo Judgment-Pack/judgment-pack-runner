@@ -40,18 +40,35 @@ jobs:
       # so TestTheRuntimesVerifierReadsTheChainOfRuns,
       # TestASignedRunKeepsItsSignature and
       # TestVerifyRunChecksARunTheRuntimeSigned run here and do not skip (#35).
-      # A pin moved to a Runtime without `jpack audit` would skip them again,
-      # and the step after the tests fails if any of them does not pass.
+      # v0.30.0 is the first that refuses to sign with a seed whose public
+      # key is not JPACK_SIGNING_PUBLIC_KEY, which
+      # TestASeedReplacedAfterStartSignsNothing needs (#54). A pin moved to a
+      # Runtime without `jpack audit` would skip them again, and the step
+      # after the tests fails if any of them does not pass.
       - name: Check out tested Runtime
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-runtime
-          ref: 3a5f031c2a15cd78a52a848bf2936af20e1dc7c6 # v0.27.0
+          ref: 8270e9999a53ccf0d8ce9e3277b8dd7646cea98a # v0.30.0
           path: .ci-runtime
           persist-credentials: false
       - name: Build Runtime
         working-directory: .ci-runtime
         run: go build -trimpath -o "$RUNNER_TEMP/jpack" ./cmd/jpack
+      # A Runtime that signs and does not know the expected key, as every
+      # release from v0.26.0 to v0.29.x: Runner must name the key a replaced
+      # seed signed under (TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed,
+      # #54). Pinned by commit as the tested Runtime is.
+      - name: Check out an earlier signing Runtime
+        uses: actions/checkout@v4
+        with:
+          repository: Judgment-Pack/judgment-pack-runtime
+          ref: 7a2fcfe20cedba5f164246fc544c4920971d2c56 # v0.27.1
+          path: .ci-runtime-earlier
+          persist-credentials: false
+      - name: Build the earlier Runtime
+        working-directory: .ci-runtime-earlier
+        run: go build -trimpath -o "$RUNNER_TEMP/jpack-earlier" ./cmd/jpack
       - name: Check out durable Gateway contract
         uses: actions/checkout@v4
         with:
@@ -68,20 +85,22 @@ jobs:
       - name: Unit, conformance and cross-process recovery tests
         run: |
           JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
+          JPACK_EARLIER_TEST_BIN="$RUNNER_TEMP/jpack-earlier" \
           JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
           JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
           go test -race ./...
-      # A skipped test passes `go test`; these three must run (#35).
-      - name: Chain and signature tests run under the pinned Runtime
+      # A skipped test passes `go test`; these must run (#35, #54).
+      - name: Chain and signature tests run under the pinned Runtimes
         run: |
           out="$(JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
+            JPACK_EARLIER_TEST_BIN="$RUNNER_TEMP/jpack-earlier" \
             JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
             JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
             go test -count=1 -v \
-            -run '^(TestTheRuntimesVerifierReadsTheChainOfRuns|TestASignedRunKeepsItsSignature|TestVerifyRunChecksARunTheRuntimeSigned)$' \
+            -run '^(TestTheRuntimesVerifierReadsTheChainOfRuns|TestASignedRunKeepsItsSignature|TestVerifyRunChecksARunTheRuntimeSigned|TestASeedReplacedAfterStartSignsNothing|TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed)$' \
             ./internal/runner ./cmd/jpack-runner)" || { printf '%s\n' "$out"; exit 1; }
           printf '%s\n' "$out"
-          for name in TestTheRuntimesVerifierReadsTheChainOfRuns TestASignedRunKeepsItsSignature TestVerifyRunChecksARunTheRuntimeSigned; do
+          for name in TestTheRuntimesVerifierReadsTheChainOfRuns TestASignedRunKeepsItsSignature TestVerifyRunChecksARunTheRuntimeSigned TestASeedReplacedAfterStartSignsNothing TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed; do
             printf '%s\n' "$out" | grep -q -- "^--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
           done
       - name: Check API document

@@ -800,29 +800,92 @@ states, and refuses to start otherwise:
 - it is one regular file with one name, owned by the user Runner runs as, and
   neither readable nor writable by its group or others.
 
-A refusal names neither the path nor anything of the key. Runner never opens
-the key, and never logs or stores its path. It passes the path to each
-operational evaluation's Runtime as `JPACK_SIGNING_KEY`, and to nothing else: no
-validation, lock, rehearsal or saved test is given it. The Runtime reads the
-variable whatever configVersion a project declares, so the release's
-configuration stays at configVersion `"3"`, unchanged. Naming the key in that
-configuration, `audit.signingKey`, would need configVersion `"6"`, which no
-released Runtime reads, and would put the path in every release and export.
-The Runtime checks the key again as it opens it, and signs nothing with a key it
-refuses. Runtime 0.25.0 and earlier do not sign, ignore the variable, and run
-as before. Signing never refuses a run: a record left unsigned is still
-recorded.
+A refusal names neither the path nor anything of the key. Runner never logs or
+stores the path. It passes the path to each operational evaluation's Runtime as
+`JPACK_SIGNING_KEY`, and to nothing else: no validation, lock, rehearsal or
+saved test is given it. The Runtime reads the variable whatever configVersion a
+project declares, so the release's configuration stays at configVersion `"3"`,
+unchanged. Naming the key in that configuration, `audit.signingKey`, would need
+configVersion `"6"`, which no released Runtime reads, and would put the path in
+every release and export. The Runtime checks the key again as it opens it, and
+signs nothing with a key it refuses. Runtime 0.25.0 and earlier do not sign,
+ignore the variable, and run as before. Signing never refuses a run: a record
+left unsigned is still recorded.
+
+**The expected key.** Runner reads the key once, at start, after the checks
+above: it opens the file it checked, without following a link, holds the open
+file to the same checks, and reads at most 4096 bytes, the most the Runtime
+reads of a seed. The file must be the Runtime's seed form, 64 hexadecimal
+characters of a 32-byte Ed25519 seed with nothing else but surrounding
+whitespace, or Runner refuses to start, saying which and naming neither the
+path nor anything the file holds. The seed's public key, as 64 lowercase
+hexadecimal characters, is the expected key for as long as Runner runs; the
+seed is not kept. Each operational evaluation's Runtime is given it, beside the
+path, as `JPACK_SIGNING_PUBLIC_KEY`, and rehearsals neither. A Runtime of 0.30.0
+or later refuses to sign with a seed whose public key is another (runtime
+#255): a key replaced at its path after Runner's start signs nothing, and the
+record is left unsigned with its decision recorded. An earlier Runtime ignores
+the variable and signs with whatever seed is at the path; Runner then detects
+it, below, and does not prevent it. Desk checks the seed against its list of
+public keys before naming it on the boot line (Desk ADR-0010, section 5,
+delivery row 11). The expected key is fixed at start and passed to the
+Runtime, and a run signed under another key completes with an explicit signing
+failure. Rotating the key is a separate change (Desk #238): Runner started
+again with a new key at the path expects that one.
+
+**A run's signing.** With a signing key, every run Runner records completed
+carries `signing`, beside `auditSignatures`, saying whether its record is
+signed under the expected key, in the transaction that records it completed.
+It is held to the record's bytes the run keeps and the sidecar as kept, by the
+check `verify-run --public-key` makes: `{"status":"signed","publicKey":"<the
+expected key>"}` when a valid signature under that key covers the record and
+no check failed, and `{"status":"failed","reason":"..."}` otherwise, with one of
+these reasons:
+
+- `The record's signature sidecar could not be read.` The sidecar is there
+  and could not be read as Runner reads one (below). It is never taken for no
+  sidecar.
+- `The record's signature sidecar names a key that is not the expected one.`
+  A line names another key, as a Runtime before 0.30.0 writes after the key is
+  replaced at its path. Runner does not hold that key, and names it only by
+  the line.
+- `The record's signature sidecar does not verify under the expected key.`
+  Every line names the expected key, and they do not show the record signed.
+- `The Runtime signed nothing: the key at the signing key's path is not the expected key.`
+  No line signs the record, and the key at the path, read again after the
+  evaluation, is another: a Runtime of 0.30.0 or later refuses it.
+- `The Runtime signed nothing, and the key at the signing key's path could not be read as a key.`
+  No line signs the record, and the key at the path could not be read again by
+  the checks above.
+- `The record carries no signature.` No line signs the record, and the key at
+  the path is the expected key: a Runtime that cannot sign, or that refused the
+  key for another reason, writes none.
+
+The key at the path is read again only to choose among the last three. A
+failed signing never withholds the decision: the run completes, with its
+result, its record and its entry in the chain of runs, as an unsigned one
+does. `signed` says what the check found over the bytes kept, and no more: it
+is not a verification by anyone holding the key independently.
+`GET /v1/runs/{run}` and run lists show `signing` as the run holds it, in those
+words. It is not part of a verification export: version 5 carries the sidecar
+itself, which a verifier checks under a key it holds, and `verify-run
+--require-signed` refuses a run signed under another key, or not at all, as it
+did. A run recorded without a key, one that did not complete, and one recorded
+before Runner kept `signing`, have none.
 
 **What Runner keeps.** After an operational evaluation, Runner reads the
 attempt's `audit/signatures.jsonl` as it reads the trail: a private regular
 file, here of at most 16 KiB. It keeps the file's bytes exactly, newlines
 included, as `run.auditSignatures`, in standard base64, in the transaction that
 records the run completed. With no file, or an empty one, it keeps none, and
-that is not an error. A file that cannot be read that way fails the run. What
-the file holds is read only when a run is verified: a line that does not sign
-the record leaves it unsigned, as a signature the Runtime could not write
-does. `GET /v1/runs/{run}` shows the sidecar; run lists and briefs leave it
-out. It is in the SQLite database, and is backed up and restored with it.
+that is not an error. Without a signing key, a file that cannot be read that
+way fails the run, as it always has; with one, it fails the run's signing and
+not the run, and nothing of it is kept. What the file holds is read when the
+run completes, with a key, for its signing, and when a run is verified: a line
+that does not sign the record leaves it unsigned, as a signature the Runtime
+could not write does. `GET /v1/runs/{run}` shows the sidecar; run lists and
+briefs leave it out. It is in the SQLite database, and is backed up and
+restored with it.
 
 **Version 5** of the export carries `run.auditSignatures`. Version 4's readers
 decode strictly and accept only versions 2 to 4, so the sidecar is a new

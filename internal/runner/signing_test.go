@@ -145,9 +145,10 @@ func filesHolding(t *testing.T, dir string, needle []byte) []string {
 }
 
 // The key's path reaches the Runtime only for an operational evaluation, as
-// JPACK_SIGNING_KEY, and is kept nowhere in the store: not for validation, a
-// lock, a rehearsal or a saved test. A Runtime that cannot sign ignores it,
-// and the run completes as before.
+// JPACK_SIGNING_KEY, with the public key Runner read from it at start as
+// JPACK_SIGNING_PUBLIC_KEY, and the path is kept nowhere in the store: not for
+// validation, a lock, a rehearsal or a saved test. A Runtime that cannot sign
+// ignores both, and the run completes as before.
 func TestTheSigningKeyReachesOnlyTheOperationalEvaluation(t *testing.T) {
 	cfg := testConfig(t)
 	real, err := filepath.Abs(cfg.Runtime)
@@ -156,7 +157,7 @@ func TestTheSigningKeyReachesOnlyTheOperationalEvaluation(t *testing.T) {
 	}
 	log := filepath.Join(t.TempDir(), "invocations")
 	wrapper := filepath.Join(t.TempDir(), "logging-runtime")
-	script := "#!/bin/sh\nprintf '%s|%s\\n' \"${JPACK_SIGNING_KEY-none}\" \"$*\" >> '" + log + "'\nexec '" + real + "' \"$@\"\n"
+	script := "#!/bin/sh\nprintf '%s|%s|%s\\n' \"${JPACK_SIGNING_KEY-none}\" \"${JPACK_SIGNING_PUBLIC_KEY-none}\" \"$*\" >> '" + log + "'\nexec '" + real + "' \"$@\"\n"
 	if err = os.WriteFile(wrapper, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -184,13 +185,17 @@ func TestTheSigningKeyReachesOnlyTheOperationalEvaluation(t *testing.T) {
 	}
 	operational := 0
 	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
-		key, args, _ := strings.Cut(line, "|")
+		key, rest, _ := strings.Cut(line, "|")
+		public, args, _ := strings.Cut(rest, "|")
 		evaluation := strings.HasPrefix(args, "experimental evaluate ") && !strings.Contains(args, "--rehearsal")
 		if evaluation {
 			operational++
 		}
 		if evaluation != (key == cfg.SigningKey) || !evaluation && key != "none" {
 			t.Fatalf("the key reached the wrong invocation: %s", line)
+		}
+		if evaluation != (public == vectorKey1) || !evaluation && public != "none" {
+			t.Fatalf("the expected key reached the wrong invocation: %s", line)
 		}
 	}
 	if operational != 1 {
@@ -409,15 +414,26 @@ func TestASignedRunKeepsItsSignature(t *testing.T) {
 	if !ok || !chained || line.rotation || line.trail != link.trail || line.at != 1 || line.value != digest(done.AuditBytes) || line.keyID != vectorKeyID1 {
 		t.Fatalf("the sidecar's line does not sign the record: %s", sidecar)
 	}
+	signed := RunSigning{Status: SigningSigned, PublicKey: vectorKey1}
+	if done.Signing == nil || *done.Signing != signed {
+		t.Fatalf("the run's signing is %+v", done.Signing)
+	}
 	s.Close()
 	if s, err = Open(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if again, err := s.run(run.ID); err != nil || !bytes.Equal(again.AuditSignatures, sidecar) {
-		t.Fatal("the sidecar is not kept after a restart", err)
+	if again, err := s.run(run.ID); err != nil || !bytes.Equal(again.AuditSignatures, sidecar) || again.Signing == nil || *again.Signing != signed {
+		t.Fatal("the sidecar or the run's signing is not kept after a restart", err)
 	}
 	h := s.Handler("test")
+	member := []byte(`"signing":{"status":"signed","publicKey":"` + vectorKey1 + `"}`)
+	if !bytes.Contains(get(t, h, "/v1/runs/"+run.ID, 200), member) || !bytes.Contains(get(t, h, "/v1/runs", 200), member) {
+		t.Fatal("the run or the run list does not show the run's signing")
+	}
 	v5 := get(t, h, "/v1/runs/"+run.ID+"/verification?version=5", 200)
+	if bytes.Contains(v5, []byte(`"signing"`)) {
+		t.Fatal("an export carries the run's signing")
+	}
 	verified, err := VerifyInputs(v5, nil, releaseDigest(release))
 	if err != nil || verified.ExportVersion() != 5 || !bytes.Equal(verified.Signatures(), sidecar) {
 		t.Fatal(err, verified.ExportVersion())
@@ -466,7 +482,11 @@ func TestASignedRunKeepsItsSignature(t *testing.T) {
 // live seed after Runner opened does not add a key to that list: a run made
 // before replacement verifies under the listed key, while one made afterward
 // is refused with the signature-invalid finding (and is demonstrably signed
-// under the unlisted replacement key).
+// under the unlisted replacement key). The signer here ignores the expected
+// key, as a Runtime before 0.30.0 does, so the run made afterward completes,
+// with its decision, and says that its signing failed: its sidecar names a key
+// that is not the expected one. The run and the run list show it in those
+// words.
 func TestALiveKeyReplacementCannotPassDesksPublicKeyList(t *testing.T) {
 	cfg := testConfig(t)
 	keyPath := signingKey(t)
@@ -482,15 +502,19 @@ func TestALiveKeyReplacementCannotPassDesksPublicKeyList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var signings []*RunSigning
+	var ids []string
 	run := func(identity string) []byte {
 		t.Helper()
 		r, _, err := s.submit(job.ID, identity, sample())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if done := waitRun(t, s, r.ID); done.State != "completed" {
+		done := waitRun(t, s, r.ID)
+		if done.State != "completed" || len(done.Result) == 0 || len(done.AuditSignatures) == 0 {
 			t.Fatal(done.State, done.Problem)
 		}
+		signings, ids = append(signings, done.Signing), append(ids, r.ID)
 		return get(t, s.Handler("test"), "/v1/runs/"+r.ID+"/verification?version=5", 200)
 	}
 	listedRun := run("listed")
@@ -507,6 +531,17 @@ func TestALiveKeyReplacementCannotPassDesksPublicKeyList(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacedRun := run("replaced")
+	if signings[0] == nil || *signings[0] != (RunSigning{Status: SigningSigned, PublicKey: vectorKey1}) {
+		t.Fatalf("the run before the replacement is not signed under the expected key: %+v", signings[0])
+	}
+	if signings[1] == nil || *signings[1] != (RunSigning{Status: SigningFailed, Reason: signingOtherKey}) {
+		t.Fatalf("the run after the replacement does not say its signing failed: %+v", signings[1])
+	}
+	member := []byte(`"signing":{"status":"failed","reason":"The record's signature sidecar names a key that is not the expected one."}`)
+	h := s.Handler("test")
+	if answer, list := get(t, h, "/v1/runs/"+ids[1], 200), get(t, h, "/v1/runs", 200); !bytes.Contains(answer, member) || !bytes.Contains(list, member) || bytes.Contains(answer, []byte(keyPath)) || bytes.Contains(answer, []byte(seed2)) || bytes.Contains(answer, []byte(vectorSeed1)) {
+		t.Fatalf("the run or the run list does not show the failed signing in its words, or names the key: %s", answer)
+	}
 
 	// This is Desk's public list spelling, retained independently of the live
 	// seed path. Read the key from the list instead of from either seed.

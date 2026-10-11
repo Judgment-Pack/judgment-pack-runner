@@ -106,6 +106,13 @@ type Run struct {
 	// none, and is not given one. Kept and served as InterruptedAt is, and
 	// not part of a verification export.
 	Reason string `json:"-"`
+	// Signing is what Runner found of the record's signature, for an
+	// installation with a signing key: signed under the expected key, or
+	// failed with its reason (signing.go). Kept and served as InterruptedAt
+	// is, beside auditSignatures, and not part of a verification export: a
+	// version-5 export carries the sidecar itself, which a verifier checks
+	// under a key it holds.
+	Signing *RunSigning `json:"-"`
 }
 
 // runQueueExpired is the Reason of an automatic run whose queue time ran out
@@ -113,22 +120,23 @@ type Run struct {
 const runQueueExpired = "queue-expired"
 
 // storedRun is a run as the store keeps it and the run routes serve it: the
-// run, when Runner saw it interrupted, and why it ended without an
-// evaluation. A run with neither encodes exactly as Run does.
+// run, when Runner saw it interrupted, why it ended without an evaluation, and
+// its record's signing. A run with none of them encodes exactly as Run does.
 type storedRun struct {
 	Run
-	InterruptedAt string `json:"interruptedAt,omitempty"`
-	Reason        string `json:"reason,omitempty"`
+	InterruptedAt string      `json:"interruptedAt,omitempty"`
+	Reason        string      `json:"reason,omitempty"`
+	Signing       *RunSigning `json:"signing,omitempty"`
 }
 
 func served(r Run) storedRun {
-	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason}
+	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing}
 }
 func runText(r Run) string { return string(encode(served(r))) }
 func decodeRun(b []byte) (Run, error) {
 	var held storedRun
 	e := json.Unmarshal(b, &held)
-	held.Run.InterruptedAt, held.Run.Reason = held.InterruptedAt, held.Reason
+	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing = held.InterruptedAt, held.Reason, held.Signing
 	return held.Run, e
 }
 

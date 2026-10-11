@@ -437,14 +437,22 @@ func (v VerifiedRun) CheckSignature(key ed25519.PublicKey) SignatureReport {
 	}
 	c := checkSignatures([][]byte{v.bundle.Run.AuditBytes}, sidecar, key)
 	r.Findings, r.FindingsTotal, r.ReadableLines, r.UnreadableLines = c.findings, c.total, c.readable, c.unreadable
-	switch {
-	case c.total > 0:
-		r.Status = SignatureInvalid
-	case c.through >= 1:
-		r.Status = SignatureSigned
-	}
+	r.Status = signatureStatus(c)
 	if r.Findings == nil {
 		r.Findings = []ChainFinding{}
 	}
 	return r
+}
+
+// signatureStatus is the status a sidecar's check gives the record: invalid
+// when a check failed, signed when a valid signature covers it, and unsigned
+// otherwise. A run's signing (signingOf) reads it as verify-run does.
+func signatureStatus(c signatureCheck) string {
+	switch {
+	case c.total > 0:
+		return SignatureInvalid
+	case c.through >= 1:
+		return SignatureSigned
+	}
+	return SignatureUnsigned
 }
