@@ -484,9 +484,10 @@ the record's digest. A preparation recomputed at another instant, its facts,
 evidence and citations unchanged, verifies as the original does, signed and
 witnessed. So freshness is consistent with the instant the export supplies;
 nothing establishes that instant was the admission instant. The member is
-present for every run any source of which was acquired, whatever reads the
-source, a copy as much as a rule. It gives the member it names, the instant,
-and each such source in the mapping's order, with its `checks`
+present for every run with a verified acquisition that was not skipped,
+whatever reads the source, a copy as much as a rule; a local file is not one.
+It is absent for an export without lineage. It gives the member it names,
+the instant, and each such source in the mapping's order, with its `checks`
 (`acquisition`, and `calculation` for a calculator that computed) and how
 many targets it maps, with a value or without. The line adds, for example,
 `Acquisition and calculator freshness for 1 source were judged against

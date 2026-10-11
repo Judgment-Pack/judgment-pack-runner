@@ -141,12 +141,15 @@ func movedBySecond(t *testing.T, bundle map[string]json.RawMessage) (map[string]
 // under the same signature and checkpoint, and the report names the moved
 // instant: freshness is consistent with the instant the export supplies, and
 // verify-run says so rather than refusing. The instant moved alone, without
-// recomputing the preparation, is refused as before.
+// recomputing the preparation, is refused as before. A report that refuses
+// carries the member too: without the held checkpoint, under another key, and
+// when a re-execution decides otherwise than a version-2 export says.
 func TestVerifyRunNamesTheInstantFreshnessWasJudgedAgainst(t *testing.T) {
 	input, s := calculatorOnACopy(t)
 	profiles := []runner.InputProfile{s.profile}
 	log := filepath.Join(t.TempDir(), "signing.log")
-	e := exportedRunKeyed(t, input, profiles, "", "?version=5", "", signingRuntime(t, log))
+	runtime := signingRuntime(t, log)
+	e := exportedRunKeyed(t, input, profiles, "", "?version=5", "", runtime)
 	if string(e.bundle["version"]) != "5" {
 		helper, _ := os.ReadFile(log)
 		t.Fatalf("not a version-5 export: %s %s", e.bundle["version"], helper)
@@ -186,6 +189,40 @@ func TestVerifyRunNamesTheInstantFreshnessWasJudgedAgainst(t *testing.T) {
 	}
 	alone["run"] = json.RawMessage(strings.Replace(string(e.bundle["run"]), `"verifiedAt":"`+verifiedAtOf(t, e.bundle)+`"`, `"verifiedAt":"`+later+`"`, 1))
 	if out, human, err := verifyWith(t, alone, e.digest, profiles, required...); err == nil || errors.Is(err, errUnsigned) || err.Error() != "retained lineage does not match recomputation" || out != "" || human != "" {
+		t.Fatal(err, out, human)
+	}
+	member := `"targetsByClass":{"asserted":0,"record":3,"generated":0}` + freshnessMember(later, judged) + "}\n"
+	unwitnessed := []string{"--public-key", key1, "--require-signed", "--require-witnessed"}
+	out, human, err := verifyWith(t, moved, e.digest, profiles, unwitnessed...)
+	if !errors.Is(err, errUnwitnessed) || err.Error() != "unwitnessed: no held checkpoint covers the run's entry, at sequence 1, and --require-witnessed refuses it: nothing here establishes the entry against the operator, who keeps the chain" || !strings.HasSuffix(out, `"status":"unwitnessed",`+member) || human != "" {
+		t.Fatal(err, out, human)
+	}
+	otherKey := []string{"--public-key", key2, "--require-signed", "--expect", held, "--require-witnessed"}
+	out, human, err = verifyWith(t, moved, e.digest, profiles, otherKey...)
+	if !errors.Is(err, errSignatureInvalid) || err.Error() != "signature-invalid: signature-invalid at line 1: sidecar line 1: the signature does not verify under the key in force" || !strings.HasSuffix(out, `"status":"signature-invalid",`+member) || human != "" {
+		t.Fatal(err, out, human)
+	}
+	// The moved export as version 2, with its answer changed in its result
+	// and its audit record alike, which a version-2 export does not hold to
+	// bytes: the release's Runtime, the signing one here, decides otherwise.
+	var run map[string]json.RawMessage
+	if err = json.Unmarshal(moved["run"], &run); err != nil {
+		t.Fatal(err)
+	}
+	delete(run, "auditBytes")
+	delete(run, "auditSignatures")
+	for _, k := range []string{"result", "audit"} {
+		changed := strings.Replace(string(run[k]), `"outcomeId":"proceed"`, `"outcomeId":"decline-redirect"`, 1)
+		if changed == string(run[k]) {
+			t.Fatalf("the run's %s has no answer to change", k)
+		}
+		run[k] = json.RawMessage(changed)
+	}
+	v2 := map[string]json.RawMessage{"version": json.RawMessage("2"), "releaseDigest": moved["releaseDigest"], "release": moved["release"]}
+	v2["run"], _ = json.Marshal(run)
+	t.Setenv("TMPDIR", t.TempDir())
+	out, human, err = verifyWith(t, v2, e.digest, profiles, "--runtime="+runtime)
+	if !errors.Is(err, runner.ErrDispositionDiffers) || !strings.HasPrefix(out, `{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"differs-from-re-execution",`) || !strings.HasSuffix(out, `"status":"disposition-differs",`+member) || human != "" {
 		t.Fatal(err, out, human)
 	}
 }

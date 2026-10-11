@@ -24,7 +24,8 @@ func freshnessOf(t *testing.T, input Input, profiles []InputProfile, at time.Tim
 // The unsigned-parameter report says nothing of a calculator on a copy
 // mapping, which is the audit's case (#55): this one names it. A calculator
 // that did not compute had its acquisition judged and not its tables, and a
-// source skipped behind it nothing. A case-only run judged nothing.
+// source skipped behind it nothing. A local file, which no receipt verifies,
+// had nothing judged either, and a case-only run judged nothing.
 func TestFreshnessJudgedAgainstTheInstantIsNamedSourceBySource(t *testing.T) {
 	input, p, key, at := calculatorFixture(t)
 	instant := at.Format("2006-01-02T15:04:05Z")
@@ -68,6 +69,19 @@ func TestFreshnessJudgedAgainstTheInstantIsNamedSourceBySource(t *testing.T) {
 		got, _ := freshnessOf(t, i, []InputProfile{p, vendors}, at)
 		if string(encode(got)) != want(`[{"source":"fx","checks":["acquisition"],"targets":2}]`) {
 			t.Fatal(string(encode(got)))
+		}
+	})
+	t.Run("a local file beside an acquired calculator", func(t *testing.T) {
+		i := cloneInput(input)
+		local := MappingSource{Name: "lookup", Kind: "selected-file", Provider: "local-file", Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/vendor/id", "/id"}}, Evidence: []EvidenceMapping{}}}}
+		i.Source.Mapping.Sources = append([]MappingSource{local}, i.Source.Mapping.Sources...)
+		i.Source.Sources["lookup"] = SourceValue{Snapshot: fileInput(`{"id":7}`, InputMapping{Version: 1, Provider: "local-file"}).Source.Snapshot}
+		got, prepared := freshnessOf(t, i, []InputProfile{p}, at)
+		if string(encode(got)) != want(`[{"source":"fx","checks":["acquisition","calculation"],"targets":2}]`) {
+			t.Fatal(string(encode(got)))
+		}
+		if l := prepared.Preparation.Lineage[0]; l.Source != "lookup" || l.Class != "asserted" || !l.Present {
+			t.Fatal("the local file was not read:", string(encode(l)))
 		}
 	})
 	t.Run("a case-only run", func(t *testing.T) {
