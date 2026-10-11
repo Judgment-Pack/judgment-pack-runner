@@ -261,8 +261,10 @@ func TestTheRuntimesVerifierReadsTheChainOfRuns(t *testing.T) {
 	chain := write("chain.jsonl", chainOf(t, s))
 	held := write("held.jsonl", joinLines(encode(second), encode(last)))
 
+	// The Runtime names this scope one-supplied-chain before 0.28.0, and
+	// committed-prefix from 0.28.0 on (runtime #240), for the same check.
 	got, code := auditVerify(t, bin, chain)
-	if code != 0 || got.Status != "valid" || got.Scope != "one-supplied-chain" || got.Lines != 4 || got.Trail != entries[0].Trail || got.Head == nil || *got.Head != last ||
+	if code != 0 || got.Status != "valid" || !slices.Contains([]string{"one-supplied-chain", "committed-prefix"}, got.Scope) || got.Lines != 4 || got.Trail != entries[0].Trail || got.Head == nil || *got.Head != last ||
 		got.Coverage.LegacyPrefix != 0 || got.Coverage.Chained != 4 || got.Coverage.Unchained != 0 || got.Coverage.Uncovered != 0 || got.Coverage.Damaged != 0 || got.Coverage.Witnessed != 0 {
 		t.Fatalf("the Runtime does not read the chain as a chained trail: %+v %d", got, code)
 	}
