@@ -243,7 +243,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 			return r, err
 		}
 	}
-	result, _, _, err := s.evaluate(ctx, r, req.Input, filepath.Join(dir, "preview"), true)
+	result, _, _, _, err := s.evaluate(ctx, r, req.Input, filepath.Join(dir, "preview"), true)
 	if err != nil {
 		return r, bad("preview_failed", "The sample input could not be evaluated. Check its facts and evidence values.")
 	}
@@ -254,30 +254,30 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	}
 	return r, s.saveRelease(r)
 }
-func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, []byte, error) {
+func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
 	if input.Source != nil && input.Source.Mapping.Version == 2 {
 		if input.Preparation == nil || !mappingMatchesRelease(r, input) {
-			return nil, nil, nil, errors.New("missing or mismatched verified preparation")
+			return nil, nil, nil, nil, errors.New("missing or mismatched verified preparation")
 		}
 		at, e := time.Parse("2006-01-02T15:04:05Z", input.Preparation.VerifiedAt)
 		if e != nil {
-			return nil, nil, nil, e
+			return nil, nil, nil, nil, e
 		}
 		prepared, e := normalizeV2(input, r.InputProfiles, at)
 		if e != nil {
-			return nil, nil, nil, e
+			return nil, nil, nil, nil, e
 		}
 		if !sameJSON(encode(prepared.Preparation), encode(input.Preparation)) {
-			return nil, nil, nil, errors.New("retained preparation failed recomputation")
+			return nil, nil, nil, nil, errors.New("retained preparation failed recomputation")
 		}
 	}
 	if digest([]byte(r.Pack)) != r.PackDigest {
-		return nil, nil, nil, errors.New("release pack digest mismatch")
+		return nil, nil, nil, nil, errors.New("release pack digest mismatch")
 	}
 	bin := filepath.Join(s.cfg.Dir, "runtimes", strings.TrimPrefix(r.RuntimeDigest, "sha256:"))
 	b, err := readLimit(bin, 128<<20)
 	if err != nil || digest(b) != r.RuntimeDigest {
-		return nil, nil, nil, errors.New("pinned Runtime is missing or changed")
+		return nil, nil, nil, nil, errors.New("pinned Runtime is missing or changed")
 	}
 	signing := signingInputs{}
 	if s.expectedKey != nil {
@@ -310,29 +310,53 @@ var errSidecarUnread = errors.New("operational audit signatures could not be rea
 // and one that signs and does not know the expected key (before 0.30.0)
 // ignores the second. A sidecar that cannot be read fails the evaluation
 // without a key, as it always has, and with one is errSidecarUnread.
-func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs) (json.RawMessage, json.RawMessage, []byte, error) {
+//
+// Only an operational evaluation of a mapping-v2 run, with its preparation,
+// is given the preparation's binding (binding.go), and only by a Runtime that
+// takes one, which the Runtime's own `version` answer says: its record must
+// then carry it byte for byte, and must carry none otherwise. What was passed
+// is returned, nil for any other evaluation. A Runtime that refuses the
+// binding fails the evaluation with errBindingRefused.
+func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
 	// The directory is exclusively created per invocation and never reused.
 	if err := os.Mkdir(dir, 0700); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	var err error
 	for name, b := range map[string][]byte{"pack.json": []byte(r.Pack), "jpack.json": []byte(r.Config), "jpack.lock.json": []byte(r.Lock), "facts.json": input.Facts} {
 		if err = saveFile(filepath.Join(dir, name), b, 0600); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
 	args := []string{"experimental", "evaluate", "--pack-id", "target", "--config", "jpack.json", "--facts", "facts.json", "--format", "json"}
 	if len(input.Evidence) > 0 {
 		if err = saveFile(filepath.Join(dir, "evidence.json"), input.Evidence, 0600); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		args = append(args, "--evidence", "evidence.json")
 	}
 	if input.Preparation != nil && len(input.Preparation.Cites) > 0 && !rehearsal {
 		if err = saveFile(filepath.Join(dir, "cites.json"), encode(input.Preparation.Cites), 0600); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		args = append(args, "--cites", "cites.json")
+	}
+	var bound *RunBinding
+	var binding []byte
+	if input.Preparation != nil && !rehearsal {
+		takes, e := takesBinding(ctx, bin, dir)
+		if e != nil {
+			return nil, nil, nil, nil, e
+		}
+		bound = &RunBinding{Status: RunBindingUnsupported}
+		if takes {
+			binding = bindingDocument(preparationDigest(input.Preparation))
+			if err = saveFile(filepath.Join(dir, bindingFile), binding, 0600); err != nil {
+				return nil, nil, nil, nil, err
+			}
+			args = append(args, "--binding", bindingFile)
+			bound = &RunBinding{Status: RunBound}
+		}
 	}
 	if rehearsal {
 		args = append(args, "--rehearsal")
@@ -342,8 +366,11 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 		env = []string{"JPACK_SIGNING_KEY=" + signing.path, "JPACK_SIGNING_PUBLIC_KEY=" + signing.publicKey}
 	}
 	out, err := invokeWith(ctx, bin, dir, "evaluation", env, args...)
+	if err != nil && binding != nil && refusedBinding(out) {
+		return nil, nil, nil, nil, errBindingRefused
+	}
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	var result struct {
 		OutputVersion string          `json:"outputVersion"`
@@ -355,14 +382,14 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 		Disposition   json.RawMessage `json:"disposition"`
 	}
 	if json.Unmarshal(out, &result) != nil || result.OutputVersion != "2" || result.Status != "evaluated" || result.PackID != r.PackID || result.PackVersion != r.PackVersion || result.Spec != "0.2.0-draft" || result.Rehearsal != rehearsal || len(result.Disposition) == 0 {
-		return nil, nil, nil, errors.New("unsupported or mismatched Runtime response")
+		return nil, nil, nil, nil, errors.New("unsupported or mismatched Runtime response")
 	}
 	if rehearsal {
-		return out, nil, nil, nil
+		return out, nil, nil, nil, nil
 	}
 	audit, err := readLimit(filepath.Join(dir, "audit", "evaluations.jsonl"), maxOutput)
 	if err != nil {
-		return nil, nil, nil, errors.New("operational audit record could not be read")
+		return nil, nil, nil, nil, errors.New("operational audit record could not be read")
 	}
 	// The record's line, exactly, is what a digest of the record and the run's
 	// entry in the installation's chain of runs are taken over. A trail that is
@@ -370,7 +397,7 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 	// the record: the evaluation is refused, and its run is not completed
 	// without them.
 	if recordLine(audit) == nil {
-		return nil, nil, nil, errors.New("operational audit record is not one line ended by a newline, so its exact bytes cannot be kept")
+		return nil, nil, nil, nil, errors.New("operational audit record is not one line ended by a newline, so its exact bytes cannot be kept")
 	}
 	var record struct {
 		Version string `json:"recordVersion"`
@@ -397,19 +424,24 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 		return e == nil && bytes.Equal(ac, bc)
 	}
 	if json.Unmarshal(audit, &record) != nil || record.Version != "1" || record.Kind != "evaluation" || record.Run == "" || !record.Reviewed || record.Pack.Digest != r.PackDigest || !same(record.Inputs.Facts, input.Facts) || record.Inputs.Supplied != (len(input.Evidence) > 0) || !same(record.Disposition, result.Disposition) || (len(input.Evidence) > 0 && !same(record.Inputs.Evidence, input.Evidence)) {
-		return nil, nil, nil, errors.New("operational audit does not match this invocation")
+		return nil, nil, nil, nil, errors.New("operational audit does not match this invocation")
 	}
 	if input.Preparation != nil && !auditCitesMatch(record.Cites, input.Preparation.Cites) {
-		return nil, nil, nil, errors.New("operational audit citations do not match verified input")
+		return nil, nil, nil, nil, errors.New("operational audit citations do not match verified input")
+	}
+	// The record carries the binding passed, byte for byte, or none when none
+	// was: one dropped, changed or added fails the evaluation, as citations do.
+	if recorded, e := recordBinding(recordLine(audit)); e != nil || !bytes.Equal(recorded, binding) {
+		return nil, nil, nil, nil, errRecordBinding
 	}
 	signatures, err := readSidecar(filepath.Join(dir, "audit", "signatures.jsonl"))
 	switch {
 	case err != nil && signing.path != "":
-		return out, audit, nil, errSidecarUnread
+		return out, audit, nil, bound, errSidecarUnread
 	case err != nil:
-		return nil, nil, nil, errors.New("operational audit signatures could not be read")
+		return nil, nil, nil, nil, errors.New("operational audit signatures could not be read")
 	}
-	return out, audit, signatures, nil
+	return out, audit, signatures, bound, nil
 }
 
 // readSidecar reads an attempt's signature sidecar, held as the trail is: a

@@ -67,7 +67,7 @@ func TestTheFreshnessSentenceCountsWhatWasJudged(t *testing.T) {
 		{judged(calculation, calculation), " Acquisition and calculator freshness for 2 sources were judged" + freshnessSaid},
 		{judged(acquisition, calculation, acquisition), " Acquisition freshness for 3 sources, and calculator freshness for 1 of them, were judged" + freshnessSaid},
 	} {
-		if got := freshnessSentence(c.freshness); got != c.want {
+		if got := freshnessSentence(c.freshness, false); got != c.want {
 			t.Fatalf("%+v: %q", c.freshness, got)
 		}
 	}
@@ -137,13 +137,17 @@ func movedBySecond(t *testing.T, bundle map[string]json.RawMessage) (map[string]
 // mapping, signed by the installation's key and witnessed by a held
 // checkpoint, verified with both required. The report and the line name the
 // instant its acquisition's and its calculator's freshness were judged
-// against. Recomputed one second later, the export verifies just as well,
-// under the same signature and checkpoint, and the report names the moved
-// instant: freshness is consistent with the instant the export supplies, and
-// verify-run says so rather than refusing. The instant moved alone, without
-// recomputing the preparation, is refused as before. A report that refuses
-// carries the member too: without the held checkpoint, under another key, and
-// when a re-execution decides otherwise than a version-2 export says.
+// against. Recomputed one second later, the export keeps the same signature
+// and checkpoint, and the report names the moved instant. A record the
+// Runtime under test did not bind (before 0.31.0) verifies just as well:
+// freshness is consistent with the instant the export supplies, and verify-run
+// says so. A record it bound (0.31.0 and later) commits the instant in the
+// signed record, and the moved export is refused: its preparation is not the
+// one the record binds (TestVerifyRunHoldsTheRecordsBindingToThePreparation
+// holds the rest). The instant moved alone, without recomputing the
+// preparation, is refused as before. A report that refuses carries the member
+// too: without the held checkpoint, under another key, and when a
+// re-execution decides otherwise than a version-2 export says.
 func TestVerifyRunNamesTheInstantFreshnessWasJudgedAgainst(t *testing.T) {
 	input, s := calculatorOnACopy(t)
 	profiles := []runner.InputProfile{s.profile}
@@ -166,16 +170,28 @@ func TestVerifyRunNamesTheInstantFreshnessWasJudgedAgainst(t *testing.T) {
 	witnessed := `"held":{"matched":1,"supplied":1,"through":1},"scope":"checkpoint","status":"valid","witnessed":true}`
 	judged := `[{"source":"fx","checks":["acquisition","calculation"],"targets":3}]`
 	moved, later := movedBySecond(t, e.bundle)
+	bound := bindingOfTheRuntime() == runner.BindingMatches
+	freshness := oneCalculation
+	if bound {
+		freshness = " Acquisition and calculator freshness for 1 source were judged" + committedFreshness
+	}
 	for name, c := range map[string]struct {
-		bundle map[string]json.RawMessage
-		at     string
-	}{"as exported": {e.bundle, verifiedAtOf(t, e.bundle)}, "moved by one second": {moved, later}} {
+		bundle   map[string]json.RawMessage
+		at       string
+		verifies bool
+	}{"as exported": {e.bundle, verifiedAtOf(t, e.bundle), true}, "moved by one second": {moved, later, !bound}} {
 		t.Run(name, func(t *testing.T) {
 			out, human, err := verifyWith(t, c.bundle, e.digest, profiles, required...)
+			if !c.verifies {
+				if !errors.Is(err, errBindingMismatch) || !strings.HasSuffix(out, `"status":"binding-mismatch","targetsByClass":{"asserted":0,"record":3,"generated":0}`+freshnessMember(c.at, judged)+"}\n") || human != "" {
+					t.Fatal(err, out, human)
+				}
+				return
+			}
 			if err != nil || !strings.HasSuffix(out, `"status":"verified-inputs","targetsByClass":{"asserted":0,"record":3,"generated":0}`+freshnessMember(c.at, judged)+"}\n") || !strings.Contains(out, signed) || !strings.Contains(out, witnessed) || strings.Contains(out, "unsignedParameters") {
 				t.Fatal(err, out)
 			}
-			if !strings.HasPrefix(human, inputsLine+oneCalculation+" The export's bytes of the audit record parse to the record.") {
+			if !strings.HasPrefix(human, inputsLine+freshness+" The export's bytes of the audit record parse to the record.") {
 				t.Fatal("human output:", human)
 			}
 		})
@@ -202,11 +218,12 @@ func TestVerifyRunNamesTheInstantFreshnessWasJudgedAgainst(t *testing.T) {
 	if !errors.Is(err, errSignatureInvalid) || err.Error() != "signature-invalid: signature-invalid at line 1: sidecar line 1: the signature does not verify under the key in force" || !strings.HasSuffix(out, `"status":"signature-invalid",`+member) || human != "" {
 		t.Fatal(err, out, human)
 	}
-	// The moved export as version 2, with its answer changed in its result
-	// and its audit record alike, which a version-2 export does not hold to
-	// bytes: the release's Runtime, the signing one here, decides otherwise.
+	// The export as version 2, with its answer changed in its result and its
+	// audit record alike, which a version-2 export does not hold to bytes: the
+	// release's Runtime, the signing one here, decides otherwise. (Moved, a
+	// bound record's export would be refused for its binding first.)
 	var run map[string]json.RawMessage
-	if err = json.Unmarshal(moved["run"], &run); err != nil {
+	if err = json.Unmarshal(e.bundle["run"], &run); err != nil {
 		t.Fatal(err)
 	}
 	delete(run, "auditBytes")
@@ -218,11 +235,12 @@ func TestVerifyRunNamesTheInstantFreshnessWasJudgedAgainst(t *testing.T) {
 		}
 		run[k] = json.RawMessage(changed)
 	}
-	v2 := map[string]json.RawMessage{"version": json.RawMessage("2"), "releaseDigest": moved["releaseDigest"], "release": moved["release"]}
+	v2 := map[string]json.RawMessage{"version": json.RawMessage("2"), "releaseDigest": e.bundle["releaseDigest"], "release": e.bundle["release"]}
 	v2["run"], _ = json.Marshal(run)
 	t.Setenv("TMPDIR", t.TempDir())
 	out, human, err = verifyWith(t, v2, e.digest, profiles, "--runtime="+runtime)
-	if !errors.Is(err, runner.ErrDispositionDiffers) || !strings.HasPrefix(out, `{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"differs-from-re-execution",`) || !strings.HasSuffix(out, `"status":"disposition-differs",`+member) || human != "" {
+	original := `"targetsByClass":{"asserted":0,"record":3,"generated":0}` + freshnessMember(verifiedAtOf(t, e.bundle), judged) + "}\n"
+	if !errors.Is(err, runner.ErrDispositionDiffers) || !strings.HasPrefix(out, `{"binding":{"status":"`+bindingOfTheRuntime()+`"},"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"differs-from-re-execution",`) || !strings.HasSuffix(out, `"status":"disposition-differs",`+original) || human != "" {
 		t.Fatal(err, out, human)
 	}
 }

@@ -101,10 +101,11 @@ type Run struct {
 	InterruptedAt string `json:"-"`
 	// Reason says, as a code, why a run ended without an evaluation:
 	// queue-expired, for an automatic run whose queue time ran out before the
-	// dispatcher reached it. Its state stays failed, and its problem the
-	// sentence it was. A run that expired before Runner kept the code has
-	// none, and is not given one. Kept and served as InterruptedAt is, and
-	// not part of a verification export.
+	// dispatcher reached it; binding-refused, for a run whose Runtime refused
+	// the preparation's binding Runner passed (binding.go). Its state stays
+	// failed, and its problem the sentence it was. A run that expired before
+	// Runner kept the code has none, and is not given one. Kept and served as
+	// InterruptedAt is, and not part of a verification export.
 	Reason string `json:"-"`
 	// Signing is what Runner found of the record's signature, for an
 	// installation with a signing key: signed under the expected key, or
@@ -113,6 +114,12 @@ type Run struct {
 	// version-5 export carries the sidecar itself, which a verifier checks
 	// under a key it holds.
 	Signing *RunSigning `json:"-"`
+	// Binding says what Runner passed the Runtime of a completed mapping-v2
+	// run: the preparation's binding, which its record then carries (bound),
+	// or none, to a Runtime that takes none (unsupported-runtime). Kept and
+	// served as InterruptedAt is, and not part of a verification export: the
+	// record carries the binding itself, which verify-run checks.
+	Binding *RunBinding `json:"-"`
 }
 
 // runQueueExpired is the Reason of an automatic run whose queue time ran out
@@ -120,23 +127,25 @@ type Run struct {
 const runQueueExpired = "queue-expired"
 
 // storedRun is a run as the store keeps it and the run routes serve it: the
-// run, when Runner saw it interrupted, why it ended without an evaluation, and
-// its record's signing. A run with none of them encodes exactly as Run does.
+// run, when Runner saw it interrupted, why it ended without an evaluation, its
+// record's signing, and the binding Runner passed its Runtime. A run with none
+// of them encodes exactly as Run does.
 type storedRun struct {
 	Run
 	InterruptedAt string      `json:"interruptedAt,omitempty"`
 	Reason        string      `json:"reason,omitempty"`
 	Signing       *RunSigning `json:"signing,omitempty"`
+	Binding       *RunBinding `json:"binding,omitempty"`
 }
 
 func served(r Run) storedRun {
-	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing}
+	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing, Binding: r.Binding}
 }
 func runText(r Run) string { return string(encode(served(r))) }
 func decodeRun(b []byte) (Run, error) {
 	var held storedRun
 	e := json.Unmarshal(b, &held)
-	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing = held.InterruptedAt, held.Reason, held.Signing
+	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing, held.Run.Binding = held.InterruptedAt, held.Reason, held.Signing, held.Binding
 	return held.Run, e
 }
 

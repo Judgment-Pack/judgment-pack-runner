@@ -11,12 +11,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/runner"
 )
 
 // reportV3 is the report line verify-run writes of a version-3 export, whose
-// audit record's original bytes have the digest given.
-func reportV3(recordDigest, status, disposition, scope string, asserted, record, generated int) string {
-	return fmt.Sprintf(`{"exactBytes":"matches-record","exportVersion":3,"recordDigest":%q,"retainedDisposition":%q,"scope":%q,"status":%q,"targetsByClass":{"asserted":%d,"record":%d,"generated":%d}}`+"\n", recordDigest, disposition, scope, status, asserted, record, generated)
+// record's binding is as given and whose audit record's original bytes have
+// the digest given.
+func reportV3(binding, recordDigest, status, disposition, scope string, asserted, record, generated int) string {
+	return fmt.Sprintf(`{"binding":{"status":%q},"exactBytes":"matches-record","exportVersion":3,"recordDigest":%q,"retainedDisposition":%q,"scope":%q,"status":%q,"targetsByClass":{"asserted":%d,"record":%d,"generated":%d}}`+"\n", binding, recordDigest, disposition, scope, status, asserted, record, generated)
 }
 
 // ampersand is the triage pack's identifier with an &, which the Runtime writes
@@ -39,9 +42,9 @@ func TestVerifyRunReportsTheRecordsDigest(t *testing.T) {
 	}
 	sum := sha256.Sum256(line)
 	want := "sha256:" + hex.EncodeToString(sum[:])
-	said := " The export's bytes of the audit record parse to the record. Their SHA-256 is " + want + ": a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run.\n"
+	said := " The export's bytes of the audit record parse to the record. Their SHA-256 is " + want + ": a digest held independently, such as a gateway receipt's, shows whether they are the bytes the Runtime wrote for this run." + boundSaid() + "\n"
 	out, human, err := verify(t, bundle, digest)
-	if err != nil || out != reportV3(want, "verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) {
+	if err != nil || out != reportV3(bindingOfTheRuntime(), want, "verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) {
 		t.Fatal(err, out)
 	}
 	if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source."+said {
@@ -49,7 +52,7 @@ func TestVerifyRunReportsTheRecordsDigest(t *testing.T) {
 	}
 	t.Setenv("TMPDIR", t.TempDir())
 	out, human, err = verify(t, bundle, digest, "--runtime="+os.Getenv("JPACK_TEST_BIN"))
-	if err != nil || out != reportV3(want, "verified-disposition", "matches-re-execution", reExecuted, 3, 0, 0) || !strings.HasSuffix(human, " nothing here checks them against a source."+said) {
+	if err != nil || out != reportV3(bindingOfTheRuntime(), want, "verified-disposition", "matches-re-execution", reExecuted, 3, 0, 0) || !strings.HasSuffix(human, " nothing here checks them against a source."+said) {
 		t.Fatal(err, out, human)
 	}
 	// Bytes that parse to another record are refused, before any report.
@@ -70,7 +73,7 @@ func TestVerifyRunSaysVersion2CarriesNoBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", strings.TrimSpace(string(trusted)))
-	if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, notInExport+"\n") {
+	if err != nil || out != reportBound(runner.BindingAbsent, "verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, notInExport+unboundSaid+"\n") {
 		t.Fatal(err, out, human)
 	}
 	// The same export claiming version 3 carries no bytes, and is refused.

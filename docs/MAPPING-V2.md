@@ -375,7 +375,11 @@ run.result members other than disposition (outputVersion, tool, command, status,
 experimental, reviewed, reviewedSet, conformanceClaimReference, specVersion,
 evaluatorSpecVersion, packId, packVersion, trace, artifact, and any additional
 members) are not signed by it. run.audit is checked against run.auditBytes;
-run.auditSignatures carries the signature, not a signature over itself. Separate
+run.auditSignatures carries the signature, not a signature over itself. A
+record's binding, which Runtime 0.31.0 and later record for a mapping-v2 run, is
+under that signature: the SHA-256 of run.input.preparation,
+preparation.verifiedAt included, which verify-run recomputes from the export and
+refuses on a mismatch; nothing else of run.input is bound by it. Separate
 release-digest, input, chain and checkpoint checks bind only what their
 documented scope states.
 
@@ -392,8 +396,8 @@ Without replay the report says `matches-audit`, which does not establish that th
 evaluator decided correctly:
 
 ```text
-{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
-verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by.
+{"binding":{"status":"matches"},"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"verified-inputs","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by. The record's binding is the SHA-256 of the export's preparation, but no signature checked here covers the record: the binding commits the preparation only under a record signature that verifies (--public-key).
 ```
 
 Verification recomputes every input the same way, but what that establishes
@@ -477,10 +481,11 @@ own verification time.` When there is neither, the line is as it was.
 Preparation judges each verified acquisition's observation and serving times,
 and each table of a calculator that computed, against one instant, which it
 retains as `preparation.verifiedAt`, and verification recomputes the
-preparation at the instant the export supplies. No signature covers that
-member: the record signature covers the audit record's bytes, which do not
-carry it, a receipt signs its own source's times, and the chain entry binds
-the record's digest. A preparation recomputed at another instant, its facts,
+preparation at the instant the export supplies. Without the record's binding
+([below](#record-signatures), "The preparation's binding"), no signature covers
+that member: the record signature covers the audit record's bytes, which do not
+otherwise carry it, a receipt signs its own source's times, and the chain entry
+binds the record's digest. A preparation recomputed at another instant, its facts,
 evidence and citations unchanged, verifies as the original does, signed and
 witnessed. So freshness is consistent with the instant the export supplies;
 nothing establishes that instant was the admission instant. The member is
@@ -494,9 +499,14 @@ many targets it maps, with a value or without. The line adds, for example,
 preparation.verifiedAt, which the export supplies and no signature covers:
 freshness is consistent with the instant the export supplies; nothing
 establishes that instant was the admission instant.` It is a report, not a
-refusal: the exit code and `--require-signed`, `--require-witnessed` and
-`--require-sourced` are unchanged. Committing the instant to signed material
-needs a member of the Runtime's record that a caller can fill (runtime #263).
+refusal. From Runtime 0.31.0 on, the record commits the preparation, its
+instant included, through its binding (runtime #263, ADR-0050). For a record
+whose binding matches and whose signature verifies under `--public-key`, the
+line says instead that freshness was judged against `preparation.verifiedAt`,
+`which is committed in the signed record: the record's binding is the SHA-256
+of the export's preparation, and its signature verifies.` A preparation
+recomputed at another instant is then refused, as `binding-mismatch`. A record
+without a binding reads as this paragraph says.
 
 ```text
 "unsignedFreshness":{"against":"preparation.verifiedAt","verifiedAt":"2026-10-11T12:00:00Z","sources":[{"source":"fx","checks":["acquisition","calculation"],"targets":3}]}
@@ -514,8 +524,8 @@ Runner store. The canonical disposition is compared byte for byte with the one t
 run's result retains and the one its audit record retains:
 
 ```text
-{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-re-execution","scope":"retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth","status":"verified-disposition","targetsByClass":{"asserted":0,"record":3,"generated":0}}
-verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by.
+{"binding":{"status":"matches"},"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-re-execution","scope":"retained input derivation, audit binding, and the retained disposition against a re-execution by the release's Runtime; not sealed-session completeness or policy truth","status":"verified-disposition","targetsByClass":{"asserted":0,"record":3,"generated":0}}
+verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. Exact-byte checks were not possible: a version-2 export carries no original bytes of the audit record, so nothing here gives the digest a gateway receipt names it by. The record's binding is the SHA-256 of the export's preparation, but no signature checked here covers the record: the binding commits the preparation only under a record signature that verifies (--public-key).
 ```
 
 When the replay differs, the command exits 1, reports `"status":"disposition-differs"`
@@ -533,7 +543,7 @@ targets it refuses. It comes before any re-execution, so with `--runtime` the
 executable is not run:
 
 ```text
-{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
+{"binding":{"status":"matches"},"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"matches-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"inputs-asserted","targetsByClass":{"asserted":1,"record":2,"generated":0}}
 runner: inputs-asserted: 1 of the run's 3 inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source
 ```
 
@@ -995,6 +1005,108 @@ run's entry in the chain of runs is what binds a record to its run. So:
   configuring a new one, not by a rotation line. A verifier then checks each run
   under the key that was in force for it.
 - Not when the record was signed, nor that a run was ever recorded.
+
+**The preparation's binding.** The record signature covers the record's line,
+and the line carries the facts, the evidence and the citations, not the
+preparation: without more, `preparation.verifiedAt` is the export's say
+([above](#release-checks-runtime-and-offline-verification), `unsignedFreshness`).
+From Runtime 0.31.0 on, an operational evaluation takes a caller's binding,
+which the record carries as given, beside `cites`, under the chain and the
+record signature (Runtime ADR-0050). On every operational evaluation of a
+mapping-v2 run, Runner passes `--binding binding.json`, a file in the attempt's
+private directory, beside the facts and citations it passes, that holds exactly:
+
+```text
+{"kind":"judgment-pack-runner/preparation/1","digest":"sha256:<64 lowercase hexadecimal characters>"}
+```
+
+The digest is the SHA-256 of the run's `run.input.preparation` in the canonical
+form Runner digests a frozen release by: the object with its members sorted by
+name, in byte order, no insignificant whitespace, numbers as written, and
+strings escaped as Go's `encoding/json` escapes them (`&`, `<` and `>` as
+`\u0026`, `\u003c` and `\u003e`). A verifier recomputes it from the export
+alone. The Runtime records the member compact, `kind` then `digest`: the bytes
+Runner passed.
+
+- **Only an operational evaluation of a mapping-v2 run.** A rehearsal, such as
+  a release's preview or a re-execution at verification, is given none: it
+  records nothing. A run without a mapping v2 has no preparation, and is given
+  none.
+- **Only a Runtime that takes one.** Before each such evaluation, Runner asks
+  the pinned Runtime `version --format json`, and passes the binding to 0.31.0
+  and later only. An earlier Runtime, and a build that names no release
+  (`0.0.0-dev`), is given none, and the evaluation runs as before. A Runtime
+  whose answer names no release Runner can read evaluates nothing, rather than
+  being evaluated unbound: the run fails with `The Runtime did not say its
+  release, so whether it takes the preparation's binding cannot be told: the
+  run was not evaluated. Inspect the retained attempt diagnostics.`
+- **The record must carry it.** The record must carry the binding passed, byte
+  for byte, or none when none was passed. Anything else fails the run, as
+  citations do: `operational audit binding does not match this invocation`.
+- **A refused binding is Runner's defect.** A Runtime that refuses the binding
+  (`JPS-INVOCATION-BINDING`) evaluates nothing. The run fails with `The Runtime
+  refused the preparation's binding Runner passed, which is a defect of Runner:
+  the run was not evaluated. Inspect the retained attempt diagnostics.`, with
+  `reason` `binding-refused`, and the Runtime's answer as its diagnostics. It is
+  never evaluated again without the binding.
+- **The run says which.** A completed mapping-v2 run carries `binding`:
+  `{"status":"bound"}` when its Runtime was given the binding and its record
+  carries it, and `{"status":"unsupported-runtime"}` when its Runtime takes
+  none. It is served with the run and in run lists, as `signing` is, and is not
+  part of a verification export: the record carries the binding itself. A run
+  that did not complete, a run without a mapping v2, and a run recorded before
+  this release have none.
+
+**Checking a binding.** `verify-run` reads the record's `binding` from the
+record's own bytes, `run.auditBytes`, or `run.audit` in a version-2 export,
+which carries no bytes. It reads the member by its exact name, and compares it
+as recorded, never canonicalised again. A record whose members cannot be read,
+that names `binding` twice, or that names a member `binding` but for case, is
+refused rather than read as one with no binding. The report's `binding` member,
+which sorts first, gives one status:
+
+- **`matches`:** the member is, byte for byte, the binding Runner passes for
+  the export's preparation.
+- **`mismatch`:** its `kind` is Runner's, and it is not that binding: another
+  preparation's digest, or the member written otherwise, its members reordered
+  among them. Refused, with status `binding-mismatch`, whatever else is asked.
+- **`foreign-kind`:** its `kind` is not Runner's, or cannot be read as one.
+  Refused, with status `binding-foreign-kind`, before any digest is compared.
+- **`absent`:** the record carries none: recorded by a Runtime before 0.31.0,
+  or before Runner passed one, or a run with no record. Reported, with
+  `unsignedFreshness` and its sentence as above. `--require-bound` refuses it,
+  with status `unbound`, and refuses an export without lineage too, which has no
+  preparation to bind.
+
+The member is absent from the report of an export without lineage. A refusal
+comes after the chain and signature checks, and before `--require-sourced` and
+a re-execution, which then does not run:
+
+```text
+runner: binding-mismatch: the record's binding is not the SHA-256 of the export's preparation: the preparation, preparation.verifiedAt included, is not the one the record binds
+runner: binding-foreign-kind: the record's binding is not of Runner's scheme, judgment-pack-runner/preparation/1, so it commits nothing verify-run can check, and no digest was compared
+runner: unbound: the run's audit record carries no binding of its preparation, and --require-bound refuses it: nothing in the record commits the preparation, or preparation.verifiedAt
+```
+
+**What a binding establishes, and what it does not.** A binding that matches,
+in a record whose signature verifies under `--public-key`, shows that the
+preparation, its instant included, is the one Runner handed the Runtime for the
+record that was signed. The line then says the instant is committed in the
+signed record, and ends with what that establishes. The audit's case, a
+preparation recomputed one second later, is refused: its digest is not the one
+the record binds. A binding that matches with no signature checked commits
+nothing by itself, and the line says so: `--require-signed` asks for the
+signature, and `--require-bound` for the binding.
+
+- **Nothing against the operator beyond the signature.** The operator holds the
+  key, and can recompute a preparation, write a record with its binding and
+  sign it again; that record verifies like the first. Only a witnessed chain
+  shows it: `--require-witnessed`, against a checkpoint held independently from
+  before the change, since the rewritten record changes the chain entry's
+  digest.
+- **Not the admission instant.** A binding carries no time. It commits the
+  instant the preparation retains, and the operator holds the clock, as for
+  every record signature.
 
 **Reading the guide's rule for one record.** The rule depends on whether the
 trail's lines are chained records, "the chain's own rule", which the guide

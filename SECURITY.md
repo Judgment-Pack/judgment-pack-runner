@@ -108,7 +108,11 @@ A valid signature shows that whoever held the key signed these exact bytes as th
 The operator holds the key, and can rewrite a record and sign it again, so against the operator it
 shows nothing; nor after the key is copied or stolen, when its holder can sign what they like. It
 does not show when the record was signed, and it binds nothing but the record: the chain of runs,
-and a checkpoint someone else holds, are what bind a run to the installation's history. Runner
+and a checkpoint someone else holds, are what bind a run to the installation's history. From
+Runtime 0.31.0 on, a mapping-v2 run's record also carries the SHA-256 of the run's preparation,
+`verifiedAt` included, which `verify-run` checks against the export. The same holds of it: the
+operator can recompute a preparation and sign its record again, and only a checkpoint someone else
+held from before shows it; nor does it show the instant was the admission instant. Runner
 checks where the key is before it starts, and reads it then, once, for its public key, the expected
 key. It never logs the key, keeps it or keeps its path in the store, but the Runtime it starts reads
 it, and anyone who can run that Runtime as Runner's user can sign with it, or replace it at its

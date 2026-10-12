@@ -43,7 +43,7 @@ func sha(b []byte) string {
 // reportV4 is the report line verify-run writes of a version-4 export of the
 // chained run, all of whose inputs are asserted, with the runChain member.
 func reportV4(recordDigest, status, disposition, scope, runChain string) string {
-	return fmt.Sprintf(`{"exactBytes":"matches-record","exportVersion":4,"recordDigest":%q,"retainedDisposition":%q,"runChain":%s,"scope":%q,"status":%q,"targetsByClass":{"asserted":3,"record":0,"generated":0}}`+"\n", recordDigest, disposition, runChain, scope, status)
+	return fmt.Sprintf(`{"binding":{"status":%q},"exactBytes":"matches-record","exportVersion":4,"recordDigest":%q,"retainedDisposition":%q,"runChain":%s,"scope":%q,"status":%q,"targetsByClass":{"asserted":3,"record":0,"generated":0}}`+"\n", bindingOfTheRuntime(), recordDigest, disposition, runChain, scope, status)
 }
 
 // file writes b to a new file and returns its path.
@@ -89,7 +89,7 @@ func TestVerifyRunChecksTheRunsEntry(t *testing.T) {
 			if err != nil || out != reportV4(record, "verified-inputs", "matches-audit", inputsOnly, c.runChain) {
 				t.Fatal(err, out)
 			}
-			if human != c.human {
+			if human != strings.TrimSuffix(c.human, "\n")+boundSaid()+"\n" {
 				t.Fatal("human output:", human)
 			}
 		})
@@ -97,7 +97,7 @@ func TestVerifyRunChecksTheRunsEntry(t *testing.T) {
 	// With the release's Runtime, the entry is reported the same way.
 	t.Setenv("TMPDIR", t.TempDir())
 	out, human, err := verify(t, e.bundle, e.digest, "--expect", held, "--runtime="+os.Getenv("JPACK_TEST_BIN"))
-	if err != nil || !strings.HasPrefix(out, `{"exactBytes":"matches-record","exportVersion":4,`) || !strings.Contains(out, `"retainedDisposition":"matches-re-execution","runChain":{"checkpoint":`+string(cp)) || !strings.Contains(out, `"witnessed":true}`) || !strings.HasSuffix(human, "or that the chain is complete after sequence 1.\n") {
+	if err != nil || !strings.HasPrefix(out, `{"binding":{"status":"`+bindingOfTheRuntime()+`"},"exactBytes":"matches-record","exportVersion":4,`) || !strings.Contains(out, `"retainedDisposition":"matches-re-execution","runChain":{"checkpoint":`+string(cp)) || !strings.Contains(out, `"witnessed":true}`) || !strings.HasSuffix(human, "or that the chain is complete after sequence 1."+boundSaid()+"\n") {
 		t.Fatal(err, out, human)
 	}
 }
@@ -168,7 +168,7 @@ func TestVerifyRunSaysAnUnchainedRunHasNoEntry(t *testing.T) {
 	}
 	record := sha(bytes.TrimSuffix(trail, []byte("\n")))
 	out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", strings.TrimSpace(string(trusted)))
-	if err != nil || out != reportV3(record, "verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " shows whether they are the bytes the Runtime wrote for this run.\n") {
+	if err != nil || out != reportV3(runner.BindingAbsent, record, "verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " shows whether they are the bytes the Runtime wrote for this run."+unboundSaid+"\n") {
 		t.Fatal(err, out, human)
 	}
 	held := file(t, "held.jsonl", []byte(`{"checkpointVersion":"1","recordDigest":"`+record+`","sequence":1,"trail":"`+strings.Repeat("a", 32)+`"}`+"\n"))

@@ -76,21 +76,28 @@ func classesOf(lineage []TargetLineage) (c InputClasses) {
 
 // VerifiedRun is an export whose inputs verified: its targets by class, the
 // parameters its acquired sources' rules read unsigned, the sources whose
-// freshness was judged against the instant the export supplies, and the inputs
-// that were recomputed, which a re-execution evaluates.
+// freshness was judged against the instant the export supplies, what its
+// record's binding of the preparation is, and the inputs that were recomputed,
+// which a re-execution evaluates.
 type VerifiedRun struct {
 	Classes  InputClasses
 	Unsigned []UnsignedParameters
 	// Freshness is nil for an export without lineage, and for a run none of
 	// whose sources was acquired: nothing was judged against an instant.
 	Freshness *UnsignedFreshness
-	bundle    VerificationBundle
-	prepared  Input
+	// Binding is what the record's binding of the export's preparation is
+	// (binding.go): matches, mismatch, absent or foreign-kind. It is nil for
+	// an export without lineage, which has no preparation. A mismatch or a
+	// foreign kind is reported here, and refused by verify-run.
+	Binding  *BindingReport
+	bundle   VerificationBundle
+	prepared Input
 }
 
 // VerifyInputs is VerifyRun, and returns what it verified. The classes are
 // counted from the recomputed lineage, which is the retained lineage: an export
-// whose lineage differs from the recomputation is refused.
+// whose lineage differs from the recomputation is refused. So is a mapping-v2
+// export whose record's members cannot be read for its binding.
 func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string) (VerifiedRun, error) {
 	var judged []judgedFreshness
 	b, prepared, e := verifyInputs(raw, profiles, trustedReleaseDigest, &judged)
@@ -99,10 +106,15 @@ func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	}
 	if b.Inputs == InputsNotMapped {
 		// No lineage records a class for any target, no rule reads a
-		// parameter, and no freshness was judged: there is nothing to count.
+		// parameter, no freshness was judged, and no preparation is bound:
+		// there is nothing to count.
 		return VerifiedRun{bundle: b, prepared: prepared}, nil
 	}
-	return VerifiedRun{classesOf(prepared.Preparation.Lineage), unsignedParameters(b.Run.Input.Source.Mapping, prepared.Preparation), unsignedFreshness(prepared.Preparation, judged), b, prepared}, nil
+	binding, e := checkBinding(b)
+	if e != nil {
+		return VerifiedRun{}, e
+	}
+	return VerifiedRun{classesOf(prepared.Preparation.Lineage), unsignedParameters(b.Run.Input.Source.Mapping, prepared.Preparation), unsignedFreshness(prepared.Preparation, judged), binding, b, prepared}, nil
 }
 
 // Inputs is InputsNotMapped for an export of a run whose job has no input
@@ -156,7 +168,7 @@ func (v VerifiedRun) Disposition(ctx context.Context, runtime string) error {
 		return errors.New("this executable is not the Runtime the release froze")
 	}
 	work := filepath.Join(dir, "evaluation")
-	out, _, _, e := evaluateWith(ctx, bin, b.Release, Input{Facts: prepared.Facts, Evidence: prepared.Evidence}, work, true, signingInputs{})
+	out, _, _, _, e := evaluateWith(ctx, bin, b.Release, Input{Facts: prepared.Facts, Evidence: prepared.Evidence}, work, true, signingInputs{})
 	if e != nil {
 		return e
 	}

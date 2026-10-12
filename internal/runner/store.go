@@ -515,7 +515,8 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	}
 	if err == nil {
 		var trail, signatures []byte
-		r.Result, trail, signatures, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+		var binding *RunBinding
+		r.Result, trail, signatures, binding, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
 		// A sidecar that could not be read, with a signing key, fails the
 		// record's signing and not the run (evaluateWith).
 		unread := errors.Is(err, errSidecarUnread)
@@ -525,6 +526,15 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 		r.retainAudit(trail, signatures)
 		if err == nil && s.expectedKey != nil {
 			r.Signing = s.signingOf(r.AuditBytes, r.AuditSignatures, unread)
+		}
+		if err == nil {
+			r.Binding = binding
+		}
+		// A binding the Runtime refused is Runner's defect, named as the
+		// reason the run ended without an evaluation; it is never retried
+		// without the binding.
+		if errors.Is(err, errBindingRefused) {
+			r.Reason = runBindingRefused
 		}
 	}
 	r.FinishedAt = now()

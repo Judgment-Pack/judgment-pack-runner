@@ -1823,9 +1823,10 @@
           },
           "reason": {
             "enum": [
-              "queue-expired"
+              "queue-expired",
+              "binding-refused"
             ],
-            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
+            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it; binding-refused, for a mapping-v2 run whose Runtime refused the preparation's binding Runner passed (JPS-INVOCATION-BINDING), a defect of Runner, never retried without the binding. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
           },
           "signing": {
             "type": "object",
@@ -1855,6 +1856,22 @@
                   "The record carries no signature."
                 ],
                 "description": "Why the signing failed. A sidecar that could not be read is never taken for no sidecar. Where no line signs the record, the key at the signing key's path, read again after the evaluation, says which of the last three: Runtime 0.30.0 and later refuse to sign with a seed that is not the expected key. Present only when failed. It names no path and no key."
+              }
+            },
+            "additionalProperties": false
+          },
+          "binding": {
+            "type": "object",
+            "description": "What Runner passed the Runtime of a completed mapping-v2 run's operational evaluation (MAPPING-V2, The preparation's binding): bound, when the Runtime was given the binding {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<SHA-256 of run.input.preparation in canonical form>\"} and the run's audit record carries it byte for byte; unsupported-runtime, when the Runtime names a release before 0.31.0, or none, and was given none. Absent for a run without a mapping v2, one that did not complete, and one recorded before Runner passed a binding. Served with the run and in run lists; not in verification exports, whose audit record carries the binding itself.",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "bound",
+                  "unsupported-runtime"
+                ]
               }
             },
             "additionalProperties": false
@@ -3186,6 +3203,7 @@
       },
       "Preparation": {
         "type": "object",
+        "description": "A mapping-v2 run's verified preparation. From Runtime 0.31.0 on, the run's audit record binds it: the record's binding is {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<hex>\"}, whose digest is the SHA-256 of this object with its members sorted by name, no insignificant whitespace, numbers as written, and strings escaped as Go's encoding/json escapes them, the form a frozen release is digested by. verify-run recomputes it from the export alone, compares the record's member as recorded, and reports binding: matches, mismatch, absent or foreign-kind, refusing a mismatch and a foreign kind (before any digest is compared), and, with --require-bound, a record without one. A binding that matches, in a record whose signature verifies, commits verifiedAt in the signed record; against the operator, who holds the key, only a witnessed chain shows a record signed again with a new binding.",
         "properties": {
           "version": {
             "const": 2

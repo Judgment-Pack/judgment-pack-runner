@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
 )
@@ -99,10 +100,13 @@ func TestFreshnessJudgedAgainstTheInstantIsNamedSourceBySource(t *testing.T) {
 // and witnessed, whose preparation is recomputed one second later and put in
 // its export in place of the original. The audit record's bytes, their
 // signature and the chain entry with its checkpoint are unchanged, and the
-// export verifies as the original did: freshness was judged against the
-// instant the export supplies. The report names that instant, the moved one,
-// and the calculator whose acquisition and tables were judged against it; the
-// unsigned-parameter report has nothing to say of it.
+// export's inputs verify as the original's did: freshness was judged against
+// the instant the export supplies. The report names that instant, the moved
+// one, and the calculator whose acquisition and tables were judged against
+// it; the unsigned-parameter report has nothing to say of it. What tells the
+// two apart is the record's binding, when the Runtime under test recorded one
+// (0.31.0 and later): it matches the original's preparation and not the moved
+// one, which verify-run refuses. A record without one is absent in both.
 func TestAPreparationMovedBySecondVerifiesAndItsInstantIsNamed(t *testing.T) {
 	bundle, profile := calculatedSignedExport(t, "computed")
 	at, err := time.Parse("2006-01-02T15:04:05Z", bundle.Run.Input.Preparation.VerifiedAt)
@@ -125,6 +129,11 @@ func TestAPreparationMovedBySecondVerifiesAndItsInstantIsNamed(t *testing.T) {
 	if !bytes.Equal(changed.Run.AuditBytes, bundle.Run.AuditBytes) || !bytes.Equal(changed.Run.AuditSignatures, bundle.Run.AuditSignatures) || !sameJSON(encode(changed.Chain), encode(bundle.Chain)) {
 		t.Fatal("the record, its signature or the chain entry changed")
 	}
+	bound := runtimeTakesBinding(t, os.Getenv("JPACK_TEST_BIN"))
+	binding := map[string]string{"original": BindingAbsent, "moved": BindingAbsent}
+	if bound {
+		binding = map[string]string{"original": BindingMatches, "moved": BindingMismatch}
+	}
 	for name, b := range map[string]VerificationBundle{"original": bundle, "moved": changed} {
 		v, err := VerifyInputs(encode(b), []InputProfile{profile}, b.ReleaseDigest)
 		if err != nil {
@@ -140,6 +149,9 @@ func TestAPreparationMovedBySecondVerifiesAndItsInstantIsNamed(t *testing.T) {
 		want := `{"against":"preparation.verifiedAt","verifiedAt":"` + b.Run.Input.Preparation.VerifiedAt + `","sources":[{"source":"fx","checks":["acquisition","calculation"],"targets":3}]}`
 		if string(encode(v.Freshness)) != want || v.Unsigned != nil {
 			t.Fatal(name, string(encode(v.Freshness)), v.Unsigned)
+		}
+		if v.Binding == nil || v.Binding.Status != binding[name] {
+			t.Fatal(name, v.Binding)
 		}
 	}
 }

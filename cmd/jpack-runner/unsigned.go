@@ -56,9 +56,11 @@ func unsignedSentence(c runner.InputClasses, unsigned []runner.UnsignedParameter
 
 // freshnessSentence is what the line on standard error adds when a source's
 // freshness was judged against preparation.verifiedAt: how many acquisitions,
-// and how many calculators' tables, and that the export supplies the instant.
-// It adds nothing when no source was acquired.
-func freshnessSentence(f *runner.UnsignedFreshness) string {
+// and how many calculators' tables, and either that the export supplies the
+// instant or, when committed, that the signed record commits it through the
+// record's binding (bindingSentence says how far). It adds nothing when no
+// source was acquired.
+func freshnessSentence(f *runner.UnsignedFreshness, committed bool) string {
 	if f == nil {
 		return ""
 	}
@@ -72,6 +74,9 @@ func freshnessSentence(f *runner.UnsignedFreshness) string {
 		judged = "Acquisition and calculator freshness for " + sources + " were judged"
 	case calculations > 0:
 		judged = fmt.Sprintf("Acquisition freshness for %s, and calculator freshness for %d of them, were judged", sources, calculations)
+	}
+	if committed {
+		return " " + judged + " against " + f.Against + ", which is committed in the signed record: the record's binding is the SHA-256 of the export's preparation, and its signature verifies."
 	}
 	return " " + judged + " against " + f.Against + ", which the export supplies and no signature covers: freshness is consistent with the instant the export supplies; nothing establishes that instant was the admission instant."
 }

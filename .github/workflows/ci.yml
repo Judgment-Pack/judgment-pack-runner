@@ -42,14 +42,16 @@ jobs:
       # TestVerifyRunChecksARunTheRuntimeSigned run here and do not skip (#35).
       # v0.30.0 is the first that refuses to sign with a seed whose public
       # key is not JPACK_SIGNING_PUBLIC_KEY, which
-      # TestASeedReplacedAfterStartSignsNothing needs (#54). A pin moved to a
-      # Runtime without `jpack audit` would skip them again, and the step
-      # after the tests fails if any of them does not pass.
+      # TestASeedReplacedAfterStartSignsNothing needs (#54). v0.31.0 is the
+      # first that takes a caller's binding (`--binding`, runtime ADR-0050),
+      # which the binding tests need (#55). A pin moved to a Runtime without
+      # `jpack audit` or `--binding` would skip them again, and the step after
+      # the tests fails if any of them does not pass.
       - name: Check out tested Runtime
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-runtime
-          ref: 8270e9999a53ccf0d8ce9e3277b8dd7646cea98a # v0.30.0
+          ref: 8869f0de460f04dc80b1b8d62eeeaaf3ac554c17 # v0.31.0
           path: .ci-runtime
           persist-credentials: false
       # The build names the pin's release, as the release build does, so a
@@ -58,11 +60,15 @@ jobs:
       # moves the version with it.
       - name: Build Runtime
         working-directory: .ci-runtime
-        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.30.0" -o "$RUNNER_TEMP/jpack" ./cmd/jpack
+        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.31.0" -o "$RUNNER_TEMP/jpack" ./cmd/jpack
       # A Runtime that signs and does not know the expected key, as every
       # release from v0.26.0 to v0.29.x: Runner must name the key a replaced
       # seed signed under (TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed,
-      # #54). Pinned by commit as the tested Runtime is.
+      # #54). It takes no binding either, as every release before v0.31.0:
+      # Runner must give it none, and verify-run report its record unbound
+      # (TestARuntimeWithoutTheBindingIsGivenNone,
+      # TestVerifyRunReportsARecordTheRuntimeDidNotBind, #55). Pinned by
+      # commit as the tested Runtime is.
       - name: Check out an earlier signing Runtime
         uses: actions/checkout@v4
         with:
@@ -93,18 +99,18 @@ jobs:
           JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
           JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
           go test -race ./...
-      # A skipped test passes `go test`; these must run (#35, #54).
-      - name: Chain and signature tests run under the pinned Runtimes
+      # A skipped test passes `go test`; these must run (#35, #54, #55).
+      - name: Chain, signature and binding tests run under the pinned Runtimes
         run: |
           out="$(JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
             JPACK_EARLIER_TEST_BIN="$RUNNER_TEMP/jpack-earlier" \
             JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
             JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
             go test -count=1 -v \
-            -run '^(TestTheRuntimesVerifierReadsTheChainOfRuns|TestASignedRunKeepsItsSignature|TestVerifyRunChecksARunTheRuntimeSigned|TestASeedReplacedAfterStartSignsNothing|TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed)$' \
+            -run '^(TestTheRuntimesVerifierReadsTheChainOfRuns|TestASignedRunKeepsItsSignature|TestVerifyRunChecksARunTheRuntimeSigned|TestASeedReplacedAfterStartSignsNothing|TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed|TestAnOperationalEvaluationBindsItsPreparation|TestABindingTheRuntimeRefusesFailsTheRun|TestARecordWithoutTheBindingPassedFailsTheRun|TestARuntimeWithoutTheBindingIsGivenNone|TestVerifyRunHoldsTheRecordsBindingToThePreparation|TestVerifyRunReportsARecordTheRuntimeDidNotBind)$' \
             ./internal/runner ./cmd/jpack-runner)" || { printf '%s\n' "$out"; exit 1; }
           printf '%s\n' "$out"
-          for name in TestTheRuntimesVerifierReadsTheChainOfRuns TestASignedRunKeepsItsSignature TestVerifyRunChecksARunTheRuntimeSigned TestASeedReplacedAfterStartSignsNothing TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed; do
+          for name in TestTheRuntimesVerifierReadsTheChainOfRuns TestASignedRunKeepsItsSignature TestVerifyRunChecksARunTheRuntimeSigned TestASeedReplacedAfterStartSignsNothing TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed TestAnOperationalEvaluationBindsItsPreparation TestABindingTheRuntimeRefusesFailsTheRun TestARecordWithoutTheBindingPassedFailsTheRun TestARuntimeWithoutTheBindingIsGivenNone TestVerifyRunHoldsTheRecordsBindingToThePreparation TestVerifyRunReportsARecordTheRuntimeDidNotBind; do
             printf '%s\n' "$out" | grep -q -- "^--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
           done
       - name: Check API document

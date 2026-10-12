@@ -186,11 +186,18 @@ func verifyFiles(file, profiles, digest string, extra ...string) (string, string
 	return stdout.String(), stderr.String(), err
 }
 
-// report is the report line verify-run writes of a version-2 export for a
-// status, a retained disposition, a scope, and counts of asserted, record and
-// generated targets.
+// report is the report line verify-run writes of a version-2 export of a run
+// the Runtime under test recorded, for a status, a retained disposition, a
+// scope, and counts of asserted, record and generated targets: its binding is
+// the one that Runtime's record gives (bindingOfTheRuntime).
 func report(status, disposition, scope string, asserted, record, generated int) string {
-	return fmt.Sprintf(`{"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":%q,"scope":%q,"status":%q,"targetsByClass":{"asserted":%d,"record":%d,"generated":%d}}`+"\n", disposition, scope, status, asserted, record, generated)
+	return reportBound(bindingOfTheRuntime(), status, disposition, scope, asserted, record, generated)
+}
+
+// reportBound is report with the binding given, as an export kept from an
+// earlier Runner reports it.
+func reportBound(binding, status, disposition, scope string, asserted, record, generated int) string {
+	return fmt.Sprintf(`{"binding":{"status":%q},"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":%q,"scope":%q,"status":%q,"targetsByClass":{"asserted":%d,"record":%d,"generated":%d}}`+"\n", binding, disposition, scope, status, asserted, record, generated)
 }
 
 // notInExport is how the line on standard error ends for a version-2 export.
@@ -252,7 +259,7 @@ func TestVerifyRunReExecutesWithTheReleaseRuntime(t *testing.T) {
 	if err != nil || out != report("verified-disposition", "matches-re-execution", reExecuted, 3, 0, 0) {
 		t.Fatal(err, out)
 	}
-	if human != "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n" {
+	if human != "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true. The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+boundSaid()+"\n" {
 		t.Fatal("human output:", human)
 	}
 	var run map[string]json.RawMessage
@@ -278,7 +285,7 @@ func TestVerifyRunSaysWhenInputsAreAsserted(t *testing.T) {
 	if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) {
 		t.Fatal(err, out)
 	}
-	if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n" {
+	if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed. The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+boundSaid()+"\n" {
 		t.Fatal("human output:", human)
 	}
 	// The executable named does not exist: a refusal after the re-execution
@@ -311,10 +318,10 @@ func TestVerifyRunAcceptsInputsDerivedFromReceipts(t *testing.T) {
 	judged := freshnessMember("2026-10-01T18:48:51Z", `[{"source":"vendor","checks":["acquisition"],"targets":3}]`)
 	for _, extra := range [][]string{nil, {"--require-sourced"}} {
 		out, human, err := verifyFiles(dir+"run.json", dir+"profiles.json", strings.TrimSpace(string(trusted)), extra...)
-		if err != nil || out != strings.TrimSuffix(report("verified-inputs", "matches-audit", inputsOnly, 0, 3, 0), "}\n")+judged+"}\n" {
+		if err != nil || out != strings.TrimSuffix(reportBound(runner.BindingAbsent, "verified-inputs", "matches-audit", inputsOnly, 0, 3, 0), "}\n")+judged+"}\n" {
 			t.Fatal(extra, err, out)
 		}
-		if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+oneAcquisition+notInExport+"\n" {
+		if human != "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+oneAcquisition+notInExport+unboundSaid+"\n" {
 			t.Fatal(extra, "human output:", human)
 		}
 	}
@@ -366,7 +373,7 @@ func TestVerifyRunRefusesAbsentAssertedInputs(t *testing.T) {
 		}
 	}
 	out, human, err := verify(t, bundle, digest)
-	if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+"\n") {
+	if err != nil || out != report("verified-inputs", "matches-audit", inputsOnly, 3, 0, 0) || !strings.HasSuffix(human, " The run's inputs are the operator's own: nothing here checks them against a source."+notInExport+boundSaid()+"\n") {
 		t.Fatal(err, out, human)
 	}
 	out, human, err = verify(t, bundle, digest, "--require-sourced")

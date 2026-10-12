@@ -112,7 +112,10 @@ const verificationCoverage = "Every retained result disposition must match the a
 	"(outputVersion, tool, command, status, experimental, reviewed, reviewedSet, " +
 	"conformanceClaimReference, specVersion, evaluatorSpecVersion, packId, packVersion, trace, artifact, " +
 	"and any additional members) are not signed by it. run.audit is checked against run.auditBytes; " +
-	"run.auditSignatures carries the signature, not a signature over itself. Separate release-digest, " +
+	"run.auditSignatures carries the signature, not a signature over itself. A record's binding, which " +
+	"Runtime 0.31.0 and later record for a mapping-v2 run, is under that signature: the SHA-256 of " +
+	"run.input.preparation, preparation.verifiedAt included, which verify-run recomputes from the export " +
+	"and refuses on a mismatch; nothing else of run.input is bound by it. Separate release-digest, " +
 	"input, chain and checkpoint checks bind only what their documented scope states."
 
 func verifyRun(args []string, stdout, stderr io.Writer) error {
@@ -134,6 +137,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	requireWitnessed := flags.Bool("require-witnessed", false, "optional: refuse a run whose entry in the installation's chain of runs no held checkpoint covers")
 	publicKeyText := flags.String("public-key", "", "optional: the public key of the installation's signing key, 64 lowercase hexadecimal characters as `jpack audit key public` prints it, to check a version-5 export's record signature under; a key that is not the canonical encoding of a point of the curve whose order does not divide 8 is refused")
 	requireSigned := flags.Bool("require-signed", false, "optional: refuse a run whose audit record no valid signature under --public-key covers")
+	requireBound := flags.Bool("require-bound", false, "optional: refuse a run whose audit record carries no binding of its preparation: one recorded by a Runtime before 0.31.0, or before Runner passed one, and a run without lineage, which has no preparation. A binding that is not the export's preparation's, or is of another scheme, is refused without it")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -180,12 +184,26 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	sig := checkSignature(verified, publicKey)
+	// Every report carries what was checked; each says its own status, and
+	// how the retained disposition stands.
+	reportOf := func(status, disposition string) verifyReport {
+		return verifyReport{Binding: verified.Binding, recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: disposition, Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned}
+	}
 	if status, err := chainRefusal(chain, *requireWitnessed); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(reportOf(status, "matches-audit"))
 		return err
 	}
 	if status, err := signatureRefusal(sig, *requireSigned); err != nil {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(reportOf(status, "matches-audit"))
+		return err
+	}
+	// The record's binding of the preparation is held to the export's
+	// preparation once the record's chain and signature have been checked: a
+	// binding of another scheme, or another preparation's, is refused, and so,
+	// with --require-bound, is a record that carries none. The refusal comes
+	// before a re-execution, which then does not run.
+	if status, err := bindingRefusal(verified.Binding, verified.Inputs(), *requireBound); err != nil {
+		json.NewEncoder(stdout).Encode(reportOf(status, "matches-audit"))
 		return err
 	}
 	// An asserted target, and a parameter that its source's receipt does not
@@ -194,29 +212,29 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// The refusal comes before a re-execution, which then does not run.
 	if *requireSourced {
 		if status, err := refuseUnsourced(verified.Inputs(), verified.Classes, verified.Unsigned); err != nil {
-			json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
+			json.NewEncoder(stdout).Encode(reportOf(status, "matches-audit"))
 			return err
 		}
 	}
-	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + freshnessSentence(verified.Freshness) + notMappedSentence(verified.Inputs()) + record.sentence() + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion())
+	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + freshnessSentence(verified.Freshness, committed(verified.Binding, sig)) + notMappedSentence(verified.Inputs()) + record.sentence() + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion()) + bindingSentence(verified.Binding, sig)
 	if *runtime == "" {
 		// The retained answer matches the audit record; no evaluator was replayed.
 		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+said)
-		return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-inputs", RetainedDisposition: "matches-audit", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
+		return json.NewEncoder(stdout).Encode(reportOf("verified-inputs", "matches-audit"))
 	}
 	// The release's own Runtime evaluates the verified inputs again, as a
 	// rehearsal. A different disposition is a failure with a report of its own.
 	scope = scopeOf(verified, reExecutedScope)
 	err = verified.Disposition(context.Background(), *runtime)
 	if errors.Is(err, runner.ErrDispositionDiffers) {
-		json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "disposition-differs", RetainedDisposition: "differs-from-re-execution", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
+		json.NewEncoder(stdout).Encode(reportOf("disposition-differs", "differs-from-re-execution"))
 		return err
 	}
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(stderr, "verified-disposition: the run's inputs match its record, and the release's Runtime, given them again, decides what the record says. This does not say the inputs or the policy are true."+said)
-	return json.NewEncoder(stdout).Encode(verifyReport{recordReport: record, RunChain: chain, Signature: sig, Status: "verified-disposition", RetainedDisposition: "matches-re-execution", Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned})
+	return json.NewEncoder(stdout).Encode(reportOf("verified-disposition", "matches-re-execution"))
 }
 
 // readLimit reads a verification input of at most limit bytes.
@@ -267,6 +285,9 @@ func targetsOf(v runner.VerifiedRun) *runner.InputClasses {
 // verifyReport is verify-run's report on standard output. Its members encode
 // sorted by name, as they did when the report was a map; the counts sort last.
 type verifyReport struct {
+	// Present only for an export with lineage: what the record's binding of
+	// the export's preparation is (runner.BindingReport).
+	Binding *runner.BindingReport `json:"binding,omitempty"`
 	recordReport
 	RetainedDisposition string `json:"retainedDisposition"`
 	// Present only for a version-4 or version-5 export: what checking the
@@ -281,8 +302,8 @@ type verifyReport struct {
 	// Absent only for an export without lineage, whose inputs member says so.
 	TargetsByClass *runner.InputClasses `json:"targetsByClass,omitempty"`
 	// Present only when a source was acquired: its freshness was judged
-	// against preparation.verifiedAt, which the export supplies and no
-	// signature covers.
+	// against preparation.verifiedAt, which the export supplies, and which a
+	// signature covers only through the record's binding, when it matches.
 	UnsignedFreshness *runner.UnsignedFreshness `json:"unsignedFreshness,omitempty"`
 	// Present only when an acquired source's rule reads a parameter that its
 	// receipt does not commit.

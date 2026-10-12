@@ -186,7 +186,13 @@ func TestVerifyRunChecksTheRecordSignature(t *testing.T) {
 			if !strings.Contains(out, `"status":"`+c.status+`"`) || c.member != "" && !strings.Contains(out, c.member) {
 				t.Fatalf("report:\n%s", out)
 			}
-			if c.said != "" && !strings.HasSuffix(strings.TrimSuffix(said, "\n"), c.said) {
+			// The binding's sentence ends the line: committed only when the
+			// record's signature verifies under the key given.
+			end := boundSaid()
+			if name == "signed" && bindingOfTheRuntime() == runner.BindingMatches {
+				end = committedSaid
+			}
+			if c.said != "" && !strings.HasSuffix(strings.TrimSuffix(said, "\n"), c.said+end) {
 				t.Fatalf("said:\n%s", said)
 			}
 		})

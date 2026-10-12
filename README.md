@@ -260,8 +260,11 @@ guide's rule, and `--require-signed` refuses a run that no valid signature cover
 signature shows only that whoever held the key signed these exact bytes. It
 establishes nothing against the operator, who holds the key, and nothing once the
 key is copied. Runtime 0.25.0 and earlier cannot sign, so their runs are unsigned, as
-are runs recorded without a key. The [details](docs/MAPPING-V2.md#record-signatures)
-are with the rest of the v2 contract.
+are runs recorded without a key. From Runtime 0.31.0 on, a mapping-v2 run's record
+also binds the run's preparation, `verifiedAt` included, by its SHA-256: `verify-run`
+recomputes it from the export and refuses a mismatch, and `--require-bound` refuses a
+record without one. Against the operator it holds no more than the signature does. The
+[details](docs/MAPPING-V2.md#record-signatures) are with the rest of the v2 contract.
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
