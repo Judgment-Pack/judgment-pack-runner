@@ -1862,7 +1862,7 @@
           },
           "binding": {
             "type": "object",
-            "description": "What Runner passed the Runtime of a completed mapping-v2 run's operational evaluation (MAPPING-V2, The preparation's binding): bound, when the Runtime was given the binding {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<SHA-256 of run.input.preparation in canonical form>\"} and the run's audit record carries it byte for byte; unsupported-runtime, when the Runtime names a release before 0.31.0, or none, and was given none. Absent for a run without a mapping v2, one that did not complete, and one recorded before Runner passed a binding. Served with the run and in run lists; not in verification exports, whose audit record carries the binding itself.",
+            "description": "What Runner passed the Runtime of a completed mapping-v2 run's operational evaluation (MAPPING-V2, The preparation's binding): bound, when the Runtime was given the binding {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<SHA-256 of run.input.preparation in canonical form>\"} and the run's audit record carries it byte for byte; unsupported-runtime, when the Runtime names a release before 0.31.0 and was given none; unversioned-runtime, when it names no release (0.0.0-dev, a build without its release's version), so that whether it takes a binding cannot be told, and was given none. Absent for a run without a mapping v2, one that did not complete, and one recorded before Runner passed a binding. Served with the run and in run lists; not in verification exports, whose audit record carries the binding itself.",
             "required": [
               "status"
             ],
@@ -1870,7 +1870,8 @@
               "status": {
                 "enum": [
                   "bound",
-                  "unsupported-runtime"
+                  "unsupported-runtime",
+                  "unversioned-runtime"
                 ]
               }
             },
@@ -3203,7 +3204,7 @@
       },
       "Preparation": {
         "type": "object",
-        "description": "A mapping-v2 run's verified preparation. From Runtime 0.31.0 on, the run's audit record binds it: the record's binding is {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<hex>\"}, whose digest is the SHA-256 of this object with its members sorted by name, no insignificant whitespace, numbers as written, and strings escaped as Go's encoding/json escapes them, the form a frozen release is digested by. verify-run recomputes it from the export alone, compares the record's member as recorded, and reports binding: matches, mismatch, absent or foreign-kind, refusing a mismatch and a foreign kind (before any digest is compared), and, with --require-bound, a record without one. A binding that matches, in a record whose signature verifies, commits verifiedAt in the signed record; against the operator, who holds the key, only a witnessed chain shows a record signed again with a new binding.",
+        "description": "A mapping-v2 run's verified preparation. From Runtime 0.31.0 on, the run's audit record binds it: the record's binding is {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<hex>\"}, whose digest is the SHA-256 of this object with its members sorted by name, no insignificant whitespace, numbers as written, and strings escaped as Go's encoding/json escapes them, the form a frozen release is digested by. verify-run recomputes it from the export alone, compares the record's member as recorded, and reports binding: matches, mismatch, absent or foreign-kind, refusing a mismatch and a foreign kind (before any digest is compared), and, with --require-bound, a record without one. A binding that matches, in a record whose signature verifies, commits verifiedAt in the signed record: a program reading verify-run's report knows it when binding.status is matches and signature.status is signed, and unsignedFreshness keeps its name either way. Against the operator, who holds the key, only a witnessed chain shows a record signed again with a new binding.",
         "properties": {
           "version": {
             "const": 2

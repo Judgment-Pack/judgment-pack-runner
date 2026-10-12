@@ -72,8 +72,13 @@ const (
 	// and whose record carries it, byte for byte.
 	RunBound = "bound"
 	// RunBindingUnsupported is a run whose Runtime names a release before
-	// 0.31.0, or names none: it takes no binding, and was given none.
+	// 0.31.0: it takes no binding, and was given none.
 	RunBindingUnsupported = "unsupported-runtime"
+	// RunBindingUnversioned is a run whose Runtime names no release, as a
+	// build without its release's version does (0.0.0-dev): whether it takes
+	// a binding cannot be told from its answer, and it was given none, so
+	// that such a build still evaluates.
+	RunBindingUnversioned = "unversioned-runtime"
 )
 
 // runBindingRefused is the Reason of a run whose Runtime refused the binding
@@ -95,12 +100,13 @@ var errRuntimeVersionUnread = errors.New("The Runtime did not say its release, s
 // Runner passed: another, or one when none was passed, or none when one was.
 var errRecordBinding = errors.New("operational audit binding does not match this invocation")
 
-// takesBinding says whether the Runtime at bin takes --binding, from the
-// release it names in its own `version` answer, invoked in dir: 0.31.0 and
-// later do. A Runtime that names no release, as one built without its
-// release's version does (0.0.0-dev), is taken to name one before. An answer
-// that cannot be read is an error, never taken for an old Runtime.
-func takesBinding(ctx context.Context, bin, dir string) (bool, error) {
+// bindingStatusOf is what the release the Runtime at bin names in its own
+// `version` answer, invoked in dir, says of the binding: RunBound for 0.31.0
+// and later, which take one; RunBindingUnsupported for an earlier release;
+// and RunBindingUnversioned for a Runtime that names no release (0.0.0), as
+// one built without its release's version does, which is given none. An
+// answer that cannot be read is an error, never taken for an old Runtime.
+func bindingStatusOf(ctx context.Context, bin, dir string) (string, error) {
 	out, err := invoke(ctx, bin, dir, "version", "version", "--format", "json")
 	var answer struct {
 		Tool struct {
@@ -108,13 +114,19 @@ func takesBinding(ctx context.Context, bin, dir string) (bool, error) {
 		} `json:"tool"`
 	}
 	if err != nil || json.Unmarshal(out, &answer) != nil {
-		return false, errRuntimeVersionUnread
+		return "", errRuntimeVersionUnread
 	}
 	var major, minor, patch int
 	if _, err = fmt.Sscanf(answer.Tool.Version, "%d.%d.%d", &major, &minor, &patch); err != nil {
-		return false, errRuntimeVersionUnread
+		return "", errRuntimeVersionUnread
 	}
-	return major > 0 || minor >= 31, nil
+	switch {
+	case major > 0 || minor >= 31:
+		return RunBound, nil
+	case minor == 0:
+		return RunBindingUnversioned, nil
+	}
+	return RunBindingUnsupported, nil
 }
 
 // refusedBinding says whether a Runtime's answer refuses its binding: one of

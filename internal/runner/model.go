@@ -116,7 +116,8 @@ type Run struct {
 	Signing *RunSigning `json:"-"`
 	// Binding says what Runner passed the Runtime of a completed mapping-v2
 	// run: the preparation's binding, which its record then carries (bound),
-	// or none, to a Runtime that takes none (unsupported-runtime). Kept and
+	// or none, to a Runtime that takes none (unsupported-runtime) or names no
+	// release (unversioned-runtime). Kept and
 	// served as InterruptedAt is, and not part of a verification export: the
 	// record carries the binding itself, which verify-run checks.
 	Binding *RunBinding `json:"-"`

@@ -344,19 +344,18 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 	var bound *RunBinding
 	var binding []byte
 	if input.Preparation != nil && !rehearsal {
-		takes, e := takesBinding(ctx, bin, dir)
+		status, e := bindingStatusOf(ctx, bin, dir)
 		if e != nil {
 			return nil, nil, nil, nil, e
 		}
-		bound = &RunBinding{Status: RunBindingUnsupported}
-		if takes {
+		if status == RunBound {
 			binding = bindingDocument(preparationDigest(input.Preparation))
 			if err = saveFile(filepath.Join(dir, bindingFile), binding, 0600); err != nil {
 				return nil, nil, nil, nil, err
 			}
 			args = append(args, "--binding", bindingFile)
-			bound = &RunBinding{Status: RunBound}
 		}
+		bound = &RunBinding{Status: status}
 	}
 	if rehearsal {
 		args = append(args, "--rehearsal")

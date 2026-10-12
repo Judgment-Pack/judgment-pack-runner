@@ -115,7 +115,9 @@ const verificationCoverage = "Every retained result disposition must match the a
 	"run.auditSignatures carries the signature, not a signature over itself. A record's binding, which " +
 	"Runtime 0.31.0 and later record for a mapping-v2 run, is under that signature: the SHA-256 of " +
 	"run.input.preparation, preparation.verifiedAt included, which verify-run recomputes from the export " +
-	"and refuses on a mismatch; nothing else of run.input is bound by it. Separate release-digest, " +
+	"and refuses on a mismatch; nothing else of run.input is bound by it. The operator, who holds the key, " +
+	"can recompute a preparation and sign its record again with the new binding, which only --require-witnessed, " +
+	"against a checkpoint held independently, shows. Separate release-digest, " +
 	"input, chain and checkpoint checks bind only what their documented scope states."
 
 func verifyRun(args []string, stdout, stderr io.Writer) error {
@@ -137,7 +139,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	requireWitnessed := flags.Bool("require-witnessed", false, "optional: refuse a run whose entry in the installation's chain of runs no held checkpoint covers")
 	publicKeyText := flags.String("public-key", "", "optional: the public key of the installation's signing key, 64 lowercase hexadecimal characters as `jpack audit key public` prints it, to check a version-5 export's record signature under; a key that is not the canonical encoding of a point of the curve whose order does not divide 8 is refused")
 	requireSigned := flags.Bool("require-signed", false, "optional: refuse a run whose audit record no valid signature under --public-key covers")
-	requireBound := flags.Bool("require-bound", false, "optional: refuse a run whose audit record carries no binding of its preparation: one recorded by a Runtime before 0.31.0, or before Runner passed one, and a run without lineage, which has no preparation. A binding that is not the export's preparation's, or is of another scheme, is refused without it")
+	requireBound := flags.Bool("require-bound", false, "optional: refuse a run whose audit record carries no binding of its preparation: one recorded by a Runtime before 0.31.0, or before Runner passed one, and a run without lineage, which has no preparation. A binding that is not the export's preparation's, or is of another scheme, is refused without it. A binding is under the record's signature, and the operator, who holds the key, can recompute a preparation and sign its record again: only --require-witnessed, against a checkpoint held independently, shows that")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}

@@ -379,9 +379,11 @@ run.auditSignatures carries the signature, not a signature over itself. A
 record's binding, which Runtime 0.31.0 and later record for a mapping-v2 run, is
 under that signature: the SHA-256 of run.input.preparation,
 preparation.verifiedAt included, which verify-run recomputes from the export and
-refuses on a mismatch; nothing else of run.input is bound by it. Separate
-release-digest, input, chain and checkpoint checks bind only what their
-documented scope states.
+refuses on a mismatch; nothing else of run.input is bound by it. The operator,
+who holds the key, can recompute a preparation and sign its record again with
+the new binding, which only --require-witnessed, against a checkpoint held
+independently, shows. Separate release-digest, input, chain and checkpoint
+checks bind only what their documented scope states.
 
 The audit-disposition mismatch exits 1 with this report:
 
@@ -1035,7 +1037,8 @@ Runner passed.
 - **Only a Runtime that takes one.** Before each such evaluation, Runner asks
   the pinned Runtime `version --format json`, and passes the binding to 0.31.0
   and later only. An earlier Runtime, and a build that names no release
-  (`0.0.0-dev`), is given none, and the evaluation runs as before. A Runtime
+  (`0.0.0-dev`, a build without its release's version), is given none, and the
+  evaluation runs as before. A Runtime
   whose answer names no release Runner can read evaluates nothing, rather than
   being evaluated unbound: the run fails with `The Runtime did not say its
   release, so whether it takes the preparation's binding cannot be told: the
@@ -1051,8 +1054,9 @@ Runner passed.
   never evaluated again without the binding.
 - **The run says which.** A completed mapping-v2 run carries `binding`:
   `{"status":"bound"}` when its Runtime was given the binding and its record
-  carries it, and `{"status":"unsupported-runtime"}` when its Runtime takes
-  none. It is served with the run and in run lists, as `signing` is, and is not
+  carries it, `{"status":"unsupported-runtime"}` when its Runtime names a
+  release before 0.31.0, and `{"status":"unversioned-runtime"}` when it names
+  none, so that whether it takes a binding cannot be told. It is served with the run and in run lists, as `signing` is, and is not
   part of a verification export: the record carries the binding itself. A run
   that did not complete, a run without a mapping v2, and a run recorded before
   this release have none.
@@ -1096,7 +1100,10 @@ signed record, and ends with what that establishes. The audit's case, a
 preparation recomputed one second later, is refused: its digest is not the one
 the record binds. A binding that matches with no signature checked commits
 nothing by itself, and the line says so: `--require-signed` asks for the
-signature, and `--require-bound` for the binding.
+signature, and `--require-bound` for the binding. A program reading the report
+knows the instant is committed when `binding.status` is `matches` and
+`signature.status` is `signed`; `unsignedFreshness` keeps its name and its
+content either way.
 
 - **Nothing against the operator beyond the signature.** The operator holds the
   key, and can recompute a preparation, write a record with its binding and

@@ -19,11 +19,11 @@ import (
 // told.
 func runtimeTakesBinding(t *testing.T, bin string) bool {
 	t.Helper()
-	takes, err := takesBinding(context.Background(), bin, t.TempDir())
+	status, err := bindingStatusOf(context.Background(), bin, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return takes
+	return status == RunBound
 }
 
 // bindingConfig is testConfig with a Runtime that takes a binding: the test is
@@ -355,9 +355,15 @@ func TestABindingTheRuntimeRefusesFailsTheRun(t *testing.T) {
 
 // A Runtime that names a release that takes a binding, and records none, or
 // another, fails the run: the record must carry the binding Runner passed,
-// byte for byte, as it must carry its citations.
+// byte for byte, as it must carry its citations. So does one that names a
+// release that takes none, and records one all the same: a record must carry
+// none when none was passed.
 func TestARecordWithoutTheBindingPassedFailsTheRun(t *testing.T) {
 	for name, body := range map[string]string{
+		// The Runtime says it is 0.30.0, and binds a digest of its own on
+		// the operational evaluation.
+		"added": "if [ \"$1\" = version ]; then printf '{\"outputVersion\":\"2\",\"tool\":{\"name\":\"jpack\",\"version\":\"0.30.0\"}}\\n'; exit 0; fi\n" +
+			"case \" $* \" in *\" --rehearsal \"*) ;; *\" experimental evaluate \"*) printf '{\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:" + strings.Repeat("0", 64) + "\"}' > added.json; exec \"$real\" \"$@\" --binding added.json;; esac\nexec \"$real\" \"$@\"",
 		// The flag and its file are dropped from the evaluation.
 		"dropped": "for a; do shift; if [ -n \"$skip\" ]; then skip=; continue; fi; if [ \"$a\" = --binding ]; then skip=1; continue; fi; set -- \"$@\" \"$a\"; done\nexec \"$real\" \"$@\"",
 		// Another preparation's digest is bound in its place.
@@ -374,6 +380,9 @@ func TestARecordWithoutTheBindingPassedFailsTheRun(t *testing.T) {
 			_, run := boundRun(t, s, caseRun(asserted))
 			if run.State != "failed" || run.Problem != errRecordBinding.Error() || run.Binding != nil || run.Reason != "" {
 				t.Fatal(run.State, run.Problem, run.Binding, run.Reason)
+			}
+			if _, err = os.Lstat(filepath.Join(cfg.Dir, "attempts", run.ID, "audit", "evaluations.jsonl")); err != nil {
+				t.Fatal("the Runtime recorded nothing, so the record's binding was not what failed the run:", err)
 			}
 		})
 	}
@@ -421,14 +430,15 @@ func TestARuntimeThatDoesNotSayItsReleaseEvaluatesNothing(t *testing.T) {
 }
 
 // What the Runtime's version answer says of the binding: 0.31.0 and later take
-// one, earlier releases and a build that names none (0.0.0-dev) do not.
+// one; earlier releases do not; and a build that names none (0.0.0-dev) is
+// given none, and said to be unversioned.
 func TestTheRuntimesReleaseSaysWhetherItTakesABinding(t *testing.T) {
-	for version, want := range map[string]bool{"0.31.0": true, "0.31.1": true, "0.40.0": true, "1.0.0": true, "0.31.0-rc.1": true, "0.30.0": false, "0.27.1": false, "0.0.0-dev": false} {
+	for version, want := range map[string]string{"0.31.0": RunBound, "0.31.1": RunBound, "0.40.0": RunBound, "1.0.0": RunBound, "0.31.0-rc.1": RunBound, "0.30.0": RunBindingUnsupported, "0.27.1": RunBindingUnsupported, "0.1.0": RunBindingUnsupported, "0.0.0-dev": RunBindingUnversioned, "0.0.0": RunBindingUnversioned} {
 		bin := filepath.Join(t.TempDir(), "version")
 		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '{\"outputVersion\":\"2\",\"tool\":{\"name\":\"jpack\",\"version\":\""+version+"\"}}\\n'\n"), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := takesBinding(context.Background(), bin, t.TempDir()); err != nil || got != want {
+		if got, err := bindingStatusOf(context.Background(), bin, t.TempDir()); err != nil || got != want {
 			t.Fatal(version, got, err)
 		}
 	}
