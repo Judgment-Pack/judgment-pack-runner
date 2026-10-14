@@ -49,9 +49,12 @@ second implementation; it is not a third independent implementation.
 The trusted boot line optionally supplies `inputProfiles: [...]`. Profiles contain
 public verification configuration only. No HTTP endpoint can create or modify
 profiles. `GET /v1/input-profiles` returns profiles with their canonical digests for
-review; this does not authorize arbitrary acquisition. A profile for an operation
-must have `shape: "mcp"` and a nonempty `tools` allowlist. Read-only backend
-credentials and operator-reviewed tools enforce the external read boundary.
+review; this does not authorize arbitrary acquisition. A profile's `shape` is one
+the gateway defines (gateway SPEC.md §1.2a, `acquisition.shape`): `airbyte`, `mcp`,
+`http` or `command`. A profile for an operation must be of an adapter's shape,
+`airbyte`, `mcp` or `http`, and one of shape `mcp` needs a nonempty `tools`
+allowlist. Read-only backend credentials and operator-reviewed tools enforce the
+external read boundary.
 
 `POST /v1/inputs/preview`, `/v1/previews`, and `/v1/jobs/{job}/runs` accept:
 
@@ -120,8 +123,19 @@ return an explicit bounded status envelope and guard it in a rule.
 
 Source kinds:
 
-- `operation`: one retained v3 MCP response `{result, receipt, salts}`. The request
-  template names a fixed, operator-allowed tool. Each source is one acquisition.
+- `operation`: one retained v3 gateway response `{result, receipt, salts}` from a
+  source of shape `airbyte`, `mcp` or `http`, whose receipt's `acquisition.shape`
+  must be the shape its profile pins. For `mcp` the request template names a fixed,
+  operator-allowed tool. For another shape it is the request that source reads (for
+  the gateway's `adapter-http`, a path, a method, a query and a body), formed by the
+  mapping's author and held to the template rules below, which the receipt commits
+  to. A paged acquisition (`acquisition.pageItems`), which the gateway's
+  `adapter-airbyte` makes of every read, is refused whatever the shape
+  ([Deferred scope](#deferred-scope)). Each source is one acquisition. The
+  preparation's form does not depend on the source's shape: the receipt is verified,
+  and the result derived, the same way for each, and the preparation does not name
+  the shape, which the profile the mapping pins by digest and the receipt it cites
+  carry.
 - `selected-file`, `provider: "local-file"`: `sources[name].snapshot` is the v1
   selected JSON snapshot. No profile or request arguments. Its class is asserted.
 - `selected-file`, `provider: "google-drive"`: the existing selected snapshot

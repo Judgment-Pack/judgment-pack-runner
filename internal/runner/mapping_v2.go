@@ -332,7 +332,11 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				if e != nil {
 					return fail(e)
 				}
-				if source.Kind == "operation" {
+				// As instantiated for this case, an MCP operation's request
+				// is still a tool call its profile allows; the request of an
+				// operation of another shape is the one its receipt commits
+				// to, and is held to nothing more (adapterShapes).
+				if source.Kind == "operation" && profile.Shape == "mcp" {
 					o := request.(map[string]any)
 					tool, ok := o["tool"].(string)
 					allowed := false

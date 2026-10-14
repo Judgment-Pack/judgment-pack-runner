@@ -1541,7 +1541,7 @@
             ]
           }
         ],
-        "description": "Manual facts/evidence, v1 selected file, or ordered v2 case/file/MCP mapping. Omit facts/evidence to use projection; supplied values must match. V2 verification requires installation profiles."
+        "description": "Manual facts/evidence, v1 selected file, or ordered v2 case/file/gateway-operation mapping. Omit facts/evidence to use projection; supplied values must match. V2 verification requires installation profiles."
       },
       "PreviewRequest": {
         "type": "object",
@@ -2945,6 +2945,7 @@
           },
           "shape": {
             "enum": [
+              "airbyte",
               "mcp",
               "http",
               "command"

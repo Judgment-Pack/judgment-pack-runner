@@ -34,6 +34,20 @@ func flatToken(s string) bool {
 	}
 	return true
 }
+
+// adapterShapes are the gateway's adapter shapes (gateway SPEC.md §1.2a,
+// acquisition.shape; §6, "Adapter sources"). An operation is read from a
+// retained record of any of them alike: its receipt is held to the shape its
+// profile pins, which the record declares, and the bytes the receipt signs
+// are derived the same way whatever the shape, so a preparation's form does
+// not depend on it. The request is what differs: an MCP operation's is a
+// tool call, held to a tool its profile allows (mcpToolCall); a request to a
+// source of another shape is formed by the mapping's author and held to the
+// template rules alone, as its receipt commits to it. "command", a bare
+// command with no adapter, is a shape a profile may name and an operation
+// may not. A shape the gateway does not define is refused.
+var adapterShapes = map[string]bool{"airbyte": true, "mcp": true, "http": true}
+
 func validateProfiles(profiles []InputProfile) error {
 	_, err := validateProfileKeys(profiles)
 	return err
@@ -53,7 +67,7 @@ func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey,
 		if len(encode(p)) > 32<<10 {
 			return nil, errors.New("input profile exceeds 32 KiB")
 		}
-		if !mappingName.MatchString(p.ID) || ids[p.ID] || (p.Class != "record" && p.Class != "generated") || p.Source == "" || len(p.Source) > 256 || p.Authority == "" || len(p.Authority) > 256 || p.Adapter.Name == "" || p.Adapter.Version == "" || !validDigest(p.Adapter.Digest) || p.Shape != "mcp" && p.Shape != "command" && p.Shape != "http" {
+		if !mappingName.MatchString(p.ID) || ids[p.ID] || (p.Class != "record" && p.Class != "generated") || p.Source == "" || len(p.Source) > 256 || p.Authority == "" || len(p.Authority) > 256 || p.Adapter.Name == "" || p.Adapter.Version == "" || !validDigest(p.Adapter.Digest) || !adapterShapes[p.Shape] && p.Shape != "command" {
 			return nil, errors.New("invalid installation input profile")
 		}
 		key, e := ParsePublicKey(p.PublicKey)
@@ -92,8 +106,8 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 			if profileHash(p) != s.ProfileDigest {
 				return p, errors.New("trusted input profile changed; review a new release")
 			}
-			if s.Kind == "operation" && p.Shape != "mcp" {
-				return p, errors.New("this slice supports MCP operations only")
+			if s.Kind == "operation" && !adapterShapes[p.Shape] {
+				return p, errors.New("an operation is read from an adapter source: its profile's shape must be airbyte, mcp or http")
 			}
 			if s.Provider == "google-drive" && (p.Source != "drive" || p.Class != "record") {
 				return p, errors.New("selected Drive files require a record profile for drive")

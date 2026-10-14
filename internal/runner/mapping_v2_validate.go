@@ -318,27 +318,11 @@ func validateMappingV2(m InputMapping) error {
 			if e != nil {
 				return fail(e.Error())
 			}
-			request, ok := v.(map[string]any)
-			if !ok {
+			// An operation's request is held to the form of its source's
+			// shape where its profile is known (mcpToolCall); here, to the
+			// template rules every request is held to.
+			if _, ok := v.(map[string]any); !ok {
 				return fail("arguments must be an object")
-			}
-			if s.Kind == "operation" {
-				tool, literal := request["tool"].(string)
-				arguments, object := request["arguments"].(map[string]any)
-				if !literal || tool == "" || !object || len(request) != 2 {
-					return fail("MCP tool identity must be a fixed literal with an arguments object")
-				}
-				if tool == "execute_sql" {
-					switch sql := arguments["sql"].(type) {
-					case string:
-					case map[string]any:
-						if _, ok := sql["$text"].(string); !ok || len(sql) != 1 {
-							return fail("execute_sql requires fixed SQL text or integer-only text interpolation; use bind arguments for strings")
-						}
-					default:
-						return fail("execute_sql requires fixed SQL text")
-					}
-				}
 			}
 			if _, e = instantiate(v, nil, local, true); e != nil {
 				return fail(e.Error())
@@ -447,6 +431,44 @@ func admitted(m InputMapping, kind, target, class string, generated bool) bool {
 	}
 	return has(class) && (!generated || has("generated"))
 }
+
+// mcpToolCall holds the request template of an operation whose profile is
+// of shape mcp to the form of a tool call: exactly a fixed, literal tool and
+// an object of arguments, the tool one the profile allows. DBHub's
+// execute_sql takes its SQL as fixed text, or as text that interpolates
+// integers only. The request of an operation of another shape is not a tool
+// call, and is not held to this (adapterShapes).
+func mcpToolCall(source MappingSource, profile InputProfile) error {
+	fail := func(s string) error { return errors.New("Mapping v2: " + s) }
+	v, e := readInputJSON(source.Arguments)
+	if e != nil {
+		return fail(e.Error())
+	}
+	request, _ := v.(map[string]any)
+	tool, literal := request["tool"].(string)
+	arguments, object := request["arguments"].(map[string]any)
+	if !literal || tool == "" || !object || len(request) != 2 {
+		return fail("MCP tool identity must be a fixed literal with an arguments object")
+	}
+	if tool == "execute_sql" {
+		switch sql := arguments["sql"].(type) {
+		case string:
+		case map[string]any:
+			if _, ok := sql["$text"].(string); !ok || len(sql) != 1 {
+				return fail("execute_sql requires fixed SQL text or integer-only text interpolation; use bind arguments for strings")
+			}
+		default:
+			return fail("execute_sql requires fixed SQL text")
+		}
+	}
+	for _, allowed := range profile.Tools {
+		if allowed == tool {
+			return nil
+		}
+	}
+	return fmt.Errorf("source %s: tool is not allowed by its trusted profile", source.Name)
+}
+
 func sourceFailure(name string, err error) error {
 	return bad("input_preparation_failed", fmt.Sprintf("Source %s: %s. No decision was requested.", name, err))
 }

@@ -490,7 +490,16 @@ func calculatedSignedExport(t *testing.T, status string, change ...func(*Input))
 	for _, c := range change {
 		c(&input)
 	}
+	return signedAndWitnessedExport(t, cfg, input, profile, "Calculated, signed and witnessed", status), profile
+}
 
+// signedAndWitnessedExport previews input under cfg, completes a run of it
+// and returns the run's version-5 export after requiring both protections
+// Desk presents: the record is signed under its listed key, and its chain
+// entry is witnessed by a checkpoint retained apart from the served chain.
+// cfg is a signing configuration whose one trusted profile is profile.
+func signedAndWitnessedExport(t *testing.T, cfg Config, input Input, profile InputProfile, title, key string) VerificationBundle {
+	t.Helper()
 	s, err := Open(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -504,11 +513,11 @@ func calculatedSignedExport(t *testing.T, status string, change ...func(*Input))
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.createJob("Calculated, signed and witnessed", release.ID)
+	job, err := s.createJob(title, release.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, _, err := s.submit(job.ID, status, input)
+	run, _, err := s.submit(job.ID, key, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +542,7 @@ func calculatedSignedExport(t *testing.T, status string, change ...func(*Input))
 	if err != nil || check.Status != "valid" || !check.Witnessed || check.FindingsTotal != 0 {
 		t.Fatalf("the required held checkpoint did not witness the run: %+v %v", check, err)
 	}
-	return bundle, profile
+	return bundle
 }
 
 // A calculated export does not escape either protection because its sources

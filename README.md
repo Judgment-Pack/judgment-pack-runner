@@ -187,7 +187,9 @@ schedules, batch records, CSV mapping, and standing source grants are not includ
 
 ## Verified mapping v2 (Runner and Desk)
 
-Runner now supports ordered case/file/MCP input mappings with cryptographic v3
+Runner now supports ordered case/file/gateway-operation input mappings, from a gateway
+source of shape `airbyte`, `mcp` or `http` alike (a paged acquisition, which
+`adapter-airbyte` makes of every read, is not read yet), with cryptographic v3
 receipt verification, exact request commitments, trusted source classifications,
 validated dependency chaining and per-target lineage. Releases freeze the mapping
 and operator profiles; operational evaluations retain matching Runtime citations.
@@ -622,8 +624,8 @@ in that state becomes a visible failure on restart and is **not** retried.
 Acquisition has a 120-second overall budget, bounded by occurrence expiry, plus
 existing source and combined input limits. Preview makes real provider calls.
 Enabling a trigger authorizes future operation calls, including provider charges.
-Interactive Drive grants, background picker file access, HTTP-shaped v2 profiles
-and connected file-change triggers remain unsupported.
+Interactive Drive grants, background picker file access and connected file-change
+triggers remain unsupported.
 
 Example additional trusted boot fields:
 

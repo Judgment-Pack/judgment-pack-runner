@@ -82,19 +82,12 @@ func preflightV2(m InputMapping, profiles []InputProfile) error {
 			if (profile.Calculator != nil) != (source.Calculation != nil) {
 				return fmt.Errorf("source %s: a calculator's profile and a calculation binding go together", source.Name)
 			}
-			if source.Kind == "operation" {
-				var request struct {
-					Tool string `json:"tool"`
-				}
-				if json.Unmarshal(source.Arguments, &request) != nil {
-					return errors.New("MCP request must name a fixed tool")
-				}
-				allowed := false
-				for _, tool := range profile.Tools {
-					allowed = allowed || tool == request.Tool
-				}
-				if !allowed {
-					return fmt.Errorf("source %s: tool is not allowed by its trusted profile", source.Name)
+			// An MCP operation's request is a tool call its profile allows.
+			// A request to a source of another shape is held to the
+			// template rules alone (adapterShapes).
+			if source.Kind == "operation" && profile.Shape == "mcp" {
+				if err := mcpToolCall(source, profile); err != nil {
+					return err
 				}
 			}
 		}

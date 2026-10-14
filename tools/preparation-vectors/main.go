@@ -17,7 +17,9 @@
 // It refuses to write into a directory that exists. The ninth vector,
 // numeric-spellings, was added by this generator afterwards, run into a new
 // directory: it wrote the first eight again byte for byte, and only the new
-// vector and its manifest entry were taken from that run.
+// vector and its manifest entry were taken from that run. The tenth,
+// http-shaped-source, was added the same way: the run wrote the first nine
+// again byte for byte.
 package main
 
 import (
@@ -93,6 +95,8 @@ var specs = []spec{
 		note: "A case-only run, as Runner exported it (version 2), before it passed a binding: every target is asserted, and nothing was acquired. A case value holds &, <, >, a letter with an accent and a snowman, so preparation.json shows the canonical form's escaping: &, < and > escaped as \\u0026, \\u003c and \\u003e, the others written as UTF-8."},
 	{name: "numeric-spellings", from: "mapping-v2-calculated-numeric", args: strongest, key: true, held: true, want: "verified-inputs",
 		note: "The valid case's mapping and inputs, run again with three integer case parameters more, which nothing reads: zero written -0, largest 9007199254740991 and least -9007199254740991, the largest and the least integers mapping v2 admits. Each outcome keeps them among its parameters as the case wrote them, and so does preparation.json: -0 is not 0, and neither large integer is written with an exponent. Numbers such as 1.00 and 1e+02, and integers beyond 2^53-1, are outside what mapping v2 admits (integers from -(2^53-1) to 2^53-1, with no fraction or exponent): preparation refuses them as a parameter and as a copied value, so no preparation holds them and no vector can. A reader concludes verified-inputs, the record's binding matching the preparation as written."},
+	{name: "http-shaped-source", from: "mapping-v2-http-shaped", args: strongest, key: true, held: true, want: "verified-inputs",
+		note: "A run whose one source is of shape http, as Runner exported it (version 5), signed, witnessed and bound. Its retained record, {result, receipt, salts}, was recorded from a stand-in, in the test's process, of a gateway source its operator declared http: an endpoint the test served over TLS, read as adapter-http reads one, and a receipt naming acquisition.shape http, the shape the profile pins, signed under the profile's key. No live service was asked. The request is the mapping's path, method and query, not a tool call; the result is the adapter's status, headers, bodyEncoding and body, and the rule reads it as any source's result is read. preparation.json has the form of every other vector's preparation: nothing in it depends on the source's shape, and nothing in it names the shape, which the profile the mapping pins by digest and the receipt it cites carry. A reader concludes verified-inputs, the record's binding matching the preparation."},
 }
 
 // vector is a vector's files as they are made.
