@@ -535,9 +535,23 @@ func calculatedSignedExport(t *testing.T, status string) (VerificationBundle, In
 // A calculated export does not escape either protection because its sources
 // carry calculator testimony: after its signature and independently held
 // checkpoint pass, changing its displayed answer has the disposition finding,
-// and changing its retained table time has the lineage finding.
+// and changing its retained table time has the lineage finding. The export in
+// testdata/mapping-v2-calculated-bound was written by this test, under Runtime
+// 0.31.0, with JPACK_V2_CALCULATED_EXPORT_DIR set: its record binds its
+// preparation, and vectors/preparation was generated from it once.
 func TestACalculatedSignedAndWitnessedRunRefusesAnswerAndTableTimeTampering(t *testing.T) {
 	bundle, profile := calculatedSignedExport(t, "computed")
+	if dir := os.Getenv("JPACK_V2_CALCULATED_EXPORT_DIR"); dir != "" {
+		raw := encode(bundle)
+		if v, err := VerifyInputs(raw, []InputProfile{profile}, bundle.ReleaseDigest); err != nil || v.Binding == nil || v.Binding.Status != BindingMatches {
+			t.Fatal("the export does not bind its preparation: set JPACK_TEST_BIN to a Runtime of 0.31.0 or later", err)
+		}
+		for name, data := range map[string][]byte{"run.json": raw, "profiles.json": encode([]InputProfile{profile}), "release-digest.txt": []byte(bundle.ReleaseDigest), "public-key.txt": []byte(vectorKey1 + "\n"), "checkpoints.jsonl": append(encode(bundle.Chain.Checkpoint), '\n')} {
+			if err := os.WriteFile(dir+"/"+name, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 
 	answer := bundle
 	answer.Run.Result = bytes.Replace(answer.Run.Result, []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"fabricated-approval"`), 1)

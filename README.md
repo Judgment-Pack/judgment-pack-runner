@@ -266,6 +266,13 @@ recomputes it from the export and refuses a mismatch, and `--require-bound` refu
 record without one. Against the operator it holds no more than the signature does. The
 [details](docs/MAPPING-V2.md#record-signatures) are with the rest of the v2 contract.
 
+The [preparation vectors](vectors/preparation/README.md) are for a second reader of the
+mapping's preparation, which the specification takes up as the dialect: for each, the
+mapping, the case, the source records and the profiles, the preparation Runner computes
+from them in its [canonical form](docs/MAPPING-V2.md#the-canonical-form-of-a-preparation)
+with its SHA-256, and the export with what `verify-run` reports of it, valid and altered.
+They were generated once and are not regenerated; tests hold Runner to them byte for byte.
+
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
 `/v1/inputs/next` planner. Supply trusted installation profiles with Desk's

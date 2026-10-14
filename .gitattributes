@@ -1,0 +1,2 @@
+# The vectors are bytes a second reader is held to: never convert their line endings.
+vectors/** -text

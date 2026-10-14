@@ -1023,12 +1023,10 @@ private directory, beside the facts and citations it passes, that holds exactly:
 ```
 
 The digest is the SHA-256 of the run's `run.input.preparation` in the canonical
-form Runner digests a frozen release by: the object with its members sorted by
-name, in byte order, no insignificant whitespace, numbers as written, and
-strings escaped as Go's `encoding/json` escapes them (`&`, `<` and `>` as
-`\u0026`, `\u003c` and `\u003e`). A verifier recomputes it from the export
-alone. The Runtime records the member compact, `kind` then `digest`: the bytes
-Runner passed.
+form Runner digests a frozen release by, stated
+[below](#the-canonical-form-of-a-preparation). A verifier recomputes it from the
+export alone. The Runtime records the member compact, `kind` then `digest`: the
+bytes Runner passed.
 
 - **Only an operational evaluation of a mapping-v2 run.** A rehearsal, such as
   a release's preview or a re-execution at verification, is given none: it
@@ -1127,6 +1125,52 @@ trail as chained from its first line, as a new trail is, so the line must be
 sequence 1, linked to the SHA-256 of nothing. A legacy prefix, and a repair's
 discontinuity, cannot occur in an attempt's directory, and are the Runtime's
 `audit verify`'s to read.
+
+### The canonical form of a preparation
+
+A preparation's digest, the one a record's binding names, is the SHA-256 of the
+preparation in one canonical form, the form a frozen release's digest is taken
+in too. It is stated here once. The vectors in
+[`vectors/preparation`](../vectors/preparation/README.md) hold it byte for byte,
+with the preparation Runner computes from each vector's mapping, case, source
+records and profiles, and what `verify-run` reports of each export; a reader
+written from this section is held to them. The specification takes this form up
+as the dialect (Judgment-Pack/judgment-pack-spec#141). Nothing here changes what
+a preparation is or how Runner computes it.
+
+- **What is digested:** the export's `run.input.preparation`, all of it:
+  `version`, `verifiedAt`, `mappingDigest`, `verification`, `cites`, `lineage`
+  and `outcomes`, with everything each holds. Nothing else of `run.input` is.
+- **Members:** each object's members sorted by name, comparing the names' UTF-8
+  bytes, which orders them by code point. An array keeps its order. No member is
+  named twice, and every string is well-formed Unicode: the export's reader
+  refuses others.
+- **Whitespace:** none between tokens.
+- **Numbers:** as written, the literal's characters kept, never read as a
+  floating-point value and written again.
+- **Strings:** as Go's `encoding/json` writes them. `"` and `\` are written
+  `\"` and `\\`; U+0008, U+0009, U+000A, U+000C and U+000D are written `\b`,
+  `\t`, `\n`, `\f` and `\r`; any other code point below U+0020 is written
+  `\u00` and two lowercase hexadecimal digits; `&`, `<` and `>` are written
+  `\u0026`, `\u003c` and `\u003e`, and U+2028 and U+2029 `\u2028` and
+  `\u2029`. Every other code point is written as its UTF-8 bytes, `/` and
+  letters outside ASCII included. The vector `escaped-strings` holds `A&B <x>
+  café ☃` written so.
+- **`true`, `false` and `null`** as they are.
+- **`verifiedAt`** is the instant the preparation was verified, in whole seconds
+  of UTC, as 20 characters: `2026-10-14T14:58:26Z`. Each outcome retains the same
+  instant among its parameters as `runAt`. A preparation recomputed at another
+  instant is another preparation, with another digest: the vector
+  `recomputed-one-second-later`.
+- **The digest** is `sha256:` and the 64 lowercase hexadecimal characters of the
+  SHA-256 of those bytes. The binding Runner passes for it is, exactly,
+  `{"kind":"judgment-pack-runner/preparation/1","digest":"sha256:…"}`, which a
+  reader compares with the record's member as recorded, as
+  [above](#record-signatures) ("Checking a binding").
+
+It is not the gateway's canonical JSON, in which a mapping's digest
+(`mappingDigest`), a profile's digest and a receipt are taken: that form writes
+`&`, `<` and `>` as they are.
 
 ### Exports without lineage
 
