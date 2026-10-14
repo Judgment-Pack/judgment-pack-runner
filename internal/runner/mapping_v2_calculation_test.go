@@ -462,8 +462,9 @@ func TestCalculatedRunIsEvaluatedAndVerifiedOffline(t *testing.T) {
 // calculatedSignedExport completes a calculated run under Runner's signing
 // key and returns the version-5 export after requiring both protections Desk
 // presents: the record is signed under its listed key, and its chain entry is
-// witnessed by a checkpoint retained apart from the served chain.
-func calculatedSignedExport(t *testing.T, status string) (VerificationBundle, InputProfile) {
+// witnessed by a checkpoint retained apart from the served chain. Each change
+// is made to the run's input before its release is previewed.
+func calculatedSignedExport(t *testing.T, status string, change ...func(*Input)) (VerificationBundle, InputProfile) {
 	t.Helper()
 	cfg := testConfig(t)
 	keyPath := signingKey(t)
@@ -486,6 +487,9 @@ func calculatedSignedExport(t *testing.T, status string) (VerificationBundle, In
 		calc["asOf"].(map[string]any)["ecb-rates"] = at.Add(-400 * 24 * time.Hour).Format(time.RFC3339)
 	}
 	input.Source.Sources["fx"] = SourceValue{Response: signResponse(t, profile, key, []byte(calculatorArgs), encode(result), at, 0)}
+	for _, c := range change {
+		c(&input)
+	}
 
 	s, err := Open(cfg)
 	if err != nil {
@@ -541,17 +545,7 @@ func calculatedSignedExport(t *testing.T, status string) (VerificationBundle, In
 // preparation, and vectors/preparation was generated from it once.
 func TestACalculatedSignedAndWitnessedRunRefusesAnswerAndTableTimeTampering(t *testing.T) {
 	bundle, profile := calculatedSignedExport(t, "computed")
-	if dir := os.Getenv("JPACK_V2_CALCULATED_EXPORT_DIR"); dir != "" {
-		raw := encode(bundle)
-		if v, err := VerifyInputs(raw, []InputProfile{profile}, bundle.ReleaseDigest); err != nil || v.Binding == nil || v.Binding.Status != BindingMatches {
-			t.Fatal("the export does not bind its preparation: set JPACK_TEST_BIN to a Runtime of 0.31.0 or later", err)
-		}
-		for name, data := range map[string][]byte{"run.json": raw, "profiles.json": encode([]InputProfile{profile}), "release-digest.txt": []byte(bundle.ReleaseDigest), "public-key.txt": []byte(vectorKey1 + "\n"), "checkpoints.jsonl": append(encode(bundle.Chain.Checkpoint), '\n')} {
-			if err := os.WriteFile(dir+"/"+name, data, 0644); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
+	writeBoundFixture(t, os.Getenv("JPACK_V2_CALCULATED_EXPORT_DIR"), bundle, profile)
 
 	answer := bundle
 	answer.Run.Result = bytes.Replace(answer.Run.Result, []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"fabricated-approval"`), 1)
@@ -567,6 +561,79 @@ func TestACalculatedSignedAndWitnessedRunRefusesAnswerAndTableTimeTampering(t *t
 	if err := VerifyRun(encode(changed), []InputProfile{profile}, changed.ReleaseDigest); err == nil || err.Error() != "retained lineage does not match recomputation" {
 		t.Fatalf("table-time tampering did not have the retained-lineage finding: %v", err)
 	}
+}
+
+// writeBoundFixture writes a calculated, signed and witnessed export into dir,
+// when dir is set, as the preparation vectors' fixtures were written: the
+// export, its profiles, its release digest, the key its record is signed
+// under and its held checkpoint. Its record must bind its preparation.
+func writeBoundFixture(t *testing.T, dir string, bundle VerificationBundle, profile InputProfile) {
+	t.Helper()
+	if dir == "" {
+		return
+	}
+	raw := encode(bundle)
+	if v, err := VerifyInputs(raw, []InputProfile{profile}, bundle.ReleaseDigest); err != nil || v.Binding == nil || v.Binding.Status != BindingMatches {
+		t.Fatal("the export does not bind its preparation: set JPACK_TEST_BIN to a Runtime of 0.31.0 or later", err)
+	}
+	for name, data := range map[string][]byte{"run.json": raw, "profiles.json": encode([]InputProfile{profile}), "release-digest.txt": []byte(bundle.ReleaseDigest), "public-key.txt": []byte(vectorKey1 + "\n"), "checkpoints.jsonl": append(encode(bundle.Chain.Checkpoint), '\n')} {
+		if err := os.WriteFile(dir+"/"+name, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// numericCase gives the calculated run three integer case parameters more,
+// which nothing reads, as the case writes them: -0, and the largest and the
+// least integers mapping v2 admits.
+func numericCase(i *Input) {
+	i.Source.Mapping.Case.Parameters["zero"] = Parameter{Pointer: "/zero", Type: "integer"}
+	i.Source.Mapping.Case.Parameters["largest"] = Parameter{Pointer: "/largest", Type: "integer"}
+	i.Source.Mapping.Case.Parameters["least"] = Parameter{Pointer: "/least", Type: "integer"}
+	i.Source.Case = json.RawMessage(`{"amount":"1200.00","currency":"EUR","zero":-0,"largest":9007199254740991,"least":-9007199254740991}`)
+}
+
+// A preparation keeps its numbers as its input wrote them, and its digest is
+// taken over them so: a case's -0, and the largest and the least integers
+// mapping v2 admits, are each outcome's parameters as written, and the record
+// binds that preparation. 1.00, 1e+02 and 2^53 are outside what mapping v2
+// admits: refused as a parameter and as a copied value, so no preparation
+// holds them. The export in testdata/mapping-v2-calculated-numeric was written
+// by this test, under Runtime 0.31.0, with JPACK_V2_NUMERIC_EXPORT_DIR set.
+func TestAPreparationKeepsItsNumbersAsWritten(t *testing.T) {
+	input, p, _, at := calculatorFixture(t)
+	for _, literal := range []string{"1.00", "1e+02", "9007199254740992"} {
+		parameter := cloneInput(input)
+		numericCase(&parameter)
+		parameter.Source.Case = json.RawMessage(strings.Replace(string(parameter.Source.Case), `"zero":-0`, `"zero":`+literal, 1))
+		if _, err := normalizeV2(parameter, []InputProfile{p}, at); err == nil || !strings.Contains(err.Error(), "parameter zero is missing or mistyped") {
+			t.Fatalf("%s was taken as an integer parameter: %v", literal, err)
+		}
+		copied := cloneInput(input)
+		copied.Source.Mapping.Case.Facts = []FactMapping{{"/count", "/count"}}
+		copied.Source.Case = json.RawMessage(`{"amount":"1200.00","currency":"EUR","count":` + literal + `}`)
+		if _, err := normalizeV2(copied, []InputProfile{p}, at); err == nil || !strings.Contains(err.Error(), literal) {
+			t.Fatalf("%s was copied into a claim: %v", literal, err)
+		}
+	}
+	bundle, profile := calculatedSignedExport(t, "computed", numericCase)
+	v, err := VerifyInputs(encode(bundle), []InputProfile{profile}, bundle.ReleaseDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := canonical(encode(bundle.Run.Input.Preparation))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kept := range []string{`"largest":9007199254740991,"least":-9007199254740991,`, `"zero":-0}`} {
+		if n := bytes.Count(prepared, []byte(kept)); n != len(bundle.Run.Input.Preparation.Outcomes) || n != 2 {
+			t.Fatalf("%s is kept %d times, not in each outcome's parameters: %s", kept, n, prepared)
+		}
+	}
+	if runtimeTakesBinding(t, os.Getenv("JPACK_TEST_BIN")) && (v.Binding == nil || v.Binding.Status != BindingMatches || preparationDigest(bundle.Run.Input.Preparation) != digest(prepared)) {
+		t.Fatalf("the record does not bind the preparation as written: %+v", v.Binding)
+	}
+	writeBoundFixture(t, os.Getenv("JPACK_V2_NUMERIC_EXPORT_DIR"), bundle, profile)
 }
 
 // A calculation that could not compute still makes a completed, signed and

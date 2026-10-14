@@ -14,7 +14,10 @@
 //	go build -o bin/jpack-runner ./cmd/jpack-runner
 //	go run ./tools/preparation-vectors -runner bin/jpack-runner
 //
-// It refuses to write into a directory that exists.
+// It refuses to write into a directory that exists. The ninth vector,
+// numeric-spellings, was added by this generator afterwards, run into a new
+// directory: it wrote the first eight again byte for byte, and only the new
+// vector and its manifest entry were taken from that run.
 package main
 
 import (
@@ -88,6 +91,8 @@ var specs = []spec{
 		note: "A run of two acquired sources whose rules read parameters their receipts do not commit, as Runner exported it (version 2), before it passed a binding. Its preparation verifies, and the report names the parameters: runAt for the first source, a case parameter and one carried in ambiguous text for the second."},
 	{name: "escaped-strings", from: "mapping-v2-before-exact-bytes", want: "verified-inputs",
 		note: "A case-only run, as Runner exported it (version 2), before it passed a binding: every target is asserted, and nothing was acquired. A case value holds &, <, >, a letter with an accent and a snowman, so preparation.json shows the canonical form's escaping: &, < and > escaped as \\u0026, \\u003c and \\u003e, the others written as UTF-8."},
+	{name: "numeric-spellings", from: "mapping-v2-calculated-numeric", args: strongest, key: true, held: true, want: "verified-inputs",
+		note: "The valid case's mapping and inputs, run again with three integer case parameters more, which nothing reads: zero written -0, largest 9007199254740991 and least -9007199254740991, the largest and the least integers mapping v2 admits. Each outcome keeps them among its parameters as the case wrote them, and so does preparation.json: -0 is not 0, and neither large integer is written with an exponent. Numbers such as 1.00 and 1e+02, and integers beyond 2^53-1, are outside what mapping v2 admits (integers from -(2^53-1) to 2^53-1, with no fraction or exponent): preparation refuses them as a parameter and as a copied value, so no preparation holds them and no vector can. A reader concludes verified-inputs, the record's binding matching the preparation as written."},
 }
 
 // vector is a vector's files as they are made.

@@ -1147,7 +1147,11 @@ a preparation is or how Runner computes it.
   refuses others.
 - **Whitespace:** none between tokens.
 - **Numbers:** as written, the literal's characters kept, never read as a
-  floating-point value and written again.
+  floating-point value and written again. A preparation's numbers are integers
+  from −(2^53−1) to 2^53−1, with no fraction or exponent, as mapping v2 admits
+  ([above](#numeric-and-resource-profile)): `-0` stays `-0`, and the largest and
+  the least are written without an exponent. The vector `numeric-spellings`
+  holds them so.
 - **Strings:** as Go's `encoding/json` writes them. `"` and `\` are written
   `\"` and `\\`; U+0008, U+0009, U+000A, U+000C and U+000D are written `\b`,
   `\t`, `\n`, `\f` and `\r`; any other code point below U+0020 is written

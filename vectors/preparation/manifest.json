@@ -339,6 +339,52 @@
         "report": "{\"binding\":{\"status\":\"absent\"},\"exactBytes\":\"not-in-export\",\"exportVersion\":2,\"retainedDisposition\":\"matches-audit\",\"scope\":\"retained input derivation and audit binding; not sealed-session completeness or policy truth\",\"status\":\"verified-inputs\",\"targetsByClass\":{\"asserted\":3,\"record\":0,\"generated\":0}}",
         "error": null
       }
+    },
+    {
+      "name": "numeric-spellings",
+      "note": "The valid case's mapping and inputs, run again with three integer case parameters more, which nothing reads: zero written -0, largest 9007199254740991 and least -9007199254740991, the largest and the least integers mapping v2 admits. Each outcome keeps them among its parameters as the case wrote them, and so does preparation.json: -0 is not 0, and neither large integer is written with an exponent. Numbers such as 1.00 and 1e+02, and integers beyond 2^53-1, are outside what mapping v2 admits (integers from -(2^53-1) to 2^53-1, with no fraction or exponent): preparation refuses them as a parameter and as a copied value, so no preparation holds them and no vector can. A reader concludes verified-inputs, the record's binding matching the preparation as written.",
+      "from": "internal/runner/testdata/mapping-v2-calculated-numeric",
+      "altered": null,
+      "verifiedAt": "2026-10-14T15:26:28Z",
+      "files": {
+        "case.json": "sha256:b3beb881f5fc73f7eb62c1c6d500233dfe1d2c5116505202cff56d76319ae8a8",
+        "checkpoints.jsonl": "sha256:4286a07c5e3e7610586d0aec64d2414e1bd9f7dbe4dd585703f7294433638235",
+        "mapping.json": "sha256:4c397caeee5f20de91fdc3da385fedfbbfc922240c78b446b4aa3d5a3011195c",
+        "preparation.json": "sha256:b7e3279bfdb0878bfbec0ee27acd4198e7a0c6c986226b5131d4902cfa688f65",
+        "preparation.sha256": "sha256:0dc443dd621792309d978a9e7c9b0d039e76e93ed26ca407e398c22156fdc170",
+        "profiles.json": "sha256:3e8368d72d781f99c15d1c0e6ba88449af8841ac0f33f41dbaf6dcd23b34ee00",
+        "public-key.txt": "sha256:40d359139cfd8af4ff3ebfbf9c8845468ca7876582189c11d3293b832f660632",
+        "release-digest.txt": "sha256:0478dc9dd6fed42d22e1775d1a234eb2a69f874301f978fa29a23218d3e5c570",
+        "run.json": "sha256:5b1bf6b595cc43257e202ebd5ccffc583e0cc08f82b36b936ba1ffdf91e751d8",
+        "sources.json": "sha256:0ccb6c566a29dd12c5b76dda6cdc74523ab7a8e468c03353d46903ca308e7341"
+      },
+      "preparation": {
+        "sha256": "sha256:b7e3279bfdb0878bfbec0ee27acd4198e7a0c6c986226b5131d4902cfa688f65",
+        "binding": "{\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:b7e3279bfdb0878bfbec0ee27acd4198e7a0c6c986226b5131d4902cfa688f65\"}",
+        "retained": "equal"
+      },
+      "recordBinding": "{\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:b7e3279bfdb0878bfbec0ee27acd4198e7a0c6c986226b5131d4902cfa688f65\"}",
+      "verifyRun": {
+        "arguments": [
+          "--file",
+          "run.json",
+          "--profiles",
+          "profiles.json",
+          "--release-digest",
+          "sha256:2b615a5c6b1f2e5ff04570d14da4ae57d3d7769f4df4c01f1d6554eb8654da3b",
+          "--public-key",
+          "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+          "--require-signed",
+          "--expect",
+          "checkpoints.jsonl",
+          "--require-witnessed",
+          "--require-bound"
+        ],
+        "exit": 0,
+        "status": "verified-inputs",
+        "report": "{\"binding\":{\"status\":\"matches\"},\"exactBytes\":\"matches-record\",\"exportVersion\":5,\"recordDigest\":\"sha256:65abaa0773a6072c75fd41c810d6b4bf97462587650c28574a2645d4a2cec437\",\"retainedDisposition\":\"matches-audit\",\"runChain\":{\"checkpoint\":{\"checkpointVersion\":\"1\",\"recordDigest\":\"sha256:f1e17f5868ec8b5d1f51f707564f36ba67840653a08e61f9a0918555eef334d8\",\"sequence\":1,\"trail\":\"b478af3ecc924f2a0f1e2beb7247818a\"},\"findings\":[],\"findingsTotal\":0,\"held\":{\"matched\":1,\"supplied\":1,\"through\":1},\"scope\":\"checkpoint\",\"status\":\"valid\",\"witnessed\":true},\"scope\":\"retained input derivation and audit binding; not sealed-session completeness or policy truth\",\"signature\":{\"findings\":[],\"findingsTotal\":0,\"keyId\":\"21fe31dfa154a261626bf854046fd227\",\"publicKey\":\"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a\",\"readableLines\":1,\"status\":\"signed\",\"unreadableLines\":0},\"status\":\"verified-inputs\",\"targetsByClass\":{\"asserted\":0,\"record\":3,\"generated\":0},\"unsignedFreshness\":{\"against\":\"preparation.verifiedAt\",\"verifiedAt\":\"2026-10-14T15:26:28Z\",\"sources\":[{\"source\":\"fx\",\"checks\":[\"acquisition\",\"calculation\"],\"targets\":3}]}}",
+        "error": null
+      }
     }
   ]
 }
