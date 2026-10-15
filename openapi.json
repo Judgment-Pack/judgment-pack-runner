@@ -4856,7 +4856,7 @@
             }
           }
         ],
-        "description": "A dialect document of version 3 (spec/dialect.md sections 4.3 and 4.4): version 2's members but provider, facts and evidence, which version 3 does not carry. A request's version-3 document is kept as written: one Runner would write otherwise (an optional member written empty, or provider, facts or evidence) is refused, so that its digest, the preparation's mappingDigest, is the digest of the document's own canonical bytes. It is read only at source.mapping (input.source.mapping in a preview request), each member named exactly so: one under a member that is one of those names but for case, or beside such a member, is refused as invalid_source_input. Its sources are bound, or are bound at import (SourceInput.import)."
+        "description": "A dialect document of version 3 (spec/dialect.md sections 4.3 and 4.4): version 2's members but provider, facts and evidence, which version 3 does not carry. A request's version-3 document is kept as written: one Runner would write otherwise (an optional member written empty, or provider, facts or evidence) is refused, so that its digest, the preparation's mappingDigest, is the digest of the document's own canonical bytes. It is read only at source.mapping (input.source.mapping in a preview request and in an event delivery), each member named exactly so: one under a member that is one of those names but for case, or beside such a member, is refused as invalid_source_input. Its sources are bound, or are bound at import (SourceInput.import)."
       },
       "BindingDocument": {
         "type": "object",

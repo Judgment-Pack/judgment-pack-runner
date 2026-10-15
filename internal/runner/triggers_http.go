@@ -170,7 +170,7 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /v1/triggers/{trigger}/events", func(w http.ResponseWriter, r *http.Request) {
 		var delivery EventDelivery
-		if e := decode(w, r, &delivery); e != nil {
+		if e := decodeInput(w, r, &delivery); e != nil {
 			s.refusedEvent(r.PathValue("trigger"), e)
 			failure(w, e)
 			return

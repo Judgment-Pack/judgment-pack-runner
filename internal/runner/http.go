@@ -46,7 +46,8 @@ func decodeRaw(w http.ResponseWriter, r *http.Request, dst any) ([]byte, error) 
 }
 
 // decodeInput is decode, for a request that names an input: an Input, whose
-// source is at source, or a PreviewRequest, whose source is at input.source.
+// source is at source, or a PreviewRequest or an EventDelivery, whose source
+// is at input.source.
 // What the decoder read is held to the request's bytes: a dialect of version
 // 3 is kept only as it is written there (keptAsWritten), so that its digest
 // is its own, and whether the source names a mapping at all, which an
@@ -62,6 +63,8 @@ func decodeInput(w http.ResponseWriter, r *http.Request, dst any) error {
 	case *Input:
 		src, path = d.Source, []string{"source", "mapping"}
 	case *PreviewRequest:
+		src, path = d.Input.Source, []string{"input", "source", "mapping"}
+	case *EventDelivery:
 		src, path = d.Input.Source, []string{"input", "source", "mapping"}
 	default:
 		return fmt.Errorf("a request of type %T names no input", dst)

@@ -247,7 +247,7 @@ digest: `Mapping v3: the dialect is written otherwise than Runner keeps it, and
 would be kept with another digest than its own: write no optional member empty,
 and no provider, facts or evidence, which version 3 does not carry`. Runner
 reads it only at `source.mapping` (`input.source.mapping` in
-`POST /v1/previews`), each member named exactly so: a version-3 document under
+`POST /v1/previews` and in an event delivery, `POST /v1/triggers/{trigger}/events`), each member named exactly so: a version-3 document under
 a member that is one of those names but for case, or beside such a member, is
 refused as `invalid_source_input`, since the canonical form admits one
 spelling. A version-2 document is kept as Runner encodes it, as before.
