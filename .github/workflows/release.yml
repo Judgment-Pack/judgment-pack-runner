@@ -438,10 +438,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           packaged="$(cd run && find . -type f ! -name release-notes.md | while read -r name; do printf '%s sha256:%s\n' "${name#./}" "$(sha256sum "${name}" | cut -d ' ' -f 1)"; done | LC_ALL=C sort)"
-          draft="$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq .draft)"
-          published="$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}/assets" --paginate --jq '.[] | "\(.name) \(.digest)"' | LC_ALL=C sort)"
+          # A read that cannot be completed is not a finding about the release:
+          # it is reported as unverified, with the API's own error, and no
+          # diagnosis is made (docs/releasing.md).
+          unverified() {
+            printf 'The published release could not be verified: %s\nNo diagnosis is made; docs/releasing.md says how to check release %s by hand.\n' "$1" "${RELEASE_ID}" >&2
+            exit 1
+          }
+          err="$(mktemp)"
+          draft="$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq .draft 2>"${err}")" || unverified "$(cat "${err}")"
+          published="$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}/assets" --paginate --jq '.[] | "\(.name) \(.digest)"' 2>"${err}")" || unverified "$(cat "${err}")"
+          { [ "${draft}" = "true" ] || [ "${draft}" = "false" ]; } || unverified "the release read returned no draft state"
+          [ -n "${published}" ] || unverified "the asset read returned no assets"
+          published="$(echo "${published}" | LC_ALL=C sort)"
           if [ "${draft}" != "false" ] || [ "${published}" != "${packaged}" ]; then
-            printf 'The published release %s (release %s, draft: %s) does not hold what this run packaged.\nThis run packaged:\n%s\nThe release holds:\n%s\n' \
+            printf 'The published release does not hold what this run packaged: %s (release %s, draft: %s).\nThis run packaged:\n%s\nThe release holds:\n%s\n' \
               "${RELEASE_TAG}" "${RELEASE_ID}" "${draft}" "${packaged}" "${published}" >&2
             exit 1
           fi
