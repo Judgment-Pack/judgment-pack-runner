@@ -21,7 +21,7 @@ func profilesUsed(m InputMapping, profiles []InputProfile) []InputProfile {
 	return out
 }
 func (s *Service) checkReleaseProfiles(r Release) error {
-	if r.InputMapping == nil || r.InputMapping.Version != 2 {
+	if r.InputMapping == nil || !r.InputMapping.dialect() {
 		return nil
 	}
 	for _, source := range r.InputMapping.Sources {

@@ -50,7 +50,7 @@ func validateAutomatic(c *AutomaticInput, r Release, hasRoot bool) error {
 		if c.Value == "" || c.Path != "" || len(c.Files) > 0 || len(c.Case) > 0 {
 			return bad("invalid_automatic_input", "Supply explicit constant inputs only.")
 		}
-		if r.InputMapping != nil && (r.InputMapping.Version != 2 || len(r.InputMapping.Sources) > 0) {
+		if r.InputMapping != nil && (!r.InputMapping.dialect() || len(r.InputMapping.Sources) > 0) {
 			return bad("unattended_source_unavailable", "This mapping needs fresh source acquisition. Interactive grants and retained responses cannot power a schedule.")
 		}
 		var value Input
@@ -176,7 +176,7 @@ func (s *Service) automaticInputSeed(c *AutomaticInput, r Release, snapshots map
 		}
 	case "mapped-files", "mapped-sources":
 		input.Source = &SourceInput{Mapping: *r.InputMapping}
-		if r.InputMapping.Version == 2 {
+		if r.InputMapping.dialect() {
 			input.Source.Case = append(json.RawMessage(nil), c.Case...)
 			input.Source.Sources = map[string]SourceValue{}
 		}

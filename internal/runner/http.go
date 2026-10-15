@@ -45,6 +45,17 @@ func decodeRaw(w http.ResponseWriter, r *http.Request, dst any) ([]byte, error) 
 	return raw, nil
 }
 
+// decodeInput is decode, for a request that names an input mapping at
+// path: a dialect of version 3 there is kept only as it is written
+// (keptAsWritten), so that its digest is its own.
+func decodeInput(w http.ResponseWriter, r *http.Request, dst any, path ...string) error {
+	raw, err := decodeRaw(w, r, dst)
+	if err != nil {
+		return err
+	}
+	return keptAsWritten(raw, path...)
+}
+
 // releaseNamed is the release a job creation's body names, read leniently:
 // a body refused for an unsupported member or a duplicate still names one.
 func releaseNamed(raw []byte) string {
@@ -133,7 +144,7 @@ func (s *Service) Handler(token string) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/inputs/next", func(w http.ResponseWriter, r *http.Request) {
 		var input Input
-		if err := decode(w, r, &input); err != nil {
+		if err := decodeInput(w, r, &input, "source", "mapping"); err != nil {
 			failure(w, err)
 			return
 		}
@@ -146,7 +157,7 @@ func (s *Service) Handler(token string) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/inputs/preview", func(w http.ResponseWriter, r *http.Request) {
 		var input Input
-		if err := decode(w, r, &input); err != nil {
+		if err := decodeInput(w, r, &input, "source", "mapping"); err != nil {
 			failure(w, err)
 			return
 		}
@@ -159,7 +170,7 @@ func (s *Service) Handler(token string) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/previews", func(w http.ResponseWriter, r *http.Request) {
 		var req PreviewRequest
-		if err := decode(w, r, &req); err != nil {
+		if err := decodeInput(w, r, &req, "input", "source", "mapping"); err != nil {
 			failure(w, err)
 			return
 		}
@@ -228,7 +239,7 @@ func (s *Service) Handler(token string) http.Handler {
 			return
 		}
 		var input Input
-		if err := decode(w, r, &input); err != nil {
+		if err := decodeInput(w, r, &input, "source", "mapping"); err != nil {
 			s.refusedRun(r.PathValue("job"), err)
 			failure(w, err)
 			return

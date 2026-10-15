@@ -241,15 +241,25 @@ func validateConditionV2(raw []byte, params map[string]string) error {
 	}
 	return nil
 }
-func validateMappingV2(m InputMapping) error {
-	fail := func(s string) error { return inputProblem("Mapping v2: " + s) }
+func validateMappingV2(m InputMapping) error { return validateDialect(m, false) }
+
+// validateDialect holds a dialect document of version 2 or 3 to its form.
+// With open, an unbound operation of version 3 is read as the import step
+// reads a published dialect (dialect_v3.go); without it, as every dialect
+// Runner prepares is read, it is refused by name.
+func validateDialect(m InputMapping, open bool) error {
+	prefix := "Mapping v2: "
+	if m.Version == 3 {
+		prefix = "Mapping v3: "
+	}
+	fail := func(s string) error { return inputProblem(prefix + s) }
 	if len(encode(m)) > 128<<10 {
 		return fail("mapping exceeds 128 KiB")
 	}
 	if _, e := proofCanon(encode(m)); e != nil {
 		return fail(e.Error())
 	}
-	if m.Version != 2 || m.Provider != "" || len(m.Facts) > 0 || len(m.Evidence) > 0 || len(m.Sources) > 16 || m.Case == nil && len(m.Sources) == 0 {
+	if !m.dialect() || m.Provider != "" || len(m.Facts) > 0 || len(m.Evidence) > 0 || len(m.Sources) > 16 || m.Case == nil && len(m.Sources) == 0 {
 		return fail("use case and/or at most 16 named sources")
 	}
 	allFacts := []FactMapping{}
@@ -295,11 +305,19 @@ func validateMappingV2(m InputMapping) error {
 		if !mappingName.MatchString(s.Name) || s.Name == "case" || prior[s.Name] {
 			return fail("invalid or duplicate source name")
 		}
+		if e := sourceForm(m.Version, s, open); e != nil {
+			return fail(e.Error())
+		}
 		verified := s.Kind == "operation" || s.Kind == "selected-file" && s.Provider == "google-drive"
 		if s.Kind != "operation" && s.Kind != "selected-file" || s.Kind == "operation" && s.Provider != "" || s.Kind == "selected-file" && s.Provider != "google-drive" && s.Provider != "local-file" {
 			return fail("unsupported source kind/provider")
 		}
-		if verified {
+		if verified && unboundOperation(s) {
+			// Its form, and that it names no profile, are sourceForm's.
+			if s.MaxAge < 1 || s.MaxAge > 86400 || len(s.Arguments) == 0 {
+				return fail("an unbound operation requires arguments and maxAge 1..86400")
+			}
+		} else if verified {
 			if s.Profile == "" || !validDigest(s.ProfileDigest) || s.MaxAge < 1 || s.MaxAge > 86400 || len(s.Arguments) == 0 {
 				return fail("verified sources require a pinned profile, arguments and maxAge 1..86400")
 			}

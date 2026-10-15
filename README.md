@@ -211,6 +211,22 @@ inputs were asserted or derived by such a rule, and `--require-sourced` refuses 
 run, unless the only such parameter is `runAt`, the export's own verification time,
 which is exempt so that freshness checks that use it are not refused. V1 behavior and
 records remain unchanged.
+
+Runner also reads dialect version 3, the specification's name for mapping v2 with an
+unbound form of an operation and four kinds more
+([the contract](docs/MAPPING-V2.md#dialect-version-3)). A version-3 document whose
+sources are all bound is prepared as the version-2 document with the same sources is,
+its preparation's version 3 and its digest the document's own; Runner keeps a
+version-3 document only as it is written, and refuses one it would write otherwise. A
+published dialect whose operations are unbound, naming the catalog platform, operation,
+shape and record an installation binds rather than a profile, is bound at import: an
+input names the published dialect and a binding document (`source.import`), Runner
+binds each unbound source to one of this installation's profiles, of that shape and
+record, refusing by name anything else, and keeps the bound dialect as the run's
+mapping and both documents beside it, which no preparation holds. `operation` and
+`selected-file` are prepared as version 2 prepares them; the kinds `http`, `sql`, `web`
+and `research` are refused by name, `research` until its verification is written in the
+specification (Judgment-Pack/judgment-pack-spec#161). Version 2 is read as before.
 The export is version 2 unless version 3 is asked for
 (`?version=3`), which adds the audit record's bytes exactly as the Runtime wrote
 them: the bytes a gateway receipt's `decision.recordDigest` is taken over, which

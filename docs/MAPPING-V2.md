@@ -223,6 +223,134 @@ calculator's statements in a signed response, held to the case and to the
 mapping's limits. A profile, mapping or lineage entry without these members
 encodes as before.
 
+## Dialect version 3
+
+The specification's companion document `spec/dialect.md`, the dialect, reads a
+mapping v2 document as a dialect document of version 2, and defines version 3:
+version 2 with an unbound form of an operation (its §4.4) and four kinds more
+(its §4.3). Runner reads version 3 (#82). A version-2 document is read, kept,
+digested and prepared as before.
+
+**What is read.** A document whose `version` is 3 has version 2's members, held
+to the same rules and bounds, but `provider`, `facts` and `evidence`: those are
+the version-1 mapping's, which Runner's encoding of a version-2 document carries
+empty, and version 3 does not carry them. A version-3 document whose sources are
+all bound prepares as the version-2 document with the same sources does: the
+same derivation, citations, lineage and outcomes, in the same canonical form.
+Its preparation's `version` is 3, the document's (the dialect's §9.1), and its
+`mappingDigest` is the digest of the document's canonical bytes (§2). So that
+it is the document's own, Runner keeps a request's version-3 document as it is
+written. One that Runner would write otherwise, with an optional member written
+empty, such as `"unmapped": []` or a source's `"parameters": {}`, or with
+`provider`, `facts` or `evidence`, is refused rather than kept with another
+digest: `Mapping v3: the dialect is written otherwise than Runner keeps it, and
+would be kept with another digest than its own: write no optional member empty,
+and no provider, facts or evidence, which version 3 does not carry`. A
+version-2 document is kept as Runner encodes it, as before.
+
+**The kinds.** Each kind of version 3 is prepared or refused by name; none is
+read as another kind.
+
+| Kind | In a version-3 document |
+| --- | --- |
+| `operation` | Version 2's, of each adapter shape, `airbyte`, `mcp` and `http`, prepared as version 2 prepares it: bound, naming its profile, or unbound and bound at import (below). |
+| `selected-file` | Version 2's, read from Runner's selected snapshot ([above](#supported-input-and-trust-configuration)): `local-file`, asserted, and `google-drive`, verified under its `drive` profile, are prepared as version 2 prepares them. |
+| `http` | Refused: `Mapping v3: source NAME is of kind http, which this Runner does not prepare: a gateway source of shape http is read as an operation`. |
+| `sql` | Refused: `… is of kind sql, which this Runner does not prepare: a connection's statement is read as an operation of the shape its gateway source serves`. |
+| `web` | Refused: `… is of kind web, which this Runner does not prepare: the gateway's web source is read as an operation of shape http`. |
+| `research` | Refused, until its verification is written in the specification: `… is of kind research, which this Runner does not prepare yet: its verification, replaying the responses retained and never asking the model again, is being written in the specification (Judgment-Pack/judgment-pack-spec#161)`. |
+
+A member of another kind beside a source's own is refused, naming it. A
+version-2 document that names one of the four kinds is refused as an
+unsupported kind, as before, and a version-2 source that names a member of
+version 3 is refused, naming it: `Mapping v2: source NAME has the member
+MEMBER, which only a source of dialect version 3 has`. Before, the request was
+refused as having a member Runner did not know.
+
+**Binding at import.** An unbound operation names, in place of `profile` and
+`profileDigest`, the catalog `platform` and `operation` it is read through, the
+`shape` that serves it and the `record` it is written against, as a profile's
+`adapter.name` names it. Runner prepares only a bound dialect: an unbound source
+given in a mapping is refused, `Mapping v3: source NAME is unbound: …`. It binds
+one at import. A request's `source` names `import`, the published dialect and
+the binding document, in place of `mapping`:
+
+```json
+{
+  "source": {
+    "import": {
+      "dialect": {
+        "version": 3,
+        "case": {"parameters": {"vendorId": {"pointer": "/id", "type": "integer"}}, "facts": [], "evidence": []},
+        "sources": [{
+          "name": "vendor", "kind": "operation",
+          "platform": "postgres", "operation": "vendors.read", "shape": "mcp", "record": "dbhub",
+          "maxAge": 300,
+          "arguments": {"tool": "execute_sql", "arguments": {"sql": {"$text": "SELECT to_jsonb(v)::text AS record FROM vendors v WHERE v.id = {{vendorId}}"}}},
+          "read": "<the read of the example above>"
+        }]
+      },
+      "binding": {
+        "dialect": "sha256:<the digest of the published dialect's canonical bytes>",
+        "sources": {"vendor": {"profile": "vendors", "profileDigest": "sha256:<digest returned by input-profiles>"}}
+      }
+    },
+    "case": {"id": 7},
+    "sources": {"vendor": {"response": {"result": {}, "receipt": {}, "salts": {"args": "<64 lowercase hex characters>"}}}}
+  }
+}
+```
+
+The digests and the `read` are placeholders, as in the first example. Runner
+reads both documents as they are written, the published dialect at most
+128 KiB and the binding document at most 64 KiB, and makes the bound dialect:
+each unbound source with its `platform`, `operation`, `shape` and `record`
+removed and the `profile` and `profileDigest` the binding gives it added, every
+other member as written. It refuses, each by a sentence that names it:
+
+- a published dialect that is not of version 3, that has no unbound source, or
+  that is written otherwise than Runner keeps it, as above;
+- an unbound source that does not name all four members, or names a profile
+  beside them, or a `shape` that is not `airbyte`, `mcp` or `http`;
+- a binding document that is not exactly `dialect` and `sources`, or whose
+  `dialect` is not the digest of the published dialect's canonical bytes;
+- a binding that leaves an unbound source unbound, binds a name that is not a
+  source of the dialect or a source that is not unbound, or gives a source any
+  member but `profile` and `profileDigest`: a binding changes nothing but the
+  profile assignments;
+- a profile this installation does not hold by that id, or whose digest is not
+  the one the binding names; a profile whose `shape` is not the source's
+  `shape`; and a profile whose `adapter.name` is not the source's `record`.
+
+The bound dialect is then held to the form of every dialect, and becomes the
+input's `mapping`; its digest is the preparation's `mappingDigest`, and a
+record's binding commits it as it commits any preparation. Runner keeps the two
+documents as `source.import`, as they were given, beside the run: the
+operator's record of what was bound, by which the published dialect's digest,
+as its publisher names it, and the binding document's are known. No preparation
+holds either digest, or the names the binding removed. Every later preparation
+of the input, at a dispatcher's recheck, at evaluation and in `verify-run`,
+binds the documents again under the profiles it is given and refuses an input
+whose `mapping` is not the bound dialect they make. A request may give that
+bound dialect as `mapping` beside the import; it must be the one the import
+makes. The import is taken wherever an input is: `POST /v1/inputs/preview`,
+`/v1/inputs/next`, `/v1/previews` and `/v1/jobs/{job}/runs`. A release freezes
+the bound dialect, as it freezes any mapping, and a run of the release names the
+import again or the bound dialect alone.
+
+**What it establishes.** Nothing beyond what an operation that names its
+profile establishes. The bound dialect is the published one with each unbound
+source bound to the profile the binding document names; that the profile is the
+one the publisher meant, or reads the system the publisher's fixtures were
+recorded from, is the installation's statement and nothing more. One published
+dialect bound under two installations' profiles has two bound dialects and two
+digests.
+
+The vectors `version-3-bound` and `unbound-bound-at-import`
+([`vectors/preparation`](../vectors/preparation/README.md)) hold a bound
+version-3 document's preparation, and a published dialect, its binding document,
+the bound dialect Runner made of them and its preparation.
+
 ## Numeric and resource profile
 
 V1 still preserves fractional and large integer values. V2 claims, rules,
@@ -1154,7 +1282,10 @@ a preparation is or how Runner computes it.
 
 - **What is digested:** the export's `run.input.preparation`, all of it:
   `version`, `verifiedAt`, `mappingDigest`, `verification`, `cites`, `lineage`
-  and `outcomes`, with everything each holds. Nothing else of `run.input` is.
+  and `outcomes`, with everything each holds. Nothing else of `run.input` is:
+  not `run.input.source.import`, the documents a dialect was bound from at
+  import ([above](#dialect-version-3)). `version` is the mapping's, 2, or 3
+  for a document of dialect version 3.
 - **Members:** each object's members sorted by name, comparing the names' UTF-8
   bytes, which orders them by code point. An array keeps its order. No member is
   named twice, and every string is well-formed Unicode: the export's reader
@@ -1463,7 +1594,11 @@ pass these routes through yet.
 
 Preparation sessions that Runner issues to a caller, seal verification, HTTP catalog support,
 SQL async statement lifecycles, model HTTP calls, multi-record/page acquisition,
-and pack-level class declarations remain separate work. Model classification
+and pack-level class declarations remain separate work. Of dialect version 3,
+the kinds `http`, `sql`, `web` and `research` are refused by name
+([above](#dialect-version-3)): `research` waits on its verification rule, the
+replay of the responses retained, in the specification
+(Judgment-Pack/judgment-pack-spec#161). Model classification
 admission is implemented and tested for authenticated MCP sources; this does not
 claim a model HTTP integration exists.
 

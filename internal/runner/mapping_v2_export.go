@@ -328,7 +328,7 @@ func verifyNotMapped(b VerificationBundle) (Input, error) {
 		return Input{}, fmt.Errorf("an export without lineage carries its audit record's bytes, from version 3 on: a version-%d export of it is not one Runner makes", b.Version)
 	case r.Input.Preparation != nil:
 		return Input{}, errors.New(`an export with lineage is not "not-mapped"`)
-	case release.InputMapping != nil && release.InputMapping.Version == 2:
+	case release.InputMapping != nil && release.InputMapping.dialect():
 		return Input{}, errors.New("the release froze a mapping v2, and its runs are exported with their lineage")
 	case r.ReleaseID != release.ID || digest([]byte(release.Pack)) != release.PackDigest || !mappingMatchesRelease(release, r.Input):
 		return Input{}, errors.New("run and frozen release differ")

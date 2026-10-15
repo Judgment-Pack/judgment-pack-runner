@@ -20,7 +20,7 @@ const preparationVectors = "../../vectors/preparation/"
 // holds the SHA-256 of every file of every vector. The vectors were generated
 // once and are not regenerated: changing one is a change of the contract a
 // second reader is held to, and changes this digest with it.
-const preparationVectorsManifest = "sha256:db6487fadcb9f6161c243f1aae18dc4627614c5c6093d988e2f07aace12dfbeb"
+const preparationVectorsManifest = "sha256:5d33c2865ef77e3cd6c32b7b92c0be587ffac570b8496d80c78411c4dd5ac026"
 
 // preparationVector is a vector as the manifest describes it
 // (vectors/preparation/README.md).
@@ -36,6 +36,13 @@ type preparationVector struct {
 		Binding  string `json:"binding"`
 		Retained string `json:"retained"`
 	} `json:"preparation"`
+	// Import names, for a vector of a dialect bound at import, the
+	// published dialect, the binding document and the bound dialect.
+	Import *struct {
+		Published string `json:"published"`
+		Binding   string `json:"binding"`
+		Bound     string `json:"bound"`
+	} `json:"import"`
 	RecordBinding *string `json:"recordBinding"`
 	VerifyRun     struct {
 		Arguments []string `json:"arguments"`
@@ -126,6 +133,25 @@ func TestPreparationVectorsAreByteExact(t *testing.T) {
 			if err = strictJSON(file["mapping.json"], &source.Mapping); err != nil {
 				t.Fatal(err)
 			}
+			// A dialect bound at import: the published dialect bound by the
+			// binding document, under the vector's profiles, is the bound
+			// dialect, byte for byte in the gateway's canonical form, and
+			// the preparation is computed from the import as a run's is.
+			if v.Import != nil {
+				if v.Import.Published != "unbound.json" || v.Import.Binding != "binding.json" || v.Import.Bound != "mapping.json" {
+					t.Fatalf("the manifest names the import's files otherwise: %+v", *v.Import)
+				}
+				source.Import = &DialectImport{Dialect: file["unbound.json"], Binding: file["binding.json"]}
+				bound, err := bindDialect(*source.Import, profiles)
+				if err != nil {
+					t.Fatal("the vector's import does not bind:", err)
+				}
+				if !bytes.Equal(canonTest(t, encode(bound)), canonTest(t, file["mapping.json"])) {
+					t.Fatalf("the bound dialect is not mapping.json:\n%s\n%s", encode(bound), file["mapping.json"])
+				}
+			} else if _, ok := file["unbound.json"]; ok {
+				t.Fatal("the vector holds an import the manifest does not name")
+			}
 			if sources, ok := file["sources.json"]; ok {
 				if err = strictJSON(sources, &source.Sources); err != nil {
 					t.Fatal(err)
@@ -157,7 +183,7 @@ func TestPreparationVectorsAreByteExact(t *testing.T) {
 			// The export holds the vector's inputs, and retains its
 			// preparation, or another where the manifest says so.
 			export := json.RawMessage(file["run.json"])
-			for name, path := range map[string][]string{"mapping.json": {"mapping"}, "case.json": {"case"}, "sources.json": {"sources"}} {
+			for name, path := range map[string][]string{"mapping.json": {"mapping"}, "case.json": {"case"}, "sources.json": {"sources"}, "unbound.json": {"import", "dialect"}, "binding.json": {"import", "binding"}} {
 				held := member(export, append([]string{"run", "input", "source"}, path...)...)
 				if b, ok := file[name]; ok != (len(held) > 0) || !bytes.Equal(b, held) {
 					t.Fatalf("%s is not the export's own bytes", name)

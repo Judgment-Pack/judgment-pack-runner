@@ -62,7 +62,7 @@ func (s *Service) occurrence(id string) (Occurrence, error) {
 	return o, e
 }
 func (s *Service) durableMapping(r Release) bool {
-	if r.InputMapping == nil || r.InputMapping.Version != 2 {
+	if r.InputMapping == nil || !r.InputMapping.dialect() {
 		return false
 	}
 	operations := 0

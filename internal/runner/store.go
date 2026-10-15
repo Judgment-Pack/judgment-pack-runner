@@ -330,7 +330,13 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 	if s.unhealthy.Load() {
 		return Run{}, false, &apiError{503, "dispatcher_stopped", "The dispatcher stopped after a storage error. Restart Desk after checking the runner storage."}
 	}
-	v2 := input.Source != nil && input.Source.Mapping.Version == 2
+	// An import is bound before the mapping is compared with the release's:
+	// the bound dialect is the mapping the run is held to.
+	input, err := importedInput(input, s.cfg.InputProfiles)
+	if err != nil {
+		return Run{}, false, err
+	}
+	v2 := input.Source != nil && input.Source.Mapping.dialect()
 	var requestHash string
 	if v2 {
 		input.Preparation = nil
@@ -505,7 +511,7 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	release, err := s.release(r.ReleaseID)
-	if err == nil && r.Trigger != nil && r.Input.Source != nil && r.Input.Source.Mapping.Version == 2 {
+	if err == nil && r.Trigger != nil && r.Input.Source != nil && r.Input.Source.Mapping.dialect() {
 		// Queue time must not silently outlive source freshness. Verify now,
 		// while retaining the exact input snapshot frozen at admission.
 		err = s.checkReleaseProfiles(release)

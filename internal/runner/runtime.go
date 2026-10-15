@@ -205,7 +205,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	if req.Input.Source != nil {
 		mapping := req.Input.Source.Mapping
 		r.InputMapping = &mapping
-		if mapping.Version == 2 {
+		if mapping.dialect() {
 			r.InputProfiles = profilesUsed(mapping, s.cfg.InputProfiles)
 		}
 	}
@@ -237,7 +237,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		return r, err
 	}
 	r.Lock = string(lock)
-	if r.InputMapping != nil && r.InputMapping.Version == 2 {
+	if r.InputMapping != nil && r.InputMapping.dialect() {
 		r.MappingWarnings, err = s.checkMappingCoverage(ctx, r, dir)
 		if err != nil {
 			return r, err
@@ -255,7 +255,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	return r, s.saveRelease(r)
 }
 func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
-	if input.Source != nil && input.Source.Mapping.Version == 2 {
+	if input.Source != nil && input.Source.Mapping.dialect() {
 		if input.Preparation == nil || !mappingMatchesRelease(r, input) {
 			return nil, nil, nil, nil, errors.New("missing or mismatched verified preparation")
 		}

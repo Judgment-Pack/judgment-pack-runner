@@ -1541,7 +1541,7 @@
             ]
           }
         ],
-        "description": "Manual facts/evidence, v1 selected file, or ordered v2 case/file/gateway-operation mapping. Omit facts/evidence to use projection; supplied values must match. V2 verification requires installation profiles."
+        "description": "Manual facts/evidence, v1 selected file, or ordered v2 case/file/gateway-operation mapping. Omit facts/evidence to use projection; supplied values must match. V2 verification requires installation profiles. A dialect of version 3 is read as version 2 is, its unbound sources bound at import (source.import)."
       },
       "PreviewRequest": {
         "type": "object",
@@ -2022,18 +2022,19 @@
           },
           {
             "$ref": "#/components/schemas/InputMappingV2"
+          },
+          {
+            "$ref": "#/components/schemas/InputMappingV3"
           }
         ]
       },
       "SourceInput": {
         "type": "object",
-        "required": [
-          "mapping"
-        ],
         "additionalProperties": false,
         "properties": {
           "mapping": {
-            "$ref": "#/components/schemas/InputMapping"
+            "$ref": "#/components/schemas/InputMapping",
+            "description": "The mapping. With import, omit it, and Runner makes it the bound dialect; or give that bound dialect, which must be the one the import makes."
           },
           "snapshot": {
             "$ref": "#/components/schemas/SourceSnapshot"
@@ -2055,8 +2056,23 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/SourceValue"
             }
+          },
+          "import": {
+            "$ref": "#/components/schemas/DialectImport"
           }
-        }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "mapping"
+            ]
+          },
+          {
+            "required": [
+              "import"
+            ]
+          }
+        ]
       },
       "SourceSnapshot": {
         "type": "object",
@@ -2670,8 +2686,13 @@
           "kind": {
             "enum": [
               "operation",
-              "selected-file"
-            ]
+              "selected-file",
+              "http",
+              "sql",
+              "web",
+              "research"
+            ],
+            "description": "operation and selected-file are version 2's, and a version-3 document's too, prepared as version 2 prepares them. http, sql, web and research are kinds of dialect version 3 that Runner refuses by name: in a version-3 document, each is refused with a sentence naming the kind (research's names Judgment-Pack/judgment-pack-spec#161, where its verification is being written), and in a version-2 document, as an unsupported kind."
           },
           "provider": {
             "enum": [
@@ -2712,6 +2733,65 @@
           },
           "calculation": {
             "$ref": "#/components/schemas/CalculationBinding"
+          },
+          "platform": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Version 3, unbound operation: the gateway catalog platform it is read through."
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Version 3, unbound operation: the operation of that platform's binding."
+          },
+          "shape": {
+            "enum": [
+              "airbyte",
+              "mcp",
+              "http"
+            ],
+            "description": "Version 3, unbound operation: the shape that serves it. The profile it is bound to must be of this shape."
+          },
+          "record": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Version 3, unbound operation: the record it is written against, as a profile's adapter.name names it. The profile it is bound to must name this adapter."
+          },
+          "method": {
+            "description": "Version 3, kind http: refused by name with its source."
+          },
+          "path": {
+            "description": "Version 3, kind http: refused by name with its source."
+          },
+          "query": {
+            "description": "Version 3, kind http: refused by name with its source."
+          },
+          "body": {
+            "description": "Version 3, kind http: refused by name with its source."
+          },
+          "headers": {
+            "description": "Version 3, kind http: refused by name with its source."
+          },
+          "statement": {
+            "description": "Version 3, kind sql: refused by name with its source."
+          },
+          "bindings": {
+            "description": "Version 3, kind sql: refused by name with its source."
+          },
+          "url": {
+            "description": "Version 3, kind web: refused by name with its source."
+          },
+          "question": {
+            "description": "Version 3, kind research: refused by name with its source."
+          },
+          "constraints": {
+            "description": "Version 3, kind research: refused by name with its source."
+          },
+          "model": {
+            "description": "Version 3, kind research: refused by name with its source."
+          },
+          "evidence": {
+            "description": "Version 3, kind research: refused by name with its source."
           }
         },
         "required": [
@@ -2734,8 +2814,6 @@
             },
             "then": {
               "required": [
-                "profile",
-                "profileDigest",
                 "maxAge",
                 "arguments"
               ],
@@ -2743,7 +2821,61 @@
                 "required": [
                   "provider"
                 ]
-              }
+              },
+              "oneOf": [
+                {
+                  "required": [
+                    "profile",
+                    "profileDigest"
+                  ],
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "platform"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "operation"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "shape"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "record"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "platform",
+                    "operation",
+                    "shape",
+                    "record"
+                  ],
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "profile"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "profileDigest"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
             }
           },
           {
@@ -2783,7 +2915,8 @@
               ]
             }
           }
-        ]
+        ],
+        "description": "A source of a dialect document. In version 3 an operation may be unbound: platform, operation, shape and record, all four, in place of profile and profileDigest (spec/dialect.md section 4.4). Runner prepares only a bound source: an unbound one is bound at import (SourceInput.import) and refused by name elsewhere. The members of the kinds http, sql, web and research are read only so that a source of those kinds is refused for its kind. A version-2 source has none of the members of version 3."
       },
       "Admission": {
         "type": "object",
@@ -3208,7 +3341,11 @@
         "description": "A mapping-v2 run's verified preparation. From Runtime 0.31.0 on, the run's audit record binds it: the record's binding is {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<hex>\"}, whose digest is the SHA-256 of this object with its members sorted by name, no insignificant whitespace, numbers as written, and strings escaped as Go's encoding/json escapes them, the form a frozen release is digested by. verify-run recomputes it from the export alone, compares the record's member as recorded, and reports binding: matches, mismatch, absent or foreign-kind, refusing a mismatch and a foreign kind (before any digest is compared), and, with --require-bound, a record without one. A binding that matches, in a record whose signature verifies, commits verifiedAt in the signed record: a program reading verify-run's report knows it when binding.status is matches and signature.status is signed, and unsignedFreshness keeps its name either way. Against the operator, who holds the key, only a witnessed chain shows a record signed again with a new binding.",
         "properties": {
           "version": {
-            "const": 2
+            "enum": [
+              2,
+              3
+            ],
+            "description": "The dialect document's version: 3 for a version-3 document, whose preparation is otherwise a version-2 document's."
           },
           "verifiedAt": {
             "type": "string"
@@ -4659,6 +4796,124 @@
             "type": "integer",
             "minimum": 0,
             "description": "Only in the answer to a request with tail or before: the sequence of the page's first entry, the before of the request for the next older page (the cursor given, or 0 for the newest page, when the page is empty). Forward answers do not carry it."
+          }
+        }
+      },
+      "InputMappingV3": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 3
+          },
+          "case": {
+            "$ref": "#/components/schemas/CaseMapping"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MappingSource"
+            },
+            "maxItems": 16
+          },
+          "admits": {
+            "$ref": "#/components/schemas/Admission"
+          },
+          "unmapped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "unmappedEvidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "case"
+            ]
+          },
+          {
+            "required": [
+              "sources"
+            ],
+            "properties": {
+              "sources": {
+                "minItems": 1
+              }
+            }
+          }
+        ],
+        "description": "A dialect document of version 3 (spec/dialect.md sections 4.3 and 4.4): version 2's members but provider, facts and evidence, which version 3 does not carry. A request's version-3 document is kept as written: one Runner would write otherwise (an optional member written empty, or provider, facts or evidence) is refused, so that its digest, the preparation's mappingDigest, is the digest of the document's own canonical bytes. Its sources are bound, or are bound at import (SourceInput.import)."
+      },
+      "BindingDocument": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dialect",
+          "sources"
+        ],
+        "description": "spec/dialect.md section 4.4: binds each unbound source of one published dialect to an input profile of this installation, by its id and digest, and changes nothing else. Its digest is the SHA-256 of its gateway canonical bytes; no preparation holds it.",
+        "properties": {
+          "dialect": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "description": "The digest of the published dialect's gateway canonical bytes."
+          },
+          "sources": {
+            "type": "object",
+            "maxProperties": 16,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "profile",
+                "profileDigest"
+              ],
+              "properties": {
+                "profile": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "profileDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "DialectImport": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dialect",
+          "binding"
+        ],
+        "description": "The import step. Runner binds the published dialect with the binding document under this installation's input profiles, refusing by name a dialect that is not of version 3, has no unbound source or is written otherwise than Runner keeps it; a binding for another dialect, that leaves an unbound source unbound, binds a source the dialect does not have or one already bound, or names a member other than a profile's id and digest; and a profile this installation does not hold by that id and digest, of another shape than the source's, or whose adapter is not the source's record. The bound dialect is the published one with each unbound source's platform, operation, shape and record replaced by the profile, every other member as written. Runner keeps it as the input's mapping and keeps both documents here, as given, beside the run: the operator's record of what was bound, which no preparation holds. Every later preparation of the input, a dispatcher's and verify-run's included, binds them again under the profiles it is given and requires the mapping to be the bound dialect.",
+        "properties": {
+          "dialect": {
+            "$ref": "#/components/schemas/InputMappingV3"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/BindingDocument"
           }
         }
       }

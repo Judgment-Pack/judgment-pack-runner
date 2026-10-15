@@ -12,7 +12,7 @@ import (
 )
 
 func (s *Service) normalizeInput(i Input) (Input, error) {
-	if i.Source == nil || i.Source.Mapping.Version != 2 {
+	if i.Source == nil || !i.Source.Mapping.dialect() && i.Source.Import == nil {
 		return normalizeInput(i)
 	}
 	return normalizeV2(i, s.cfg.InputProfiles, time.Now().UTC().Truncate(time.Second))
@@ -156,10 +156,16 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	if e != nil {
 		return i, e
 	}
-	if i.Source == nil || i.Source.Mapping.Version != 2 {
+	// An imported dialect is bound again, under the profiles given, every
+	// time it is prepared: the mapping must be the bound dialect its import
+	// makes, or is made from it when the request names none.
+	c, e := importedSource(i.Source, profiles)
+	if e != nil {
+		return i, e
+	}
+	if c == nil || !c.Mapping.dialect() {
 		return i, inputProblem("mapping v2 required")
 	}
-	c := *i.Source
 	m := c.Mapping
 	if e := m.validate(); e != nil {
 		return i, e
@@ -201,7 +207,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	evidence := map[string]string{}
 	caseParams := map[string]any{"runAt": at.UTC().Format("2006-01-02T15:04:05Z")}
 	caseTypes := map[string]string{"runAt": "timestamp"}
-	prep := &Preparation{Version: 2, VerifiedAt: at.UTC().Format("2006-01-02T15:04:05Z"), MappingDigest: hash, Verification: "verified acquisitions; session sealing and input truth are not established", Cites: []Citation{}, Lineage: []TargetLineage{}, Outcomes: []SourceOutcome{}}
+	prep := &Preparation{Version: m.Version, VerifiedAt: at.UTC().Format("2006-01-02T15:04:05Z"), MappingDigest: hash, Verification: "verified acquisitions; session sealing and input truth are not established", Cites: []Citation{}, Lineage: []TargetLineage{}, Outcomes: []SourceOutcome{}}
 	claims := map[string]derivedClaim{}
 	generated := map[string]bool{}
 	used := map[string]bool{}
@@ -463,7 +469,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	// sources as a mapping may have, the other keeps them too.
 	sort.SliceStable(prep.Cites, func(a, b int) bool { return prep.Cites[a].CallIndex < prep.Cites[b].CallIndex })
 	c.MappingDigest = hash
-	mapped := Input{Facts: encode(facts), Source: &c, Preparation: prep}
+	mapped := Input{Facts: encode(facts), Source: c, Preparation: prep}
 	for _, l := range prep.Lineage {
 		if l.Kind == "evidence" {
 			mapped.Evidence = encode(evidence)

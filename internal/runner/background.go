@@ -71,7 +71,7 @@ func (s *Service) gatewayProfiles() []string {
 	return out
 }
 func (s *Service) validateGatewayMapping(r Release) error {
-	if r.InputMapping == nil || r.InputMapping.Version != 2 {
+	if r.InputMapping == nil || !r.InputMapping.dialect() {
 		return bad("automatic_mapping_required", "Choose a version 2 mapping for connected acquisition.")
 	}
 	if e := preflightV2(*r.InputMapping, s.cfg.InputProfiles); e != nil {

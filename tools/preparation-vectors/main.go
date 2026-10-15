@@ -19,7 +19,9 @@
 // directory: it wrote the first eight again byte for byte, and only the new
 // vector and its manifest entry were taken from that run. The tenth,
 // http-shaped-source, was added the same way: the run wrote the first nine
-// again byte for byte.
+// again byte for byte. So were the eleventh and twelfth, version-3-bound and
+// unbound-bound-at-import, the first vectors of dialect version 3: the run
+// wrote the first ten again byte for byte.
 package main
 
 import (
@@ -97,6 +99,10 @@ var specs = []spec{
 		note: "The valid case's mapping and inputs, run again with three integer case parameters more, which nothing reads: zero written -0, largest 9007199254740991 and least -9007199254740991, the largest and the least integers mapping v2 admits. Each outcome keeps them among its parameters as the case wrote them, and so does preparation.json: -0 is not 0, and neither large integer is written with an exponent. Numbers such as 1.00 and 1e+02, and integers beyond 2^53-1, are outside what mapping v2 admits (integers from -(2^53-1) to 2^53-1, with no fraction or exponent): preparation refuses them as a parameter and as a copied value, so no preparation holds them and no vector can. A reader concludes verified-inputs, the record's binding matching the preparation as written."},
 	{name: "http-shaped-source", from: "mapping-v2-http-shaped", args: strongest, key: true, held: true, want: "verified-inputs",
 		note: "A run whose one source is of shape http, as Runner exported it (version 5), signed, witnessed and bound. Its retained record, {result, receipt, salts}, was recorded from a stand-in, in the test's process, of a gateway source its operator declared http: an endpoint the test served over TLS, read as adapter-http reads one, and a receipt naming acquisition.shape http, the shape the profile pins, signed under the profile's key. No live service was asked. The request is the mapping's path, method and query, not a tool call; the result is the adapter's status, headers, bodyEncoding and body, and the rule reads it as any source's result is read. preparation.json has the form of every other vector's preparation: nothing in it depends on the source's shape, and nothing in it names the shape, which the profile the mapping pins by digest and the receipt it cites carry. A reader concludes verified-inputs, the record's binding matching the preparation."},
+	{name: "version-3-bound", from: "mapping-v3-bound", args: strongest, key: true, held: true, want: "verified-inputs",
+		note: "The valid case's mapping written as a dialect document of version 3, its one source bound: it names its input profile by id and digest, as a source of version 2 does. Runner writes a document of version 3 without provider, facts and evidence, the members of its version-1 mapping that its encoding of a version-2 document carries empty, so mappingDigest is the digest of the canon bytes of mapping.json as it is. The run, as Runner exported it (version 5), is signed, witnessed and bound. preparation.json has the form of the version-2 vectors' preparations, its version 3, the document's: a source of version 3 that is bound is prepared as one of version 2 is. A reader concludes verified-inputs, the record's binding matching the preparation."},
+	{name: "unbound-bound-at-import", from: "mapping-v3-imported", args: strongest, key: true, held: true, want: "verified-inputs",
+		note: "A dialect of version 3 published with its one source unbound, unbound.json: the source names the catalog platform intake-api and operation requests.read, the shape http and the record adapter-http, and no input profile. The binding document, binding.json, names that dialect by the digest of its canon bytes and binds the source to the installation's profile intake, by its id and digest. Runner bound them at import, as the run's request asked (source.import), and made the bound dialect, mapping.json: the published dialect with the source's platform, operation, shape and record removed and the profile and its digest added, every other member as written. The run keeps the bound dialect as its mapping and the two documents beside it, as given, and verify-run binds them again under the profiles it is given and holds the mapping to the result. The preparation's mappingDigest is the bound dialect's digest; it holds neither document's digest nor the names the binding removed. The source's record was recorded from a stand-in, in the test's process, of a gateway source of shape http, as http-shaped-source's was. A reader binds unbound.json with binding.json under profiles.json, holds the result to mapping.json, prepares it, and concludes verified-inputs, the record's binding matching the preparation."},
 }
 
 // vector is a vector's files as they are made.
@@ -120,15 +126,28 @@ type manifest struct {
 }
 
 type entry struct {
-	Name          string            `json:"name"`
-	Note          string            `json:"note"`
-	From          string            `json:"from"`
-	Altered       *string           `json:"altered"`
-	VerifiedAt    string            `json:"verifiedAt"`
-	Files         map[string]string `json:"files"`
-	Preparation   preparationEntry  `json:"preparation"`
-	RecordBinding *string           `json:"recordBinding"`
-	VerifyRun     verifyEntry       `json:"verifyRun"`
+	Name        string            `json:"name"`
+	Note        string            `json:"note"`
+	From        string            `json:"from"`
+	Altered     *string           `json:"altered"`
+	VerifiedAt  string            `json:"verifiedAt"`
+	Files       map[string]string `json:"files"`
+	Preparation preparationEntry  `json:"preparation"`
+	// Import says, for a vector of a dialect bound at import, which file is
+	// which; it is absent for every other vector.
+	Import        *importEntry `json:"import,omitempty"`
+	RecordBinding *string      `json:"recordBinding"`
+	VerifyRun     verifyEntry  `json:"verifyRun"`
+}
+
+// importEntry names the files of a dialect bound at import: the published
+// dialect, run.input.source.import.dialect; the binding document,
+// run.input.source.import.binding; and the bound dialect Runner made of
+// them, run.input.source.mapping, whose digest the preparation names.
+type importEntry struct {
+	Published string `json:"published"`
+	Binding   string `json:"binding"`
+	Bound     string `json:"bound"`
 }
 
 type preparationEntry struct {
@@ -204,7 +223,7 @@ func write(s spec, runner, dir string) (entry, error) {
 		"preparation.json":   v.preparation,
 		"preparation.sha256": []byte(sha(v.preparation)),
 	}
-	for name, path := range map[string][]string{"mapping.json": {"mapping"}, "case.json": {"case"}, "sources.json": {"sources"}} {
+	for name, path := range map[string][]string{"mapping.json": {"mapping"}, "case.json": {"case"}, "sources.json": {"sources"}, "unbound.json": {"import", "dialect"}, "binding.json": {"import", "binding"}} {
 		start, end, err := span(v.run, append([]string{"run", "input", "source"}, path...)...)
 		if errors.Is(err, errNoMember) {
 			continue
@@ -256,6 +275,9 @@ func write(s spec, runner, dir string) (entry, error) {
 		Preparation: preparationEntry{SHA256: sha(v.preparation), Binding: `{"kind":"` + bindingKind + `","digest":"` + sha(v.preparation) + `"}`, Retained: v.retained}}
 	if s.altered != "" {
 		e.Altered = &s.altered
+	}
+	if _, ok := files["unbound.json"]; ok {
+		e.Import = &importEntry{Published: "unbound.json", Binding: "binding.json", Bound: "mapping.json"}
 	}
 	return e, nil
 }

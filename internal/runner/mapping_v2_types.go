@@ -50,6 +50,32 @@ type MappingSource struct {
 	Arguments     json.RawMessage      `json:"arguments,omitempty"`
 	Read          SourceRead           `json:"read"`
 	Calculation   *CalculationBinding  `json:"calculation,omitempty"`
+	// The members below are those dialect version 3 gives a source
+	// (spec/dialect.md §4.3, §4.4), kept as written so that one written
+	// with any value, null included, is told from one not written at all.
+	// A version-2 document has none of them. Platform, Operation, Shape and
+	// Record are an unbound operation's, which the import step replaces
+	// with Profile and ProfileDigest (dialect_v3.go). The others are the
+	// members of the kinds http, sql, web and research, which Runner refuses
+	// by name: they are read here only so that a source of those kinds is
+	// refused for its kind, and not as a request with a member Runner does
+	// not know.
+	Platform    json.RawMessage `json:"platform,omitempty"`
+	Operation   json.RawMessage `json:"operation,omitempty"`
+	Shape       json.RawMessage `json:"shape,omitempty"`
+	Record      json.RawMessage `json:"record,omitempty"`
+	Method      json.RawMessage `json:"method,omitempty"`
+	Path        json.RawMessage `json:"path,omitempty"`
+	Query       json.RawMessage `json:"query,omitempty"`
+	Body        json.RawMessage `json:"body,omitempty"`
+	Headers     json.RawMessage `json:"headers,omitempty"`
+	Statement   json.RawMessage `json:"statement,omitempty"`
+	Bindings    json.RawMessage `json:"bindings,omitempty"`
+	URL         json.RawMessage `json:"url,omitempty"`
+	Question    json.RawMessage `json:"question,omitempty"`
+	Constraints json.RawMessage `json:"constraints,omitempty"`
+	Model       json.RawMessage `json:"model,omitempty"`
+	Evidence    json.RawMessage `json:"evidence,omitempty"`
 }
 
 // CalculationBinding binds a calculator's answer to the case: each input it
