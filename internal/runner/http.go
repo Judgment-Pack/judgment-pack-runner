@@ -45,15 +45,32 @@ func decodeRaw(w http.ResponseWriter, r *http.Request, dst any) ([]byte, error) 
 	return raw, nil
 }
 
-// decodeInput is decode, for a request that names an input mapping at
-// path: a dialect of version 3 there is kept only as it is written
-// (keptAsWritten), so that its digest is its own.
-func decodeInput(w http.ResponseWriter, r *http.Request, dst any, path ...string) error {
+// decodeInput is decode, for a request that names an input: an Input, whose
+// source is at source, or a PreviewRequest, whose source is at input.source.
+// What the decoder read is held to the request's bytes: a dialect of version
+// 3 is kept only as it is written there (keptAsWritten), so that its digest
+// is its own, and whether the source names a mapping at all, which an
+// import's binding turns on (importedSource), is recorded.
+func decodeInput(w http.ResponseWriter, r *http.Request, dst any) error {
 	raw, err := decodeRaw(w, r, dst)
 	if err != nil {
 		return err
 	}
-	return keptAsWritten(raw, path...)
+	var src *SourceInput
+	var path []string
+	switch d := dst.(type) {
+	case *Input:
+		src, path = d.Source, []string{"source", "mapping"}
+	case *PreviewRequest:
+		src, path = d.Input.Source, []string{"input", "source", "mapping"}
+	default:
+		return fmt.Errorf("a request of type %T names no input", dst)
+	}
+	if src == nil {
+		return nil
+	}
+	src.mappingGiven = namedAt(raw, path...)
+	return keptAsWritten(raw, src.Mapping, path...)
 }
 
 // releaseNamed is the release a job creation's body names, read leniently:
@@ -144,7 +161,7 @@ func (s *Service) Handler(token string) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/inputs/next", func(w http.ResponseWriter, r *http.Request) {
 		var input Input
-		if err := decodeInput(w, r, &input, "source", "mapping"); err != nil {
+		if err := decodeInput(w, r, &input); err != nil {
 			failure(w, err)
 			return
 		}
@@ -157,7 +174,7 @@ func (s *Service) Handler(token string) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/inputs/preview", func(w http.ResponseWriter, r *http.Request) {
 		var input Input
-		if err := decodeInput(w, r, &input, "source", "mapping"); err != nil {
+		if err := decodeInput(w, r, &input); err != nil {
 			failure(w, err)
 			return
 		}
@@ -170,7 +187,7 @@ func (s *Service) Handler(token string) http.Handler {
 	})
 	mux.HandleFunc("POST /v1/previews", func(w http.ResponseWriter, r *http.Request) {
 		var req PreviewRequest
-		if err := decodeInput(w, r, &req, "input", "source", "mapping"); err != nil {
+		if err := decodeInput(w, r, &req); err != nil {
 			failure(w, err)
 			return
 		}
@@ -239,7 +256,7 @@ func (s *Service) Handler(token string) http.Handler {
 			return
 		}
 		var input Input
-		if err := decodeInput(w, r, &input, "source", "mapping"); err != nil {
+		if err := decodeInput(w, r, &input); err != nil {
 			s.refusedRun(r.PathValue("job"), err)
 			failure(w, err)
 			return

@@ -49,6 +49,12 @@ type SourceInput struct {
 	// documents are kept beside it as given, the operator's record of what
 	// was bound: no preparation holds them or their digests.
 	Import *DialectImport `json:"import,omitempty"`
+	// mappingGiven is whether the request this source was decoded from
+	// names a mapping member, whatever its value, {} and null included
+	// (decodeInput). Beside an import, a mapping given must be the bound
+	// dialect, and only one the request does not name is made from it
+	// (importedSource).
+	mappingGiven bool
 }
 type sourceSnapshot struct {
 	Version    int    `json:"version"`

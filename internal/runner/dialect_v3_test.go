@@ -162,6 +162,80 @@ func TestAVersion3DocumentIsKeptAsWritten(t *testing.T) {
 	}
 }
 
+// postTo posts body to route, as the owner.
+func postTo(h http.Handler, route string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", route, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+// A version-3 document is read only where each member of its path, source
+// and mapping (input, source and mapping in a preview request), is named
+// exactly so and none beside it is named so but for case: Go's decoder
+// would read such a member as the field, and the check that the document
+// is kept as written must run over what it read. The document written
+// otherwise under Mapping, refused under mapping, is refused under Mapping
+// too, as is one under Source, beside source, or beside mapping, before or
+// after it, and under Input; the document written as Runner keeps it is
+// kept with its own digest under mapping. A version-2 document under
+// Mapping is read as before.
+func TestAVersion3DocumentIsReadOnlyUnderItsExactNames(t *testing.T) {
+	input, p, _, _ := v2Fixture(t)
+	h := (&Service{cfg: Config{InputProfiles: []InputProfile{p}}}).Handler("test")
+	three := asVersion3(input)
+	body := encode(three)
+	written := encode(three.Source.Mapping)
+	otherwise := []byte(strings.Replace(string(written), `"version":3`, `"version":3,"unmapped":[]`, 1))
+	at := []byte(`"mapping":` + string(written))
+	if !bytes.Contains(body, at) || bytes.Equal(otherwise, written) {
+		t.Fatal("the request does not name the document at source.mapping:", string(body))
+	}
+	renamed := func(name string, document []byte) []byte {
+		return bytes.Replace(body, at, []byte(`"`+name+`":`+string(document)), 1)
+	}
+	kept := "Mapping v3: the dialect is written otherwise than Runner keeps it, and would be kept with another digest than its own: write no optional member empty, and no provider, facts or evidence, which version 3 does not carry"
+	cased := func(member, name, path string) string {
+		return "Mapping v3: the request names the member " + member + ", which is " + name + " but for case: a dialect of version 3 is read only at " + path + ", each member of the path named exactly so and none beside it named so but for case, so that the document Runner keeps is the one written"
+	}
+
+	w := postTo(h, "/v1/inputs/preview", body)
+	var answer struct {
+		Input Input `json:"input"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &answer) != nil || answer.Input.Preparation.MappingDigest != digest(canonTest(t, written)) {
+		t.Fatal("the document under mapping is not kept with its own digest:", w.Code, w.Body.String())
+	}
+	for name, c := range map[string]struct {
+		route, body, want string
+	}{
+		"written otherwise, under mapping":  {"/v1/inputs/preview", string(renamed("mapping", otherwise)), kept},
+		"written otherwise, under Mapping":  {"/v1/inputs/preview", string(renamed("Mapping", otherwise)), cased("Mapping", "mapping", "source.mapping")},
+		"under MAPPING, to the next step":   {"/v1/inputs/next", string(renamed("MAPPING", written)), cased("MAPPING", "mapping", "source.mapping")},
+		"under Source":                      {"/v1/inputs/preview", strings.Replace(string(body), `{"source":`, `{"Source":`, 1), cased("Source", "source", "source.mapping")},
+		"a Source beside source":            {"/v1/inputs/preview", strings.TrimSuffix(string(body), "}") + `,"Source":{"mapping":` + string(otherwise) + `}}`, cased("Source", "source", "source.mapping")},
+		"a Mapping after mapping":           {"/v1/inputs/preview", string(renamed("mapping", []byte(string(written)+`,"Mapping":`+string(otherwise)))), cased("Mapping", "mapping", "source.mapping")},
+		"a Mapping before mapping":          {"/v1/inputs/preview", string(renamed("Mapping", []byte(string(otherwise)+`,"mapping":`+string(written)))), cased("Mapping", "mapping", "source.mapping")},
+		"under Input, in a preview request": {"/v1/previews", `{"pack":"","Input":` + string(body) + `}`, cased("Input", "input", "input.source.mapping")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := postTo(h, c.route, []byte(c.body))
+			if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), `"code":"invalid_source_input"`) || !strings.Contains(w.Body.String(), c.want) {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		})
+	}
+	two := encode(input)
+	underCase := bytes.Replace(two, []byte(`"mapping":`), []byte(`"Mapping":`), 1)
+	if bytes.Equal(underCase, two) {
+		t.Fatal("the version-2 request does not name its mapping")
+	}
+	if w := postTo(h, "/v1/inputs/preview", underCase); w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &answer) != nil || answer.Input.Preparation.MappingDigest != mappingV2Hash(input.Source.Mapping) {
+		t.Fatal("a version-2 document under Mapping is not read as before:", w.Code, w.Body.String())
+	}
+}
+
 // importFixture is v2Fixture's mapping published as a version-3 dialect
 // whose one source is unbound, the binding document that binds it to the
 // fixture's profile, and the same dialect written bound, directly.
@@ -273,15 +347,76 @@ func TestTheImportStepBindsAnUnboundDialect(t *testing.T) {
 	refusedWith(t, err, "Mapping v3: the mapping is not the bound dialect its import makes: name the import alone, or the import and the mapping it binds")
 
 	s := &Service{cfg: Config{InputProfiles: []InputProfile{f.profile}}}
-	req := httptest.NewRequest("POST", "/v1/inputs/preview", bytes.NewReader(encode(imported)))
-	req.Header.Set("Authorization", "Bearer test")
-	w := httptest.NewRecorder()
-	s.Handler("test").ServeHTTP(w, req)
+	w := postTo(s.Handler("test"), "/v1/inputs/preview", importRequest(t, imported, "mapping", nil))
 	var answer struct {
 		Input Input `json:"input"`
 	}
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &answer) != nil || answer.Input.Preparation.MappingDigest != mappingV2Hash(f.direct) || answer.Input.Source.Import == nil {
 		t.Fatal("the API does not take the import alone:", w.Code, w.Body.String())
+	}
+}
+
+// importRequest is the request body of the input imported, its source's
+// mapping member as given: absent when mapping is nil.
+func importRequest(t *testing.T, imported Input, name string, mapping []byte) []byte {
+	t.Helper()
+	var request map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(encode(imported), &request); err != nil || request["source"] == nil {
+		t.Fatal("the imported input is not a request with a source:", err)
+	}
+	delete(request["source"], "mapping")
+	if mapping != nil {
+		request["source"][name] = mapping
+	}
+	return encode(request)
+}
+
+// Beside an import, the bound dialect becomes the mapping only when the
+// request names no mapping member: a mapping given, whatever its value, is
+// held to the bound dialect, byte for byte in canonical form. The empty
+// object, null and an empty document of version 0, under mapping or under
+// a name that is mapping but for case, are refused, naming the inequality,
+// at preview and at the next step; the bound dialect given is taken, with
+// the digest of the import alone.
+func TestAMappingGivenBesideAnImportIsTheBoundDialect(t *testing.T) {
+	f := newImportFixture(t)
+	imported := f.imported(t)
+	h := (&Service{cfg: Config{InputProfiles: []InputProfile{f.profile}}}).Handler("test")
+	digestOf := func(body []byte) string {
+		t.Helper()
+		w := postTo(h, "/v1/inputs/preview", body)
+		var answer struct {
+			Input Input `json:"input"`
+		}
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &answer) != nil || answer.Input.Preparation == nil {
+			t.Fatal("the import is not taken:", w.Code, w.Body.String())
+		}
+		return answer.Input.Preparation.MappingDigest
+	}
+	alone := digestOf(importRequest(t, imported, "mapping", nil))
+	if alone != mappingV2Hash(f.direct) {
+		t.Fatalf("the import alone is prepared with the digest %s, not the bound dialect's %s", alone, mappingV2Hash(f.direct))
+	}
+	if given := digestOf(importRequest(t, imported, "mapping", encode(f.direct))); given != alone {
+		t.Fatalf("the bound dialect given beside its import is prepared with the digest %s, not the import alone's %s", given, alone)
+	}
+	refused := `"code":"invalid_source_input","message":"Mapping v3: the mapping is not the bound dialect its import makes: name the import alone, or the import and the mapping it binds"`
+	for name, c := range map[string]struct {
+		member, mapping string
+	}{
+		"the empty object":             {"mapping", `{}`},
+		"null":                         {"mapping", `null`},
+		"a document of version 0":      {"mapping", `{"version":0}`},
+		"the empty object, as Mapping": {"Mapping", `{}`},
+	} {
+		for _, route := range []string{"/v1/inputs/preview", "/v1/inputs/next"} {
+			t.Run(name+" "+route, func(t *testing.T) {
+				w := postTo(h, route, importRequest(t, imported, c.member, []byte(c.mapping)))
+				if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), refused) {
+					t.Fatal(w.Code, w.Body.String())
+				}
+			})
+		}
 	}
 }
 

@@ -31,6 +31,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // dialect says whether the mapping is a dialect document: version 2, the
@@ -188,16 +189,65 @@ func asWritten(written []byte, m InputMapping) error {
 	return nil
 }
 
-// keptAsWritten holds the dialect a request names at path, when it is of
-// version 3, to asWritten. A request's other faults are refused where they
-// are read.
-func keptAsWritten(request []byte, path ...string) error {
-	written := member(request, path...)
-	var m InputMapping
-	if len(written) == 0 || json.Unmarshal(written, &m) != nil || m.Version != 3 {
+// keptAsWritten holds the dialect decoded from a request at path, when it is
+// of version 3, to asWritten, over the bytes the decoder read. Go's decoder
+// takes a member whose name is a field's but for case (strings.EqualFold) as
+// that field, and of two such members reads both into it, so a dialect of
+// version 3 is read only where each member of its path is named exactly so
+// and no member beside it is named so but for case: the canonical form
+// admits one spelling. A request that names it otherwise is refused, and a
+// lookup by the exact names that finds nothing refuses too: it never skips
+// the check. A dialect of version 2, however its path is named, is read as
+// before. A request's other faults are refused where they are read.
+func keptAsWritten(request []byte, decoded InputMapping, path ...string) error {
+	if decoded.Version != 3 {
 		return nil
 	}
-	return asWritten(written, m)
+	written, e := exactlyAt(request, path...)
+	if e != nil {
+		return e
+	}
+	return asWritten(written, decoded)
+}
+
+// exactlyAt is the value of the member of request at path, each member of
+// the path named exactly so and none beside it named so but for case; any
+// other request is refused, naming the member.
+func exactlyAt(request []byte, path ...string) (json.RawMessage, error) {
+	where := strings.Join(path, ".")
+	at := json.RawMessage(request)
+	for i, name := range path {
+		members, e := exactMembers(at)
+		for _, other := range sortedKeys(members) {
+			if other != name && strings.EqualFold(other, name) {
+				return nil, inputProblem(fmt.Sprintf("Mapping v3: the request names the member %s, which is %s but for case: a dialect of version 3 is read only at %s, each member of the path named exactly so and none beside it named so but for case, so that the document Runner keeps is the one written", other, name, where))
+			}
+		}
+		value, ok := members[name]
+		if e != nil || !ok {
+			return nil, inputProblem(fmt.Sprintf("Mapping v3: the request has no member %s named exactly so: a dialect of version 3 is read only at %s, so that the document Runner keeps is the one written", strings.Join(path[:i+1], "."), where))
+		}
+		at = value
+	}
+	return at, nil
+}
+
+// namedAt says whether the decoder read a member of raw at path: at each
+// step, a member named so or so but for case, as Go's decoder reads one.
+func namedAt(raw json.RawMessage, path ...string) bool {
+	if len(path) == 0 {
+		return true
+	}
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return false
+	}
+	for name, value := range members {
+		if strings.EqualFold(name, path[0]) && namedAt(value, path[1:]...) {
+			return true
+		}
+	}
+	return false
 }
 
 // importedInput is i with its import, if it names one, bound under
@@ -216,8 +266,11 @@ func importedInput(i Input, profiles []InputProfile) (Input, error) {
 
 // importedSource is a copy of src with its import bound under profiles:
 // its mapping is the bound dialect the import makes, made from the import
-// when src names no mapping, and refused when src names another. A source
-// with no import is copied as it is. The documents are kept as given.
+// only when src names no mapping, and refused when src names another. A
+// request that names a mapping member names a mapping, whatever its value,
+// {} and null included (mappingGiven); a source built otherwise names none
+// by the empty mapping. A source with no import is copied as it is. The
+// documents are kept as given.
 func importedSource(src *SourceInput, profiles []InputProfile) (*SourceInput, error) {
 	if src == nil {
 		return nil, nil
@@ -230,7 +283,7 @@ func importedSource(src *SourceInput, profiles []InputProfile) (*SourceInput, er
 	if e != nil {
 		return nil, e
 	}
-	if bytes.Equal(encode(c.Mapping), encode(InputMapping{})) {
+	if !c.mappingGiven && bytes.Equal(encode(c.Mapping), encode(InputMapping{})) {
 		c.Mapping = bound
 		return &c, nil
 	}

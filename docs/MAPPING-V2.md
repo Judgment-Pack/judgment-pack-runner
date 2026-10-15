@@ -245,8 +245,12 @@ empty, such as `"unmapped": []` or a source's `"parameters": {}`, or with
 `provider`, `facts` or `evidence`, is refused rather than kept with another
 digest: `Mapping v3: the dialect is written otherwise than Runner keeps it, and
 would be kept with another digest than its own: write no optional member empty,
-and no provider, facts or evidence, which version 3 does not carry`. A
-version-2 document is kept as Runner encodes it, as before.
+and no provider, facts or evidence, which version 3 does not carry`. Runner
+reads it only at `source.mapping` (`input.source.mapping` in
+`POST /v1/previews`), each member named exactly so: a version-3 document under
+a member that is one of those names but for case, or beside such a member, is
+refused as `invalid_source_input`, since the canonical form admits one
+spelling. A version-2 document is kept as Runner encodes it, as before.
 
 **The kinds.** Each kind of version 3 is prepared or refused by name; none is
 read as another kind.
@@ -333,7 +337,12 @@ of the input, at a dispatcher's recheck, at evaluation and in `verify-run`,
 binds the documents again under the profiles it is given and refuses an input
 whose `mapping` is not the bound dialect they make. A request may give that
 bound dialect as `mapping` beside the import; it must be the one the import
-makes. The import is taken wherever an input is: `POST /v1/inputs/preview`,
+makes. Runner makes the mapping from the import only when the request has no
+`mapping` member: a `mapping` given, `{}` and `null` included, that is not the
+bound dialect byte for byte in canonical form is refused as
+`invalid_source_input`: `Mapping v3: the mapping is not the bound dialect its
+import makes: name the import alone, or the import and the mapping it binds`.
+The import is taken wherever an input is: `POST /v1/inputs/preview`,
 `/v1/inputs/next`, `/v1/previews` and `/v1/jobs/{job}/runs`. A release freezes
 the bound dialect, as it freezes any mapping, and a run of the release names the
 import again or the bound dialect alone.
