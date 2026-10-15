@@ -530,5 +530,21 @@
    "kind": "runner"
   },
   "concerns": {}
- }
+ },
+{
+    "sequence": 4,
+    "entryVersion": "1",
+    "kind": "job.upgraded",
+    "at": "2026-10-06T09:04:00.000001Z",
+    "by": {
+        "kind": "installation",
+        "owner": "installation-owner"
+    },
+    "concerns": {
+        "job": "job_11111111111111111111111111111111",
+        "release": "release_22222222222222222222222222222222"
+    },
+    "revision": 2,
+    "previousRevision": 1
+}
 ]

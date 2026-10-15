@@ -1495,6 +1495,62 @@
           }
         }
       }
+    },
+    "/v1/jobs/{job}/upgrade": {
+      "post": {
+        "summary": "Review and upgrade a job to a checked release",
+        "description": "Requires the current job revision and release, paused triggers, settled occurrences and passing release checks. Existing runs keep their original release. Repeating the exact completed request returns its original receipt.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "releaseId",
+                  "baseReleaseId",
+                  "baseRevision",
+                  "reviewed"
+                ],
+                "properties": {
+                  "releaseId": {
+                    "type": "string"
+                  },
+                  "baseReleaseId": {
+                    "type": "string"
+                  },
+                  "baseRevision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "reviewed": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The immutable receipt for the completed job revision."
+          },
+          "409": {
+            "description": "Stale review, active automation, pending work, failed tests or invalid artifact version."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4578,6 +4634,7 @@
               "run.interrupted",
               "release.previewed",
               "job.created",
+              "job.upgraded",
               "admission.refused",
               "journal.began",
               "runner.started",

@@ -635,6 +635,14 @@ func journalSteps() []journalStep {
 				w.t.Fatalf("%+v", occurrence)
 			}
 		}},
+		{"a job is explicitly upgraded", func(w *journalWorld) {
+			first := journalRelease(w.t, w.s, w.s.runtimeDigest)
+			j, e := w.s.createJob("Upgrade example", first.ID)
+			must(w.t, e)
+			next := journalRelease(w.t, w.s, w.s.runtimeDigest)
+			_, e = w.s.upgradeJob(context.Background(), j.ID, UpgradeJobRequest{ReleaseID: next.ID, BaseReleaseID: first.ID, BaseRevision: 1, Reviewed: true})
+			must(w.t, e)
+		}, []string{"release.previewed", "job.created", "release.previewed", "job.upgraded"}, nil},
 	}
 }
 
@@ -942,7 +950,7 @@ func TestAStoreFromBeforeTheJournalServesWhenItBeganAndNothingInvented(t *testin
 	}
 	var schema string
 	must(t, s.db.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema))
-	if schema != "2" {
+	if schema != storeSchema {
 		t.Fatal("the schema is", schema)
 	}
 	tr, _ := storedTrigger(t, s, trigger.ID)

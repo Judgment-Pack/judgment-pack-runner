@@ -87,6 +87,15 @@ or sent to the browser. Desk selects the workspace and stable installation owner
 Direct browser origins are refused by the control API. Desk's API uses its existing
 bearer and origin guards. The pilot has one local owner, not delegated machine roles.
 
+## Upgrading a job
+
+Preview and check the new release, pause existing triggers, and finish or cancel
+pending occurrences. Submit the new release with the job's reviewed base revision
+to `POST /v1/jobs/{job}/upgrade`. Historical runs retain their original release;
+triggers remain paused and require a fresh review before resuming. See
+[reviewed job upgrades](docs/design/job-revisions.md) for retries, immutable
+identities, and the store-schema migration.
+
 ## First job
 
 1. Open **Jobs → Create job**, or **Packs → More → Create job**.

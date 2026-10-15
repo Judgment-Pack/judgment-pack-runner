@@ -266,7 +266,7 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	}
 	defer tx.Rollback()
 	var held []byte
-	err = tx.QueryRow("SELECT record FROM jobs WHERE release_id=?", releaseID).Scan(&held)
+	err = tx.QueryRow("SELECT record FROM job_creations WHERE release_id=?", releaseID).Scan(&held)
 	if err == nil {
 		var stored Job
 		if err = json.Unmarshal(held, &stored); err != nil {
@@ -280,10 +280,20 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Job{}, err
 	}
+	var used int
+	if err = tx.QueryRow("SELECT count(*) FROM job_revisions WHERE release_id=?", releaseID).Scan(&used); err != nil {
+		return Job{}, err
+	}
+	if used != 0 {
+		return Job{}, &apiError{409, "release_already_used", "This preview already belongs to a job revision. Check a fresh release."}
+	}
 	// Only a new job is refused: a job made before the setting was on is returned
 	// as any repeated creation is, and keeps running.
 	if s.cfg.RequireTestedReleases && r.Tests == "not-run" {
 		return Job{}, &apiError{409, "release_untested", "This installation creates jobs only from releases whose saved tests ran and passed. Save tests for this pack, then check a new release."}
+	}
+	if err = admitJobPack(tx, r); err != nil {
+		return Job{}, err
 	}
 	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest}
 	if c != nil {
@@ -307,6 +317,9 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 		}
 	}
 	if _, err = tx.Exec("INSERT INTO jobs(id,release_id,record)VALUES(?,?,?)", j.ID, j.ReleaseID, string(encode(j))); err != nil {
+		return Job{}, err
+	}
+	if err = recordInitialJob(tx, j); err != nil {
 		return Job{}, err
 	}
 	if _, err = appendEvent(tx, change{kind: "job.created", by: s.installation(), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}}); err != nil {

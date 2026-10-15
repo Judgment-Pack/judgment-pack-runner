@@ -327,7 +327,7 @@ func TestARefusalIsTheCredentialsThatWasAuthenticated(t *testing.T) {
 // succeeds migrates it whole.
 func TestAMigrationThatFailsLeavesTheStoreAsItWas(t *testing.T) {
 	for name, fault := range map[string]string{
-		"the schema's raise fails": `CREATE TRIGGER fault BEFORE INSERT ON metadata WHEN NEW.key='schema' AND NEW.value='2' BEGIN SELECT RAISE(ABORT,'the test refuses this write'); END`,
+		"the schema's raise fails": `CREATE TRIGGER fault BEFORE INSERT ON metadata WHEN NEW.key='schema' AND NEW.value='3' BEGIN SELECT RAISE(ABORT,'the test refuses this write'); END`,
 		"the first entry fails":    `CREATE TABLE events (unrelated TEXT)`,
 	} {
 		t.Run(name, func(t *testing.T) {

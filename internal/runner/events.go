@@ -33,10 +33,9 @@ import (
 // cloud connection, or Runner itself; never a person.
 
 const (
-	// storeSchema is the store's schema since its journal began. An earlier
-	// Runner holds a store to schema "1" and refuses this one, so no Runner
-	// that writes no entries changes a store the journal began in.
-	storeSchema = "2"
+	// storeSchema 3 adds immutable job revisions and creation receipts. Earlier
+	// Runners refuse it rather than changing a job without retaining its history.
+	storeSchema = "3"
 	// EventEntryVersion is the shape of an entry. A member added later raises
 	// it.
 	EventEntryVersion = "1"
@@ -61,7 +60,7 @@ var eventKinds = []string{
 	"occurrence.submitted", "occurrence.failed", "occurrence.expired", "occurrence.needs-attention",
 	"occurrence.cancelled", "occurrence.reconciled",
 	"run.queued", "run.started", "run.expired", "run.completed", "run.failed", "run.interrupted",
-	"release.previewed", "job.created", "admission.refused",
+	"release.previewed", "job.created", "job.upgraded", "admission.refused",
 	"journal.began", "runner.started", "runner.stopped",
 }
 
@@ -410,25 +409,30 @@ func (s *Service) migrateStore() error {
 	switch schema {
 	case storeSchema:
 		return nil
-	case "", "1":
+	case "", "1", "2":
 	default:
 		return errors.New("runner store belongs to another owner, workspace or schema")
 	}
-	// SQLite's schema changes are transactional: a migration that fails
-	// leaves no table, column or entry behind.
-	if _, err = tx.Exec(eventsSchema); err != nil {
-		return err
-	}
-	var held EventHeld
-	for table, count := range map[string]*int{"jobs": &held.Jobs, "triggers": &held.Triggers, "occurrences": &held.Occurrences, "runs": &held.Runs} {
-		if err = tx.QueryRow("SELECT count(*) FROM " + table).Scan(count); err != nil {
+	if schema != "2" {
+		// SQLite's schema changes are transactional: a migration that fails
+		// leaves no table, column or entry behind.
+		if _, err = tx.Exec(eventsSchema); err != nil {
+			return err
+		}
+		var held EventHeld
+		for table, count := range map[string]*int{"jobs": &held.Jobs, "triggers": &held.Triggers, "occurrences": &held.Occurrences, "runs": &held.Runs} {
+			if err = tx.QueryRow("SELECT count(*) FROM " + table).Scan(count); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.Exec("ALTER TABLE triggers ADD COLUMN key_revision INTEGER"); err != nil {
+			return err
+		}
+		if _, err = appendEvent(tx, change{kind: "journal.began", by: runnerActor, detail: EventDetail{Held: &held}}); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.Exec("ALTER TABLE triggers ADD COLUMN key_revision INTEGER"); err != nil {
-		return err
-	}
-	if _, err = appendEvent(tx, change{kind: "journal.began", by: runnerActor, detail: EventDetail{Held: &held}}); err != nil {
+	if _, err = tx.Exec(jobRevisionSchema); err != nil {
 		return err
 	}
 	if _, err = tx.Exec("INSERT OR REPLACE INTO metadata VALUES ('schema',?)", storeSchema); err != nil {
@@ -820,10 +824,10 @@ func eventPageBefore(db *sql.DB, tail bool, before int64, where string, args ...
 	return page, err
 }
 
-// jobEntries selects a job's entries, given its id and its release's: those
+// jobEntries selects a job's entries and all of its retained releases: those
 // naming the job, and those naming its release alone (its preview, a refused
 // creation). Both routes use it.
-const jobEntries = "job_id=? OR (job_id='' AND release_id=?)"
+const jobEntries = "job_id=? OR (job_id='' AND release_id IN (SELECT release_id FROM job_revisions WHERE job_id=?))"
 
 // jobEventsHandler serves a job's entries.
 func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
@@ -837,7 +841,7 @@ func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	page, err := s.eventPageFor(req, jobEntries, j.ID, j.ReleaseID)
+	page, err := s.eventPageFor(req, jobEntries, j.ID, j.ID)
 	if err != nil {
 		failure(w, err)
 		return
@@ -861,7 +865,7 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// The job route's entries, and Runner's own.
-		where, args = jobEntries+" OR kind IN ('journal.began','runner.started','runner.stopped')", []any{j.ID, j.ReleaseID}
+		where, args = jobEntries+" OR kind IN ('journal.began','runner.started','runner.stopped')", []any{j.ID, j.ID}
 	}
 	page, err := s.eventPageFor(req, where, args...)
 	if err != nil {
