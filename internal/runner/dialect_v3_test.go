@@ -776,20 +776,31 @@ func TestAVersion3DocumentOnTheEventRouteIsReadOnlyUnderItsExactNames(t *testing
 	w := newCoverWorld(t)
 	tr, key := w.eventTrigger("queue")
 	header := map[string]string{"X-Trigger-Token": key}
+	message := func(w *httptest.ResponseRecorder) (int, string, string) {
+		var body struct {
+			Error struct{ Code, Message string }
+		}
+		if e := json.Unmarshal(w.Body.Bytes(), &body); e != nil {
+			t.Fatal("not an error body:", w.Code, w.Body.String())
+		}
+		return w.Code, body.Error.Code, body.Error.Message
+	}
 	got := serve(t, w.s, "POST", "/v1/triggers/"+tr.ID+"/events", string(cased), header)
 	want := "Mapping v3: the request names the member Mapping, which is mapping but for case: a dialect of version 3 is read only at input.source.mapping, each member of the path named exactly so and none beside it named so but for case, so that the document Runner keeps is the one written"
-	if got.Code != http.StatusUnprocessableEntity || !strings.Contains(got.Body.String(), `"code":"invalid_source_input"`) || !strings.Contains(got.Body.String(), want) {
+	if status, code, text := message(got); status != http.StatusUnprocessableEntity || code != "invalid_source_input" || text != want {
 		t.Fatal(got.Code, got.Body.String())
 	}
 	// The same document, as a preview request, is refused with the same message.
 	h := (&Service{cfg: Config{InputProfiles: []InputProfile{p}}}).Handler("test")
 	preview := postTo(h, "/v1/previews", []byte(`{"pack":"","input":`+string(bytes.Replace(encode(three), at, []byte(`"Mapping":`+string(written)), 1))+`}`))
-	if !strings.Contains(preview.Body.String(), want) {
+	_, _, previewText := message(preview)
+	if _, _, text := message(got); text != previewText {
 		t.Fatal("the preview route's refusal differs:", preview.Body.String())
 	}
-	// The control: the document under mapping is not refused as an encoding.
+	// The control: the document under mapping passes the encoding rule and
+	// reaches the frozen-mapping check, which this fixture's release fails.
 	control := serve(t, w.s, "POST", "/v1/triggers/"+tr.ID+"/events", string(delivery), header)
-	if strings.Contains(control.Body.String(), "invalid_source_input") && strings.Contains(control.Body.String(), "but for case") {
-		t.Fatal("the lowercase document is refused for its encoding:", control.Code, control.Body.String())
+	if status, code, text := message(control); status != http.StatusUnprocessableEntity || code != "mapping_mismatch" || text != "Use the job's reviewed input mapping." {
+		t.Fatal("the lowercase document does not reach the frozen-mapping check:", control.Code, control.Body.String())
 	}
 }
