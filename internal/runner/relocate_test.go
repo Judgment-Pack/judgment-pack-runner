@@ -9,7 +9,7 @@ import (
 
 func TestWorkspaceRelocationPreservesRecordsAndIsIdempotent(t *testing.T) {
 	cfg := testConfig(t)
-	cfg.InputRoot = t.TempDir()
+	cfg.InputRoot = relocationTempDir(t)
 	cfg.disableAutomation = true
 	service, err := Open(cfg)
 	if err != nil {
@@ -24,7 +24,7 @@ func TestWorkspaceRelocationPreservesRecordsAndIsIdempotent(t *testing.T) {
 	if err = service.db.QueryRow("SELECT record FROM jobs WHERE id=?", job.ID).Scan(&original); err != nil {
 		t.Fatal(err)
 	}
-	next := filepath.Join(t.TempDir(), "moved-project")
+	next := filepath.Join(relocationTempDir(t), "moved-project")
 	request := RelocateRequest{Version: 1, ID: strings.Repeat("a", 32), Dir: cfg.Dir, Workspace: cfg.Workspace, Owner: cfg.Owner, PreviousInputRoot: cfg.InputRoot, InputRoot: next}
 	if err = os.Rename(cfg.InputRoot, next); err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestWorkspaceRelocationPreservesRecordsAndIsIdempotent(t *testing.T) {
 		t.Fatal("changed workspace owner")
 	}
 	stale := request
-	stale.PreviousInputRoot = t.TempDir()
+	stale.PreviousInputRoot = relocationTempDir(t)
 	if _, err = RelocateWorkspace(stale); err == nil {
 		t.Fatal("changed stale binding")
 	}
@@ -70,7 +70,7 @@ func TestWorkspaceRelocationRefusesRunningAndQueuedWork(t *testing.T) {
 	for _, state := range []string{"queued", "running"} {
 		t.Run(state, func(t *testing.T) {
 			cfg := testConfig(t)
-			cfg.InputRoot = t.TempDir()
+			cfg.InputRoot = relocationTempDir(t)
 			cfg.disableAutomation = true
 			cfg.disableDispatcher = true
 			service, err := Open(cfg)
@@ -82,7 +82,7 @@ func TestWorkspaceRelocationRefusesRunningAndQueuedWork(t *testing.T) {
 				t.Fatal(err)
 			}
 			service.Close()
-			request := RelocateRequest{Version: 1, ID: strings.Repeat("b", 32), Dir: cfg.Dir, Workspace: cfg.Workspace, Owner: cfg.Owner, PreviousInputRoot: cfg.InputRoot, InputRoot: t.TempDir()}
+			request := RelocateRequest{Version: 1, ID: strings.Repeat("b", 32), Dir: cfg.Dir, Workspace: cfg.Workspace, Owner: cfg.Owner, PreviousInputRoot: cfg.InputRoot, InputRoot: relocationTempDir(t)}
 			if _, err = RelocateWorkspace(request); err == nil {
 				t.Fatal("moved unfinished work")
 			}
@@ -94,7 +94,7 @@ func TestWorkspaceRelocationRefusesPendingSourcesAndTriggers(t *testing.T) {
 	for _, state := range []string{"accepted", "preparing", "waiting", "needs-attention", "unpaused-trigger"} {
 		t.Run(state, func(t *testing.T) {
 			cfg := testConfig(t)
-			cfg.InputRoot = t.TempDir()
+			cfg.InputRoot = relocationTempDir(t)
 			cfg.disableAutomation, cfg.disableDispatcher = true, true
 			service, err := Open(cfg)
 			if err != nil {
@@ -109,7 +109,7 @@ func TestWorkspaceRelocationRefusesPendingSourcesAndTriggers(t *testing.T) {
 				t.Fatal(err)
 			}
 			service.Close()
-			request := RelocateRequest{Version: 1, ID: strings.Repeat("c", 32), Dir: cfg.Dir, Workspace: cfg.Workspace, Owner: cfg.Owner, PreviousInputRoot: cfg.InputRoot, InputRoot: t.TempDir()}
+			request := RelocateRequest{Version: 1, ID: strings.Repeat("c", 32), Dir: cfg.Dir, Workspace: cfg.Workspace, Owner: cfg.Owner, PreviousInputRoot: cfg.InputRoot, InputRoot: relocationTempDir(t)}
 			if _, err = RelocateWorkspace(request); err == nil {
 				t.Fatal("moved pending source work")
 			}
@@ -123,4 +123,15 @@ func TestDecodeRelocationRefusesAmbiguousInput(t *testing.T) {
 			t.Fatal("accepted ambiguous request")
 		}
 	}
+}
+
+// macOS exposes its temporary directory through /var -> /private/var. Requests
+// carry canonical input roots, just as Desk's reviewed move plan does.
+func relocationTempDir(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
