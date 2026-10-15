@@ -47,7 +47,7 @@ func decodeRaw(w http.ResponseWriter, r *http.Request, dst any) ([]byte, error) 
 
 // decodeInput is decode, for a request that names an input: an Input, whose
 // source is at source, or a PreviewRequest or an EventDelivery, whose source
-// is at input.source.
+// is at input.source, or a RecordDelivery at event.input.source.
 // What the decoder read is held to the request's bytes: a dialect of version
 // 3 is kept only as it is written there (keptAsWritten), so that its digest
 // is its own, and whether the source names a mapping at all, which an
@@ -64,6 +64,8 @@ func decodeInput(w http.ResponseWriter, r *http.Request, dst any) error {
 		src, path = d.Source, []string{"source", "mapping"}
 	case *PreviewRequest:
 		src, path = d.Input.Source, []string{"input", "source", "mapping"}
+	case *RecordDelivery:
+		src, path = d.Event.Input.Source, []string{"event", "input", "source", "mapping"}
 	case *EventDelivery:
 		src, path = d.Input.Source, []string{"input", "source", "mapping"}
 	default:
@@ -160,7 +162,7 @@ func (s *Service) Handler(token string) http.Handler {
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades"}})
+		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades"}})
 	})
 	mux.HandleFunc("POST /v1/inputs/next", func(w http.ResponseWriter, r *http.Request) {
 		var input Input

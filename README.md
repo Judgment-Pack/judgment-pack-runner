@@ -413,6 +413,31 @@ backup of it, from whoever should not sign. A
 restored older copy rolls the chain back with the runs: a checkpoint someone else
 holds from after the copy is what shows it.
 
+## Offline workspace relocation
+
+A host moving a reviewed project folder can query
+`jpack-runner relocate-workspace --capabilities` (contract version 1), then send
+one bounded JSON request to `jpack-runner relocate-workspace` on stdin:
+
+```json
+{"version":1,"id":"0123456789abcdef0123456789abcdef","dir":"/new/desk/.desk-private/jobs","workspace":"existing-workspace","owner":"existing-owner","previousInputRoot":"/old/desk","inputRoot":"/new/desk"}
+```
+
+Stop Runner first. Move the project/state on the same filesystem through the
+host's reviewed transaction; the new input root must exist as a real directory.
+The command holds Runner's instance lock, checks owner/workspace and the prior
+root, and refuses queued/running runs, unpaused triggers, and pending source
+preparations. It updates only the current root binding and records the relocation
+ID in SQLite metadata in one transaction. Replaying the same request reports
+`alreadyApplied`; a mismatched request or changed binding is refused.
+
+This is an offline host operation, with no HTTP endpoint or browser capability.
+Saved releases, decisions, signatures and run-chain bytes are unchanged. The
+metadata entry is maintenance history, not a signed decision record. Unknown or
+duplicate JSON members and trailing values are refused before opening storage.
+The host remains responsible for folder moves, destination safety, quiescing
+other processes, journaling and restarting with the new boot configuration.
+
 ## Verification
 
 ```sh

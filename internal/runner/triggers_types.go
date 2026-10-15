@@ -81,3 +81,10 @@ type EventDelivery struct {
 	OccurredAt string `json:"occurredAt"`
 	Input      Input  `json:"input"`
 }
+
+// RecordDelivery is an installation-owned durable outbox entry. Unlike public
+// credential deliveries it is bound to a release and can survive downtime.
+type RecordDelivery struct {
+	ReleaseID string        `json:"releaseId"`
+	Event     EventDelivery `json:"event"`
+}

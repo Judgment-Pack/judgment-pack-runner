@@ -1496,7 +1496,7 @@
         }
       }
     },
-    "/v1/jobs/{job}/upgrade": {
+    "/jobs/{job}/upgrade": {
       "post": {
         "summary": "Review and upgrade a job to a checked release",
         "description": "Requires the current job revision and release, paused triggers, settled occurrences and passing release checks. Existing runs keep their original release. Repeating the exact completed request returns its original receipt.",
@@ -1548,6 +1548,158 @@
           },
           "409": {
             "description": "Stale review, active automation, pending work, failed tests or invalid artifact version."
+          }
+        }
+      }
+    },
+    "/triggers/{trigger}/deliveries": {
+      "parameters": [
+        {
+          "name": "trigger",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "deliverRecordRevision",
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "occurrence": {
+                      "$ref": "#/components/schemas/Occurrence"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "occurrence",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "occurrence": {
+                      "$ref": "#/components/schemas/Occurrence"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "occurrence",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "releaseId",
+                  "event"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "releaseId": {
+                    "type": "string"
+                  },
+                  "event": {
+                    "$ref": "#/components/schemas/EventDelivery"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Owner-authenticated local control delivery of a previously persisted immutable record envelope. Bind releaseId to the reviewed release. Older occurredAt timestamps are allowed for outbox recovery; future timestamps, source freshness, mapping checks and queue expiry still apply. Persist exact bytes before the first request. Exact retries return the original occurrence, even when paused; changed payloads conflict. This route is not exposed through the public Desk event-token ingress."
+      }
+    },
+    "/triggers/{trigger}/deliveries/{event}": {
+      "parameters": [
+        {
+          "name": "trigger",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "event",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "readRecordDelivery",
+        "description": "Owner-authenticated reconciliation by stable event identity; does not admit or replay a delivery. Returns the retained occurrence without source inputs.",
+        "responses": {
+          "200": {
+            "description": "Retained occurrence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "occurrence": {
+                      "$ref": "#/components/schemas/Occurrence"
+                    }
+                  },
+                  "required": [
+                    "occurrence"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }

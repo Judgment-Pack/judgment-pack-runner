@@ -9,6 +9,33 @@ import (
 )
 
 func (s *Service) triggerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/triggers/{trigger}/deliveries/{event}", func(w http.ResponseWriter, r *http.Request) {
+		o, _, e := s.findOccurrence(r.PathValue("trigger"), "event:"+r.PathValue("event"))
+		if e != nil {
+			failure(w, e)
+			return
+		}
+		write(w, 200, map[string]any{"occurrence": publicOccurrence(o)})
+	})
+	mux.HandleFunc("POST /v1/triggers/{trigger}/deliveries", func(w http.ResponseWriter, r *http.Request) {
+		var req RecordDelivery
+		if e := decodeInput(w, r, &req); e != nil {
+			s.refusedEvent(r.PathValue("trigger"), e)
+			failure(w, e)
+			return
+		}
+		o, replay, e := s.deliverRecord(r.PathValue("trigger"), req.ReleaseID, req.Event)
+		if e != nil {
+			s.refusedEvent(r.PathValue("trigger"), e)
+			failure(w, e)
+			return
+		}
+		status := 202
+		if replay {
+			status = 200
+		}
+		write(w, status, map[string]any{"occurrence": o, "replayed": replay})
+	})
 	mux.HandleFunc("POST /v1/occurrences/{occurrence}/reconcile", func(w http.ResponseWriter, r *http.Request) {
 		o, e := s.reconcileOccurrence(r.PathValue("occurrence"))
 		if e != nil {

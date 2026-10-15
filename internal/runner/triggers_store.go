@@ -304,8 +304,27 @@ func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrenc
 	return o, replay, e
 }
 
-// admitEvent admits an event delivery whose credential event authenticated.
 func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occurrence, bool, error) {
+	return s.admitBoundEvent(t, hash, event, "")
+}
+
+// deliverRecord is called only by the authenticated local control API. The caller
+// persists the complete envelope before delivery; old timestamps are allowed, but
+// source freshness and queue expiry still apply at admission/execution.
+func (s *Service) deliverRecord(triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
+	s.automationMu.Lock()
+	defer s.automationMu.Unlock()
+	t, _, e := s.trigger(triggerID)
+	if e != nil {
+		return Occurrence{}, false, e
+	}
+	if releaseID == "" {
+		return Occurrence{}, false, bad("release_required", "Bind this delivery to its reviewed release.")
+	}
+	return s.admitBoundEvent(t, "", event, releaseID)
+}
+
+func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, expectedRelease string) (Occurrence, bool, error) {
 	if t.Config.Kind != "event" {
 		return Occurrence{}, false, bad("not_event_trigger", "This trigger does not accept event delivery.")
 	}
@@ -313,7 +332,11 @@ func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occur
 		return Occurrence{}, false, bad("invalid_event", "Supply a stable event ID up to 128 bytes.")
 	}
 	// Delivery identity is stable across trigger configuration revisions.
-	raw, e := canonical(encode(event))
+	var envelope any = event
+	if expectedRelease != "" {
+		envelope = map[string]any{"event": event, "releaseId": expectedRelease}
+	}
+	raw, e := canonical(encode(envelope))
 	if e != nil {
 		return Occurrence{}, false, e
 	}
@@ -336,7 +359,7 @@ func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occur
 		return old, false, &apiError{409, "trigger_paused", "This trigger is paused; the event was not accepted."}
 	}
 	at, e := time.Parse(time.RFC3339, event.OccurredAt)
-	if e != nil || time.Since(at) > 5*time.Minute || time.Until(at) > 30*time.Second {
+	if e != nil || time.Until(at) > 30*time.Second || expectedRelease == "" && time.Since(at) > 5*time.Minute {
 		return old, false, bad("event_expired", "Supply an event timestamp from the last five minutes.")
 	}
 	if event.Input.Preparation != nil {
@@ -345,6 +368,9 @@ func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occur
 	job, e := s.job(t.JobID)
 	if e != nil {
 		return old, false, e
+	}
+	if expectedRelease != "" && job.ReleaseID != expectedRelease {
+		return old, false, &apiError{409, "release_changed", "The job no longer uses the reviewed release."}
 	}
 	release, e := s.release(job.ReleaseID)
 	if e != nil {
@@ -365,13 +391,20 @@ func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occur
 		return o, false, e
 	}
 	defer tx.Rollback()
-	if e = s.admitOccurrence(tx, t, &o, "event:"+event.ID, payload); e != nil {
+	var publisher *EventActor
+	if expectedRelease != "" {
+		actor := s.installation()
+		publisher = &actor
+	}
+	if e = s.admitOccurrenceAs(tx, t, &o, "event:"+event.ID, payload, publisher); e != nil {
 		return o, false, e
 	}
 	// The occurrence is bound to the credential that created it, for that
 	// credential's read of its result.
-	if _, e = tx.Exec("INSERT INTO occurrence_keys(occurrence_id,key_hash) VALUES(?,?)", o.ID, hash); e != nil {
-		return o, false, e
+	if hash != "" {
+		if _, e = tx.Exec("INSERT INTO occurrence_keys(occurrence_id,key_hash) VALUES(?,?)", o.ID, hash); e != nil {
+			return o, false, e
+		}
 	}
 	e = tx.Commit()
 	o.Input = nil
@@ -434,6 +467,9 @@ func (s *Service) findOccurrence(trigger, identity string) (Occurrence, string, 
 	return o, hash, e
 }
 func (s *Service) admitOccurrence(tx *sql.Tx, t Trigger, o *Occurrence, identity, payload string) error {
+	return s.admitOccurrenceAs(tx, t, o, identity, payload, nil)
+}
+func (s *Service) admitOccurrenceAs(tx *sql.Tx, t Trigger, o *Occurrence, identity, payload string, publisher *EventActor) error {
 	if o.State == "accepted" {
 		var pending, active int
 		if e := tx.QueryRow("SELECT count(*) FROM occurrences WHERE state IN ('accepted','preparing','waiting')").Scan(&pending); e != nil {
@@ -463,6 +499,9 @@ func (s *Service) admitOccurrence(tx *sql.Tx, t Trigger, o *Occurrence, identity
 	by := triggerActor(t.ID, t.Revision)
 	if o.Kind == "event" {
 		by = credentialActor(t.ID, t.keyRevision)
+	}
+	if publisher != nil {
+		by = *publisher
 	}
 	_, e := appendEvent(tx, occurrenceChange(*o, "", by))
 	return e

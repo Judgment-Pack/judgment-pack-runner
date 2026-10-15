@@ -23,6 +23,14 @@ func main() {
 	err := error(nil)
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		fmt.Println("jpack-runner", buildinfo.Version())
+	} else if len(os.Args) > 1 && os.Args[1] == "relocate-workspace" {
+		if len(os.Args) == 3 && os.Args[2] == "--capabilities" {
+			fmt.Println(`{"version":1}`)
+		} else if len(os.Args) != 2 {
+			err = fmt.Errorf("relocate-workspace takes one reviewed JSON request on stdin")
+		} else {
+			err = relocateWorkspace(os.Stdin, os.Stdout)
+		}
 	} else if len(os.Args) > 1 && os.Args[1] == "verify-run" {
 		err = verifyRun(os.Args[2:], os.Stdout, os.Stderr)
 	} else {
@@ -385,4 +393,20 @@ func requireSourcedInputs(c runner.InputClasses) error {
 		return fmt.Errorf("%w: 1 of the run's %d inputs is asserted, and --require-sourced refuses it: nothing here checks it against a source", errInputsAsserted, total)
 	}
 	return fmt.Errorf("%w: %d of the run's %d inputs are asserted, and --require-sourced refuses them: nothing here checks them against a source", errInputsAsserted, c.Asserted, total)
+}
+
+func relocateWorkspace(input io.Reader, output io.Writer) error {
+	raw, err := io.ReadAll(io.LimitReader(input, 16385))
+	if err != nil || len(raw) > 16384 {
+		return fmt.Errorf("bounded relocation request required")
+	}
+	request, err := runner.DecodeRelocateRequest(raw)
+	if err != nil {
+		return err
+	}
+	result, err := runner.RelocateWorkspace(request)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(result)
 }
