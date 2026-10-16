@@ -9,7 +9,9 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -60,15 +62,8 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	// Reconcile a completed request before current readiness or automation checks.
 	// Returning its immutable receipt does not replay the upgrade, even if the job
 	// has since advanced again.
-	var prior, priorHash string
-	err := s.db.QueryRow("SELECT record,request_digest FROM job_revisions WHERE job_id=? AND revision=?", jobID, req.BaseRevision+1).Scan(&prior, &priorHash)
-	if err == nil && priorHash == hash {
-		var j Job
-		err = json.Unmarshal([]byte(prior), &j)
-		return j, err
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Job{}, err
+	if prior, found, err := s.upgradeReceipt(jobID, req); err != nil || found {
+		return prior, err
 	}
 	if s.unhealthy.Load() {
 		return Job{}, &apiError{503, "dispatcher_stopped", "Check Runner storage before changing a job."}
@@ -235,4 +230,46 @@ func (s *Service) upgradeJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, j)
+}
+
+// upgradeReceipt never performs readiness checks or changes a job. Hosts use it
+// to reconcile a lost acknowledgement without granting a new write.
+func (s *Service) upgradeReceipt(jobID string, req UpgradeJobRequest) (Job, bool, error) {
+	var raw, hash string
+	err := s.db.QueryRow("SELECT record,request_digest FROM job_revisions WHERE job_id=? AND revision=?", jobID, req.BaseRevision+1).Scan(&raw, &hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, false, nil
+	}
+	if err != nil {
+		return Job{}, false, err
+	}
+	if hash != digest(encode(req)) {
+		return Job{}, false, &apiError{409, "job_changed", "This job revision belongs to a different reviewed upgrade."}
+	}
+	var job Job
+	err = json.Unmarshal([]byte(raw), &job)
+	return job, err == nil, err
+}
+func (s *Service) upgradeReceiptHandler(w http.ResponseWriter, r *http.Request) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(q) != 3 || len(q["baseRevision"]) != 1 || len(q["baseReleaseId"]) != 1 || len(q["releaseId"]) != 1 {
+		failure(w, bad("invalid_request", "Choose the exact job upgrade to reconcile."))
+		return
+	}
+	revision, err := strconv.Atoi(q.Get("baseRevision"))
+	if err != nil || revision < 1 || revision == math.MaxInt || q.Get("baseReleaseId") == "" || q.Get("releaseId") == "" {
+		failure(w, bad("invalid_request", "Choose the exact job upgrade to reconcile."))
+		return
+	}
+	req := UpgradeJobRequest{ReleaseID: q.Get("releaseId"), BaseReleaseID: q.Get("baseReleaseId"), BaseRevision: revision, Reviewed: true}
+	job, found, err := s.upgradeReceipt(r.PathValue("job"), req)
+	if err != nil {
+		failure(w, err)
+		return
+	}
+	if !found {
+		failure(w, &apiError{404, "upgrade_not_completed", "No completed receipt exists for this upgrade."})
+		return
+	}
+	write(w, 200, job)
 }

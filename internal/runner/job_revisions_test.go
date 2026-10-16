@@ -255,3 +255,46 @@ func TestJobCreationRefusesUsedPackIdentityMutation(t *testing.T) {
 		t.Fatal("published identity changed")
 	}
 }
+
+func TestUpgradeReceiptReadOnlyRecovery(t *testing.T) {
+	cfg := journalConfig(t)
+	s := openJournal(t, cfg)
+	defer func() { s.Close() }()
+	first := journalRelease(t, s, s.runtimeDigest)
+	j, err := s.createJob("Recovery", first.ID)
+	must(t, err)
+	next := journalRelease(t, s, s.runtimeDigest)
+	req := UpgradeJobRequest{ReleaseID: next.ID, BaseReleaseID: first.ID, BaseRevision: 1, Reviewed: true}
+	path := "/v1/jobs/" + j.ID + "/upgrade-receipt?baseRevision=1&baseReleaseId=" + first.ID + "&releaseId=" + next.ID
+	if r := serve(t, s, "GET", path, "", nil); r.Code != 404 {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	held, err := s.job(j.ID)
+	must(t, err)
+	if held != j {
+		t.Fatal("receipt read changed job")
+	}
+	updated, err := s.upgradeJob(context.Background(), j.ID, req)
+	must(t, err)
+	newer := journalRelease(t, s, s.runtimeDigest)
+	_, err = s.upgradeJob(context.Background(), j.ID, UpgradeJobRequest{ReleaseID: newer.ID, BaseReleaseID: next.ID, BaseRevision: 2, Reviewed: true})
+	must(t, err)
+	s.Close()
+	s = openJournal(t, cfg)
+	s.unhealthy.Store(true)
+	r := serve(t, s, "GET", path, "", nil)
+	if r.Code != 200 {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	var receipt Job
+	must(t, json.Unmarshal(r.Body.Bytes(), &receipt))
+	if receipt != updated {
+		t.Fatal("historical receipt changed")
+	}
+	if r := serve(t, s, "GET", path+"&releaseId=other", "", nil); r.Code != 422 {
+		t.Fatal("duplicate query accepted", r.Code)
+	}
+	if r := serve(t, s, "GET", strings.Replace(path, next.ID, first.ID, 1), "", nil); r.Code != 409 {
+		t.Fatal("different intent accepted", r.Code)
+	}
+}

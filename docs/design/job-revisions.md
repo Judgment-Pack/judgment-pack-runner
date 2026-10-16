@@ -43,3 +43,13 @@ Tests cover real Runtime version checks including large components, immutable
 identity admission, migration from schema 2, exact replay after further revisions
 and restart, historical run pins, every pending occurrence state, stale trigger
 reviews, and atomic rollback when the event write fails.
+
+### Read-only recovery
+
+`GET /v1/jobs/{job}/upgrade-receipt?baseRevision=N&baseReleaseId=rel_...&releaseId=rel_...`
+returns the immutable job revision for exactly that reviewed upgrade. It returns
+404 when no receipt exists and 409 when that next revision belongs to a different
+upgrade. It never executes an upgrade or checks current candidate readiness.
+Hosts can reconcile interrupted writes after local inputs or the job have changed
+without replaying a write. Authorization remains the normal workspace API boundary.
+Capability: `job-upgrade-receipts`.
