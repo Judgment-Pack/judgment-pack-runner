@@ -983,9 +983,6 @@ func readResearchAcquisition(value SourceValue, r *researchRecipe) (*researchAcq
 		}
 		return malformed("the research record is not one JSON value")
 	}
-	if e := researchRecordBounds(record, r); e != nil {
-		return nil, e
-	}
 	o, ok := record.(map[string]any)
 	if !ok || !closedMembers(o, []string{"fields", "responses"}, nil) {
 		return malformed("the research record is an object of exactly fields and responses")
@@ -1057,6 +1054,96 @@ func saltsForm(v any) bool {
 		}
 	}
 	return true
+}
+
+// researchAcquisitionBounds holds a research source's acquisition to the
+// maxima of §12 before anything else is read of it (§11, the first and the
+// third phases): on its bytes, every number literal's characters and
+// exponent and the document's nesting; on the record, its nesting, and the
+// counts and lengths researchRecordBounds measures. An acquisition that does
+// not read as JSON is measured on its bytes alone: its form is refused after.
+func researchAcquisitionBounds(value SourceValue, r *researchRecipe) error {
+	if e := measureBytes(value.Response, 64); e != nil {
+		return e
+	}
+	v, e := readInputJSONDepth(value.Response, 64)
+	if e != nil {
+		return nil
+	}
+	o, _ := v.(map[string]any)
+	record, ok := o["result"]
+	if !ok {
+		return nil
+	}
+	if valueDepth(record) > 32 {
+		return researchFail(codeOverBound, "the research record is nested more than 32 levels")
+	}
+	return researchRecordBounds(record, r)
+}
+
+// measureBytes holds a document's bytes to §12's bounds, as they are
+// measured before it is read: its nesting, each object and array a level,
+// at most maxDepth; and each number literal, a maximal run outside strings
+// of the characters 0 to 9, +, -, ., e and E, at most 128 characters, its
+// exponent of a magnitude at most 308.
+func measureBytes(data []byte, maxDepth int) error {
+	const literal = "0123456789+-.eE"
+	depth, inString, escaped := 0, false, false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		switch {
+		case inString:
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '[' || c == '{':
+			depth++
+			if depth > maxDepth {
+				return researchFail(codeOverBound, "a value nested more than %d levels", maxDepth)
+			}
+		case c == ']' || c == '}':
+			depth--
+		case strings.IndexByte(literal, c) >= 0:
+			end := i
+			for end < len(data) && strings.IndexByte(literal, data[end]) >= 0 {
+				end++
+			}
+			if e := literalBounds(string(data[i:end])); e != nil {
+				return e
+			}
+			i = end - 1
+		}
+	}
+	return nil
+}
+
+// literalBounds holds one number literal to §12: at most 128 characters,
+// and the digits after its first e or E, and the sign after it if any, of
+// a value at most 308.
+func literalBounds(literal string) error {
+	if len(literal) > 128 {
+		return researchFail(codeOverBound, "a number literal of more than 128 characters")
+	}
+	at := strings.IndexAny(literal, "eE")
+	if at < 0 {
+		return nil
+	}
+	rest := literal[at+1:]
+	if rest != "" && (rest[0] == '+' || rest[0] == '-') {
+		rest = rest[1:]
+	}
+	digits := rest[:len(rest)-len(strings.TrimLeft(rest, "0123456789"))]
+	trimmed := strings.TrimLeft(digits, "0")
+	if len(trimmed) > 3 || len(trimmed) == 3 && trimmed > "308" {
+		return researchFail(codeOverBound, "a number literal whose exponent is of a magnitude over 308")
+	}
+	return nil
 }
 
 // researchRecordBounds holds a research record to the maxima of §12, each
@@ -1384,6 +1471,23 @@ func acquisitionCode(e error) string {
 	return codeInvalid
 }
 
+// researchTimes holds a research receipt's times to §5.2: the observation
+// and the serving instants, each a timestamp (receiptTimes held their form
+// before), each no more than maxAge seconds before at and no more than 30
+// seconds after it; otherwise acquisition-stale. No rule joins the two.
+func researchTimes(observed, served string, at time.Time, maxAge int) error {
+	for _, instant := range []string{observed, served} {
+		t, e := time.Parse("2006-01-02T15:04:05Z", instant)
+		if e != nil {
+			return fmt.Errorf("invalid acquisition time")
+		}
+		if t.Before(at.Add(-time.Duration(maxAge)*time.Second)) || t.After(at.Add(30*time.Second)) {
+			return errAcquisitionStale
+		}
+	}
+	return nil
+}
+
 // retainedAsAcquired is a retained response as verifyAcquisition reads an
 // acquisition: {result, receipt, salts}.
 func retainedAsAcquired(result, receipt, salts json.RawMessage) json.RawMessage {
@@ -1462,7 +1566,7 @@ func replayResearch(a *researchAcquisition, request json.RawMessage, ai InputPro
 		if !receiptTimes(response.receipt) {
 			return nil, nil, researchFail(codeInvalid, "retained response %d, through the profile %s: its receipt's servedAt and acquisition.observedAt are not each a timestamp of whole seconds in UTC that names a time", n, profile.ID)
 		}
-		_, citation, e := verifyAcquisition(retainedAsAcquired(response.result, response.receipt, response.salts), response.request, profile, keys[profile.ID], at, maxAge)
+		_, citation, e := verifyReceipt(retainedAsAcquired(response.result, response.receipt, response.salts), response.request, profile, keys[profile.ID], at, maxAge, true)
 		if e != nil {
 			return nil, nil, researchFail(acquisitionCode(e), "retained response %d, through the profile %s: %v", n, profile.ID, e)
 		}
@@ -1479,7 +1583,7 @@ func replayResearch(a *researchAcquisition, request json.RawMessage, ai InputPro
 		if !receiptTimes(a.receipt) {
 			return nil, nil, researchFail(codeInvalid, "the record's own receipt, through the profile %s: its servedAt and acquisition.observedAt are not each a timestamp of whole seconds in UTC that names a time", ai.ID)
 		}
-		_, citation, e := verifyAcquisition(retainedAsAcquired(a.raw, a.receipt, a.salts), request, ai, keys[ai.ID], at, maxAge)
+		_, citation, e := verifyReceipt(retainedAsAcquired(a.raw, a.receipt, a.salts), request, ai, keys[ai.ID], at, maxAge, true)
 		if e != nil {
 			return nil, nil, researchFail(acquisitionCode(e), "the record's own receipt, through the profile %s: %v", ai.ID, e)
 		}
@@ -1490,6 +1594,36 @@ func replayResearch(a *researchAcquisition, request json.RawMessage, ai InputPro
 		citations = append(citations, *citation)
 	}
 	return own, &citations, nil
+}
+
+// researchUnwrap applies a research read's unwrap steps to its record
+// (spec/dialect.md §6.1, §11, §12): each pointer resolves to a string that
+// holds one JSON value, read-failed otherwise; the string's bytes, and the
+// nesting and number literals of the value it holds, are measured as it is
+// unwrapped, input-over-bound over any of them, a bound kept apart from a
+// pointer that does not resolve and from a string that is not JSON.
+func researchUnwrap(read SourceRead, record any) (any, error) {
+	value := record
+	for _, p := range read.Unwrap {
+		tokens, _ := pointerTokens(p, true)
+		at, ok := pointerRead(value, tokens)
+		text, isString := at.(string)
+		if !ok || !isString {
+			return nil, researchFail(codeReadFailed, "the unwrap %s resolves to no string", p)
+		}
+		if len(text) > maxInputDocument {
+			return nil, researchFail(codeOverBound, "the unwrap %s resolves to a string of more than %d bytes", p, maxInputDocument)
+		}
+		if e := measureBytes([]byte(text), 32); e != nil {
+			return nil, e
+		}
+		next, e := readInputJSON([]byte(text))
+		if e != nil {
+			return nil, researchFail(codeReadFailed, "the unwrap %s resolves to a string that holds no one JSON value", p)
+		}
+		value = next
+	}
+	return value, nil
 }
 
 // readResearch applies a research source's read to its record (§4.3), or,
@@ -1514,8 +1648,8 @@ func readResearch(s MappingSource, record any, records map[string]any, params ma
 		if e = boundedArtifact(value); e != nil {
 			return derivedClaim{}, researchFail(codeOverBound, "%v", e)
 		}
-	} else if value, e = unwrapRead(s.Read, record); e != nil {
-		return derivedClaim{}, researchFail(codeReadFailed, "%v", e)
+	} else if value, e = researchUnwrap(s.Read, record); e != nil {
+		return derivedClaim{}, e
 	}
 	claim, e := deriveRead(s.Read, value, params)
 	if e != nil {

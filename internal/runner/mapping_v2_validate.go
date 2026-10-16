@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -31,7 +32,49 @@ func strictJSON(raw []byte, dest any) error {
 	if d.Decode(new(any)) != io.EOF {
 		return errors.New("one JSON value required")
 	}
+	if foreignReadSources(reflect.ValueOf(dest)) {
+		return errors.New(`json: unknown field "sources"`)
+	}
 	return nil
+}
+
+// foreignReadSources says whether a value strictJSON decoded holds a source
+// of a kind other than research whose read names sources. A read's sources
+// are a research source's reconciliation (spec/dialect.md §6.4), and the
+// read of a source of another kind has no such member: one that names it is
+// refused at decoding, with the decoder's own sentence for a member it does
+// not know, as it always was. Every other refusal of the decoder, and its
+// sentence, is as it was.
+func foreignReadSources(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		return !v.IsNil() && foreignReadSources(v.Elem())
+	case reflect.Struct:
+		if v.Type() == reflect.TypeOf(MappingSource{}) {
+			return v.FieldByName("Kind").String() != "research" && v.FieldByName("Read").FieldByName("Sources").Len() > 0
+		}
+		for i := 0; i < v.NumField(); i++ {
+			if foreignReadSources(v.Field(i)) {
+				return true
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			return false
+		}
+		for i := 0; i < v.Len(); i++ {
+			if foreignReadSources(v.Index(i)) {
+				return true
+			}
+		}
+	case reflect.Map:
+		for it := v.MapRange(); it.Next(); {
+			if foreignReadSources(it.Value()) {
+				return true
+			}
+		}
+	}
+	return false
 }
 func proofCanon(raw []byte) ([]byte, error) {
 	if len(raw) > MaxBody {

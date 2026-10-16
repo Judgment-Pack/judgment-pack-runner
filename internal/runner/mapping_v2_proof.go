@@ -124,6 +124,17 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 // verifyAcquisition verifies a single retained v3 acquisition, not a sealed
 // session/store. Unknown signed fields remain covered by the signature.
 func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int) (json.RawMessage, *Citation, error) {
+	return verifyReceipt(raw, args, p, public, at, maxAge, false)
+}
+
+// verifyReceipt is verifyAcquisition. With research, it holds a research
+// source's retained response, or its record's own receipt, to the
+// specification's §5.2 where an operation's acquisition is held otherwise,
+// as before: the receipt's adapter is the profile's adapter, as a whole
+// object, and its observation and serving times are each within the
+// source's maxAge before at and 30 seconds after it, with no rule between
+// the two (researchTimes).
+func verifyReceipt(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int, research bool) (json.RawMessage, *Citation, error) {
 	fail := func(s string) (json.RawMessage, *Citation, error) { return nil, nil, errors.New(s) }
 	var response struct {
 		Result  json.RawMessage `json:"result"`
@@ -240,6 +251,9 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	if a["endpoint"] != endpoint || adapter["name"] != p.Adapter.Name || adapter["version"] != p.Adapter.Version || adapter["digest"] != p.Adapter.Digest {
 		return fail("adapter or endpoint differs from the trusted profile")
 	}
+	if research && !sameJSON(encode(adapter), encode(p.Adapter)) {
+		return fail("adapter or endpoint differs from the trusted profile")
+	}
 	sig, _ := hex.DecodeString(str("signature"))
 	delete(r, "signature")
 	unsigned, e := proofCanon(encode(r))
@@ -264,6 +278,12 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	observed, ok := a["observedAt"].(string)
 	if !ok {
 		return fail("missing observation time")
+	}
+	if research {
+		if e := researchTimes(observed, str("servedAt"), at, maxAge); e != nil {
+			return nil, nil, e
+		}
+		return result, &Citation{str("sessionId"), int(index), hex.EncodeToString(sig)}, nil
 	}
 	obs, e := time.Parse(time.RFC3339Nano, observed)
 	if e != nil {

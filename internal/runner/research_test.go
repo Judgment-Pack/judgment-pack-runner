@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -1130,5 +1131,191 @@ func TestAResearchRulesParametersAreSignedOnlyByTheRecordsOwnReceipt(t *testing.
 		if u.Source == "follow-up" {
 			t.Fatalf("a parameter the record's own receipt commits is named unsigned: %+v", u)
 		}
+	}
+}
+
+// A research receipt's observation and serving instants are each held to
+// the window §5.2 gives, against the preparation's instant: no more than the
+// source's maxAge before it and no more than 30 seconds after it, the edges
+// inside; no rule joins the two instants (the review of #97, finding 1).
+func TestAResearchReceiptsTimesAreEachWithinTheWindow(t *testing.T) {
+	for _, member := range []string{"servedAt", "observedAt"} {
+		for name, c := range map[string]struct {
+			offset time.Duration
+			code   string
+		}{
+			"at the lower edge":          {-3600 * time.Second, ""},
+			"a second before the window": {-3601 * time.Second, codeStale},
+			"at the upper edge":          {30 * time.Second, ""},
+			"a second after the window":  {31 * time.Second, codeStale},
+		} {
+			t.Run(member+" "+name, func(t *testing.T) {
+				d := researchDocsOf(t, gtmPlan)
+				r := d.retained("person", 1)["receipt"].(map[string]any)
+				instant := d.at.Add(c.offset).Format(time.RFC3339)
+				if member == "servedAt" {
+					r["servedAt"] = instant
+				} else {
+					r["acquisition"].(map[string]any)["observedAt"] = instant
+				}
+				d.resign(t, r)
+				_, err := d.prepare(t)
+				if c.code == "" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				refusedFor(t, err, c.code)
+			})
+		}
+	}
+	// Observed 3630 seconds after it was served, each within the window: read.
+	d := researchDocsOf(t, gtmPlan)
+	r := d.retained("person", 1)["receipt"].(map[string]any)
+	r["servedAt"], r["acquisition"].(map[string]any)["observedAt"] = d.at.Add(-3600*time.Second).Format(time.RFC3339), d.at.Add(30*time.Second).Format(time.RFC3339)
+	d.resign(t, r)
+	if _, err := d.prepare(t); err != nil {
+		t.Fatal("an observation after its service, both within the window, was refused:", err)
+	}
+}
+
+// A research receipt's acquisition.adapter is its profile's adapter, as a
+// whole object (§5.2, check 3; the review of #97, finding 2): a member more
+// or a member fewer is acquisition-invalid, though the receipt is signed.
+func TestAResearchReceiptsAdapterIsItsProfilesWhole(t *testing.T) {
+	for name, change := range map[string]func(map[string]any){
+		"a member more":  func(a map[string]any) { a["extra"] = "not pinned" },
+		"a member fewer": func(a map[string]any) { delete(a, "version") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := researchDocsOf(t, gtmPlan)
+			r := d.retained("person", 2)["receipt"].(map[string]any)
+			change(r["acquisition"].(map[string]any)["adapter"].(map[string]any))
+			d.resign(t, r)
+			_, err := d.prepare(t)
+			refusedFor(t, err, codeInvalid)
+		})
+	}
+}
+
+// The research record's maxima come first (§11, §12; the review of #97,
+// finding 3), after the dialect's own checks: every measurable member of the
+// record and of its retained results is measured before its form, a
+// profile that does not fit or any acquisition finding.
+func TestAResearchRecordsMaximaComeFirst(t *testing.T) {
+	long := strings.Repeat("1", 129)
+	for name, c := range map[string]struct {
+		change func(*researchDocs)
+		code   string
+	}{
+		"65 responses beside a member more in the envelope": {func(d *researchDocs) {
+			r := d.record("company")
+			for len(r["responses"].([]any)) < 65 {
+				r["responses"] = append(r["responses"].([]any), d.retained("company", 0))
+			}
+			d.response("company")["extra"] = true
+		}, codeOverBound},
+		"a number of 129 characters in a retained result": {func(d *researchDocs) {
+			d.retained("person", 1)["result"].(map[string]any)["status"] = json.Number(long)
+		}, codeOverBound},
+		"an exponent over 308 in a retained result": {func(d *researchDocs) {
+			d.retained("person", 1)["result"].(map[string]any)["status"] = json.Number("1e309")
+		}, codeOverBound},
+		"a record nested 33 levels": {func(d *researchDocs) {
+			var nested any = []any{}
+			for i := 0; i < 29; i++ {
+				nested = []any{nested}
+			}
+			d.retained("person", 1)["result"] = nested
+		}, codeOverBound},
+		"a response through an unbound profile beside 65 responses": {func(d *researchDocs) {
+			r := d.record("company")
+			for len(r["responses"].([]any)) < 65 {
+				r["responses"] = append(r["responses"].([]any), d.retained("company", 0))
+			}
+			search := d.profiles[1]
+			d.retained("person", 0)["profile"] = map[string]any{"id": search.ID, "digest": profileHash(search)}
+		}, codeOverBound},
+		// The binding is the dialect's: its profiles are held at import and in
+		// preflight, before any record is read. A binding by a wrong digest
+		// beside an over-bound record is profile-mismatch, as
+		// docs/MAPPING-V2.md says ("Research sources", the replay).
+		"a wrong binding digest beside 65 responses": {func(d *researchDocs) {
+			r := d.record("company")
+			for len(r["responses"].([]any)) < 65 {
+				r["responses"] = append(r["responses"].([]any), d.retained("company", 0))
+			}
+			d.assignment("company")["profileDigest"] = digest([]byte("an old profile"))
+		}, codeMismatch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := researchDocsOf(t, gtmPlan)
+			c.change(d)
+			_, err := d.prepare(t)
+			refusedFor(t, err, c.code)
+		})
+	}
+}
+
+// An unwrapped research value is measured as it is unwrapped (§11, §12; the
+// review of #97, finding 4): nested beyond 32 levels it is input-over-bound,
+// kept apart from a pointer that does not resolve and a string that holds no
+// JSON, which are read-failed.
+func TestAnUnwrappedResearchValueIsMeasured(t *testing.T) {
+	nested := func(levels int) string { return strings.Repeat("[", levels) + strings.Repeat("]", levels) }
+	for name, c := range map[string]struct {
+		value, unwrap, code string
+	}{
+		"nested 33 levels":             {nested(33), "/fields/company-id/value", codeOverBound},
+		"nested 32 levels":             {nested(32), "/fields/company-id/value", ""},
+		"a string that holds no JSON":  {"not JSON", "/fields/company-id/value", codeReadFailed},
+		"a value that is not a string": {nested(1), "/fields/employee-count/value", codeReadFailed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := researchDocsOf(t, gtmPlan)
+			d.answers("company")["company-id"].(map[string]any)["value"] = c.value
+			d.source("company")["read"].(map[string]any)["unwrap"] = []any{c.unwrap}
+			_, err := d.prepare(t)
+			if c.code == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			refusedFor(t, err, c.code)
+		})
+	}
+}
+
+// A source of a kind other than research has no read.sources: one that
+// names it is refused at decoding, by the decoder's own sentence, in
+// version 2 and in version 3, as before research was read (the review of
+// #97, finding 5). Every other refusal of the decoder keeps its sentence.
+func TestAnOperationsReadNamingSourcesIsRefusedAtDecoding(t *testing.T) {
+	operation := `{"name":"vendor","kind":"operation","profile":"vendors","profileDigest":"sha256:` + strings.Repeat("0", 64) + `","maxAge":300,"arguments":{"tool":"execute_sql","arguments":{}},"read":%s}`
+	source := func(read string) string { return strings.Replace(operation, "%s", read, 1) }
+	for name, c := range map[string]struct{ mapping, want string }{
+		"version 2":                      {`{"version":2,"provider":"","facts":null,"evidence":null,"case":{"facts":[],"evidence":[]},"sources":[` + source(`{"sources":["vendor"],"copy":{"facts":[],"evidence":[]}}`) + `]}`, `json: unknown field "sources"`},
+		"version 3":                      {`{"version":3,"case":{"facts":[],"evidence":[]},"sources":[` + source(`{"copy":{"facts":[],"evidence":[]},"sources":["vendor"]}`) + `]}`, `json: unknown field "sources"`},
+		"a read's type error, as before": {`{"version":2,"case":{"facts":[],"evidence":[]},"sources":[` + source(`{"unwrap":"x","copy":{"facts":[],"evidence":[]}}`) + `]}`, "json: cannot unmarshal string into Go struct field SourceRead.sources.read.unwrap of type []string"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var m InputMapping
+			if err := strictJSON([]byte(c.mapping), &m); err == nil || err.Error() != c.want {
+				t.Fatalf("decoding found %v, not %s", err, c.want)
+			}
+			h := (&Service{}).Handler("test")
+			w := postTo(h, "/v1/inputs/preview", []byte(`{"source":{"mapping":`+c.mapping+`,"case":{}}}`))
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"invalid_request"`) {
+				t.Fatal("the request was not refused at decoding:", w.Code, w.Body.String())
+			}
+		})
+	}
+	// A research source's read names them, and is decoded.
+	d := researchDocsOf(t, func(h *researchStandIn) researchPlan { return fallbackPlan(h, "gtm-company-person") }, func(h *researchStandIn, p *researchPlan) { fallback(p, "all-unavailable") })
+	var m InputMapping
+	if err := strictJSON(encode(d.dialect), &m); err != nil || len(m.Sources[2].Read.Sources) == 0 {
+		t.Fatal("a research source's reconciliation was not decoded:", err)
 	}
 }

@@ -180,10 +180,12 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		return i, inputProblem(err.Error())
 	}
 	// A research source's acquisition is the record its caller retains
-	// (research.go). Every record is held to its form, and then each
-	// retained response's profile to the source's assignments, before any
-	// acquisition is checked: the forms are refusals, and a profile that
-	// does not fit precedes every other finding (spec/dialect.md §11).
+	// (research.go). Once the dialect has been held to its own form, its
+	// profiles and its bindings (above), every record is held to the maxima
+	// of §12, then to its form, and then each retained response's profile to
+	// the source's assignments, before any acquisition is checked: the
+	// maxima and the forms are refusals, the maxima first, and a profile
+	// that does not fit precedes every other finding (spec/dialect.md §11).
 	recipes := map[string]*researchRecipe{}
 	retained := map[string]*researchAcquisition{}
 	for _, source := range m.Sources {
@@ -195,8 +197,17 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 			return i, inputProblem("Mapping v3: " + err.Error())
 		}
 		recipes[source.Name] = recipe
-		if value, ok := c.Sources[source.Name]; ok {
-			a, err := readResearchAcquisition(value, recipe)
+	}
+	for _, source := range m.Sources {
+		if value, ok := c.Sources[source.Name]; ok && recipes[source.Name] != nil {
+			if err := researchAcquisitionBounds(value, recipes[source.Name]); err != nil {
+				return i, sourceFailure(source.Name, err)
+			}
+		}
+	}
+	for _, source := range m.Sources {
+		if value, ok := c.Sources[source.Name]; ok && recipes[source.Name] != nil {
+			a, err := readResearchAcquisition(value, recipes[source.Name])
 			if err != nil {
 				return i, sourceFailure(source.Name, err)
 			}

@@ -442,16 +442,23 @@ values of their types, and none means `not-found`. The record's own `receipt` an
 `salts` are present beside `result` when the record came back through a gateway
 source, under the AI profile, over the source's request and the whole record.
 
-**The replay.** Runner holds the record to its form, every maximum of the
-specification's §12 first (`input-over-bound`), then every form
-(`input-malformed`), and then each retained response's profile to the source's
+**The replay.** The dialect's own checks come first: its form, its profiles and
+its binding, which a binding at import and preflight hold before any record is
+read, so that a binding by a wrong digest is `profile-mismatch` whatever the
+record holds. Then Runner holds each research record to every maximum of the
+specification's §12 (`input-over-bound`): on its bytes, every number literal and
+the nesting, and on the record, its nesting, its responses, its answers and every
+length and count §12 names, the retained results included; then to every form
+(`input-malformed`); and then each retained response's profile to the source's
 assignments (`profile-mismatch`). It then checks each retained response, in the
 order the record retains it, as it checks an operation's acquisition, under that
 response's own profile and over that response's own request: its result present
 (`acquisition-missing` otherwise); its receipt's times whole seconds in UTC, its
-signature, its source, authority, adapter, shape and endpoint, its commitment to
-the request and its digest of the result (`acquisition-invalid`); its times within
-the source's `maxAge` before the preparation's instant (`acquisition-stale`); and
+signature, its source, authority, shape and endpoint, its adapter equal to the
+profile's as a whole object, its commitment to the request and its digest of the
+result (`acquisition-invalid`); its observation and serving times each within the
+source's `maxAge` before the preparation's instant and 30 seconds after it, with
+no rule between the two (`acquisition-stale`); and
 its place in the preparation's sessions, as every receipt's
 (`acquisition-sessions`). Then the record's own receipt, when it has one. Each
 refusal names the specification's code at its end, so that it can be read beside
@@ -459,7 +466,10 @@ a verifier's finding. The read then applies to `R`: a copy or a rule, reading
 `/fields`, a declared field's entry, its `status`, its `cites`, its `value` and what
 is below it, and, in a condition only, an observation's value
 (`/fields/<name>/values/<i>/value`); no read takes a value from under `values`, so
-that a conflict is never resolved but by a rule that says how. A reconciliation,
+that a conflict is never resolved but by a rule that says how. An unwrap's string,
+and the nesting and the number literals of the value it holds, are measured as it
+is unwrapped (`input-over-bound`), apart from a pointer that resolves to no string
+or a string that holds no JSON value (`read-failed`). A reconciliation,
 `{"sources": [earlier research sources], "rule": R}`, reads `{"current": R,
 "sources": {…}}`, a skipped source's record absent; its rule guards each value it
 selects as `found`, names what every other status and absence does, and writes
