@@ -58,10 +58,11 @@ func validateProfiles(profiles []InputProfile) error {
 // key if a future caller reaches it by another path.
 //
 // A class is a profile's, and a binding takes it only where the source's
-// kind admits that class (spec/dialect.md §5.1, RFC 0018 round 13): an
-// operation of any shape takes its profile's class, record or generated; a
-// research source's capability bindings take generated; a web-kind binding
-// is record. So one gateway source, its key, source and authority, may be
+// kind admits that class (spec/dialect.md §5.1, RFC 0018 rounds 13 and 14):
+// an operation of any shape takes its profile's class, record or generated;
+// a research source's capability bindings take generated; a web-kind binding
+// is record; a Drive selected-file requires a drive profile of class record
+// (profileFor, below). So one gateway source, its key, source and authority, may be
 // held by profiles of different classes, as it may by profiles of one class,
 // each with its own id. A source names its profile by id and digest and
 // takes that profile's class. Runner refuses the kind web by name and reads
