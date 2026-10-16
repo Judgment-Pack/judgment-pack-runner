@@ -365,3 +365,79 @@ func TestV2ASkippedOperationLeavesOneAcquisition(t *testing.T) {
 		t.Fatal(e, string(encode(got.Preparation)))
 	}
 }
+
+// A receipt's sessionId is a string, which spec/dialect.md §5.2 does not hold
+// to the gateway's token form (runner #99): any string is read, and the
+// citation and the session rule carry it as given.
+var oddSessions = map[string]string{
+	"with spaces":     "a session of mine",
+	"with a colon":    "job:2026-10-16",
+	"non-ASCII":       "séance-日本",
+	"over 128 bytes":  strings.Repeat("s", 200),
+	"empty":           "",
+	"a path-like dot": "..",
+}
+
+func TestAnOperationReceiptsSessionIdIsAnyString(t *testing.T) {
+	for name, session := range oddSessions {
+		t.Run(name, func(t *testing.T) {
+			// One such session shared at distinct call indexes.
+			input, p, key, at, args := threeSources(t)
+			for i, source := range []string{"vendor", "detail", "standing"} {
+				input.Source.Sources[source] = SourceValue{Response: signResponseIn(t, p, key, args[source], sourceResults[source], at, session, i)}
+			}
+			got, e := normalizeV2(input, []InputProfile{p}, at)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if len(got.Preparation.Cites) != 3 {
+				t.Fatalf("%d citations", len(got.Preparation.Cites))
+			}
+			for i, c := range got.Preparation.Cites {
+				if c.SessionID != session || c.CallIndex != i {
+					t.Fatalf("citation %d: %+v", i, c)
+				}
+			}
+			// What is verified twice is the same twice.
+			again, e := normalizeV2(got, []InputProfile{p}, at)
+			if e != nil || !sameJSON(encode(again), encode(got)) {
+				t.Fatalf("not repeatable: %v", e)
+			}
+			// The same call index twice in it is one receipt for two sources.
+			input, p, key, at, args = threeSources(t)
+			for i, source := range []string{"vendor", "detail", "standing"} {
+				input.Source.Sources[source] = SourceValue{Response: signResponseIn(t, p, key, args[source], sourceResults[source], at, session, []int{0, 0, 1}[i])}
+			}
+			if _, e = normalizeV2(input, []InputProfile{p}, at); e == nil || !strings.Contains(e.Error(), "detail") {
+				t.Fatalf("a call index twice in a session: %v", e)
+			}
+			// Each alone in a session of its own, at call index 0.
+			input, p, key, at, args = threeSources(t)
+			for i, source := range []string{"vendor", "detail", "standing"} {
+				input.Source.Sources[source] = SourceValue{Response: signResponseIn(t, p, key, args[source], sourceResults[source], at, session+strings.Repeat("!", i), 0)}
+			}
+			got, e = normalizeV2(input, []InputProfile{p}, at)
+			if e != nil || got.Preparation.Cites[2].SessionID != session+"!!" {
+				t.Fatalf("each in its own session: %v", e)
+			}
+		})
+	}
+}
+
+// A sessionId that is not a string, or is absent, makes the receipt
+// malformed (§5.2): acquisition-invalid, whatever is signed.
+func TestAnOperationReceiptsSessionIdThatIsNoStringIsInvalid(t *testing.T) {
+	const want = "Source vendor: invalid session id. No decision was requested."
+	for name, change := range map[string]func(r map[string]any){
+		"a number": func(r map[string]any) { r["sessionId"] = json.Number("7") },
+		"null":     func(r map[string]any) { r["sessionId"] = nil },
+		"an array": func(r map[string]any) { r["sessionId"] = []any{"s"} },
+		"absent":   func(r map[string]any) { delete(r, "sessionId") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			input, p, key, at := v2Fixture(t)
+			input = resigned(t, input, key, change)
+			refusedWith(t, preparedByEachCaller(t, input, p, at), want)
+		})
+	}
+}

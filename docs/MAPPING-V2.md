@@ -549,7 +549,11 @@ An input in neither form is refused at the first source, in the mapping's order,
 that leaves both: two acquisitions that share a session beside one that does not,
 or, among acquisitions of sessions apart, one that is not its session's first
 call. One acquisition alone shares a session with itself, and is taken at any
-call index, as it was. The form is read from the receipts and from nothing else, so whoever
+call index, as it was. A receipt's `sessionId` is a string and is read as given, of any content:
+the dialect does not hold it to the gateway's token form (spec/dialect.md §5.2), so two
+receipts share a session when their strings are equal, and the citation carries the string
+unchanged. A `sessionId` that is not a string makes the receipt malformed (`acquisition-invalid`),
+before the time and session rules. The form is read from the receipts and from nothing else, so whoever
 verifies an export later reads the same form. Neither form says a session is
 sealed or complete, as stated above: a caller that asks twice chooses which
 answer to submit, in one session or in two.

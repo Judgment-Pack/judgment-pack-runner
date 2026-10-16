@@ -129,6 +129,8 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 // The receipt's adapter is the profile's adapter as a whole object, and its
 // observation and serving instants are each within the window
 // acquisitionTimes gives, with no rule between the two (runner #98).
+// Its sessionId is a string of any content (§5.2 does not hold it to the
+// gateway's token form), read and cited as given (runner #99).
 func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int) (json.RawMessage, *Citation, error) {
 	fail := func(s string) (json.RawMessage, *Citation, error) { return nil, nil, errors.New(s) }
 	var response struct {
@@ -157,10 +159,16 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 		return fail("receipt is not an object")
 	}
 	str := func(k string) string { s, _ := r[k].(string); return s }
-	for _, k := range []string{"receiptVersion", "kind", "sessionId", "source", "servedAt", "authority", "keyId", "signature", "resultDigest", "argumentsCommitment"} {
+	for _, k := range []string{"receiptVersion", "kind", "source", "servedAt", "authority", "keyId", "signature", "resultDigest", "argumentsCommitment"} {
 		if _, ok := r[k].(string); !ok {
 			return fail("receipt is missing a required string")
 		}
+	}
+	// The session identifier is a string (§5.2), of any content: the
+	// dialect does not hold it to the gateway's token form, so it is read,
+	// and cited, as given. A member of another type is malformed.
+	if _, ok := r["sessionId"].(string); !ok {
+		return fail("invalid session id")
 	}
 	idx, ok := r["callIndex"].(json.Number)
 	if !ok {
@@ -174,7 +182,7 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	if !present || prev != nil && !validHex(fmt.Sprint(prev), 64) || index == 0 && prev != nil || index > 0 && prev == nil {
 		return fail("invalid previous signature")
 	}
-	if str("receiptVersion") != "3" || str("kind") != "acquisition" || !flatToken(str("sessionId")) || !validHex(str("signature"), 64) || !validDigest(str("resultDigest")) || !validDigest(str("argumentsCommitment")) {
+	if str("receiptVersion") != "3" || str("kind") != "acquisition" || !validHex(str("signature"), 64) || !validDigest(str("resultDigest")) || !validDigest(str("argumentsCommitment")) {
 		return fail("unsupported or malformed receipt")
 	}
 	if _, ok := r["argumentsDigest"]; ok {

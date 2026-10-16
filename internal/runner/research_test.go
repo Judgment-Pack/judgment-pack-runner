@@ -1018,6 +1018,95 @@ func TestAResearchAcquisitionIsReplayedNotAskedAgain(t *testing.T) {
 	}
 }
 
+// Every receipt of a research source, retained responses and the record's
+// own, is read whatever string its sessionId is (spec/dialect.md §5.2, runner
+// #99): the citations carry it as given, and the session rule reads it so.
+func TestAResearchReceiptsSessionIdIsAnyString(t *testing.T) {
+	// inSession puts every receipt of the documents in one session. The
+	// record's own receipt commits the record, retained receipts included,
+	// so it is signed again over the changed record.
+	inSession := func(t *testing.T, d *researchDocs, session string) int {
+		receipts := 0
+		for source := range d.sources {
+			for i := range d.record(source)["responses"].([]any) {
+				r := d.retained(source, i)["receipt"].(map[string]any)
+				r["sessionId"] = session
+				d.resign(t, r)
+				receipts++
+			}
+			if r, ok := d.response(source)["receipt"].(map[string]any); ok {
+				r["sessionId"] = session
+				r["resultDigest"] = digest(canonTest(t, encode(d.record(source))))
+				d.resign(t, r)
+				receipts++
+			}
+		}
+		return receipts
+	}
+	for name, session := range map[string]string{"spaces": "a session of mine", "a colon": "job:2026-10-16", "non-ASCII": "séance-日本", "empty": ""} {
+		for plan, p := range map[string]func(*researchStandIn) researchPlan{"gtm-company-person": gtmPlan, "work-item-triage": workItemPlan} {
+			t.Run(plan+" "+name, func(t *testing.T) {
+				d := researchDocsOf(t, p)
+				receipts := inSession(t, d, session)
+				prepared, err := d.prepare(t)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cites := prepared.Preparation.Cites
+				if len(cites) != receipts || receipts < 2 {
+					t.Fatalf("%d citations of %d receipts", len(cites), receipts)
+				}
+				for _, c := range cites {
+					if c.SessionID != session {
+						t.Fatalf("citation %+v", c)
+					}
+				}
+				// The session rule still holds in such a session: two
+				// receipts at one call index are one receipt twice.
+				d = researchDocsOf(t, p)
+				inSession(t, d, session)
+				if plan == "gtm-company-person" {
+					r := d.retained("person", 1)["receipt"].(map[string]any)
+					r["callIndex"] = json.Number("1")
+					d.resign(t, r)
+				} else {
+					r := d.response("follow-up")["receipt"].(map[string]any)
+					r["callIndex"] = json.Number("3")
+					d.resign(t, r)
+				}
+				_, err = d.prepare(t)
+				refusedFor(t, err, codeSessions)
+			})
+		}
+	}
+}
+
+// A research receipt whose sessionId is not a string is malformed
+// (acquisition-invalid), a retained response's and the record's own alike.
+func TestAResearchReceiptsSessionIdThatIsNoStringIsInvalid(t *testing.T) {
+	for name, c := range map[string]struct {
+		plan   func(*researchStandIn) researchPlan
+		target func(d *researchDocs) map[string]any
+	}{
+		"a retained response's": {gtmPlan, func(d *researchDocs) map[string]any { return d.retained("person", 1)["receipt"].(map[string]any) }},
+		"the record's own":      {workItemPlan, func(d *researchDocs) map[string]any { return d.response("follow-up")["receipt"].(map[string]any) }},
+	} {
+		for kind, value := range map[string]any{"a number": json.Number("7"), "null": nil} {
+			t.Run(name+" "+kind, func(t *testing.T) {
+				d := researchDocsOf(t, c.plan)
+				r := c.target(d)
+				r["sessionId"] = value
+				d.resign(t, r)
+				_, err := d.prepare(t)
+				refusedFor(t, err, codeInvalid)
+				if !strings.Contains(err.Error(), "invalid session id") {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
 // A research source whose question takes an earlier source's fact, which
 // that source does not resolve, is skipped: it is not acquired, and a record
 // supplied for it is acquisition-unexpected (spec/dialect.md §3, §5.2).
