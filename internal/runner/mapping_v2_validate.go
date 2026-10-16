@@ -315,6 +315,9 @@ func validateDialect(m InputMapping, open bool) error {
 	// Each earlier research source's recipe, by its name, which a
 	// reconciliation read names (spec/dialect.md §6.4).
 	recipes := map[string]*researchRecipe{}
+	// Each earlier source's fact targets, by its name: a source parameter's
+	// pointer is exactly one of them (spec/dialect.md §3).
+	factTargets := map[string]map[string]bool{}
 	checkParams := func(ps map[string]Parameter, caseOnly bool, local map[string]string) error {
 		if len(ps) > 64 {
 			return errors.New("too many parameters")
@@ -331,6 +334,9 @@ func validateDialect(m InputMapping, open bool) error {
 			}
 			if caseOnly && p.From != "" || !caseOnly && !prior[p.From] {
 				return errors.New("dependencies must name an earlier source's derived facts")
+			}
+			if !caseOnly && !factTargets[p.From][p.Pointer] {
+				return fmt.Errorf("source parameter %s reads no fact target of %s: pointer %q is not exactly a fact target the source declares", n, p.From, p.Pointer)
 			}
 			local[n] = p.Type
 		}
@@ -419,6 +425,10 @@ func validateDialect(m InputMapping, open bool) error {
 		f, ev, e := readTargets(s.Read)
 		if e != nil {
 			return fail(e.Error())
+		}
+		factTargets[s.Name] = map[string]bool{}
+		for _, x := range f {
+			factTargets[s.Name][x.Target] = true
 		}
 		if recipe != nil {
 			if e := researchReadForm(s, recipe, recipes); e != nil {

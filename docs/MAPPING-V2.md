@@ -160,7 +160,10 @@ may produce the same destination; the union is used for mapping review.
 
 Case parameters are typed `string`, `integer` or `timestamp`. A source-local
 parameter is `{from: "earlier-source", pointer: "/derived/fact", type: ...}`.
-It reads only that source's derived facts after `acquisitionStatus: "resolved"`.
+The pointer is exactly one of that source's fact targets: a path below a target,
+a pointer that is no target, and an evidence requirement are refused as a malformed
+mapping, before any acquisition, on versions 2 and 3. It reads only that source's
+derived facts after `acquisitionStatus: "resolved"`.
 It never reads a raw rejected artifact. Missing/unknown/absent upstream outputs
 skip the dependent source and record `dependency-unavailable`. Supplying a response
 for that skipped source is refused. A present but mistyped export is an error.
