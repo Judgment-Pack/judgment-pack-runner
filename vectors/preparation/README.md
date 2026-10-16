@@ -204,17 +204,25 @@ each a fact target of an earlier source, `approver`, `sponsor`'s `/sponsor/id`, 
 `requestType`, `intake`'s `/intake/type`, and is skipped, since `sponsor`'s claim is not
 `resolved`. A skipped source is not acquired: `sources.json` holds no record of it,
 `cites` no citation, and its read does not apply.
-Runner writes its outcome with its `claim`, `{"acquisitionStatus": "unknown", "basis":
-[], "evidenceAvailability": {}, "facts": {}, "reason": "dependency-unavailable"}`,
-status `unknown` and reason `dependency-unavailable`, no `arguments`, and as
-`parameters` those that have a value (`runAt`, `requestId`, `requestType`, and not
-`approver`). Each of its lineage entries has that status and reason, `present` false,
-`basis` `[]`, no `receipt`, and `dependencies`: the source parameters it waited on,
-each `{"parameter", "source", "pointer"}`, in the order of the parameters' names,
-`approver` before `requestType`, though `intake` comes before `sponsor` among the
-sources. This is the form of a skipped source of every kind; the specification's
-§9.2 and §9.3 state another (`claim` absent, status `dependency-unavailable`, no
-`dependencies`) until its amendment for judgment-pack-spec#189 takes this one.
+Runner writes four members of a skipped source, of every kind, otherwise than the
+specification's §9.2 and §9.3 state them, until its amendment for
+judgment-pack-spec#189 takes Runner's form:
+
+- the outcome's `claim`, present: `{"acquisitionStatus": "unknown", "basis": [],
+  "evidenceAvailability": {}, "facts": {}, "reason": "dependency-unavailable"}` (the
+  text: absent);
+- the outcome's `status`, `unknown` (the text: `dependency-unavailable`);
+- each lineage entry's `status`, `unknown` (the text: the outcome's,
+  `dependency-unavailable`);
+- each lineage entry's `dependencies`, the source parameters it waited on, as objects
+  `{"parameter", "source", "pointer"}` in the order of the parameters' names,
+  `approver` before `requestType`, though `intake` comes before `sponsor` among the
+  sources (the text: no such member).
+
+Its other members are as the text states them: the outcome's `reason`
+`dependency-unavailable`, no `arguments`, and as `parameters` those that have a value
+(`runAt`, `requestId`, `requestType`, and not `approver`); each lineage entry's
+`reason` `dependency-unavailable`, `present` false, `basis` `[]` and no `receipt`.
 
 The last two of the first twelve are dialect version 3 (`docs/MAPPING-V2.md`, "Dialect version 3").
 `version-3-bound` is there for the version: its mapping is written as a version-3

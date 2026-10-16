@@ -74,10 +74,11 @@ func skippedSourceInput(t *testing.T, p InputProfile, key ed25519.PrivateKey, at
 // Runner writes for a skipped source, of every kind: its outcome carries its
 // claim, of no facts and no availability, with status unknown and reason
 // dependency-unavailable, the parameters that have a value and no request;
-// each of its lineage entries carries that status and reason, no value, no
-// basis and no receipt, and dependencies, the source parameters it waited
-// on, in the order of their names: approver, from sponsor, before
-// requestType, from intake, though intake comes first among the sources.
+// each of its lineage entries carries the status unknown, not the reason, and
+// the reason dependency-unavailable, no value, no basis and no receipt, and
+// dependencies, the source parameters it waited on, in the order of their
+// names: approver, from sponsor, before requestType, from intake, though
+// intake comes first among the sources.
 func requireSkippedSource(t *testing.T, p *Preparation) {
 	t.Helper()
 	if p == nil || len(p.Outcomes) != 4 || len(p.Cites) != 2 {
@@ -107,7 +108,10 @@ func requireSkippedSource(t *testing.T, p *Preparation) {
 			continue
 		}
 		entries++
-		if l.Status != "unknown" || l.Reason != "dependency-unavailable" || l.Present || len(l.Basis) != 0 || l.Receipt != nil || l.Class != "record" || string(encode(l.Dependencies)) != want {
+		if l.Status != "unknown" {
+			t.Fatalf("the skipped source's entry for %s has the status %q, not unknown", l.Target, l.Status)
+		}
+		if l.Reason != "dependency-unavailable" || l.Present || len(l.Basis) != 0 || l.Receipt != nil || l.Class != "record" || string(encode(l.Dependencies)) != want {
 			t.Fatalf("the skipped source's entry is %s", encode(l))
 		}
 	}
