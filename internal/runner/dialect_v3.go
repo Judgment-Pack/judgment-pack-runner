@@ -46,6 +46,9 @@ func (m InputMapping) dialect() bool { return m.Version == 2 || m.Version == 3 }
 // dialect's version 2 records (spec/dialect.md §2). Version 3 carries none
 // of them: its encoding is the document with no member Runner adds.
 func (m InputMapping) MarshalJSON() ([]byte, error) {
+	if m.originalDocument != nil {
+		return m.originalDocument, nil
+	}
 	type plain InputMapping
 	if m.FormatVersion != "" {
 		return m.marshalArtifact()
@@ -320,7 +323,10 @@ func importedSource(src *SourceInput, profiles []InputProfile) (*SourceInput, er
 // held to the form every dialect is.
 func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, error) {
 	fail := func(format string, a ...any) (InputMapping, error) {
-		return InputMapping{}, inputProblem("Mapping v3: " + fmt.Sprintf(format, a...))
+		return InputMapping{}, preparationCause{inputProblem("Mapping v3: " + fmt.Sprintf(format, a...)), researchFail(codeMalformed, format, a...)}
+	}
+	mismatch := func(format string, a ...any) (InputMapping, error) {
+		return InputMapping{}, preparationCause{inputProblem("Mapping v3: " + fmt.Sprintf(format, a...)), researchFail(codeMismatch, format, a...)}
 	}
 	absent := func(raw json.RawMessage) bool {
 		return len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
@@ -406,7 +412,7 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 		if isResearch(s) {
 			b, e := bindResearch(s, entry, profiles)
 			if e != nil {
-				return fail("%s", e.Error())
+				return InputMapping{}, preparationCause{inputProblem("Mapping v3: " + e.Error()), e}
 			}
 			bound.Sources[i] = b
 			continue
@@ -431,13 +437,13 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 		}
 		switch {
 		case profile == nil:
-			return fail("the binding document binds source %s to the profile %s, which this installation does not hold", s.Name, id)
+			return mismatch("the binding document binds source %s to the profile %s, which this installation does not hold", s.Name, id)
 		case profileHash(*profile) != pinned:
-			return fail("the binding document binds source %s to the profile %s by a digest that is not the digest of this installation's profile %s", s.Name, id, id)
+			return mismatch("the binding document binds source %s to the profile %s by a digest that is not the digest of this installation's profile %s", s.Name, id, id)
 		case profile.Shape != shape:
-			return fail("the binding document binds source %s, served by shape %s, to the profile %s, of shape %s", s.Name, shape, id, profile.Shape)
+			return mismatch("the binding document binds source %s, served by shape %s, to the profile %s, of shape %s", s.Name, shape, id, profile.Shape)
 		case profile.Adapter.Name != record:
-			return fail("the binding document binds source %s, written against the record %s, to the profile %s, whose adapter is %s", s.Name, record, id, profile.Adapter.Name)
+			return mismatch("the binding document binds source %s, written against the record %s, to the profile %s, whose adapter is %s", s.Name, record, id, profile.Adapter.Name)
 		}
 		s.Platform, s.Operation, s.Shape, s.Record = nil, nil, nil, nil
 		s.Profile, s.ProfileDigest = id, pinned

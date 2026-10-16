@@ -176,8 +176,12 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	if len(encode(c)) > MaxBody {
 		return i, inputProblem("v2 input exceeds aggregate limit")
 	}
-	if err := preflightV2(m, profiles); err != nil {
-		return i, inputProblem(err.Error())
+	if err := preflightPreparation(m, profiles, planning); err != nil {
+		var typed researchError
+		if !errors.As(err, &typed) {
+			err = preparationCause{err, researchFail(codeMismatch, "profile does not match source")}
+		}
+		return i, preparationCause{inputProblem(err.Error()), err}
 	}
 	// A research source's acquisition is the record its caller retains
 	// (research.go). Once the dialect has been held to its own form, its
@@ -227,8 +231,8 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		for _, source := range m.Sources {
 			known = known || source.Name == name
 		}
-		if !known {
-			return i, inputProblem("unexpected source response")
+		if planning && !known {
+			return i, preparationCause{inputProblem("unexpected source response"), researchFail(codeUnexpected, "unexpected source response")}
 		}
 	}
 	hash := mappingV2Hash(m)
@@ -265,7 +269,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	admit := func(cite Citation) error {
 		key := fmt.Sprintf("%s/%d", cite.SessionID, cite.CallIndex)
 		if cites[key] {
-			return errors.New("one receipt cannot stand in for multiple source acquisitions")
+			return researchFail(codeSessions, "one receipt cannot stand in for multiple source acquisitions")
 		}
 		cites[key] = true
 		if len(prep.Cites) == 0 {
@@ -276,7 +280,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		shared = shared && cite.SessionID == first
 		apart = apart && cite.CallIndex == 0
 		if !shared && !apart {
-			return errors.New("acquisitions must share one session, or each be the first call of a session of its own")
+			return researchFail(codeSessions, "acquisitions must share one session, or each be the first call of a session of its own")
 		}
 		prep.Cites = append(prep.Cites, cite)
 		return nil
@@ -284,6 +288,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	// The research records acquired, by their sources' names, which a later
 	// reconciliation reads (spec/dialect.md §6.4).
 	records := map[string]any{}
+	var admissionFailure error
 	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, receipts *[]Citation, calc *CalculationLineage) error {
 		ft, et, err := readTargets(read)
 		if err != nil {
@@ -297,7 +302,17 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		rd := digest(b)
 		for _, f := range ft {
 			if !admitted(m, "facts", f.Target, class, gen) {
-				return errors.New("fact target does not admit source class or generated dependency")
+				if admissionFailure == nil {
+					message := "fact target does not admit source class or generated dependency"
+					if name != "case" {
+						message = fmt.Sprintf("source %s: %s", name, message)
+					}
+					typed := researchFail(codeAdmission, "%s", message)
+					if recipes[name] != nil {
+						message = typed.Error()
+					}
+					admissionFailure = preparationCause{inputProblem(message), typed}
+				}
 			}
 			tokens, _ := pointerTokens(f.Target, false)
 			v, present := pointerRead(fv, tokens)
@@ -308,7 +323,17 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		}
 		for _, f := range et {
 			if !admitted(m, "evidence", f.Requirement, class, gen) {
-				return errors.New("evidence target does not admit source class or generated dependency")
+				if admissionFailure == nil {
+					message := "evidence target does not admit source class or generated dependency"
+					if name != "case" {
+						message = fmt.Sprintf("source %s: %s", name, message)
+					}
+					typed := researchFail(codeAdmission, "%s", message)
+					if recipes[name] != nil {
+						message = typed.Error()
+					}
+					admissionFailure = preparationCause{inputProblem(message), typed}
+				}
 			}
 			v, present := claim.Evidence[f.Requirement]
 			if present {
@@ -324,7 +349,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 			tokens, _ := pointerTokens(p.Pointer, true)
 			v, ok := pointerRead(caseValue, tokens)
 			if !ok || !paramValue(v, p.Type) {
-				return i, sourceFailure("case", fmt.Errorf("parameter %s is missing or mistyped", n))
+				return i, sourceFailure("case", researchFail("parameter-invalid", "parameter %s is missing or mistyped", n))
 			}
 			caseParams[n] = v
 			caseTypes[n] = p.Type
@@ -363,7 +388,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				continue
 			}
 			if !paramValue(v, p.Type) {
-				return fail(fmt.Errorf("validated parameter %s is mistyped", n))
+				return fail(researchFail("parameter-invalid", "validated parameter %s is mistyped", n))
 			}
 			params[n] = v
 			types[n] = p.Type
@@ -402,7 +427,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				return fail(researchFail(codeUnexpected, "a skipped dependent source must not supply a response"))
 			}
 			if present {
-				return fail(errors.New("a skipped dependent source must not supply a response"))
+				return fail(researchFail(codeUnexpected, "a skipped dependent source must not supply a response"))
 			}
 		} else if research {
 			// The request is the recipe, recorded and never sent: Runner
@@ -460,7 +485,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				if planning {
 					return i, &acquisitionNeeded{PlannedSource{Name: source.Name, Kind: source.Kind, Provider: source.Provider, Profile: source.Profile, Source: profile.Source, Arguments: args}}
 				}
-				return fail(errors.New("required source response is missing"))
+				return fail(researchFail(codeMissing, "required source response is missing"))
 			}
 			if source.Kind == "selected-file" {
 				if len(value.Response) > 0 {
@@ -473,7 +498,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				}
 				artifact = doc
 				if verified {
-					result, citation, err := verifyAcquisition([]byte(snap.Proof.Response), args, profile, profileKeys[profile.ID], at, source.MaxAge)
+					result, citation, err := verifyPreparationAcquisition([]byte(snap.Proof.Response), args, profile, profileKeys[profile.ID], at, source.MaxAge)
 					if err != nil {
 						return fail(err)
 					}
@@ -494,7 +519,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				if len(value.Snapshot) > 0 {
 					return fail(errors.New("operations must supply a response only"))
 				}
-				result, citation, err := verifyAcquisition(value.Response, args, profile, profileKeys[profile.ID], at, source.MaxAge)
+				result, citation, err := verifyPreparationAcquisition(value.Response, args, profile, profileKeys[profile.ID], at, source.MaxAge)
 				if err != nil {
 					return fail(err)
 				}
@@ -546,8 +571,11 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	}
 	for n := range c.Sources {
 		if !used[n] {
-			return i, inputProblem("unexpected source response")
+			return i, preparationCause{inputProblem("unexpected source response"), researchFail(codeUnexpected, "unexpected source response")}
 		}
+	}
+	if admissionFailure != nil {
+		return i, admissionFailure
 	}
 	// By call index, as before. Where each acquisition is the first call of
 	// its own session the indexes are equal, and the order is the mapping's

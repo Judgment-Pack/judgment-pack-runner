@@ -31,6 +31,8 @@ func main() {
 		} else {
 			err = relocateWorkspace(os.Stdin, os.Stdout)
 		}
+	} else if len(os.Args) > 1 && os.Args[1] == "verify-preparation" {
+		os.Exit(verifyPreparation(os.Args[2:], os.Stdout, os.Stderr))
 	} else if len(os.Args) > 1 && os.Args[1] == "verify-run" {
 		err = verifyRun(os.Args[2:], os.Stdout, os.Stderr)
 	} else {

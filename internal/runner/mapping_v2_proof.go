@@ -138,7 +138,13 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 // Its sessionId is a string of any content (§5.2 does not hold it to the
 // gateway's token form), read and cited as given (runner #99).
 func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int) (json.RawMessage, *Citation, error) {
-	fail := func(s string) (json.RawMessage, *Citation, error) { return nil, nil, errors.New(s) }
+	code := codeInvalid
+	fail := func(s string) (json.RawMessage, *Citation, error) {
+		return nil, nil, preparationCause{errors.New(s), researchFail(code, "%s", s)}
+	}
+	if !operationEnvelopeForm(raw) {
+		return nil, nil, researchFail(codeMalformed, "malformed acquisition envelope")
+	}
 	var response struct {
 		Result  json.RawMessage `json:"result"`
 		Receipt json.RawMessage `json:"receipt"`
@@ -246,6 +252,20 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	if !validDigest(adapter["digest"].(string)) {
 		return fail("invalid adapter digest")
 	}
+	if !validHex(response.Salts.Args, 32) {
+		return fail("missing argument commitment salt")
+	}
+	observed, ok := a["observedAt"].(string)
+	if !ok {
+		return fail("missing observation time")
+	}
+	if _, valid := receiptInstant(observed); !valid {
+		return fail("invalid observation time")
+	}
+	if _, valid := receiptInstant(str("servedAt")); !valid {
+		return fail("invalid serving time")
+	}
+	code = codeInvalid
 	shape, ok := a["shape"].(string)
 	if !ok || shape != p.Shape {
 		return fail("acquisition shape differs from the trusted profile")
@@ -284,10 +304,6 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	committed := append(append(salt, []byte("args:")...), argBytes...)
 	if digest(committed) != str("argumentsCommitment") {
 		return fail("response does not match the frozen request and this case's parameters")
-	}
-	observed, ok := a["observedAt"].(string)
-	if !ok {
-		return fail("missing observation time")
 	}
 	if e := acquisitionTimes(observed, str("servedAt"), at, maxAge); e != nil {
 		return nil, nil, e

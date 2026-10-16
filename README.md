@@ -749,3 +749,5 @@ automatic pruning is provided. Do not delete records whose IDs can still be
 retried. Native provider handles/callbacks, automatic refresh and browser-initiated
 acquisition recovery remain outside this implementation. Runtime behavior is
 unchanged. See [the recovery contract](docs/design/durable-sources.md).
+
+For fixture-only replay without a job or Runtime, see [offline preparation verification](docs/OFFLINE-PREPARATION.md).

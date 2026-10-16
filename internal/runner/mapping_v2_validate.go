@@ -569,7 +569,7 @@ func mcpToolCall(source MappingSource, profile InputProfile) error {
 }
 
 func sourceFailure(name string, err error) error {
-	return bad("input_preparation_failed", fmt.Sprintf("Source %s: %s. No decision was requested.", name, err))
+	return preparationCause{bad("input_preparation_failed", fmt.Sprintf("Source %s: %s. No decision was requested.", name, err)), err}
 }
 
 // Bound arbitrary-precision comparison work before the reference interpreter.

@@ -27,6 +27,9 @@ type EvidenceMapping struct {
 	Source      string `json:"source"`
 }
 type InputMapping struct {
+	// originalDocument retains an admitted offline integer-v2 document whose optional legacy members are omitted.
+	originalDocument json.RawMessage
+
 	FormatVersion    string            `json:"-"`
 	ArtifactID       string            `json:"-"`
 	ArtifactVersion  string            `json:"-"`
