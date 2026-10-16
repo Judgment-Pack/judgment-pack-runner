@@ -23,7 +23,11 @@ Profile admission requires the public key to be the canonical encoding of a
 point on the curve whose order does not divide 8, as record signing keys do.
 The receipt signature authenticates the corresponding acquisition identity; the
 operator profile supplies classification. This is not a new signed Gateway
-class field. A profile cannot give one gateway source conflicting classifications.
+class field. The class is the profile's, for each binding to it, and not the
+gateway source's (spec/dialect.md §5.1): one gateway source, its key, source and
+authority, may be held under profiles of different classes, as under profiles
+of one class, each with its own id, and each source takes the class of the
+profile it names. A profile repeating another's id is refused.
 
 **Upgrade note.** An installation whose trusted profile contains a malformed
 public key that an earlier Runner accepted now refuses to start. A release or
@@ -414,6 +418,20 @@ for, or names another model than the source's; and so is a retained response
 that names a profile the source is not bound to. No other model is substituted.
 A release freezes every profile a research source is bound to, the AI profile
 and the web profiles, as it freezes an operation's.
+
+**One gateway source under two classes.** A web profile is of class `generated`
+for a research source's binding to it, and the same gateway source, its key,
+source and authority, may be held under a second profile, of class `record`,
+for another binding (spec/dialect.md §5.1). The dialect's kind `web`, which
+Runner refuses by name, is read as an operation of shape `http` through the
+gateway's web source; such an operation may name the `record` profile. Each
+binding takes its profile's class: the research source's targets are
+`generated` and the operation's `record`, each lineage entry records its
+binding's class, `targetsByClass` counts each target under it, and a release
+freezes both profiles, which `verify-run` must be given. A retained response
+that names the `record` profile is `profile-mismatch`, since the research
+source is not bound to it; an operation bound to the `generated` profile has
+`generated` targets, which a target must admit.
 
 **Binding at import.** A dialect is published with its research sources
 unbound, naming no profile, and an installation binds it at import
