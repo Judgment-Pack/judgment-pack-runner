@@ -341,12 +341,19 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 		dialect.originalDocument = append(json.RawMessage(nil), f.Dialect...)
 	}
 	// A dialect with an unbound source is read with its binding document, as
-	// the import step reads one; one with none, as it is given (§4.4).
-	if err = validateDialect(dialect, f.Binding != nil); err != nil {
+	// the import step reads one; one with none, as it is given (§4.4). Every
+	// source is held to its form, a kind the verifier does not read too, and
+	// the binding document to its own, before any kind is refused.
+	if err = validateDialectMode(dialect, f.Binding != nil, true); err != nil {
 		return failed(err)
 	}
+	if f.Binding != nil {
+		if err = bindingDocumentForm(read["the binding document"], f.Dialect, dialect); err != nil {
+			return failed(err)
+		}
+	}
 	// A kind Runner prepares and the verifier does not read (§11's sixth
-	// phase).
+	// phase), after every form.
 	for _, s := range dialect.Sources {
 		if !verifiedKinds[s.Kind] {
 			return stop(codeKindUnread, fmt.Sprintf("source %s is of kind %s, which verify-preparation does not read: it reads the kinds operation and research", s.Name, s.Kind))

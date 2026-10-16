@@ -178,6 +178,45 @@ func TestOfflinePreparationReviewedBoundaries(t *testing.T) {
 			f.Preparation = mutateOfflineJSON(f.Preparation, func(v map[string]any) { v["mappingDigest"] = digest(c) })
 		}
 	}
+	localFile := func(f *PreparationFixture) {
+		dialectSource(f, 0, func(s map[string]any) {
+			for _, member := range []string{"calculation", "profile", "profileDigest", "maxAge", "arguments"} {
+				delete(s, member)
+			}
+			s["kind"], s["provider"] = "selected-file", "local-file"
+		})
+	}
+	// localFileReading appends a local file declaring a source parameter
+	// taken from the operation's fact target.
+	localFileReading := func(from string) func(*PreparationFixture) {
+		return func(f *PreparationFixture) {
+			f.Dialect = mutateOfflineJSON(f.Dialect, func(v map[string]any) {
+				v["sources"] = append(v["sources"].([]any), map[string]any{
+					"name": "notes", "kind": "selected-file", "provider": "local-file",
+					"parameters": map[string]any{"request": map[string]any{"from": from, "pointer": "/request", "type": "string"}},
+					"read":       map[string]any{"copy": map[string]any{"facts": []any{}, "evidence": []any{}}},
+				})
+			})
+		}
+	}
+	// version3 is the dialect written in version 3 with sources appended,
+	// each pinned to the operation's profile and of maxAge 300.
+	version3 := func(f *PreparationFixture, appended ...map[string]any) {
+		f.Dialect = mutateOfflineJSON(f.Dialect, func(v map[string]any) {
+			v["version"] = 3
+			delete(v, "provider")
+			delete(v, "facts")
+			delete(v, "evidence")
+			pinned := v["sources"].([]any)[0].(map[string]any)["profileDigest"]
+			for _, s := range appended {
+				s["profile"], s["profileDigest"], s["maxAge"] = "fx", pinned, 300
+				if _, ok := s["read"]; !ok {
+					s["read"] = map[string]any{"copy": map[string]any{"facts": []any{}, "evidence": []any{}}}
+				}
+				v["sources"] = append(v["sources"].([]any), s)
+			}
+		})
+	}
 	drive := func(f *PreparationFixture) {
 		dialectSource(f, 0, func(s map[string]any) {
 			delete(s, "calculation")
@@ -247,13 +286,50 @@ func TestOfflinePreparationReviewedBoundaries(t *testing.T) {
 			drive(f)
 			f.Sources = []byte(`{"fx":{"response":{"result":{},"receipt":{},"salts":{"args":"` + strings.Repeat("00", 32) + `"}},"snapshot":{"version":1}}}`)
 		}, codeMalformed},
-		{"local-file selected-file with a response acquisition", "valid", func(f *PreparationFixture) {
-			dialectSource(f, 0, func(s map[string]any) {
-				for _, member := range []string{"calculation", "profile", "profileDigest", "maxAge", "arguments"} {
-					delete(s, member)
-				}
-				s["kind"], s["provider"] = "selected-file", "local-file"
-			})
+		{"local-file selected-file with a response acquisition", "valid", localFile, codeKindUnread},
+		// The cross-vendor review of this change: every form, the binding
+		// document's and each kind's own, before a kind is refused.
+		{"an empty binding document beside a local file", "valid", func(f *PreparationFixture) {
+			localFile(f)
+			f.Binding = []byte(`{}`)
+		}, codeMalformed},
+		{"a binding document beside a local file and no unbound source", "valid", func(f *PreparationFixture) {
+			localFile(f)
+			c, err := canonical(f.Dialect)
+			if err != nil {
+				panic(err)
+			}
+			f.Binding = []byte(`{"dialect":"` + digest(c) + `","sources":{}}`)
+		}, codeMalformed},
+		{"a local file declaring a source parameter", "valid", localFileReading("fx"), codeKindUnread},
+		{"a local file declaring a source parameter from no earlier source", "valid", localFileReading("nope"), codeMalformed},
+		{"an http source whose method is not GET or POST", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "page", "kind": "http", "method": 7, "path": "/rates"})
+		}, codeMalformed},
+		{"an http source of its form", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "page", "kind": "http", "method": "GET", "path": "/rates", "query": map[string]any{"currency": map[string]any{"$param": "invoiceCurrency"}}, "headers": []any{"accept"}})
+		}, codeKindUnread},
+		{"an http source with a member of another kind", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "page", "kind": "http", "method": "GET", "path": "/rates", "url": "https://example.com"})
+		}, codeMalformed},
+		{"an http source with a body beside GET", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "page", "kind": "http", "method": "GET", "path": "/rates", "body": map[string]any{}})
+		}, codeMalformed},
+		{"an http source of its form before a malformed source", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "page", "kind": "http", "method": "POST", "path": "/rates", "body": map[string]any{}},
+				map[string]any{"name": "late", "kind": "operation", "arguments": 5})
+		}, codeMalformed},
+		{"a sql statement that is a template", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "ledger", "kind": "sql", "statement": map[string]any{"$param": "invoiceAmount"}, "bindings": []any{}})
+		}, codeMalformed},
+		{"a sql source of its form", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "ledger", "kind": "sql", "statement": "select 1", "bindings": []any{map[string]any{"name": "amount", "type": "STRING", "value": map[string]any{"$param": "invoiceAmount"}}}})
+		}, codeKindUnread},
+		{"a web url that is a number", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "rates", "kind": "web", "url": 7})
+		}, codeMalformed},
+		{"a web source of its form", "valid", func(f *PreparationFixture) {
+			version3(f, map[string]any{"name": "rates", "kind": "web", "url": map[string]any{"$param": "invoiceCurrency"}})
 		}, codeKindUnread},
 		{"unknown acquisition member beside a stale receipt", "valid", func(f *PreparationFixture) {
 			f.Sources = mutateOfflineJSON(f.Sources, func(v map[string]any) { v["zz"] = v["fx"] })

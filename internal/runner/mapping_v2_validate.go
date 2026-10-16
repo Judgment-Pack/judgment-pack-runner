@@ -296,7 +296,15 @@ func validateMappingV2(m InputMapping) error { return validateDialect(m, false) 
 // With open, an unbound operation of version 3 is read as the import step
 // reads a published dialect (dialect_v3.go); without it, as every dialect
 // Runner prepares is read, it is refused by name.
-func validateDialect(m InputMapping, open bool) error {
+func validateDialect(m InputMapping, open bool) error { return validateDialectMode(m, open, false) }
+
+// validateDialectMode is validateDialect. Offline, as VerifyPreparation reads
+// a dialect, every source is held to its form before any kind is refused
+// (spec/dialect.md §11's fifth and sixth phases): a source of kind http, sql
+// or web to its own (unreadKindForm), where a run refuses it by name, and a
+// local file's source parameters to the rules of every source's (§3, §4),
+// where a run refuses any. VerifyPreparation refuses the kind after.
+func validateDialectMode(m InputMapping, open, offline bool) error {
 	if e := m.validateArtifactIdentity(); e != nil {
 		return e
 	}
@@ -371,21 +379,24 @@ func validateDialect(m InputMapping, open bool) error {
 		if !mappingName.MatchString(s.Name) || s.Name == "case" || prior[s.Name] {
 			return fail("invalid or duplicate source name")
 		}
-		if e := sourceForm(m.Version, s, open); e != nil {
-			return failOn(e)
+		unread := offline && m.Version == 3 && refusedKind(s) != nil
+		if !unread {
+			if e := sourceForm(m.Version, s, open); e != nil {
+				return failOn(e)
+			}
 		}
 		if len(s.Read.Sources) > 0 && !(m.Version == 3 && isResearch(s)) {
 			return fail(researchFail(codeMalformed, "source %s: a read names sources only as a research source's reconciliation of earlier research sources, in dialect version 3", s.Name).Error())
 		}
 		research := m.Version == 3 && isResearch(s)
 		verified := s.Kind == "operation" || s.Kind == "selected-file" && s.Provider == "google-drive"
-		if !research && (s.Kind != "operation" && s.Kind != "selected-file" || s.Kind == "operation" && s.Provider != "" || s.Kind == "selected-file" && s.Provider != "google-drive" && s.Provider != "local-file") {
+		if !research && !unread && (s.Kind != "operation" && s.Kind != "selected-file" || s.Kind == "operation" && s.Provider != "" || s.Kind == "selected-file" && s.Provider != "google-drive" && s.Provider != "local-file") {
 			return fail("unsupported source kind/provider")
 		}
 		// A research source's form, its recipe's and its assignments', is
 		// readResearchRecipe's, once its parameters are read (below).
 		switch {
-		case research:
+		case research, unread:
 		case verified && unboundOperation(s):
 			// Its form, and that it names no profile, are sourceForm's.
 			if s.MaxAge < 1 || s.MaxAge > 86400 || len(s.Arguments) == 0 {
@@ -395,7 +406,7 @@ func validateDialect(m InputMapping, open bool) error {
 			if s.Profile == "" || !validDigest(s.ProfileDigest) || s.MaxAge < 1 || s.MaxAge > 86400 || len(s.Arguments) == 0 {
 				return fail("verified sources require a pinned profile, arguments and maxAge 1..86400")
 			}
-		case s.Profile != "" || s.ProfileDigest != "" || s.MaxAge != 0 || len(s.Arguments) > 0 || len(s.Parameters) > 0:
+		case s.Profile != "" || s.ProfileDigest != "" || s.MaxAge != 0 || len(s.Arguments) > 0 || len(s.Parameters) > 0 && !offline:
 			return fail("local files cannot declare verification metadata or dependencies")
 		}
 		local := map[string]string{}
@@ -404,6 +415,11 @@ func validateDialect(m InputMapping, open bool) error {
 		}
 		for n, t := range types {
 			local[n] = t
+		}
+		if unread {
+			if e := unreadKindForm(s, local); e != nil {
+				return failOn(e)
+			}
 		}
 		var recipe *researchRecipe
 		if research {

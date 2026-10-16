@@ -1660,9 +1660,15 @@ members (a case parameter exactly `pointer` and `type`, a source parameter
 exactly `from`, `pointer` and `type`, a source §4's members and its kind's), a
 member its kind does not list refused even when written empty, as `"from": ""`
 on a case parameter or `"provider": ""` on an operation, a version-3 or named
-dialect only as written ([above](#named-dialect-artifact-formats)), and a
-binding document's at import (`input-malformed`); after every form, a kind the
-command does not read, `kind-unread`: it reads `operation`, of the shapes
+dialect only as written ([above](#named-dialect-artifact-formats)), every source
+of a kind the command does not read held to its form as well (an `http`, `sql`
+or `web` source to the members and forms §4.3 gives its kind, and a local
+file's source parameters to the rules of every source's, §3, where a run
+refuses them), and the binding document's form (§4.4: exactly `dialect`, the
+digest of the dialect given, and `sources`, naming exactly its unbound sources,
+each a profile's id and digest, a research source's with its `webProfiles`),
+all before any kind is refused (`input-malformed`); after every form, a kind
+the command does not read, `kind-unread`: it reads `operation`, of the shapes
 `airbyte`, `mcp` and `http`, and `research`, the kinds the vectors hold, and
 refuses `selected-file`, and `http`, `sql` and `web`, by name; and then
 Runner's own preparation, at that instant, whose findings are §11's:
