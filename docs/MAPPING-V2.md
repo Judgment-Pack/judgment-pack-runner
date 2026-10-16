@@ -558,12 +558,15 @@ Citations are recorded by call index, and those of equal index in the mapping's
 order of sources. A preparation with a research source records them in the order
 of sources instead ([below](#research-sources)). Cached responses can be reused within their source's `maxAge`.
 `maxAge` is required, from 1 through 86,400 seconds. A receipt's observation time
-(`acquisition.observedAt`) and its Gateway serving time (`servedAt`) are each held
-against the preparation's instant, `verifiedAt`: no more than the source's `maxAge`
-before it and no more than 30 seconds after it, for future clock skew, the edges
-inside. No rule joins the two, so an observation long after its serving reads when
-both are within that window; either outside it fails preparation as stale
-(spec/dialect.md §5.2). A time that does not parse fails as invalid, not stale.
+(`acquisition.observedAt`) and its Gateway serving time (`servedAt`) are each a
+timestamp of whole seconds in UTC, `YYYY-MM-DDThh:mm:ssZ`, that names a time
+(spec/dialect.md §1): a fraction of a second, an offset in place of `Z` or a date
+that does not exist fails preparation as invalid, not stale, whatever the source's
+kind. Each is then held against the preparation's instant, `verifiedAt`: no more
+than the source's `maxAge` before it and no more than 30 seconds after it, for
+future clock skew, the edges inside. No rule joins the two, so an observation long
+after its serving reads when both are within that window; either outside it fails
+preparation as stale (spec/dialect.md §5.2).
 
 Runner supplies whole-second UTC `runAt` only to derivation rules. It is the
 input verification instant before queue admission, retained as `verifiedAt`.

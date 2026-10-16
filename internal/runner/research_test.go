@@ -968,6 +968,16 @@ func TestAResearchAcquisitionIsReplayedNotAskedAgain(t *testing.T) {
 			r["servedAt"] = d.at.Format("2006-01-02T15:04:05") + ".5Z"
 			d.resign(t, r)
 		}, codeInvalid},
+		"a serving time with an offset in place of Z": {gtmPlan, func(t *testing.T, d *researchDocs) {
+			r := receipt(d, "person", 2)
+			r["servedAt"] = d.at.Format("2006-01-02T15:04:05") + "+00:00"
+			d.resign(t, r)
+		}, codeInvalid},
+		"the record's own observation time with an offset in place of Z": {workItemPlan, func(t *testing.T, d *researchDocs) {
+			r := d.response("follow-up")["receipt"].(map[string]any)
+			r["acquisition"].(map[string]any)["observedAt"] = d.at.Format("2006-01-02T15:04:05") + "+00:00"
+			d.resign(t, r)
+		}, codeInvalid},
 		"an expired retained receipt": {gtmPlan, func(t *testing.T, d *researchDocs) {
 			r := receipt(d, "person", 1)
 			r["acquisition"].(map[string]any)["observedAt"] = expired

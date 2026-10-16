@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -623,6 +624,13 @@ func valueAt(t *testing.T, raw []byte, pointer string) []byte {
 // drive profile, as TestV2DriveVerifiesSelectedBytesAndRequest makes one.
 func driveInput(t *testing.T) (Input, InputProfile, time.Time) {
 	t.Helper()
+	input, p, _, at := driveFixture(t)
+	return input, p, at
+}
+
+// driveFixture is driveInput with the key its receipt is signed under.
+func driveFixture(t *testing.T) (Input, InputProfile, ed25519.PrivateKey, time.Time) {
+	t.Helper()
 	p, key := testProfile(t)
 	p.ID, p.Source, p.Shape, p.Tools = "drive", "drive", "http", nil
 	at := time.Now().UTC().Truncate(time.Second)
@@ -643,7 +651,7 @@ func driveInput(t *testing.T) (Input, InputProfile, time.Time) {
 			Read:      SourceRead{Copy: &CopyMapping{[]FactMapping{{"/approved", "/approved"}}, []EvidenceMapping{}}},
 		}},
 	}
-	return Input{Source: &SourceInput{Mapping: mapping, Case: args, Sources: map[string]SourceValue{"file": {Snapshot: encode(snap)}}}}, p, at
+	return Input{Source: &SourceInput{Mapping: mapping, Case: args, Sources: map[string]SourceValue{"file": {Snapshot: encode(snap)}}}}, p, key, at
 }
 
 // The kind http of version 3 is refused by name: a gateway source of shape

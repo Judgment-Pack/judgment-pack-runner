@@ -1481,22 +1481,6 @@ func retainedAsAcquired(result, receipt, salts json.RawMessage) json.RawMessage 
 	return b.Bytes()
 }
 
-// receiptTimes says whether a receipt's servedAt and acquisition.observedAt
-// are each a timestamp (spec/dialect.md §1): whole seconds in UTC, a time
-// that exists. A research receipt is held to the form, before its checks.
-func receiptTimes(receipt json.RawMessage) bool {
-	var r struct {
-		ServedAt    any `json:"servedAt"`
-		Acquisition struct {
-			ObservedAt any `json:"observedAt"`
-		} `json:"acquisition"`
-	}
-	if json.Unmarshal(receipt, &r) != nil {
-		return false
-	}
-	return paramValue(r.ServedAt, "timestamp") && paramValue(r.Acquisition.ObservedAt, "timestamp")
-}
-
 // valueDepth is a value's nesting, each object and array one level, as
 // §12 counts it.
 func valueDepth(v any) int {
@@ -1542,9 +1526,6 @@ func replayResearch(a *researchAcquisition, request json.RawMessage, ai InputPro
 				profile = p
 			}
 		}
-		if !receiptTimes(response.receipt) {
-			return nil, nil, researchFail(codeInvalid, "retained response %d, through the profile %s: its receipt's servedAt and acquisition.observedAt are not each a timestamp of whole seconds in UTC that names a time", n, profile.ID)
-		}
 		_, citation, e := verifyAcquisition(retainedAsAcquired(response.result, response.receipt, response.salts), response.request, profile, keys[profile.ID], at, maxAge)
 		if e != nil {
 			return nil, nil, researchFail(acquisitionCode(e), "retained response %d, through the profile %s: %v", n, profile.ID, e)
@@ -1559,9 +1540,6 @@ func replayResearch(a *researchAcquisition, request json.RawMessage, ai InputPro
 	// passed the domain's check above, and each request did at its form.
 	var own *Citation
 	if len(a.receipt) > 0 {
-		if !receiptTimes(a.receipt) {
-			return nil, nil, researchFail(codeInvalid, "the record's own receipt, through the profile %s: its servedAt and acquisition.observedAt are not each a timestamp of whole seconds in UTC that names a time", ai.ID)
-		}
 		_, citation, e := verifyAcquisition(retainedAsAcquired(a.raw, a.receipt, a.salts), request, ai, keys[ai.ID], at, maxAge)
 		if e != nil {
 			return nil, nil, researchFail(acquisitionCode(e), "the record's own receipt, through the profile %s: %v", ai.ID, e)

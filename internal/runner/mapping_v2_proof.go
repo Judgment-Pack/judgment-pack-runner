@@ -291,17 +291,16 @@ var errAcquisitionStale = errors.New("acquisition is stale or from the future")
 // before it and no more than 30 seconds after it, the edges inside;
 // errAcquisitionStale otherwise. No rule joins the two instants, so an
 // observation long after its service reads when both are within the window.
-// Both are read before either is judged: a time with no instant is invalid,
-// not stale. An operation's times are read as RFC 3339, a fraction of a
-// second included (runner #99); a research receipt's were held to whole
-// seconds before (receiptTimes), and are read alike.
+// Both are read before either is judged, each to its instant
+// (receiptInstant): a time with no instant is invalid, not stale, for an
+// operation, a selected file and a research receipt alike.
 func acquisitionTimes(observed, served string, at time.Time, maxAge int) error {
-	observation, e := time.Parse(time.RFC3339Nano, observed)
-	if e != nil {
+	observation, ok := receiptInstant(observed)
+	if !ok {
 		return errors.New("invalid observation time")
 	}
-	service, e := time.Parse(time.RFC3339Nano, served)
-	if e != nil {
+	service, ok := receiptInstant(served)
+	if !ok {
 		return errors.New("invalid serving time")
 	}
 	earliest, latest := at.Add(-time.Duration(maxAge)*time.Second), at.Add(30*time.Second)
@@ -311,6 +310,18 @@ func acquisitionTimes(observed, served string, at time.Time, maxAge int) error {
 		}
 	}
 	return nil
+}
+
+// receiptInstant is a receipt time's instant (spec/dialect.md §1): the time
+// is a timestamp, YYYY-MM-DDThh:mm:ssZ, whole seconds in UTC, that names a
+// time. A fraction of a second, an offset in place of Z, or a date or time
+// that does not exist gives none.
+func receiptInstant(s string) (time.Time, bool) {
+	if !paramValue(s, "timestamp") {
+		return time.Time{}, false
+	}
+	t, _ := time.Parse("2006-01-02T15:04:05Z", s)
+	return t, true
 }
 
 func ParseInputProfiles(raw []byte) ([]InputProfile, error) {
