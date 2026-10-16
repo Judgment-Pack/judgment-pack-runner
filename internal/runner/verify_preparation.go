@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 )
 
 // The codes of spec/dialect.md §11 that only the preparation verifier names
@@ -290,15 +291,34 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 		}
 	}
 
+	if preparationCountBounds(read["the dialect"], read["the acquisitions"], read["the profiles"], read["the binding document"]) {
+		return stop(codeOverBound, "the inputs exceed a counted preparation limit")
+	}
+
 	// The forms (§11's fifth phase): the profiles, the acquisitions, the
 	// preparation's instant and the dialect; the binding document's is the
 	// import step's, below.
+
+	var profileMembers []map[string]json.RawMessage
+	if json.Unmarshal(f.Profiles, &profileMembers) != nil || profileMembers == nil {
+		return stop(codeMalformed, "the profiles must be an array")
+	}
+	for _, profile := range profileMembers {
+		for _, member := range []string{"id", "publicKey", "class", "source", "authority", "shape", "adapter", "endpoint"} {
+			if _, present := profile[member]; !present {
+				return stop(codeMalformed, "a profile omits a required member")
+			}
+		}
+	}
 	profiles, err := ParseInputProfiles(f.Profiles)
 	if err != nil {
 		return stop(codeMalformed, "the profiles: "+err.Error())
 	}
+	if exactPreparationKeys(f.Profiles, reflect.TypeOf(profiles)) != nil {
+		return stop(codeMalformed, "the profiles contain invalid members")
+	}
 	source := &SourceInput{Case: f.Case}
-	if err = strictJSON(sources, &source.Sources); err != nil || source.Sources == nil {
+	if err = strictJSON(sources, &source.Sources); err != nil || source.Sources == nil || !exactAcquisitionMembers(sources) {
 		return stop(codeMalformed, fmt.Sprintf("the acquisitions are not one object of acquisitions by source: %v", err))
 	}
 	given, _ := read["the preparation"].(map[string]any)
@@ -311,12 +331,14 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	if err = strictJSON(f.Dialect, &dialect); err != nil {
 		return stop(codeMalformed, "the dialect is not a dialect document: "+err.Error())
 	}
-	// A dialect of version 3, or of a named format, is read only as written
-	// (spec/dialect.md §2, §2.1), as Runner keeps one.
-	if dialect.Version == 3 || dialect.FormatVersion != "" {
-		if err = asWritten(f.Dialect, dialect); err != nil {
-			return failed(err)
-		}
+	if err = exactDialectForm(f.Dialect, dialect); err != nil {
+		return stop(codeMalformed, "the dialect has invalid members")
+	}
+	if err = preparationAcquisitionForms(dialect, source.Sources); err != nil {
+		return failed(err)
+	}
+	if dialect.Version == 2 && dialect.FormatVersion == "" && f.Binding == nil {
+		dialect.originalDocument = append(json.RawMessage(nil), f.Dialect...)
 	}
 	// A dialect with an unbound source is read with its binding document, as
 	// the import step reads one; one with none, as it is given (§4.4).
@@ -339,7 +361,7 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// The recomputation, at the given preparation's instant (§11's
 	// findings 1 to 4), and the canonical comparison (finding 5).
 	var judged []judgedFreshness
-	prepared, err := prepareV2(Input{Source: source}, profiles, at, false, &judged)
+	prepared, err := prepareV2Mode(Input{Source: source}, profiles, at, false, &judged, true)
 	if err != nil {
 		return failed(err)
 	}

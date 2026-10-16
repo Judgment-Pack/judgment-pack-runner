@@ -46,6 +46,12 @@ func nextInput(input Input, profiles []InputProfile, at time.Time) (InputPlan, e
 // influence and fixed tool permissions. A late invalid source must not trigger
 // needless external calls to earlier sources.
 func preflightV2(m InputMapping, profiles []InputProfile) error {
+	return preflightPreparation(m, profiles, true)
+}
+
+// Offline verification defers admission until after retained acquisitions; live
+// planning still rejects it before any source can be called.
+func preflightPreparation(m InputMapping, profiles []InputProfile, admission bool) error {
 	generated := map[string]bool{}
 	check := func(read SourceRead, class string, gen bool) error {
 		facts, evidence, err := readTargets(read)
@@ -53,12 +59,12 @@ func preflightV2(m InputMapping, profiles []InputProfile) error {
 			return err
 		}
 		for _, f := range facts {
-			if !admitted(m, "facts", f.Target, class, gen) {
+			if admission && !admitted(m, "facts", f.Target, class, gen) {
 				return withCode(codeAdmission, errors.New("fact target does not admit source class or generated dependency"))
 			}
 		}
 		for _, e := range evidence {
-			if !admitted(m, "evidence", e.Requirement, class, gen) {
+			if admission && !admitted(m, "evidence", e.Requirement, class, gen) {
 				return withCode(codeAdmission, errors.New("evidence target does not admit source class or generated dependency"))
 			}
 		}

@@ -27,6 +27,9 @@ type EvidenceMapping struct {
 	Source      string `json:"source"`
 }
 type InputMapping struct {
+	// Only offline verification retains the original legacy document encoding.
+	originalDocument json.RawMessage
+
 	FormatVersion    string            `json:"-"`
 	ArtifactID       string            `json:"-"`
 	ArtifactVersion  string            `json:"-"`

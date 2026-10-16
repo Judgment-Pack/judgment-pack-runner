@@ -165,6 +165,11 @@ func normalizeV2Mode(i Input, profiles []InputProfile, at time.Time, planning bo
 // source is a calculator that computed, whose tables were judged too. What it
 // lists is meaningful only when it returns no error.
 func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, judged *[]judgedFreshness) (Input, error) {
+	return prepareV2Mode(i, profiles, at, planning, judged, false)
+}
+
+// offline changes only finding precedence; acquisition and derivation stay shared.
+func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool, judged *[]judgedFreshness, offline bool) (Input, error) {
 	profileKeys, e := validateProfileKeys(profiles)
 	if e != nil {
 		return i, e
@@ -189,7 +194,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	if len(encode(c)) > MaxBody {
 		return i, inputProblem("v2 input exceeds aggregate limit")
 	}
-	if err := preflightV2(m, profiles); err != nil {
+	if err := preflightPreparation(m, profiles, !offline); err != nil {
 		return i, inputProblemOf(err.Error(), err)
 	}
 	// A research source's acquisition is the record its caller retains
@@ -240,7 +245,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		for _, source := range m.Sources {
 			known = known || source.Name == name
 		}
-		if !known {
+		if !offline && !known {
 			return i, codedProblem(codeUnexpected, "unexpected source response")
 		}
 	}
@@ -297,6 +302,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	// The research records acquired, by their sources' names, which a later
 	// reconciliation reads (spec/dialect.md §6.4).
 	records := map[string]any{}
+	var admissionFailure error
 	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, receipts *[]Citation, calc *CalculationLineage) error {
 		ft, et, err := readTargets(read)
 		if err != nil {
@@ -310,7 +316,13 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		rd := digest(b)
 		for _, f := range ft {
 			if !admitted(m, "facts", f.Target, class, gen) {
-				return withCode(codeAdmission, errors.New("fact target does not admit source class or generated dependency"))
+				problem := withCode(codeAdmission, errors.New("fact target does not admit source class or generated dependency"))
+				if !offline {
+					return problem
+				}
+				if admissionFailure == nil {
+					admissionFailure = sourceFailure(name, problem)
+				}
 			}
 			tokens, _ := pointerTokens(f.Target, false)
 			v, present := pointerRead(fv, tokens)
@@ -321,7 +333,13 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		}
 		for _, f := range et {
 			if !admitted(m, "evidence", f.Requirement, class, gen) {
-				return withCode(codeAdmission, errors.New("evidence target does not admit source class or generated dependency"))
+				problem := withCode(codeAdmission, errors.New("evidence target does not admit source class or generated dependency"))
+				if !offline {
+					return problem
+				}
+				if admissionFailure == nil {
+					admissionFailure = sourceFailure(name, problem)
+				}
 			}
 			v, present := claim.Evidence[f.Requirement]
 			if present {
@@ -561,6 +579,9 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		if !used[n] {
 			return i, codedProblem(codeUnexpected, "unexpected source response")
 		}
+	}
+	if admissionFailure != nil {
+		return i, admissionFailure
 	}
 	// By call index, as before. Where each acquisition is the first call of
 	// its own session the indexes are equal, and the order is the mapping's

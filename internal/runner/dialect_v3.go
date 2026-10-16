@@ -46,6 +46,9 @@ func (m InputMapping) dialect() bool { return m.Version == 2 || m.Version == 3 }
 // dialect's version 2 records (spec/dialect.md §2). Version 3 carries none
 // of them: its encoding is the document with no member Runner adds.
 func (m InputMapping) MarshalJSON() ([]byte, error) {
+	if m.originalDocument != nil {
+		return m.originalDocument, nil
+	}
 	type plain InputMapping
 	if m.FormatVersion != "" {
 		return m.marshalArtifact()
