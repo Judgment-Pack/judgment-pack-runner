@@ -662,11 +662,23 @@ func TestTheVersion3KindWebIsRefusedByName(t *testing.T) {
 	refusesKind(t, "web", "Mapping v3: source asked is of kind web, which this Runner does not prepare: the gateway's web source is read as an operation of shape http")
 }
 
-// The kind research of version 3 is refused by name, naming the issue of
-// the specification where its verification, replaying the responses
-// retained, is being written. It is not read as an operation.
-func TestTheVersion3KindResearchIsRefusedByName(t *testing.T) {
-	refusesKind(t, "research", "Mapping v3: source asked is of kind research, which this Runner does not prepare yet: its verification, replaying the responses retained and never asking the model again, is being written in the specification (Judgment-Pack/judgment-pack-spec#161)")
+// The kind research of version 3 is prepared as research, and never read as
+// an operation: a research source with an operation's arguments is refused,
+// and so is one without its recipe (research_test.go holds the kind's
+// preparation).
+func TestTheVersion3KindResearchIsNotReadAsAnOperation(t *testing.T) {
+	input, p, _, at := v2Fixture(t)
+	i := asVersion3(input)
+	asked := v3KindSource("research", p)
+	asked.Arguments = input.Source.Mapping.Sources[0].Arguments
+	i.Source.Mapping.Sources = []MappingSource{asked}
+	i.Source.Sources = map[string]SourceValue{"asked": input.Source.Sources["vendor"]}
+	_, err := normalizeV2(i, []InputProfile{p}, at)
+	refusedWith(t, err, "Mapping v3: source asked: a research source names no provider, arguments or calculation: its request is its recipe (input-malformed)")
+	asked.Arguments = nil
+	i.Source.Mapping.Sources = []MappingSource{asked}
+	_, err = normalizeV2(i, []InputProfile{p}, at)
+	refusedWith(t, err, "Mapping v3: source asked: a research source names its question, constraints, model, evidence, fields and capabilities, and fields is missing (input-malformed)")
 }
 
 // A version-2 document has no member of version 3: one that names one is

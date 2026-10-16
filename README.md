@@ -233,9 +233,13 @@ input names the published dialect and a binding document (`source.import`), Runn
 binds each unbound source to one of this installation's profiles, of that shape and
 record, refusing by name anything else, and keeps the bound dialect as the run's
 mapping and both documents beside it, which no preparation holds. `operation` and
-`selected-file` are prepared as version 2 prepares them; the kinds `http`, `sql`, `web`
-and `research` are refused by name, `research` until its verification is written in the
-specification (Judgment-Pack/judgment-pack-spec#161). Version 2 is read as before.
+`selected-file` are prepared as version 2 prepares them. A `research` source is bound
+to an AI profile and web profiles of class `generated`, which declare the capabilities
+and the model it asks for, and is prepared from the research record its caller
+retains: each retained response is replayed under the profile it came through, and
+nothing is asked again, a model or a page, by Runner or by `verify-run`
+([the contract](docs/MAPPING-V2.md#research-sources)). The kinds `http`, `sql` and
+`web` are refused by name. Version 2 is read as before.
 The export is version 2 unless version 3 is asked for
 (`?version=3`), which adds the audit record's bytes exactly as the Runtime wrote
 them: the bytes a gateway receipt's `decision.recordDigest` is taken over, which

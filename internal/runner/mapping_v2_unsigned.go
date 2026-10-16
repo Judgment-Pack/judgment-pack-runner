@@ -56,9 +56,13 @@ func unsignedParameters(m InputMapping, p *Preparation) []UnsignedParameters {
 	}
 	targets := map[string]int{}
 	applied := map[string]bool{}
+	// own is whether a research source's record has a receipt of its own,
+	// the one receipt over the source's request (spec/dialect.md §5.2).
+	own := map[string]bool{}
 	for _, l := range p.Lineage {
 		targets[l.Source]++
 		applied[l.Source] = l.Calculation == nil || l.Calculation.Status == calculationComputed
+		own[l.Source] = l.Receipt != nil
 	}
 	// A source without targets is not in the lineage, and is not applied here.
 	local := map[string]bool{}
@@ -67,7 +71,7 @@ func unsignedParameters(m InputMapping, p *Preparation) []UnsignedParameters {
 	taint := map[string]string{}
 	var out []UnsignedParameters
 	for _, s := range m.Sources {
-		local[s.Name] = s.Kind != "operation" && s.Provider != "google-drive"
+		local[s.Name] = s.Kind == "selected-file" && s.Provider != "google-drive"
 		var rule ruleDocument
 		if local[s.Name] || !acquired[s.Name] || !applied[s.Name] || len(s.Read.Rule) == 0 || json.Unmarshal(s.Read.Rule, &rule) != nil {
 			continue
@@ -77,8 +81,19 @@ func unsignedParameters(m InputMapping, p *Preparation) []UnsignedParameters {
 			conditionParameters(c.When, reads)
 		}
 		committed, ambiguous := map[string]bool{}, map[string]bool{}
-		template, _ := readInputJSON(s.Arguments)
-		requestParameters(template, committed, ambiguous)
+		if isResearch(s) {
+			// A research source's request is its recipe, which only the
+			// record's own receipt commits: its retained responses' receipts
+			// commit their own requests, not the question (§11).
+			question, _ := readInputJSON(s.Question)
+			requestParameters(question, committed, ambiguous)
+			if !own[s.Name] {
+				committed = map[string]bool{}
+			}
+		} else {
+			template, _ := readInputJSON(s.Arguments)
+			requestParameters(template, committed, ambiguous)
+		}
 		if s.Calculation != nil {
 			for _, n := range s.Calculation.Inputs {
 				committed[n] = true

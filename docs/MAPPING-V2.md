@@ -15,7 +15,9 @@ orchestration and retained lineage view. No new repository or shared module is i
 Source classes are `asserted`, `record`, and `generated`. Case/local-file data is
 asserted. For authenticated sources the installation, not a mapping/API caller,
 supplies a trusted profile. A profile pins source, authority, gateway public key,
-adapter name/version/digest, shape, endpoint, class and permitted read tools. Its
+adapter name/version/digest, shape, endpoint, class, permitted read tools and, for a
+channel a research source is bound to, the research capabilities and model it
+declares ([below](#research-sources)). Its
 canonical digest is frozen into the mapping; the release retains the profile.
 Profile admission requires the public key to be the canonical encoding of a
 point on the curve whose order does not divide 8, as record signing keys do.
@@ -262,7 +264,7 @@ read as another kind.
 | `http` | Refused: `Mapping v3: source NAME is of kind http, which this Runner does not prepare: a gateway source of shape http is read as an operation`. |
 | `sql` | Refused: `… is of kind sql, which this Runner does not prepare: a connection's statement is read as an operation of the shape its gateway source serves`. |
 | `web` | Refused: `… is of kind web, which this Runner does not prepare: the gateway's web source is read as an operation of shape http`. |
-| `research` | Refused, until its verification is written in the specification: `… is of kind research, which this Runner does not prepare yet: its verification, replaying the responses retained and never asking the model again, is being written in the specification (Judgment-Pack/judgment-pack-spec#161)`. |
+| `research` | Prepared from the research record its caller retains, each retained response replayed under the profile it came through, and never asked again: bound to an AI profile and web profiles, or published unbound and bound at import ([below](#research-sources)). |
 
 A member of another kind beside a source's own is refused, naming it. A
 version-2 document that names one of the four kinds is refused as an
@@ -360,6 +362,141 @@ The vectors `version-3-bound` and `unbound-bound-at-import`
 version-3 document's preparation, and a published dialect, its binding document,
 the bound dialect Runner made of them and its preparation.
 
+## Research sources
+
+A source of kind `research`, of dialect version 3 (spec/dialect.md §4.3, §4.4,
+§5.1, §5.2, §6.4, §9 and §11, at the specification's commit `18aef51`), declares an
+AI-assisted research recipe and is prepared from what its caller retained when the
+recipe was run. Runner runs nothing: it asks no model and reads no page, at
+preparation, at evaluation, in a dispatcher's recheck or in `verify-run`.
+
+**The recipe.** Besides `name`, `kind`, `parameters` and `read`, a research source
+has exactly `maxAge`; `question`, a string template (a string, a `$text` whose
+placeholders name integer parameters, or a `$param` naming a parameter of type
+`string` or `timestamp`, never `runAt`); `constraints`, an object; `model`, the
+model the recipe asks; `evidence`, the evidence to retain; `fields`, one to 64
+requested fields, each exactly `{name, type, required, description}`, of the types
+`integer`, `decimal`, `boolean`, `text`, `text-list` and `range`; and
+`capabilities`, from `answer`, `search` and `page`, in that order, `answer`
+required. The source's request is exactly the recipe, `{question, constraints,
+model, evidence, fields, capabilities}`, the question instantiated; the
+preparation records it as the outcome's `arguments`, and nothing sends it. The
+version-3 rule of one spelling holds the recipe: members written empty that the
+recipe has, `constraints: {}`, `evidence: []` and `webProfiles: {}`, are kept as
+written.
+
+**The profiles it is bound to.** A research source is bound to an AI profile,
+`profile` and `profileDigest`, which serves `answer`, and to a web profile for
+each web capability it asks for, `webProfiles`, `{"search": {profile,
+profileDigest}, "page": {…}}`, exactly those, written even when empty; one
+profile may serve more than one capability. An installation's profile declares
+what its channel serves as `research: {capabilities, model}`, the form a gateway's
+web-search connection reports in its status row (gateway `docs/web-search.md`),
+`model` exactly when it serves `answer`:
+
+```json
+{"id": "assistant", "class": "generated", "shape": "http", "source": "web-search",
+ "research": {"capabilities": ["answer", "search"], "model": "<the model it names>"}, "…": "…"}
+```
+
+The declaration is the installation's, pinned by the profile's digest, and not an
+observation of the model; a profile of another form stops Runner at start. A
+research source is refused, `profile-mismatch`, when a profile it is bound to is
+not one this installation holds by that id and digest, is not of class
+`generated`, declares no research capabilities, lacks the capability it is bound
+for, or names another model than the source's; and so is a retained response
+that names a profile the source is not bound to. No other model is substituted.
+A release freezes every profile a research source is bound to, the AI profile
+and the web profiles, as it freezes an operation's.
+
+**Binding at import.** A dialect is published with its research sources
+unbound, naming no profile, and an installation binds it at import
+([above](#dialect-version-3)): the binding document gives each research source
+exactly `profile`, `profileDigest` and `webProfiles`. The bound dialect is the
+published one with those three added and every other member as written: a
+research source has no catalog names to remove. The preparation commits the
+bound dialect alone, by its digest, with every AI and web profile it assigns;
+neither the published dialect's digest nor the binding document's. Rebinding one
+assignment changes the bound dialect and its digest.
+
+**The research record.** A research source's acquisition is the research record
+its caller assembles, `R`, given as the source's `response.result`:
+
+```json
+{"response": {"result": {
+  "fields": {"employee-count": {"status": "found", "value": 240, "cites": [0]}},
+  "responses": [{"profile": {"id": "assistant", "digest": "sha256:…"},
+                 "request": {…}, "result": {…}, "receipt": {…}, "salts": {"args": "…"}}]
+}}}
+```
+
+`responses` are at most 64 retained responses, in the order the run made them,
+each exactly the profile it came through, by id and digest, the request it made,
+the result, the receipt a gateway signed and the salts. `fields` answers the
+declared fields: each entry `found`, with `value` of the declared type and one to
+64 distinct indexes into `responses`; `not-found` or `stale`, with no value and
+zero to 64 indexes; or `conflicting`, with two to 64 observations, `{value,
+cites}`, that do not all agree, and `cites` of its own `[]`. Every required field
+has an entry. `null` is never a value; zero, `"0"`, `false`, `""` and `[]` are
+values of their types, and none means `not-found`. The record's own `receipt` and
+`salts` are present beside `result` when the record came back through a gateway
+source, under the AI profile, over the source's request and the whole record.
+
+**The replay.** Runner holds the record to its form, every maximum of the
+specification's §12 first (`input-over-bound`), then every form
+(`input-malformed`), and then each retained response's profile to the source's
+assignments (`profile-mismatch`). It then checks each retained response, in the
+order the record retains it, as it checks an operation's acquisition, under that
+response's own profile and over that response's own request: its result present
+(`acquisition-missing` otherwise); its receipt's times whole seconds in UTC, its
+signature, its source, authority, adapter, shape and endpoint, its commitment to
+the request and its digest of the result (`acquisition-invalid`); its times within
+the source's `maxAge` before the preparation's instant (`acquisition-stale`); and
+its place in the preparation's sessions, as every receipt's
+(`acquisition-sessions`). Then the record's own receipt, when it has one. Each
+refusal names the specification's code at its end, so that it can be read beside
+a verifier's finding. The read then applies to `R`: a copy or a rule, reading
+`/fields`, a declared field's entry, its `status`, its `cites`, its `value` and what
+is below it, and, in a condition only, an observation's value
+(`/fields/<name>/values/<i>/value`); no read takes a value from under `values`, so
+that a conflict is never resolved but by a rule that says how. A reconciliation,
+`{"sources": [earlier research sources], "rule": R}`, reads `{"current": R,
+"sources": {…}}`, a skipped source's record absent; its rule guards each value it
+selects as `found`, names what every other status and absence does, and writes
+fact targets only. Each target is of class `generated`, with generated influence,
+and must admit `generated`. The lineage of each target names, as `receipts`,
+every citation the source adds, each retained response's in order and then the
+record's own, which is also its `receipt`; the preparation's `cites` follow the
+order of sources, each research source's citations in that order.
+
+`verify-run` replays the same record at the export's instant, under the profiles
+it is given, binding the import again, and so recomputes the preparation; a
+changed retained result, request or receipt, or a field changed under the
+record's own receipt, is refused as `acquisition-invalid`. Without a receipt of
+its own, the record's answers and the membership and order of its responses are
+the caller's say: a changed answer that a read uses changes the preparation, and
+one no read uses need not.
+
+**What Runner does not do.** It does not run the recipe, ask the model or read a
+page; it does not check that a model answered, which model it was, or that an
+answer is right, complete or current; it does not check that a cited response
+supports the value it is cited for, that the retained responses are every one the
+run made, or that the caller did not choose among runs; and it acquires no
+research source in the background: a job's background acquisition refuses one,
+`research_not_acquired`. `POST /v1/inputs/next` names a research source still to
+supply, with its request, the recipe, for the caller to run. What a preparation of
+a research source establishes is the least an acquisition of class `generated`
+establishes (spec/dialect.md §13): that each receipt holds its request and its
+bytes under its trusted profile, and that the model and capabilities the source
+declares match the profiles bound.
+
+**The vectors.** The research vectors
+([`vectors/preparation`](../vectors/preparation/README.md)) are the first of the
+kind: twenty-six runs of the specification's two examples, `gtm-company-person`
+and `work-item-triage`, recorded from responses a stand-in served in the tests'
+process, each evaluated, signed, witnessed and bound, and two findings made from
+them.
+
 ## Numeric and resource profile
 
 V1 still preserves fractional and large integer values. V2 claims, rules,
@@ -405,7 +542,8 @@ sealed or complete, as stated above: a caller that asks twice chooses which
 answer to submit, in one session or in two.
 
 Citations are recorded by call index, and those of equal index in the mapping's
-order of sources. Cached responses can be reused within their source's `maxAge`.
+order of sources. A preparation with a research source records them in the order
+of sources instead ([below](#research-sources)). Cached responses can be reused within their source's `maxAge`.
 `maxAge` is required, from 1 through 86,400 seconds. Observation and Gateway
 serving time permit at most 30 seconds of future clock skew.
 
@@ -1604,12 +1742,12 @@ pass these routes through yet.
 Preparation sessions that Runner issues to a caller, seal verification, HTTP catalog support,
 SQL async statement lifecycles, model HTTP calls, multi-record/page acquisition,
 and pack-level class declarations remain separate work. Of dialect version 3,
-the kinds `http`, `sql`, `web` and `research` are refused by name
-([above](#dialect-version-3)): `research` waits on its verification rule, the
-replay of the responses retained, in the specification
-(Judgment-Pack/judgment-pack-spec#161). Model classification
-admission is implemented and tested for authenticated MCP sources; this does not
-claim a model HTTP integration exists.
+the kinds `http`, `sql` and `web` are refused by name
+([above](#dialect-version-3)). A `research` source is prepared from responses its
+caller retains ([above](#research-sources)): Runner runs no research itself, in
+the foreground or the background, and asks no model. Model classification
+admission is implemented and tested for authenticated MCP sources and for
+research sources; this does not claim a model HTTP integration exists.
 
 
 ## Desk acquisition planning

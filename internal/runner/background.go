@@ -81,6 +81,9 @@ func (s *Service) validateGatewayMapping(r Release) error {
 		if src.Kind == "selected-file" && src.Provider == "local-file" {
 			continue
 		}
+		if isResearch(src) {
+			return bad("research_not_acquired", "A research source is prepared from the responses its caller retains. Runner asks no model and reads no page, and does not acquire one in the background.")
+		}
 		if src.Kind != "operation" {
 			return bad("standing_grant_required", "Interactive file selection does not grant background access. Use a local file or an installed Gateway operation.")
 		}

@@ -71,6 +71,19 @@ func preflightV2(m InputMapping, profiles []InputProfile) error {
 	}
 	for _, source := range m.Sources {
 		class := "asserted"
+		if isResearch(source) {
+			// A research source's AI profile and web profiles, each of
+			// class generated, declaring the capability it serves and the
+			// source's model (research.go): profile-mismatch otherwise.
+			recipe, err := readResearchRecipe(source, nil, false)
+			if err != nil {
+				return err
+			}
+			if _, err = researchProfiles(source, recipe, profiles); err != nil {
+				return err
+			}
+			class = classGenerated
+		}
 		if source.Kind == "operation" || source.Provider == "google-drive" {
 			profile, err := profileFor(source, profiles)
 			if err != nil {
@@ -97,6 +110,9 @@ func preflightV2(m InputMapping, profiles []InputProfile) error {
 		}
 		generated[source.Name] = gen
 		if err := check(source.Read, class, gen); err != nil {
+			if isResearch(source) {
+				return researchFail(codeAdmission, "source %s: %v", source.Name, err)
+			}
 			return fmt.Errorf("source %s: %w", source.Name, err)
 		}
 	}

@@ -81,6 +81,9 @@ func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey,
 		if c := p.Calculator; c != nil && (p.Class != "record" || p.Shape != "mcp" || c.Name == "" || len(c.Name) > 256 || c.Version == "" || len(c.Version) > 256) {
 			return nil, errors.New("a calculator profile is a record MCP profile naming its calculator and version")
 		}
+		if e := researchDeclarationForm(p); e != nil {
+			return nil, e
+		}
 		identity := p.PublicKey + "\n" + p.Source + "\n" + p.Authority
 		if c, ok := identities[identity]; ok && c != p.Class {
 			return nil, errors.New("one trusted source cannot have conflicting output classes")
@@ -267,8 +270,11 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 		return fail("invalid observation time")
 	}
 	served, e := time.Parse(time.RFC3339Nano, str("servedAt"))
-	if e != nil || obs.After(served.Add(30*time.Second)) || served.After(at.Add(30*time.Second)) || obs.After(at.Add(30*time.Second)) || obs.Before(at.Add(-time.Duration(maxAge)*time.Second)) {
+	if e != nil {
 		return fail("acquisition is stale or from the future")
+	}
+	if obs.After(served.Add(30*time.Second)) || served.After(at.Add(30*time.Second)) || obs.After(at.Add(30*time.Second)) || obs.Before(at.Add(-time.Duration(maxAge)*time.Second)) {
+		return nil, nil, errAcquisitionStale
 	}
 	return result, &Citation{str("sessionId"), int(index), hex.EncodeToString(sig)}, nil
 }

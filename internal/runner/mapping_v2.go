@@ -179,6 +179,37 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	if err := preflightV2(m, profiles); err != nil {
 		return i, inputProblem(err.Error())
 	}
+	// A research source's acquisition is the record its caller retains
+	// (research.go). Every record is held to its form, and then each
+	// retained response's profile to the source's assignments, before any
+	// acquisition is checked: the forms are refusals, and a profile that
+	// does not fit precedes every other finding (spec/dialect.md §11).
+	recipes := map[string]*researchRecipe{}
+	retained := map[string]*researchAcquisition{}
+	for _, source := range m.Sources {
+		if !isResearch(source) {
+			continue
+		}
+		recipe, err := readResearchRecipe(source, nil, false)
+		if err != nil {
+			return i, inputProblem("Mapping v3: " + err.Error())
+		}
+		recipes[source.Name] = recipe
+		if value, ok := c.Sources[source.Name]; ok {
+			a, err := readResearchAcquisition(value, recipe)
+			if err != nil {
+				return i, sourceFailure(source.Name, err)
+			}
+			retained[source.Name] = a
+		}
+	}
+	for _, source := range m.Sources {
+		if a := retained[source.Name]; a != nil {
+			if err := checkResponseProfiles(source, recipes[source.Name], a, profiles); err != nil {
+				return i, sourceFailure(source.Name, err)
+			}
+		}
+	}
 	// Reject unknown responses even when planning stops at an earlier missing source.
 	for name := range c.Sources {
 		known := false
@@ -220,7 +251,29 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	// shares a session with itself, at any call index. Neither form says a
 	// session is sealed or complete.
 	shared, apart, first := true, true, ""
-	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, calc *CalculationLineage) error {
+	admit := func(cite Citation) error {
+		key := fmt.Sprintf("%s/%d", cite.SessionID, cite.CallIndex)
+		if cites[key] {
+			return errors.New("one receipt cannot stand in for multiple source acquisitions")
+		}
+		cites[key] = true
+		if len(prep.Cites) == 0 {
+			first = cite.SessionID
+		}
+		// Two first calls of one session would be one receipt twice,
+		// which is refused above: so first calls are of sessions apart.
+		shared = shared && cite.SessionID == first
+		apart = apart && cite.CallIndex == 0
+		if !shared && !apart {
+			return errors.New("acquisitions must share one session, or each be the first call of a session of its own")
+		}
+		prep.Cites = append(prep.Cites, cite)
+		return nil
+	}
+	// The research records acquired, by their sources' names, which a later
+	// reconciliation reads (spec/dialect.md §6.4).
+	records := map[string]any{}
+	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, receipts *[]Citation, calc *CalculationLineage) error {
 		ft, et, err := readTargets(read)
 		if err != nil {
 			return err
@@ -240,7 +293,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 			if present {
 				writeTarget(facts, f.Target, v)
 			}
-			prep.Lineage = append(prep.Lineage, TargetLineage{f.Target, "fact", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Target), deps, cite, calc})
+			prep.Lineage = append(prep.Lineage, TargetLineage{f.Target, "fact", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Target), deps, cite, receipts, calc})
 		}
 		for _, f := range et {
 			if !admitted(m, "evidence", f.Requirement, class, gen) {
@@ -250,7 +303,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 			if present {
 				evidence[f.Requirement] = v
 			}
-			prep.Lineage = append(prep.Lineage, TargetLineage{f.Requirement, "evidence", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Requirement), deps, cite, calc})
+			prep.Lineage = append(prep.Lineage, TargetLineage{f.Requirement, "evidence", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Requirement), deps, cite, receipts, calc})
 		}
 		return nil
 	}
@@ -270,7 +323,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		if err != nil {
 			return i, sourceFailure("case", err)
 		}
-		if err = merge("case", "asserted", false, read, claim, nil, nil, nil); err != nil {
+		if err = merge("case", "asserted", false, read, claim, nil, nil, nil, nil); err != nil {
 			return i, sourceFailure("case", err)
 		}
 		prep.Outcomes = append(prep.Outcomes, SourceOutcome{Name: "case", Status: claim.Status, Reason: claim.Reason, Parameters: encode(caseParams), Claim: encode(claim)})
@@ -307,12 +360,22 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		class := "asserted"
 		var profile InputProfile
 		verified := source.Kind == "operation" || source.Provider == "google-drive"
+		research := isResearch(source)
 		if verified {
 			profile, e = profileFor(source, profiles)
 			if e != nil {
 				return fail(e)
 			}
 			class = profile.Class
+		}
+		if research {
+			// Its profiles were held to its assignments in preflight: each
+			// of class generated, the AI profile serving answer.
+			served, err := researchProfiles(source, recipes[source.Name], profiles)
+			if err != nil {
+				return fail(err)
+			}
+			profile, class = served["answer"], classGenerated
 		}
 		gen = gen || class == "generated"
 		generated[source.Name] = gen
@@ -321,10 +384,35 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		claim := derivedClaim{json.RawMessage(`{}`), map[string]string{}, "unknown", "dependency-unavailable", []string{}}
 		var args json.RawMessage
 		var cite *Citation
+		var receipts *[]Citation
 		var calc *CalculationLineage
 		if unavailable {
+			if present && research {
+				return fail(researchFail(codeUnexpected, "a skipped dependent source must not supply a response"))
+			}
 			if present {
 				return fail(errors.New("a skipped dependent source must not supply a response"))
+			}
+		} else if research {
+			// The request is the recipe, recorded and never sent: Runner
+			// asks no model and reads no page (research.go).
+			if args, e = researchRequest(source, params, types); e != nil {
+				return fail(e)
+			}
+			if !present {
+				if planning {
+					return i, &acquisitionNeeded{PlannedSource{Name: source.Name, Kind: source.Kind, Profile: profile.ID, Source: profile.Source, Arguments: args}}
+				}
+				return fail(researchFail(codeMissing, "the research record its caller retains is missing"))
+			}
+			cite, receipts, e = replayResearch(retained[source.Name], args, profile, profiles, profileKeys, at, source.MaxAge, admit)
+			if e != nil {
+				return fail(e)
+			}
+			records[source.Name] = retained[source.Name].record
+			claim, e = readResearch(source, retained[source.Name].record, records, params)
+			if e != nil {
+				return fail(e)
 			}
 		} else {
 			var artifact any
@@ -406,22 +494,9 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				}
 			}
 			if cite != nil {
-				key := fmt.Sprintf("%s/%d", cite.SessionID, cite.CallIndex)
-				if cites[key] {
-					return fail(errors.New("one receipt cannot stand in for multiple source acquisitions"))
+				if e = admit(*cite); e != nil {
+					return fail(e)
 				}
-				cites[key] = true
-				if len(prep.Cites) == 0 {
-					first = cite.SessionID
-				}
-				// Two first calls of one session would be one receipt twice,
-				// which is refused above: so first calls are of sessions apart.
-				shared = shared && cite.SessionID == first
-				apart = apart && cite.CallIndex == 0
-				if !shared && !apart {
-					return fail(errors.New("acquisitions must share one session, or each be the first call of a session of its own"))
-				}
-				prep.Cites = append(prep.Cites, *cite)
 			}
 			artifact, e = unwrapRead(source.Read, artifact)
 			if e != nil {
@@ -445,13 +520,14 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				return fail(e)
 			}
 		}
-		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite, calc); e != nil {
+		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite, receipts, calc); e != nil {
 			return fail(e)
 		}
 		// A verified source that was not skipped had its acquisition's times
 		// judged against at, and a calculator that computed its tables'
 		// instants too: either failure would have failed preparation above.
-		if verified && !unavailable && judged != nil {
+		// So did a research source each response it retains.
+		if (verified || research) && !unavailable && judged != nil {
 			*judged = append(*judged, judgedFreshness{source.Name, calc != nil && calc.Status == calculationComputed})
 		}
 		claims[source.Name] = claim
@@ -466,8 +542,13 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	// its own session the indexes are equal, and the order is the mapping's
 	// order of sources: the sort keeps equal elements as they were. No test
 	// tells this sort from one that does not promise to: for as many
-	// sources as a mapping may have, the other keeps them too.
-	sort.SliceStable(prep.Cites, func(a, b int) bool { return prep.Cites[a].CallIndex < prep.Cites[b].CallIndex })
+	// sources as a mapping may have, the other keeps them too. A preparation
+	// with a research source keeps the order of sources instead, each
+	// research source's citations in the order its record retains them, the
+	// record's own last (spec/dialect.md §9.1).
+	if len(recipes) == 0 {
+		sort.SliceStable(prep.Cites, func(a, b int) bool { return prep.Cites[a].CallIndex < prep.Cites[b].CallIndex })
+	}
 	c.MappingDigest = hash
 	mapped := Input{Facts: encode(facts), Source: c, Preparation: prep}
 	for _, l := range prep.Lineage {

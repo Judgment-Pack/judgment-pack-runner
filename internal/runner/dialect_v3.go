@@ -20,9 +20,11 @@ package runner
 //   - Of the kinds, operation is version 2's, of every adapter shape, and
 //     selected-file is version 2's, read from the Runner's selected
 //     snapshot, local-file and google-drive alike: both are prepared as
-//     version 2 prepares them. http, sql and web are refused by name, and so
-//     is research, whose verification is being written in the specification
-//     (Judgment-Pack/judgment-pack-spec#161). None is read as another kind.
+//     version 2 prepares them. research is prepared from the responses its
+//     caller retains, replayed and never asked again (research.go), bound to
+//     an AI profile and web profiles, or published unbound and bound at
+//     import. http, sql and web are refused by name. None is read as another
+//     kind.
 //
 // A version-2 document is read as before: nothing here changes how one is
 // read, kept, digested or prepared.
@@ -73,11 +75,6 @@ const (
 	maxBindingDocument  = 64 << 10
 )
 
-// researchSpecification is where the verification of a research source,
-// replaying the responses retained and never asking the model again, is
-// being written.
-const researchSpecification = "Judgment-Pack/judgment-pack-spec#161"
-
 // version3Member is a member dialect version 3 gives a source, and whether
 // the source writes it.
 type version3Member struct {
@@ -95,8 +92,13 @@ func version3Members(s MappingSource) []version3Member {
 		{"statement", s.Statement}, {"bindings", s.Bindings},
 		{"url", s.URL},
 		{"question", s.Question}, {"constraints", s.Constraints}, {"model", s.Model}, {"evidence", s.Evidence},
+		{"fields", s.Fields}, {"capabilities", s.Capabilities}, {"webProfiles", s.WebProfiles},
 	}
 }
+
+// researchMembers are the members of version 3 a research source has
+// (§4.3, §4.4): its recipe's and its web assignments.
+var researchMembers = map[string]bool{"question": true, "constraints": true, "model": true, "evidence": true, "fields": true, "capabilities": true, "webProfiles": true}
 
 // unboundMembers are the members an unbound operation names in place of
 // its profile (§4.4).
@@ -119,20 +121,20 @@ func refusedKind(s MappingSource) error {
 		return fmt.Errorf("source %s is of kind sql, which this Runner does not prepare: a connection's statement is read as an operation of the shape its gateway source serves", s.Name)
 	case "web":
 		return fmt.Errorf("source %s is of kind web, which this Runner does not prepare: the gateway's web source is read as an operation of shape http", s.Name)
-	case "research":
-		return fmt.Errorf("source %s is of kind research, which this Runner does not prepare yet: its verification, replaying the responses retained and never asking the model again, is being written in the specification (%s)", s.Name, researchSpecification)
 	}
 	return nil
 }
 
 // sourceForm holds a source to the members its document's version gives
 // its kind. A version-2 source has no member of version 3. A version-3
-// source of kind http, sql, web or research is refused by name. An
-// operation of version 3 is bound, naming its profile as version 2's does,
-// or unbound, naming exactly the four members of §4.4 in its place; with
-// open it is read, as the import step reads a published dialect, and
-// otherwise it is refused by name: Runner prepares only a bound dialect.
-// Every other member of version 3 is refused on a source of another kind.
+// source of kind http, sql or web is refused by name. An operation of
+// version 3 is bound, naming its profile as version 2's does, or unbound,
+// naming exactly the four members of §4.4 in its place; with open it is
+// read, as the import step reads a published dialect, and otherwise it is
+// refused by name: Runner prepares only a bound dialect. A research source
+// has its recipe's members and its web assignments, and its form is
+// readResearchRecipe's. Every other member of version 3 is refused on a
+// source of another kind.
 func sourceForm(version int, s MappingSource, open bool) error {
 	members := version3Members(s)
 	if version != 3 {
@@ -147,7 +149,10 @@ func sourceForm(version int, s MappingSource, open bool) error {
 		return e
 	}
 	for _, m := range members {
-		if len(m.value) > 0 && (s.Kind != "operation" || !unboundMembers[m.name]) {
+		if len(m.value) > 0 && !(s.Kind == "operation" && unboundMembers[m.name] || isResearch(s) && researchMembers[m.name]) {
+			if isResearch(s) {
+				return researchFail(codeMalformed, "source %s has the member %s, which a source of kind %s does not have", s.Name, m.name, s.Kind)
+			}
 			return fmt.Errorf("source %s has the member %s, which a source of kind %s does not have", s.Name, m.name, s.Kind)
 		}
 	}
@@ -307,8 +312,9 @@ func importedSource(src *SourceInput, profiles []InputProfile) (*SourceInput, er
 // a profile's id and digest, which would change something else than the
 // profile assignments; and a profile this installation does not hold by
 // that id and digest, or whose shape is not the source's shape, or whose
-// adapter is not the source's record. The bound dialect is then held to
-// the form every dialect is.
+// adapter is not the source's record. A research source is bound to its
+// AI profile and its web profiles (bindResearch). The bound dialect is then
+// held to the form every dialect is.
 func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, error) {
 	fail := func(format string, a ...any) (InputMapping, error) {
 		return InputMapping{}, inputProblem("Mapping v3: " + fmt.Sprintf(format, a...))
@@ -342,7 +348,7 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 	sources := map[string]bool{}
 	for _, s := range m.Sources {
 		sources[s.Name] = true
-		unbound[s.Name] = unboundOperation(s)
+		unbound[s.Name] = unboundOperation(s) || unboundResearch(s)
 	}
 	if !anyTrue(unbound) {
 		return fail("the dialect has no unbound source, and a binding document beside it binds nothing: give the dialect as the mapping")
@@ -393,6 +399,14 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 		entry, ok := entries[s.Name]
 		if !ok {
 			return fail("the binding document leaves source %s unbound: it binds every unbound source of the dialect", s.Name)
+		}
+		if isResearch(s) {
+			b, e := bindResearch(s, entry, profiles)
+			if e != nil {
+				return fail("%s", e.Error())
+			}
+			bound.Sources[i] = b
+			continue
 		}
 		for _, member := range sortedKeys(entry) {
 			if member != "profile" && member != "profileDigest" {

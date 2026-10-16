@@ -20,7 +20,7 @@ const preparationVectors = "../../vectors/preparation/"
 // holds the SHA-256 of every file of every vector. The vectors were generated
 // once and are not regenerated: changing one is a change of the contract a
 // second reader is held to, and changes this digest with it.
-const preparationVectorsManifest = "sha256:5d33c2865ef77e3cd6c32b7b92c0be587ffac570b8496d80c78411c4dd5ac026"
+const preparationVectorsManifest = "sha256:62dd8998b30ca89688e78fcc83ecde4a2535df1a84e30d7f9feb43f00babd179"
 
 // preparationVector is a vector as the manifest describes it
 // (vectors/preparation/README.md).
@@ -161,8 +161,21 @@ func TestPreparationVectorsAreByteExact(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// A vector whose inputs were changed after the run, retained
+			// "recorded", is one the Runner computes no preparation from: it
+			// refuses the inputs as verify-run does, and preparation.json is
+			// the preparation the run recorded, held fixed.
 			prepared, err := prepareV2(Input{Source: source}, profiles, at, false, nil)
-			if err != nil {
+			if v.Preparation.Retained == "recorded" {
+				if v.Altered == nil || err == nil || v.VerifyRun.Error == nil || err.Error() != *v.VerifyRun.Error {
+					t.Fatalf("the Runner does not refuse the changed inputs as verify-run does: %v", err)
+				}
+				var recorded VerificationBundle
+				if err = strictJSON(file["run.json"], &recorded); err != nil {
+					t.Fatal(err)
+				}
+				prepared = Input{Preparation: recorded.Run.Input.Preparation}
+			} else if err != nil {
 				t.Fatal("the Runner does not prepare the vector's inputs:", err)
 			}
 			computed, err := canonical(encode(prepared.Preparation))
@@ -193,7 +206,7 @@ func TestPreparationVectorsAreByteExact(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if bytes.Equal(retained, computed) != (v.Preparation.Retained == "equal") || v.Preparation.Retained != "equal" && v.Preparation.Retained != "altered" {
+			if bytes.Equal(retained, computed) != (v.Preparation.Retained != "altered") || v.Preparation.Retained != "equal" && v.Preparation.Retained != "altered" && v.Preparation.Retained != "recorded" {
 				t.Fatalf("the export's preparation is not %s to the one the Runner computes", v.Preparation.Retained)
 			}
 			var bundle VerificationBundle

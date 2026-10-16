@@ -500,6 +500,13 @@ func calculatedSignedExport(t *testing.T, status string, change ...func(*Input))
 // cfg is a signing configuration whose one trusted profile is profile.
 func signedAndWitnessedExport(t *testing.T, cfg Config, input Input, profile InputProfile, title, key string) VerificationBundle {
 	t.Helper()
+	return signedAndWitnessedExportOf(t, cfg, input, []InputProfile{profile}, title, key)
+}
+
+// signedAndWitnessedExportOf is signedAndWitnessedExport under every
+// profile the input's sources are bound to.
+func signedAndWitnessedExportOf(t *testing.T, cfg Config, input Input, profiles []InputProfile, title, key string) VerificationBundle {
+	t.Helper()
 	s, err := Open(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -526,7 +533,7 @@ func signedAndWitnessedExport(t *testing.T, cfg Config, input Input, profile Inp
 		t.Fatal(done.State, done.Problem)
 	}
 	raw := get(t, s.Handler("test"), "/v1/runs/"+run.ID+"/verification?version=5", 200)
-	verified, err := VerifyInputs(raw, []InputProfile{profile}, releaseDigest(release))
+	verified, err := VerifyInputs(raw, profiles, releaseDigest(release))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,14 +585,21 @@ func TestACalculatedSignedAndWitnessedRunRefusesAnswerAndTableTimeTampering(t *t
 // under and its held checkpoint. Its record must bind its preparation.
 func writeBoundFixture(t *testing.T, dir string, bundle VerificationBundle, profile InputProfile) {
 	t.Helper()
+	writeBoundFixtureOf(t, dir, bundle, []InputProfile{profile})
+}
+
+// writeBoundFixtureOf is writeBoundFixture with every profile the export's
+// sources are bound to, which profiles.json holds.
+func writeBoundFixtureOf(t *testing.T, dir string, bundle VerificationBundle, profiles []InputProfile) {
+	t.Helper()
 	if dir == "" {
 		return
 	}
 	raw := encode(bundle)
-	if v, err := VerifyInputs(raw, []InputProfile{profile}, bundle.ReleaseDigest); err != nil || v.Binding == nil || v.Binding.Status != BindingMatches {
+	if v, err := VerifyInputs(raw, profiles, bundle.ReleaseDigest); err != nil || v.Binding == nil || v.Binding.Status != BindingMatches {
 		t.Fatal("the export does not bind its preparation: set JPACK_TEST_BIN to a Runtime of 0.31.0 or later", err)
 	}
-	for name, data := range map[string][]byte{"run.json": raw, "profiles.json": encode([]InputProfile{profile}), "release-digest.txt": []byte(bundle.ReleaseDigest), "public-key.txt": []byte(vectorKey1 + "\n"), "checkpoints.jsonl": append(encode(bundle.Chain.Checkpoint), '\n')} {
+	for name, data := range map[string][]byte{"run.json": raw, "profiles.json": encode(profiles), "release-digest.txt": []byte(bundle.ReleaseDigest), "public-key.txt": []byte(vectorKey1 + "\n"), "checkpoints.jsonl": append(encode(bundle.Chain.Checkpoint), '\n')} {
 		if err := os.WriteFile(dir+"/"+name, data, 0644); err != nil {
 			t.Fatal(err)
 		}

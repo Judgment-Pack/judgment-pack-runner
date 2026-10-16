@@ -10,7 +10,9 @@ import (
 func profilesUsed(m InputMapping, profiles []InputProfile) []InputProfile {
 	used := map[string]bool{}
 	for _, s := range m.Sources {
-		used[s.Profile] = true
+		for _, ref := range sourceProfileRefs(s) {
+			used[ref.ID] = true
+		}
 	}
 	out := []InputProfile{}
 	for _, p := range profiles {
@@ -25,6 +27,21 @@ func (s *Service) checkReleaseProfiles(r Release) error {
 		return nil
 	}
 	for _, source := range r.InputMapping.Sources {
+		if isResearch(source) {
+			// Each profile a research source is bound to, its AI profile
+			// and its web profiles, is still the one the release froze.
+			for _, ref := range sourceProfileRefs(source) {
+				p, e := profileFor(MappingSource{Kind: source.Kind, Profile: ref.ID, ProfileDigest: ref.Digest}, s.cfg.InputProfiles)
+				if e != nil {
+					return inputProblem(e.Error())
+				}
+				old, e := profileFor(MappingSource{Kind: source.Kind, Profile: ref.ID, ProfileDigest: ref.Digest}, r.InputProfiles)
+				if e != nil || profileHash(p) != profileHash(old) {
+					return inputProblem("release trust configuration changed")
+				}
+			}
+			continue
+		}
 		if source.Profile != "" {
 			p, e := profileFor(source, s.cfg.InputProfiles)
 			if e != nil {

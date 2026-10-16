@@ -2857,6 +2857,15 @@
           },
           "rule": {
             "$ref": "#/components/schemas/DerivationRule"
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 15,
+            "items": {
+              "type": "string"
+            },
+            "description": "A research source's reconciliation (spec/dialect.md section 6.4): the earlier research sources it reads, distinct, beside a rule over {\"current\": its record, \"sources\": each named source's record, a skipped one absent}, with no copy and no unwrap. The rule guards each value it selects as found, names what every other status and absence does, writes no evidence, and ends with a clause that writes no fact and resolves nothing; anything else is refused, input-malformed."
           }
         },
         "required": [],
@@ -2882,7 +2891,8 @@
               ]
             }
           }
-        ]
+        ],
+        "description": "copy or rule; a research source's read reads its record through a closed list of pointers (/fields, a declared field's entry, its status, its cites, its value and what is below it, and in a condition an observation's value) and never takes a value from under values, or is a reconciliation (sources and rule)."
       },
       "MappingSource": {
         "type": "object",
@@ -2900,7 +2910,7 @@
               "web",
               "research"
             ],
-            "description": "operation and selected-file are version 2's, and a version-3 document's too, prepared as version 2 prepares them. http, sql, web and research are kinds of dialect version 3 that Runner refuses by name: in a version-3 document, each is refused with a sentence naming the kind (research's names Judgment-Pack/judgment-pack-spec#161, where its verification is being written), and in a version-2 document, as an unsupported kind."
+            "description": "operation and selected-file are version 2's, and a version-3 document's too, prepared as version 2 prepares them. research is a kind of dialect version 3 (spec/dialect.md sections 4.3 and 4.4): a recipe, bound to an AI profile and web profiles of class generated, prepared from the research record its caller retains, each retained response replayed under the profile it came through; Runner asks no model and reads no page. http, sql and web are kinds of dialect version 3 that Runner refuses by name: in a version-3 document, each is refused with a sentence naming the kind, and in a version-2 document, as an unsupported kind."
           },
           "provider": {
             "enum": [
@@ -2990,16 +3000,121 @@
             "description": "Version 3, kind web: refused by name with its source."
           },
           "question": {
-            "description": "Version 3, kind research: refused by name with its source."
+            "description": "Version 3, kind research: the question, a string template: a string, a $text whose placeholders name integer parameters, or a $param naming a parameter of type string or timestamp, never runAt. The source's request is its recipe, the question instantiated; it is recorded and never sent."
           },
           "constraints": {
-            "description": "Version 3, kind research: refused by name with its source."
+            "type": "object",
+            "description": "Version 3, kind research: the recipe's constraints, in the gateway canonical domain; kept as written."
           },
           "model": {
-            "description": "Version 3, kind research: refused by name with its source."
+            "type": "string",
+            "minLength": 1,
+            "description": "Version 3, kind research: the model the recipe asks, at most 256 UTF-8 bytes. The AI profile the source is bound to must declare this model: profile-mismatch otherwise."
           },
           "evidence": {
-            "description": "Version 3, kind research: refused by name with its source."
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Version 3, kind research: the evidence to retain, each instruction at most 4096 UTF-8 bytes."
+          },
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "description": "Version 3, kind research: the requested fields, in order, each exactly name (a non-empty string other than case, at most 64 UTF-8 bytes, distinct), type, required and description (at most 2048 UTF-8 bytes). The research record answers them.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "type",
+                "required",
+                "description"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "enum": [
+                    "integer",
+                    "decimal",
+                    "boolean",
+                    "text",
+                    "text-list",
+                    "range"
+                  ]
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "items": {
+              "enum": [
+                "answer",
+                "search",
+                "page"
+              ]
+            },
+            "uniqueItems": true,
+            "description": "Version 3, kind research: the capabilities the recipe needs, distinct, in the order answer, search, page; answer is required."
+          },
+          "webProfiles": {
+            "type": "object",
+            "additionalProperties": false,
+            "maxProperties": 2,
+            "properties": {
+              "search": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "profile",
+                  "profileDigest"
+                ],
+                "properties": {
+                  "profile": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "profileDigest": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                }
+              },
+              "page": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "profile",
+                  "profileDigest"
+                ],
+                "properties": {
+                  "profile": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "profileDigest": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                }
+              }
+            },
+            "description": "Version 3, kind research, bound: a profile for each web capability the source asks for, exactly those, written even when empty. With profile and profileDigest, the AI profile for answer, all three or none: a research source published with none is bound at import (SourceInput.import)."
           }
         },
         "required": [
@@ -3122,9 +3237,71 @@
                 "arguments"
               ]
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "research"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "maxAge",
+                "question",
+                "constraints",
+                "model",
+                "evidence",
+                "fields",
+                "capabilities"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "provider"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "arguments"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "calculation"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "platform"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "operation"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "shape"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "record"
+                    ]
+                  }
+                ]
+              }
+            }
           }
         ],
-        "description": "A source of a dialect document. In version 3 an operation may be unbound: platform, operation, shape and record, all four, in place of profile and profileDigest (spec/dialect.md section 4.4). Runner prepares only a bound source: an unbound one is bound at import (SourceInput.import) and refused by name elsewhere. The members of the kinds http, sql, web and research are read only so that a source of those kinds is refused for its kind. A version-2 source has none of the members of version 3."
+        "description": "A source of a dialect document. In version 3 an operation may be unbound: platform, operation, shape and record, all four, in place of profile and profileDigest (spec/dialect.md section 4.4); and a research source may be unbound, with none of profile, profileDigest and webProfiles. Runner prepares only a bound source: an unbound one is bound at import (SourceInput.import) and refused by name elsewhere. A research source is held to its recipe's form and the maxima of spec/dialect.md section 12, each refusal naming the specification's code at its end, input-malformed or input-over-bound; a profile it is bound to that this installation does not hold by that id and digest, that is not of class generated, declares no research capabilities, lacks the capability it is bound for or names another model is refused, profile-mismatch. The members of the kinds http, sql and web are read only so that a source of those kinds is refused for its kind. A version-2 source has none of the members of version 3."
       },
       "Admission": {
         "type": "object",
@@ -3311,6 +3488,34 @@
           },
           "calculator": {
             "$ref": "#/components/schemas/CalculatorPin"
+          },
+          "research": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "answer",
+                    "search",
+                    "page"
+                  ]
+                }
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "description": "What the channel serves of a research source's capabilities, distinct, in the order answer, search, page, and the model that answers, exactly when it serves answer (spec/dialect.md section 5.1): the form a gateway's web-search status row gives as research. The installation's declaration, pinned by the profile's digest; not an observation of the model. Runner refuses to start with one of another form."
           }
         },
         "required": [
@@ -3357,11 +3562,18 @@
               }
             },
             "required": [
-              "result",
-              "receipt",
-              "salts"
+              "result"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "dependentRequired": {
+              "receipt": [
+                "salts"
+              ],
+              "salts": [
+                "receipt"
+              ]
+            },
+            "description": "An acquisition, {result, receipt, salts}. A research source's result is its research record, exactly fields and responses (each retained response exactly profile, request, result, receipt and salts), and its receipt and salts are present exactly when the record came back through a gateway source; every other source's are required."
           }
         },
         "required": [],
@@ -3497,6 +3709,13 @@
           },
           "calculation": {
             "$ref": "#/components/schemas/CalculationLineage"
+          },
+          "receipts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "description": "For an acquired research source: every citation it adds to the preparation's cites, in order, each retained response's and then the record's own when it has one; written even when empty. receipt is then the record's own citation, absent when it has none."
           }
         },
         "required": [
@@ -3569,7 +3788,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Citation"
-            }
+            },
+            "description": "Every acquisition's citation, ordered by callIndex, those of one index in the order of sources; in a preparation with a research source, in the order of sources instead, each research source adding every retained response's citation in the order its record retains them, then the record's own (spec/dialect.md section 9.1)."
           },
           "lineage": {
             "type": "array",
@@ -3838,7 +4058,8 @@
           "kind": {
             "enum": [
               "operation",
-              "selected-file"
+              "selected-file",
+              "research"
             ]
           },
           "provider": {
@@ -3856,7 +4077,8 @@
           "arguments": {
             "type": "object"
           }
-        }
+        },
+        "description": "The next source to acquire. For a research source, the caller runs the recipe (arguments) through the profiles the source is bound to and supplies the research record it assembles from the responses it retains: Runner asks no model and reads no page."
       },
       "InputPlan": {
         "oneOf": [
@@ -5074,7 +5296,7 @@
           "dialect",
           "sources"
         ],
-        "description": "spec/dialect.md section 4.4: binds each unbound source of one published dialect to an input profile of this installation, by its id and digest, and changes nothing else. Its digest is the SHA-256 of its gateway canonical bytes; no preparation holds it.",
+        "description": "spec/dialect.md section 4.4: binds each unbound source of one published dialect to input profiles of this installation, by id and digest, and changes nothing else: an operation to one profile, and a research source to its AI profile (profile and profileDigest) and a web profile for each web capability it asks for (webProfiles). Its digest is the SHA-256 of its gateway canonical bytes; no preparation holds it.",
         "properties": {
           "dialect": {
             "type": "string",
@@ -5103,6 +5325,50 @@
                 "profileDigest": {
                   "type": "string",
                   "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "webProfiles": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "maxProperties": 2,
+                  "properties": {
+                    "search": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "profile",
+                        "profileDigest"
+                      ],
+                      "properties": {
+                        "profile": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "profileDigest": {
+                          "type": "string",
+                          "pattern": "^sha256:[a-f0-9]{64}$"
+                        }
+                      }
+                    },
+                    "page": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "profile",
+                        "profileDigest"
+                      ],
+                      "properties": {
+                        "profile": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "profileDigest": {
+                          "type": "string",
+                          "pattern": "^sha256:[a-f0-9]{64}$"
+                        }
+                      }
+                    }
+                  },
+                  "description": "For a research source, REQUIRED: a profile for each web capability it asks for, exactly those, written even when empty."
                 }
               }
             }
@@ -5116,7 +5382,7 @@
           "dialect",
           "binding"
         ],
-        "description": "The import step. Runner binds the published dialect with the binding document under this installation's input profiles, refusing by name a dialect that is not of version 3, has no unbound source or is written otherwise than Runner keeps it; a binding for another dialect, that leaves an unbound source unbound, binds a source the dialect does not have or one already bound, or names a member other than a profile's id and digest; and a profile this installation does not hold by that id and digest, of another shape than the source's, or whose adapter is not the source's record. The bound dialect is the published one with each unbound source's platform, operation, shape and record replaced by the profile, every other member as written. Runner keeps it as the input's mapping and keeps both documents here, as given, beside the run: the operator's record of what was bound, which no preparation holds. Every later preparation of the input, a dispatcher's and verify-run's included, binds them again under the profiles it is given and requires the mapping to be the bound dialect.",
+        "description": "The import step. Runner binds the published dialect with the binding document under this installation's input profiles, refusing by name a dialect that is not of version 3, has no unbound source or is written otherwise than Runner keeps it; a binding for another dialect, that leaves an unbound source unbound, binds a source the dialect does not have or one already bound, or names a member other than a profile's id and digest; and a profile this installation does not hold by that id and digest, of another shape than the source's, or whose adapter is not the source's record. A research source is bound by exactly its AI profile, its digest and its web profiles, the web profiles exactly the web capabilities it asks for (input-malformed otherwise; three web assignments are input-over-bound), each profile of class generated, declaring the capability it is bound for and the source's model (profile-mismatch otherwise). The bound dialect is the published one with each unbound operation's platform, operation, shape and record replaced by the profile, and each unbound research source's three assignment members added, every other member as written. Runner keeps it as the input's mapping and keeps both documents here, as given, beside the run: the operator's record of what was bound, which no preparation holds. Every later preparation of the input, a dispatcher's and verify-run's included, binds them again under the profiles it is given and requires the mapping to be the bound dialect.",
         "properties": {
           "dialect": {
             "$ref": "#/components/schemas/InputMappingV3"

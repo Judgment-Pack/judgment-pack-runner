@@ -19,6 +19,22 @@ type InputProfile struct {
 	// tool computes a deterministic function of the inputs it echoes and the
 	// tables it reports, calling no model. Absent, the profile encodes as before.
 	Calculator *CalculatorPin `json:"calculator,omitempty"`
+	// Research, when set, is what the channel serves of a research
+	// source's capabilities, answer, search and page, and the model that
+	// answers when it serves answer (spec/dialect.md §5.1): the form a
+	// gateway's web-search status row gives as its member research. It is
+	// the installation's declaration, never an observation of the model,
+	// and its digest pins it. Absent, the profile encodes as before.
+	Research *ResearchDeclaration `json:"research,omitempty"`
+}
+
+// ResearchDeclaration is a profile's research member (spec/dialect.md
+// §5.1): capabilities, from answer, search and page in that order, and the
+// model exactly when they include answer. Model is a pointer so that a
+// model written empty is told from one not written.
+type ResearchDeclaration struct {
+	Capabilities []string `json:"capabilities"`
+	Model        *string  `json:"model,omitempty"`
 }
 type CalculatorPin struct {
 	Name    string `json:"name"`
@@ -59,7 +75,9 @@ type MappingSource struct {
 	// members of the kinds http, sql, web and research, which Runner refuses
 	// by name: they are read here only so that a source of those kinds is
 	// refused for its kind, and not as a request with a member Runner does
-	// not know.
+	// not know. Question, Constraints, Model and Evidence are a research
+	// source's, which Runner prepares from the responses its caller retains
+	// (research.go).
 	Platform    json.RawMessage `json:"platform,omitempty"`
 	Operation   json.RawMessage `json:"operation,omitempty"`
 	Shape       json.RawMessage `json:"shape,omitempty"`
@@ -76,6 +94,12 @@ type MappingSource struct {
 	Constraints json.RawMessage `json:"constraints,omitempty"`
 	Model       json.RawMessage `json:"model,omitempty"`
 	Evidence    json.RawMessage `json:"evidence,omitempty"`
+	// Fields and Capabilities complete a research source's recipe, and
+	// WebProfiles, with Profile and ProfileDigest, its bound form
+	// (spec/dialect.md §4.3, §4.4; research.go).
+	Fields       json.RawMessage `json:"fields,omitempty"`
+	Capabilities json.RawMessage `json:"capabilities,omitempty"`
+	WebProfiles  json.RawMessage `json:"webProfiles,omitempty"`
 }
 
 // CalculationBinding binds a calculator's answer to the case: each input it
@@ -89,6 +113,10 @@ type SourceRead struct {
 	Unwrap []string        `json:"unwrap,omitempty"`
 	Copy   *CopyMapping    `json:"copy,omitempty"`
 	Rule   json.RawMessage `json:"rule,omitempty"`
+	// Sources is a reconciliation read's earlier research sources, by name,
+	// kept as written (spec/dialect.md §6.4): with Rule alone, on a research
+	// source of version 3, and on no other read.
+	Sources json.RawMessage `json:"sources,omitempty"`
 }
 type CopyMapping struct {
 	Facts    []FactMapping     `json:"facts"`
@@ -113,20 +141,25 @@ type Dependency struct {
 	Pointer   string `json:"pointer"`
 }
 type TargetLineage struct {
-	Target             string              `json:"target"`
-	Kind               string              `json:"kind"`
-	Source             string              `json:"source"`
-	Class              string              `json:"class"`
-	GeneratedInfluence bool                `json:"generatedInfluence"`
-	Present            bool                `json:"present"`
-	Status             string              `json:"status"`
-	Reason             string              `json:"reason"`
-	ReadDigest         string              `json:"readDigest"`
-	Basis              []string            `json:"basis"`
-	Candidates         []string            `json:"candidateFrom,omitempty"`
-	Dependencies       []Dependency        `json:"dependencies,omitempty"`
-	Receipt            *Citation           `json:"receipt,omitempty"`
-	Calculation        *CalculationLineage `json:"calculation,omitempty"`
+	Target             string       `json:"target"`
+	Kind               string       `json:"kind"`
+	Source             string       `json:"source"`
+	Class              string       `json:"class"`
+	GeneratedInfluence bool         `json:"generatedInfluence"`
+	Present            bool         `json:"present"`
+	Status             string       `json:"status"`
+	Reason             string       `json:"reason"`
+	ReadDigest         string       `json:"readDigest"`
+	Basis              []string     `json:"basis"`
+	Candidates         []string     `json:"candidateFrom,omitempty"`
+	Dependencies       []Dependency `json:"dependencies,omitempty"`
+	Receipt            *Citation    `json:"receipt,omitempty"`
+	// Receipts is, for an acquired research source, every citation it adds
+	// to the preparation's cites, in their order: each retained response's,
+	// then the record's own when it has one (spec/dialect.md §9.3). It is
+	// written even when empty, and absent for every other source.
+	Receipts    *[]Citation         `json:"receipts,omitempty"`
+	Calculation *CalculationLineage `json:"calculation,omitempty"`
 }
 
 // CalculationLineage records, for a calculated source, which calculator answered,

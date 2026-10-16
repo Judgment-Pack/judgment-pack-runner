@@ -21,7 +21,10 @@
 // http-shaped-source, was added the same way: the run wrote the first nine
 // again byte for byte. So were the eleventh and twelfth, version-3-bound and
 // unbound-bound-at-import, the first vectors of dialect version 3: the run
-// wrote the first ten again byte for byte.
+// wrote the first ten again byte for byte. So were the research vectors,
+// the first of the kind research, twenty-six from the fixture plan of the
+// specification's dialect (§11), from the runs in testdata/research: the
+// run wrote the first twelve again byte for byte.
 package main
 
 import (
@@ -191,7 +194,7 @@ func generate(runner, out string) error {
 		CanonicalForm: "docs/MAPPING-V2.md, \"The canonical form of a preparation\"",
 		Generator:     "tools/preparation-vectors, run once from the fixtures named by each vector's from; the vectors are not regenerated",
 	}
-	for _, s := range specs {
+	for _, s := range append(append([]spec{}, specs...), researchSpecs()...) {
 		e, err := write(s, runner, filepath.Join(out, s.name))
 		if err != nil {
 			return fmt.Errorf("%s: %w", s.name, err)
@@ -485,6 +488,143 @@ func foreignKind(v *vector) error {
 		return err
 	}
 	return set(v, newSidecar, "run", "auditSignatures")
+}
+
+// researchRun is what every research vector's run is: how its documents
+// were made, which no reader can check, and what nothing in it is.
+const researchRun = "A run of the example %s of the specification's fixture plan (spec/dialect.md, section 11), as Runner exported it (version 5), signed, witnessed and bound. Its dialect, of version 3, was published with its research sources unbound (unbound.json), naming no profile, and bound at import by the binding document (binding.json) to the installation's AI profile and web profiles, each of class generated and declaring the capabilities it serves and the model (profiles.json); mapping.json is the bound dialect. Each research source's acquisition (sources.json) is the research record its caller assembled: the responses retained, each with the profile it came through, its request, its result, the receipt a gateway signed and the salts, and the typed answers, each citing the responses by their indexes. The responses were served, in the test's process, by a stand-in of a gateway over TLS, an AI connection's answer, a search connection's links and a public page, each receipt minted as a gateway mints one, under the stand-in's key, at call indexes of one session. No model was asked, no page outside the test's process was read, and every identifier and observation is synthetic. "
+
+// researchReads is what a reader does with a research vector that reads.
+const researchReads = " A reader binds unbound.json with binding.json under profiles.json and holds the result to mapping.json, replays each retained response under the profile it names, with the record's own receipt when it has one, recomputes the preparation from the records, its cites in the order of the sources, and concludes verified-inputs, the record's binding matching the preparation."
+
+// researchSpecs are the research vectors: for each example of the fixture
+// plan, the readings Runner can record, and two findings made from them.
+func researchSpecs() []spec {
+	var out []spec
+	for _, example := range []string{"gtm-company-person", "work-item-triage"} {
+		run := fmt.Sprintf(researchRun, example)
+		reading := func(variant, says string) spec {
+			name := example + "-" + variant
+			return spec{name: name, from: "research/" + name, args: strongest, key: true, held: true, want: "verified-inputs", note: run + says + researchReads}
+		}
+		out = append(out, reading("valid-types-all-six", researchValid[example]))
+		for _, variant := range []string{"optional-omitted", "required-not-found", "integer-zero", "decimal-zero", "boolean-false", "text-empty"} {
+			out = append(out, reading("presence-"+variant, researchPresence[example+"/"+variant]+" Nothing absent, null or false is replaced by a default."))
+		}
+		out = append(out, reading("stale-and-conflicting-unknown", researchStale[example]))
+		for _, variant := range []string{"all-unavailable", "secondary-found"} {
+			out = append(out, reading("failed-fallback-"+variant, researchFallback+researchFallbackVariant[variant]))
+		}
+		out = append(out, reading("changed-binding-second-installation", researchSecond[example]))
+		old := "research/" + example + "-valid-types-all-six"
+		out = append(out, spec{name: example + "-changed-binding-old-preparation", from: "research/" + example + "-changed-binding-second-installation", args: strongest, key: true, held: true, want: "retained lineage does not match recomputation",
+			altered: "The export of " + example + "-changed-binding-second-installation retains, in place of its own preparation, the preparation of " + example + "-valid-types-all-six, recorded under the first installation's binding seconds before.",
+			alter:   oldPreparation(old),
+			note:    run + researchSecond[example] + " Its export retains the first installation's preparation instead, the old preparation held fixed: preparation.json is what the Runner computes from the second installation's inputs, which differs. A reader given the retained preparation recomputes the second installation's at its verifiedAt, under its bound dialect, and concludes preparation-differs; verify-run refuses it with no report."})
+		out = append(out, researchChanged[example](run))
+	}
+	return out
+}
+
+var researchValid = map[string]string{
+	"gtm-company-person": "Its company source asks for answer alone, retaining one answer, and its read copies the record's whole fields object to /company. Its person source asks for answer, search and page, retaining an answer, a search's links and a page, each through its assigned profile, and its rule writes the person's id and the qualification /qualification/contactable from found values. All six types are answered: text, an integer, a decimal of scale two and a signed one, booleans, a list with values and an empty one, an integer range and a decimal range whose endpoints have different scales; every target is generated, with generated influence.",
+	"work-item-triage":   "Its item source asks for answer, search and page, its search served by its AI profile and its page by a web profile, and its rule writes the item's id, its points and /triage/blocked from found values. Its follow-up source asks for answer alone, its question a $param, its record came back through the AI connection with a receipt of its own over the source's request and the whole record, and its read copies the record's whole fields object to /follow-up; its lineage names that receipt, and its receipts end with it. All six types are answered: text, integers, decimals, booleans, a list with duplicates and an empty string, an empty list, a decimal range with a signed endpoint and an integer range.",
+}
+
+var researchPresence = map[string]string{
+	"gtm-company-person/optional-omitted":   "The valid-types run with every optional entry omitted: the company's and the person's roles and ranges. The copy writes the entries there are.",
+	"gtm-company-person/required-not-found": "The valid-types run with a required entry not-found in each source, citing the response about the unsuccessful search: the company's headcount, which the copy keeps as recorded, and the person's contactability, so that the rule's found clause does not match and its last derives unknown, with no fact.",
+	"gtm-company-person/integer-zero":       "The valid-types run with integer zero: the company's headcount and the person's years of experience, each found.",
+	"gtm-company-person/decimal-zero":       "The valid-types run with the decimal \"0\": the company's revenue and the person's allocation, each found.",
+	"gtm-company-person/boolean-false":      "The valid-types run with false: the company is not active, and the person may not be contacted, which the rule writes as /qualification/contactable false.",
+	"gtm-company-person/text-empty":         "The valid-types run with the empty text: the company's id and the person's, which the rule writes as /person/id \"\".",
+	"work-item-triage/optional-omitted":     "The valid-types run with every optional entry omitted: the item's labels and range, and every follow-up field but its id.",
+	"work-item-triage/required-not-found":   "The valid-types run with a required entry not-found in each source: whether the item is blocked, citing the page, so that the rule derives unknown, and the follow-up's id, citing nothing.",
+	"work-item-triage/integer-zero":         "The valid-types run with integer zero: the item's points, which the rule writes, and the follow-up's.",
+	"work-item-triage/decimal-zero":         "The valid-types run with the decimal \"0\": the item's estimate and the follow-up's.",
+	"work-item-triage/boolean-false":        "The valid-types run with false: the item is not blocked, which the rule writes as /triage/blocked false, and neither is the follow-up.",
+	"work-item-triage/text-empty":           "The valid-types run with the empty text: the item's id, which the rule writes as /work-item/id \"\", and the follow-up's.",
+}
+
+var researchStale = map[string]string{
+	"gtm-company-person": "The valid-types run, its receipts fresh, with explicitly stale observations, one citing nothing and one citing the search, and conflicting typed values, each observation with its own citations: the company's headcount stale and its revenue conflicting, which the copy keeps as recorded; the person's experience stale and its contactability conflicting, true on the answer and false on the page, so that the rule's clause reading an observation derives unknown, choosing neither.",
+	"work-item-triage":   "The valid-types run, its receipts fresh, with explicitly stale observations, one citing nothing and one citing the search, and conflicting typed values, each observation with its own citations: the item's points stale and whether it is blocked conflicting, so that the rule derives unknown, choosing neither; the follow-up's estimate conflicting between \"1.0\" and \"1.00\", spelled apart, and its labels stale, which the copy keeps as recorded.",
+}
+
+const researchFallback = "Three research sources each ask for answer alone and declare the example's count field: the primary and the secondary copy their entry's status, and the third reconciles the two before it and itself (section 6.4) by a rule that tests their statuses in a declared order: the primary's found value, then the secondary's, a conflict anywhere unknown, then its own found value, and unknown when no candidate is left; each absence, not-found, stale and conflicting status is named by an exact guard. The reconciliation's citations are its own response's; the earlier sources keep theirs. "
+
+var researchFallbackVariant = map[string]string{
+	"all-unavailable": "The primary answers not-found, the secondary stale and the third conflicting: the failed fallback derives unknown, with no resolved target.",
+	"secondary-found": "The primary answers not-found and the secondary found: the reconciliation resolves the target from the secondary's value.",
+}
+
+var researchSecond = map[string]string{
+	"gtm-company-person": "The valid-types run as a second installation binds it: the same published dialect, the person's page bound to the profile reader, of the same gateway at another endpoint, in place of page. Every response through it names reader, and its receipt verifies under reader; the bound dialect and its digest differ from the first installation's, and nothing else does but the responses, asked again in a session of the gateway's own.",
+	"work-item-triage":   "The valid-types run as a second installation binds it: the same published dialect, the follow-up's AI profile assistant-2, of the same gateway at another endpoint, in place of assistant. Every response through it, and the record's own receipt, name assistant-2 and verify under it; the bound dialect and its digest differ from the first installation's, and nothing else does but the responses, asked again in a session of the gateway's own.",
+}
+
+var researchChanged = map[string]func(string) spec{
+	"gtm-company-person": func(run string) spec {
+		return spec{name: "gtm-company-person-changed-response-retained-result", from: "research/gtm-company-person-valid-types-all-six", args: strongest, key: true, held: true,
+			want:    "Source person: retained response 2, through the profile page: result digest failed (acquisition-invalid). No decision was requested.",
+			altered: "In the export's research record of the source person, the result of the third retained response, the page, says person-0013 where it said person-0012; its receipt is as it was.",
+			alter:   changedResponse(`A synthetic page about person-0012.`, `A synthetic page about person-0013.`),
+			note:    run + "The valid-types run with one retained result changed and its receipt and the expected preparation held fixed: preparation.json is the preparation the run recorded, which the export retains, and the Runner computes none from the changed inputs. A reader replays the third response under its profile and concludes acquisition-invalid: its result is not the bytes its receipt names; verify-run refuses it with no report."}
+	},
+	"work-item-triage": func(run string) spec {
+		return spec{name: "work-item-triage-changed-response-record-fields", from: "research/work-item-triage-valid-types-all-six", args: strongest, key: true, held: true,
+			want:    "Source follow-up: the record's own receipt, through the profile assistant: result digest failed (acquisition-invalid). No decision was requested.",
+			altered: "In the export's research record of the source follow-up, the answer for points is 3 where it was 2; the record's own receipt is as it was.",
+			alter:   changedResponse(`"points":{"cites":[0],"status":"found","value":2}},"responses":[`, `"points":{"cites":[0],"status":"found","value":3}},"responses":[`),
+			note:    run + "The valid-types run with the follow-up record's fields changed under the record's own receipt, which is held fixed, and the expected preparation held fixed: preparation.json is the preparation the run recorded, which the export retains, and the Runner computes none from the changed inputs. A reader replays the record's own receipt over the whole record and concludes acquisition-invalid; verify-run refuses it with no report."}
+	},
+}
+
+// oldPreparation makes the export retain, in place of its own preparation,
+// the preparation another fixture's export retains: the old preparation held
+// fixed against inputs that make another. The Runner computes the export's
+// own from its inputs, which preparation.json holds.
+func oldPreparation(from string) func(*vector) error {
+	return func(v *vector) error {
+		other, err := os.ReadFile(filepath.Join(fixtures, from, "run.json"))
+		if err != nil {
+			return err
+		}
+		start, end, err := span(other, "run", "input", "preparation")
+		if err != nil {
+			return err
+		}
+		old := other[start:end]
+		if start, end, err = span(v.run, "run", "input", "preparation"); err != nil {
+			return err
+		}
+		if bytes.Equal(v.run[start:end], old) {
+			return errors.New("the two preparations are one")
+		}
+		v.run = splice(v.run, start, end, old)
+		v.retained = "altered"
+		return nil
+	}
+}
+
+// changedResponse changes, once, the export's research records, its
+// run.input.source.sources, and nothing else: no receipt, and not the
+// preparation the run recorded, which the export retains and preparation.json
+// holds, since the Runner computes none from the changed inputs.
+func changedResponse(from, to string) func(*vector) error {
+	return func(v *vector) error {
+		start, end, err := span(v.run, "run", "input", "source", "sources")
+		if err != nil {
+			return err
+		}
+		changed, err := replace(v.run[start:end], from, to, 1)
+		if err != nil {
+			return err
+		}
+		v.run = splice(v.run, start, end, changed)
+		v.retained = "recorded"
+		return nil
+	}
 }
 
 // verifyRun runs verify-run on a vector's files, in its directory, and reads
