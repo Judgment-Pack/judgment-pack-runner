@@ -1,2 +1,5 @@
-# The vectors are bytes a second reader is held to: never convert their line endings.
+# The vectors are bytes a second reader is held to, and the Exchange fixtures
+# verify-preparation is tested on are the Exchange's bytes, held to their digests:
+# never convert their line endings.
 vectors/** -text
+cmd/jpack-runner/testdata/exchange/** -text

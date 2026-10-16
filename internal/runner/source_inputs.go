@@ -268,8 +268,11 @@ func (m InputMapping) validate() error {
 	if m.Case != nil || m.Sources != nil || m.Admits != nil || m.Unmapped != nil || m.UnmappedEvidence != nil {
 		return inputProblem("Version 2 fields require mapping version 2.")
 	}
-	if m.Version != 1 || (m.Provider != "google-drive" && m.Provider != "local-file") || m.Facts == nil || m.Evidence == nil || len(m.Facts) > 256 || len(m.Evidence) > 128 {
+	if m.Version != 1 || (m.Provider != "google-drive" && m.Provider != "local-file") || m.Facts == nil || m.Evidence == nil {
 		return inputProblem("Use a supported file input mapping.")
+	}
+	if len(m.Facts) > 256 || len(m.Evidence) > 128 {
+		return codedProblem(codeOverBound, "Use a supported file input mapping.")
 	}
 	targets := map[string]bool{}
 	ids := map[string]bool{}

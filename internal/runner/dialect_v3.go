@@ -119,11 +119,11 @@ func unboundOperation(s MappingSource) bool {
 func refusedKind(s MappingSource) error {
 	switch s.Kind {
 	case "http":
-		return fmt.Errorf("source %s is of kind http, which this Runner does not prepare: a gateway source of shape http is read as an operation", s.Name)
+		return withCode(codeKindUnread, fmt.Errorf("source %s is of kind http, which this Runner does not prepare: a gateway source of shape http is read as an operation", s.Name))
 	case "sql":
-		return fmt.Errorf("source %s is of kind sql, which this Runner does not prepare: a connection's statement is read as an operation of the shape its gateway source serves", s.Name)
+		return withCode(codeKindUnread, fmt.Errorf("source %s is of kind sql, which this Runner does not prepare: a connection's statement is read as an operation of the shape its gateway source serves", s.Name))
 	case "web":
-		return fmt.Errorf("source %s is of kind web, which this Runner does not prepare: the gateway's web source is read as an operation of shape http", s.Name)
+		return withCode(codeKindUnread, fmt.Errorf("source %s is of kind web, which this Runner does not prepare: the gateway's web source is read as an operation of shape http", s.Name))
 	}
 	return nil
 }
@@ -322,6 +322,11 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 	fail := func(format string, a ...any) (InputMapping, error) {
 		return InputMapping{}, inputProblem("Mapping v3: " + fmt.Sprintf(format, a...))
 	}
+	// mismatch is fail for a profile that does not fit its source
+	// (spec/dialect.md §4.4, §5.1).
+	mismatch := func(format string, a ...any) (InputMapping, error) {
+		return InputMapping{}, codedProblem(codeMismatch, "Mapping v3: "+fmt.Sprintf(format, a...))
+	}
 	absent := func(raw json.RawMessage) bool {
 		return len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 	}
@@ -406,7 +411,7 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 		if isResearch(s) {
 			b, e := bindResearch(s, entry, profiles)
 			if e != nil {
-				return fail("%s", e.Error())
+				return InputMapping{}, inputProblemOf("Mapping v3: "+e.Error(), e)
 			}
 			bound.Sources[i] = b
 			continue
@@ -431,13 +436,13 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 		}
 		switch {
 		case profile == nil:
-			return fail("the binding document binds source %s to the profile %s, which this installation does not hold", s.Name, id)
+			return mismatch("the binding document binds source %s to the profile %s, which this installation does not hold", s.Name, id)
 		case profileHash(*profile) != pinned:
-			return fail("the binding document binds source %s to the profile %s by a digest that is not the digest of this installation's profile %s", s.Name, id, id)
+			return mismatch("the binding document binds source %s to the profile %s by a digest that is not the digest of this installation's profile %s", s.Name, id, id)
 		case profile.Shape != shape:
-			return fail("the binding document binds source %s, served by shape %s, to the profile %s, of shape %s", s.Name, shape, id, profile.Shape)
+			return mismatch("the binding document binds source %s, served by shape %s, to the profile %s, of shape %s", s.Name, shape, id, profile.Shape)
 		case profile.Adapter.Name != record:
-			return fail("the binding document binds source %s, written against the record %s, to the profile %s, whose adapter is %s", s.Name, record, id, profile.Adapter.Name)
+			return mismatch("the binding document binds source %s, written against the record %s, to the profile %s, whose adapter is %s", s.Name, record, id, profile.Adapter.Name)
 		}
 		s.Platform, s.Operation, s.Shape, s.Record = nil, nil, nil, nil
 		s.Profile, s.ProfileDigest = id, pinned

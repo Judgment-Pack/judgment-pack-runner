@@ -1603,6 +1603,114 @@ signature establish of any run, and no more: nothing about where the inputs
 came from, and nothing against the operator without a checkpoint held
 independently.
 
+### Verifying a preparation without a run
+
+`jpack-runner verify-preparation` reads one preparation offline, as the
+specification's dialect companion says a *preparation verifier* reads one
+(`spec/dialect.md` §11, §14), for a preparation that no run of this
+installation made: an Exchange entry's fixture above all. It needs no export,
+no release digest, no installation profiles and no clock; it asks no network,
+model or Runtime, and writes nothing. It is the computation
+`TestPreparationVectorsAreByteExact` holds every vector to and `verify-run`
+recomputes an export with, given the files themselves:
+
+```text
+jpack-runner verify-preparation --dialect dialect.json [--binding binding.json] \
+    --case case.json --profiles profiles.json [--sources sources.json] \
+    --preparation preparation.json --preparation-digest sha256:…
+```
+
+- `--dialect` is the dialect document as given. With `--binding`, it is the
+  published dialect, whose unbound sources the binding document binds, by
+  Runner's own import step ([above](#dialect-version-3)), as the Exchange's tests
+  call the specification's verifier on a fixture. `--unbound` names the published
+  dialect so, and takes `--binding`. A dialect with an unbound source and no
+  binding document, and a binding document beside a dialect with none, are
+  refused.
+- `--sources` is the acquisitions, a fixture's `sources.json`; without it there
+  are none.
+- `--preparation` is the expected preparation, and `--preparation-digest` its
+  digest, supplied apart from the files, as an Exchange entry pins a fixture's
+  `preparationDigest`. The digest is checked against the file's bytes before
+  anything is read: a preparation it does not name is refused,
+  `preparation-digest-mismatch`, Runner's own code, outside §11.
+- The instant is the given preparation's `verifiedAt`, held to the timestamp
+  form with an instant (§1), and nothing else: there is no fallback to the
+  current time. Receipts stale today and fresh at that instant read; receipts
+  fresh today and outside their window at that instant are
+  `acquisition-stale`.
+
+Then, in the order §11 gives them: §12's bounds on the documents' bytes, then
+each document read strictly, then the nesting of each acquisition's result
+(`input-over-bound`, `input-malformed`); the forms of the profiles, the
+acquisitions, the instant and the dialect, a version-3 or named dialect only as
+written ([above](#named-dialect-artifact-formats)), and a binding document's at
+import (`input-malformed`); a kind the command does not read, `kind-unread`: it
+reads `operation`, of the shapes `airbyte`, `mcp` and `http`, and `research`, the
+kinds the vectors hold, and refuses `selected-file`, and `http`, `sql` and `web`,
+by name; and then Runner's own preparation, at that instant, whose findings
+are §11's: `profile-mismatch` (a profile not given by its id and digest, or of
+another shape or adapter than the source it is bound to), `parameter-invalid`,
+`acquisition-missing`, `acquisition-unexpected`, `acquisition-invalid` (a
+retained response changed under its receipt among them), `acquisition-stale`,
+`acquisition-sessions`, `calculation-invalid`, `read-failed` and
+`admission-refused`. Last, the recomputed preparation is compared with the
+given one in the [canonical form](#the-canonical-form-of-a-preparation):
+`preparation-differs` when it is not, as the old preparation under a changed
+binding is.
+
+It writes §11's report on standard output, one line in that canonical form,
+and why on standard error, and exits 0 for a reading, 1 for a refusal and 2 for
+a finding; 3, with no report, when it could not run: an argument it does not
+take, a file it cannot open, `-h`. A refusal is exactly
+`{"refusal":"input-malformed","result":"refusal"}` and a finding
+`{"finding":"acquisition-invalid","result":"finding"}`. A reading is exactly
+`result`, `digest`, `binding`, `facts`, `evidence`, `targetsByClass`, and
+`unsignedParameters` and `unsignedFreshness` when they are not empty, with the
+values `verify-run` reports of an export. Of the vector `valid`:
+
+```text
+{"binding":"not-checked","digest":"sha256:2a058ca1490ee316a87ad5999a7460906699a6f8987c93369a344ae4614b7a6d","evidence":{"intake-form":"present","sponsor-endorsement":"present"},"facts":{"request":{"appropriateness":"pass","completeness":"complete","embargoedInformationToUnauthorizedRecipients":false,"type":"data-access"}},"result":"reading","targetsByClass":{"asserted":0,"generated":0,"record":3},"unsignedFreshness":{"against":"preparation.verifiedAt","sources":[{"checks":["acquisition","calculation"],"source":"fx","targets":3}],"verifiedAt":"2026-10-14T14:58:26Z"}}
+```
+
+Its `binding` is always `not-checked`: the command is given no record, so
+nothing here holds a signed record's binding to the preparation, or commits the
+preparation, its instant included, to anything. `verify-run` is the reader that
+does, for a run's export.
+
+`jpack-runner verify-preparation --capabilities` prints, alone, one closed
+object for a caller to check before it calls: the command's version
+(`"version":1`), the release it was built from (`runner`), the dialect versions
+(`[2,3]`) and named formats (`"2.0.0"`, `"3.0.0"`), the source kinds and shapes
+it reads, the instant it recomputes at, its report's form, results, binding,
+refusal and finding codes and exit statuses, and the bounds it holds the
+documents to.
+
+**What a reading establishes, and what it does not** (§13, §14). A reading
+establishes that the preparation, byte for byte in the canonical form,
+recomputes from the files given at the instant it names: that the derivations
+it records were made from these bytes by these rules, and that each retained
+response's receipt verifies under the profile the fixture gives for it. The
+profiles are verification inputs, taken from the caller as a fixture carries
+them, not an installation's trusted configuration: whoever holds a key a
+fixture's profile names can sign its receipts, so a reading of a fixture does
+not show that any gateway an installation trusts served its records, nor that
+any record is true, current or complete, nor that a research answer is right,
+nor that the instant was the one anything was admitted at. It establishes
+recomputation and nothing else, and no report built on one may say more. Nor
+is it a conformance claim of the class: the specification publishes no dialect
+vectors with any of its versions yet (§14).
+
+On the forty-one vectors and on the Exchange's example fixtures, given as the
+Exchange's tests give them, its reports are byte for byte those of the
+specification's own reader, `tools/dialect_verify.py`, at the commit
+`e10421b` of judgment-pack-spec; the tests hold each vector to its manifest
+and each example fixture to its `preparationDigest`. Where an input has more
+than one fault, it reports the first Runner's preparation meets, which is not
+always the first in §11's order. A case document that is not one object is
+refused, `input-malformed`, as every run's case is, where the specification's
+reader reads the case as any JSON value.
+
 ## The journal of job activity
 
 Runner keeps each record's latest state, and beside it a journal: one entry for

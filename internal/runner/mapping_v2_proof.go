@@ -113,18 +113,18 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 	for _, p := range profiles {
 		if p.ID == s.Profile {
 			if profileHash(p) != s.ProfileDigest {
-				return p, errors.New("trusted input profile changed; review a new release")
+				return p, withCode(codeMismatch, errors.New("trusted input profile changed; review a new release"))
 			}
 			if s.Kind == "operation" && !adapterShapes[p.Shape] {
-				return p, errors.New("an operation is read from an adapter source: its profile's shape must be airbyte, mcp or http")
+				return p, withCode(codeMismatch, errors.New("an operation is read from an adapter source: its profile's shape must be airbyte, mcp or http"))
 			}
 			if s.Provider == "google-drive" && (p.Source != "drive" || p.Class != "record") {
-				return p, errors.New("selected Drive files require a record profile for drive")
+				return p, withCode(codeMismatch, errors.New("selected Drive files require a record profile for drive"))
 			}
 			return p, nil
 		}
 	}
-	return InputProfile{}, errors.New("input profile is not configured by the installation")
+	return InputProfile{}, withCode(codeMismatch, errors.New("input profile is not configured by the installation"))
 }
 
 // verifyAcquisition verifies a single retained v3 acquisition, not a sealed
@@ -138,7 +138,10 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 // Its sessionId is a string of any content (§5.2 does not hold it to the
 // gateway's token form), read and cited as given (runner #99).
 func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int) (json.RawMessage, *Citation, error) {
-	fail := func(s string) (json.RawMessage, *Citation, error) { return nil, nil, errors.New(s) }
+	fail := func(s string) (json.RawMessage, *Citation, error) {
+		return nil, nil, withCode(codeInvalid, errors.New(s))
+	}
+	malformed := func(s string) (json.RawMessage, *Citation, error) { return nil, nil, errors.New(s) }
 	var response struct {
 		Result  json.RawMessage `json:"result"`
 		Receipt json.RawMessage `json:"receipt"`
@@ -148,13 +151,19 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 		} `json:"salts"`
 	}
 	if e := strictJSON(raw, &response); e != nil {
-		return fail("malformed acquisition response")
+		return malformed("malformed acquisition response")
 	}
 	result, e := proofCanon(response.Result)
+	if len(response.Result) == 0 {
+		return malformed("result is outside the gateway canonical domain")
+	}
 	if e != nil {
 		return fail("result is outside the gateway canonical domain")
 	}
 	canonicalReceipt, e := proofCanon(response.Receipt)
+	if len(response.Receipt) == 0 || e == nil && canonicalReceipt[0] != '{' {
+		return malformed("malformed receipt")
+	}
 	if e != nil {
 		return fail("malformed receipt")
 	}
@@ -162,7 +171,7 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	v, _ := readInputJSON(canonicalReceipt)
 	r, ok := v.(map[string]any)
 	if !ok {
-		return fail("receipt is not an object")
+		return malformed("receipt is not an object")
 	}
 	str := func(k string) string { s, _ := r[k].(string); return s }
 	for _, k := range []string{"receiptVersion", "kind", "source", "servedAt", "authority", "keyId", "signature", "resultDigest", "argumentsCommitment"} {
@@ -274,7 +283,7 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 		return fail("result digest failed")
 	}
 	if !validHex(response.Salts.Args, 32) {
-		return fail("missing argument commitment salt")
+		return malformed("missing argument commitment salt")
 	}
 	salt, _ := hex.DecodeString(response.Salts.Args)
 	argBytes, e := proofCanon(args)
@@ -311,16 +320,16 @@ var errAcquisitionStale = errors.New("acquisition is stale or from the future")
 func acquisitionTimes(observed, served string, at time.Time, maxAge int) error {
 	observation, ok := receiptInstant(observed)
 	if !ok {
-		return errors.New("invalid observation time")
+		return withCode(codeInvalid, errors.New("invalid observation time"))
 	}
 	service, ok := receiptInstant(served)
 	if !ok {
-		return errors.New("invalid serving time")
+		return withCode(codeInvalid, errors.New("invalid serving time"))
 	}
 	earliest, latest := at.Add(-time.Duration(maxAge)*time.Second), at.Add(30*time.Second)
 	for _, instant := range []time.Time{observation, service} {
 		if instant.Before(earliest) || instant.After(latest) {
-			return errAcquisitionStale
+			return withCode(codeStale, errAcquisitionStale)
 		}
 	}
 	return nil

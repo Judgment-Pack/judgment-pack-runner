@@ -184,7 +184,7 @@ func readTargets(r SourceRead) ([]FactMapping, []EvidenceMapping, error) {
 		return nil, nil, errors.New("choose exactly one copy or rule")
 	}
 	if len(r.Unwrap) > 4 {
-		return nil, nil, errors.New("at most four unwrap steps")
+		return nil, nil, withCode(codeOverBound, errors.New("at most four unwrap steps"))
 	}
 	for _, p := range r.Unwrap {
 		if _, e := pointerTokens(p, true); e != nil {
@@ -201,7 +201,10 @@ func readTargets(r SourceRead) ([]FactMapping, []EvidenceMapping, error) {
 	if e := strictJSON(r.Rule, &doc); e != nil {
 		return nil, nil, e
 	}
-	if len(doc.Clauses) > 64 || doc.Parameters == nil {
+	if len(doc.Clauses) > 64 {
+		return nil, nil, withCode(codeOverBound, errors.New("rule requires parameters and at most 64 clauses"))
+	}
+	if doc.Parameters == nil {
 		return nil, nil, errors.New("rule requires parameters and at most 64 clauses")
 	}
 	facts := map[string]string{}
@@ -273,8 +276,11 @@ func validateConditionV2(raw []byte, params map[string]string) error {
 		return validateConditionV2(o["of"], params)
 	case "all", "any":
 		var a []json.RawMessage
-		if json.Unmarshal(o["of"], &a) != nil || len(a) > 64 {
+		if json.Unmarshal(o["of"], &a) != nil {
 			return errors.New("invalid condition list")
+		}
+		if len(a) > 64 {
+			return withCode(codeOverBound, errors.New("invalid condition list"))
 		}
 		for _, x := range a {
 			if e := validateConditionV2(x, params); e != nil {
@@ -299,13 +305,18 @@ func validateDialect(m InputMapping, open bool) error {
 		prefix = "Mapping v3: "
 	}
 	fail := func(s string) error { return inputProblem(prefix + s) }
+	// failOn is fail with e's sentence, keeping e and the code it names.
+	failOn := func(e error) error { return inputProblemOf(prefix+e.Error(), e) }
 	if len(encode(m)) > 128<<10 {
-		return fail("mapping exceeds 128 KiB")
+		return codedProblem(codeOverBound, prefix+"mapping exceeds 128 KiB")
 	}
 	if _, e := proofCanon(encode(m)); e != nil {
 		return fail(e.Error())
 	}
-	if !m.dialect() || m.Provider != "" || len(m.Facts) > 0 || len(m.Evidence) > 0 || len(m.Sources) > 16 || m.Case == nil && len(m.Sources) == 0 {
+	if m.dialect() && len(m.Sources) > 16 {
+		return codedProblem(codeOverBound, prefix+"use case and/or at most 16 named sources")
+	}
+	if !m.dialect() || m.Provider != "" || len(m.Facts) > 0 || len(m.Evidence) > 0 || m.Case == nil && len(m.Sources) == 0 {
 		return fail("use case and/or at most 16 named sources")
 	}
 	allFacts := []FactMapping{}
@@ -320,7 +331,7 @@ func validateDialect(m InputMapping, open bool) error {
 	factTargets := map[string]map[string]bool{}
 	checkParams := func(ps map[string]Parameter, caseOnly bool, local map[string]string) error {
 		if len(ps) > 64 {
-			return errors.New("too many parameters")
+			return withCode(codeOverBound, errors.New("too many parameters"))
 		}
 		for n, p := range ps {
 			if !mappingName.MatchString(n) || types[n] != "" || local[n] != "" {
@@ -345,7 +356,7 @@ func validateDialect(m InputMapping, open bool) error {
 	if m.Case != nil {
 		extra := map[string]string{}
 		if e := checkParams(m.Case.Parameters, true, extra); e != nil {
-			return fail(e.Error())
+			return failOn(e)
 		}
 		for n, t := range extra {
 			types[n] = t
@@ -361,7 +372,7 @@ func validateDialect(m InputMapping, open bool) error {
 			return fail("invalid or duplicate source name")
 		}
 		if e := sourceForm(m.Version, s, open); e != nil {
-			return fail(e.Error())
+			return failOn(e)
 		}
 		if len(s.Read.Sources) > 0 && !(m.Version == 3 && isResearch(s)) {
 			return fail(researchFail(codeMalformed, "source %s: a read names sources only as a research source's reconciliation of earlier research sources, in dialect version 3", s.Name).Error())
@@ -389,7 +400,7 @@ func validateDialect(m InputMapping, open bool) error {
 		}
 		local := map[string]string{}
 		if e := checkParams(s.Parameters, false, local); e != nil {
-			return fail(e.Error())
+			return failOn(e)
 		}
 		for n, t := range types {
 			local[n] = t
@@ -398,7 +409,7 @@ func validateDialect(m InputMapping, open bool) error {
 		if research {
 			r, e := readResearchRecipe(s, local, open)
 			if e != nil {
-				return fail(e.Error())
+				return failOn(e)
 			}
 			recipe = r
 		}
@@ -419,12 +430,12 @@ func validateDialect(m InputMapping, open bool) error {
 		}
 		if s.Calculation != nil {
 			if e := validateCalculationBinding(*s.Calculation, s.Kind, local); e != nil {
-				return fail(e.Error())
+				return failOn(e)
 			}
 		}
 		f, ev, e := readTargets(s.Read)
 		if e != nil {
-			return fail(e.Error())
+			return failOn(e)
 		}
 		factTargets[s.Name] = map[string]bool{}
 		for _, x := range f {
@@ -432,7 +443,7 @@ func validateDialect(m InputMapping, open bool) error {
 		}
 		if recipe != nil {
 			if e := researchReadForm(s, recipe, recipes); e != nil {
-				return fail(e.Error())
+				return failOn(e)
 			}
 			recipes[s.Name] = recipe
 		}
@@ -569,7 +580,7 @@ func mcpToolCall(source MappingSource, profile InputProfile) error {
 }
 
 func sourceFailure(name string, err error) error {
-	return bad("input_preparation_failed", fmt.Sprintf("Source %s: %s. No decision was requested.", name, err))
+	return causedError{bad("input_preparation_failed", fmt.Sprintf("Source %s: %s. No decision was requested.", name, err)).(*apiError), err}
 }
 
 // Bound arbitrary-precision comparison work before the reference interpreter.

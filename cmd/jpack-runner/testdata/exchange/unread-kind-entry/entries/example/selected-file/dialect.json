@@ -1,0 +1,1 @@
+{"case":{"parameters":{},"facts":[],"evidence":[]},"sources":[{"name":"doc","kind":"selected-file","provider":"local-file","read":{"copy":{"facts":[{"target":"/request","source":"/facts/request"}],"evidence":[]}}}],"unmappedEvidence":[],"version":2,"provider":"","facts":null,"evidence":null}

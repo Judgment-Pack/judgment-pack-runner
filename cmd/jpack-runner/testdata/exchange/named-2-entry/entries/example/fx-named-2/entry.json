@@ -1,0 +1,37 @@
+{
+  "entryVersion": 3,
+  "kind": "dialect",
+  "id": "example.fx-named-2",
+  "title": "Example: currency conversion on an invoice, in the named format 2.0.0",
+  "direction": "input",
+  "pack": {
+    "id": "https://example.com/packs/vendor-intake",
+    "versions": ">=0.1.0"
+  },
+  "dialect": {
+    "path": "dialect.json",
+    "formatVersion": "2.0.0",
+    "digest": "sha256:d2adfc2a5e881b3249a3ccf0ea0807efadd26f8e688dfe8c950e503252f12858"
+  },
+  "artifact": {
+    "id": "urn:judgmentpack:dialect:example",
+    "version": "0.1.0"
+  },
+  "requires": {
+    "inputProfile": "sha256:2b5a5c82f8edf7b686cc50a68415a67c9032d324d9cf2d09f5477881bab04ddc"
+  },
+  "sourceKinds": [
+    "operation"
+  ],
+  "licence": "Apache-2.0",
+  "author": "example",
+  "assertion": "The author asserts that these rules derive these facts and this evidence-availability from records of that shape, or these arguments from that disposition, and asserts nothing about any record's truth.",
+  "fixtures": [
+    {
+      "name": "valid",
+      "path": "fixtures/valid",
+      "preparationDigest": "sha256:fe8e02b09a8d41236c6f603f06f30f15f00886e8f53323b49eab5969465d2cbd"
+    }
+  ],
+  "verification": []
+}

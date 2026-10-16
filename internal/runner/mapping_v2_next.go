@@ -54,12 +54,12 @@ func preflightV2(m InputMapping, profiles []InputProfile) error {
 		}
 		for _, f := range facts {
 			if !admitted(m, "facts", f.Target, class, gen) {
-				return errors.New("fact target does not admit source class or generated dependency")
+				return withCode(codeAdmission, errors.New("fact target does not admit source class or generated dependency"))
 			}
 		}
 		for _, e := range evidence {
 			if !admitted(m, "evidence", e.Requirement, class, gen) {
-				return errors.New("evidence target does not admit source class or generated dependency")
+				return withCode(codeAdmission, errors.New("evidence target does not admit source class or generated dependency"))
 			}
 		}
 		return nil
@@ -93,14 +93,14 @@ func preflightV2(m InputMapping, profiles []InputProfile) error {
 			// A calculator's answer is held to a binding, and a binding is
 			// held only to a calculator's answer: neither stands alone.
 			if (profile.Calculator != nil) != (source.Calculation != nil) {
-				return fmt.Errorf("source %s: a calculator's profile and a calculation binding go together", source.Name)
+				return withCode(codeMismatch, fmt.Errorf("source %s: a calculator's profile and a calculation binding go together", source.Name))
 			}
 			// An MCP operation's request is a tool call its profile allows.
 			// A request to a source of another shape is held to the
 			// template rules alone (adapterShapes).
 			if source.Kind == "operation" && profile.Shape == "mcp" {
 				if err := mcpToolCall(source, profile); err != nil {
-					return err
+					return withCode(codeMismatch, err)
 				}
 			}
 		}

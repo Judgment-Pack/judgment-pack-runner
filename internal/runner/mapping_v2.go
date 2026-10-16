@@ -78,17 +78,23 @@ func unwrapRead(read SourceRead, artifact any) (any, error) {
 		tokens, _ := pointerTokens(p, true)
 		v, ok := pointerRead(artifact, tokens)
 		s, isString := v.(string)
-		if !ok || !isString || len(s) > maxInputDocument {
-			return nil, errors.New("unwrap requires one bounded JSON string")
+		if !ok || !isString {
+			return nil, withCode(codeReadFailed, errors.New("unwrap requires one bounded JSON string"))
+		}
+		if len(s) > maxInputDocument {
+			return nil, withCode(codeOverBound, errors.New("unwrap requires one bounded JSON string"))
+		}
+		if measureBytes([]byte(s), 32) != nil {
+			return nil, withCode(codeOverBound, errors.New("unwrap contains invalid JSON"))
 		}
 		next, e := readInputJSON([]byte(s))
 		if e != nil {
-			return nil, errors.New("unwrap contains invalid JSON")
+			return nil, withCode(codeReadFailed, errors.New("unwrap contains invalid JSON"))
 		}
 		artifact = next
 	}
 	if err := boundedArtifact(artifact); err != nil {
-		return nil, err
+		return nil, withCode(codeOverBound, err)
 	}
 	return artifact, nil
 }
@@ -98,20 +104,20 @@ func deriveRead(read SourceRead, artifact any, params map[string]any) (derivedCl
 	if read.Copy != nil {
 		c, e := copyClaim(*read.Copy, artifact)
 		if e != nil {
-			return c, e
+			return c, withCode(codeReadFailed, e)
 		}
 		if _, e = proofCanon(encode(c)); e != nil {
-			return c, e
+			return c, withCode(codeReadFailed, e)
 		}
 		return c, nil
 	}
 	out, e := derivation.Derive(read.Rule, encode(artifact), encode(params))
 	if e != nil {
-		return derivedClaim{}, fmt.Errorf("derivation rejected: %w", e)
+		return derivedClaim{}, withCode(codeReadFailed, fmt.Errorf("derivation rejected: %w", e))
 	}
 	var c derivedClaim
 	e = json.Unmarshal(out, &c)
-	return c, e
+	return c, withCode(codeReadFailed, e)
 }
 func candidateFrom(read SourceRead, target string) []string {
 	set := map[string]bool{}
@@ -177,7 +183,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		return i, inputProblem("v2 input exceeds aggregate limit")
 	}
 	if err := preflightV2(m, profiles); err != nil {
-		return i, inputProblem(err.Error())
+		return i, inputProblemOf(err.Error(), err)
 	}
 	// A research source's acquisition is the record its caller retains
 	// (research.go). Once the dialect has been held to its own form, its
@@ -194,7 +200,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		}
 		recipe, err := readResearchRecipe(source, nil, false)
 		if err != nil {
-			return i, inputProblem("Mapping v3: " + err.Error())
+			return i, inputProblemOf("Mapping v3: "+err.Error(), err)
 		}
 		recipes[source.Name] = recipe
 	}
@@ -228,7 +234,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 			known = known || source.Name == name
 		}
 		if !known {
-			return i, inputProblem("unexpected source response")
+			return i, codedProblem(codeUnexpected, "unexpected source response")
 		}
 	}
 	hash := mappingV2Hash(m)
@@ -265,7 +271,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	admit := func(cite Citation) error {
 		key := fmt.Sprintf("%s/%d", cite.SessionID, cite.CallIndex)
 		if cites[key] {
-			return errors.New("one receipt cannot stand in for multiple source acquisitions")
+			return withCode(codeSessions, errors.New("one receipt cannot stand in for multiple source acquisitions"))
 		}
 		cites[key] = true
 		if len(prep.Cites) == 0 {
@@ -276,7 +282,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		shared = shared && cite.SessionID == first
 		apart = apart && cite.CallIndex == 0
 		if !shared && !apart {
-			return errors.New("acquisitions must share one session, or each be the first call of a session of its own")
+			return withCode(codeSessions, errors.New("acquisitions must share one session, or each be the first call of a session of its own"))
 		}
 		prep.Cites = append(prep.Cites, cite)
 		return nil
@@ -297,7 +303,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		rd := digest(b)
 		for _, f := range ft {
 			if !admitted(m, "facts", f.Target, class, gen) {
-				return errors.New("fact target does not admit source class or generated dependency")
+				return withCode(codeAdmission, errors.New("fact target does not admit source class or generated dependency"))
 			}
 			tokens, _ := pointerTokens(f.Target, false)
 			v, present := pointerRead(fv, tokens)
@@ -308,7 +314,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 		}
 		for _, f := range et {
 			if !admitted(m, "evidence", f.Requirement, class, gen) {
-				return errors.New("evidence target does not admit source class or generated dependency")
+				return withCode(codeAdmission, errors.New("evidence target does not admit source class or generated dependency"))
 			}
 			v, present := claim.Evidence[f.Requirement]
 			if present {
@@ -324,7 +330,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 			tokens, _ := pointerTokens(p.Pointer, true)
 			v, ok := pointerRead(caseValue, tokens)
 			if !ok || !paramValue(v, p.Type) {
-				return i, sourceFailure("case", fmt.Errorf("parameter %s is missing or mistyped", n))
+				return i, sourceFailure("case", withCode(codeParameter, fmt.Errorf("parameter %s is missing or mistyped", n)))
 			}
 			caseParams[n] = v
 			caseTypes[n] = p.Type
@@ -363,7 +369,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				continue
 			}
 			if !paramValue(v, p.Type) {
-				return fail(fmt.Errorf("validated parameter %s is mistyped", n))
+				return fail(withCode(codeParameter, fmt.Errorf("validated parameter %s is mistyped", n)))
 			}
 			params[n] = v
 			types[n] = p.Type
@@ -402,7 +408,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				return fail(researchFail(codeUnexpected, "a skipped dependent source must not supply a response"))
 			}
 			if present {
-				return fail(errors.New("a skipped dependent source must not supply a response"))
+				return fail(withCode(codeUnexpected, errors.New("a skipped dependent source must not supply a response")))
 			}
 		} else if research {
 			// The request is the recipe, recorded and never sent: Runner
@@ -449,10 +455,10 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 						allowed = allowed || tool == t
 					}
 					if !ok || !allowed || len(o) != 2 {
-						return fail(errors.New("MCP request must name an allowed tool and arguments"))
+						return fail(withCode(codeMismatch, errors.New("MCP request must name an allowed tool and arguments")))
 					}
 					if _, ok := o["arguments"].(map[string]any); !ok {
-						return fail(errors.New("MCP tool arguments must be an object"))
+						return fail(withCode(codeMismatch, errors.New("MCP tool arguments must be an object")))
 					}
 				}
 			}
@@ -460,7 +466,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 				if planning {
 					return i, &acquisitionNeeded{PlannedSource{Name: source.Name, Kind: source.Kind, Provider: source.Provider, Profile: source.Profile, Source: profile.Source, Arguments: args}}
 				}
-				return fail(errors.New("required source response is missing"))
+				return fail(withCode(codeMissing, errors.New("required source response is missing")))
 			}
 			if source.Kind == "selected-file" {
 				if len(value.Response) > 0 {
@@ -515,11 +521,11 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 			}
 			if source.Calculation != nil {
 				if profile.Calculator == nil {
-					return fail(errors.New("a calculated source requires a calculator's profile"))
+					return fail(withCode(codeMismatch, errors.New("a calculated source requires a calculator's profile")))
 				}
 				calc, e = checkCalculation(source, *profile.Calculator, parameterOrigins(m.Case, source), artifact, params, at)
 				if e != nil {
-					return fail(e)
+					return fail(withCode(codeCalculation, e))
 				}
 			}
 			if calc != nil && calc.Status != calculationComputed {
@@ -546,7 +552,7 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 	}
 	for n := range c.Sources {
 		if !used[n] {
-			return i, inputProblem("unexpected source response")
+			return i, codedProblem(codeUnexpected, "unexpected source response")
 		}
 	}
 	// By call index, as before. Where each acquisition is the first call of

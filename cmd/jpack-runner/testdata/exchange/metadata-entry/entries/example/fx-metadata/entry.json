@@ -1,0 +1,41 @@
+{
+  "entryVersion": 3,
+  "kind": "dialect",
+  "id": "example.fx-metadata",
+  "title": "Example: currency conversion with authoring metadata",
+  "description": "Asks a gateway tool to convert an invoice's amount into the pack's currency, and copies the request fact and two evidence requirements from the case. An example of the authoring metadata: what the entry is for, the desk and runner releases its author says it fits, and a review note for an upgrade from the entry's previous bytes.",
+  "compatibility": {
+    "desk": ">=v0.14.0 <v0.15.0",
+    "runner": "v0.11.0"
+  },
+  "upgrade": {
+    "sha256:52895deee7e135c99f48553cfcd01586aafcfea29232c03698aac6bec1ca6c31": "The previous entry held the same dialect and the same fixture, without authoring metadata. Nothing to review but the three members added: description, compatibility and upgrade."
+  },
+  "direction": "input",
+  "pack": {
+    "id": "https://example.com/packs/vendor-intake",
+    "versions": ">=0.1.0"
+  },
+  "dialect": {
+    "path": "dialect.json",
+    "dialectVersion": 2,
+    "digest": "sha256:fa1e7dbc7ff03bbe841ecb4680d8d249da6c9b231203999434de4bc659d653e2"
+  },
+  "requires": {
+    "inputProfile": "sha256:2b5a5c82f8edf7b686cc50a68415a67c9032d324d9cf2d09f5477881bab04ddc"
+  },
+  "sourceKinds": [
+    "operation"
+  ],
+  "licence": "Apache-2.0",
+  "author": "example",
+  "assertion": "The author asserts that these rules derive these facts and this evidence-availability from records of that shape, or these arguments from that disposition, and asserts nothing about any record's truth.",
+  "fixtures": [
+    {
+      "name": "valid",
+      "path": "fixtures/valid",
+      "preparationDigest": "sha256:2a058ca1490ee316a87ad5999a7460906699a6f8987c93369a344ae4614b7a6d"
+    }
+  ],
+  "verification": []
+}

@@ -1,0 +1,31 @@
+{
+  "entryVersion": 3,
+  "kind": "dialect",
+  "id": "example.selected-file",
+  "title": "Example: a selected file, a kind the verifier does not read",
+  "direction": "input",
+  "pack": {
+    "id": "https://example.com/packs/vendor-intake",
+    "versions": ">=0.1.0"
+  },
+  "dialect": {
+    "path": "dialect.json",
+    "dialectVersion": 2,
+    "digest": "sha256:296ba19b7b7613609fbff7b32c4e080a878a7c21bd847d1dedcea3949d07423f"
+  },
+  "requires": {},
+  "sourceKinds": [
+    "selected-file"
+  ],
+  "licence": "Apache-2.0",
+  "author": "example",
+  "assertion": "The author asserts that these rules derive these facts and this evidence-availability from records of that shape, or these arguments from that disposition, and asserts nothing about any record's truth.",
+  "fixtures": [
+    {
+      "name": "valid",
+      "path": "fixtures/valid",
+      "preparationDigest": "sha256:4af2bc1797af2114d110c4f4a04780bc56d856ade969df9a62c1ee604aecfb47"
+    }
+  ],
+  "verification": []
+}

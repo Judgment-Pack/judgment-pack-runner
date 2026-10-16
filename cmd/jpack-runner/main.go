@@ -33,6 +33,10 @@ func main() {
 		}
 	} else if len(os.Args) > 1 && os.Args[1] == "verify-run" {
 		err = verifyRun(os.Args[2:], os.Stdout, os.Stderr)
+	} else if len(os.Args) > 1 && os.Args[1] == "verify-preparation" {
+		// Its exit status is the report's (spec/dialect.md §11), and it says
+		// why on standard error itself.
+		os.Exit(verifyPreparation(os.Args[2:], os.Stdout, os.Stderr))
 	} else {
 		err = serve()
 	}

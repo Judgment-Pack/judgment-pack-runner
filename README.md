@@ -71,6 +71,16 @@ from. A build that is not a release reports the module version the Go toolchain
 recorded (a tag or a pseudo-version, when VCS stamping is available), or
 `unversioned build` where it recorded none.
 
+The program's commands:
+
+| Command | What it does |
+| --- | --- |
+| none | Desk's companion: reads one boot line on stdin and serves `jobs/1`, as the next paragraphs say |
+| `version` | names the release the program was built from |
+| `verify-run` | verifies a run's export offline ([below](#verified-mapping-v2-runner-and-desk)) |
+| `verify-preparation` | verifies one preparation offline, an Exchange fixture's among them, with no run ([below](#verified-mapping-v2-runner-and-desk)) |
+| `relocate-workspace` | rebinds a stopped Runner's workspace to its moved project folder ([below](#offline-workspace-relocation)) |
+
 Alternatively install `jpack-runner` beside `jpack-desk`. Desk discovers that sibling
 binary. The runner is a long-lived Desk companion, not a browser task. Closing every
 browser tab does not stop accepted work. Stopping Desk stops the companion; restarting
@@ -303,6 +313,18 @@ mapping, the case, the source records and the profiles, the preparation Runner c
 from them in its [canonical form](docs/MAPPING-V2.md#the-canonical-form-of-a-preparation)
 with its SHA-256, and the export with what `verify-run` reports of it, valid and altered.
 They were generated once and are not regenerated; tests hold Runner to them byte for byte.
+
+`verify-preparation` reads one preparation with no run: a dialect, bound or published
+with its binding document, a case, the acquisitions, the profiles and the expected
+preparation, with its digest supplied apart, as an Exchange entry's fixture holds them.
+It recomputes the preparation through Runner's own preparation at the preparation's own
+`verifiedAt`, never the current time, and reports what the specification's dialect
+companion (§11) gives a preparation verifier: a reading, binding `not-checked`, or a
+refusal or finding by its code, exiting 0, 1 or 2. `--capabilities` names what it reads.
+Its profiles are verification inputs, not this installation's trusted configuration, and
+a reading establishes recomputation, not the truth of any record. On the vectors and the
+Exchange's example fixtures its reports are byte for byte those of the specification's
+own reader ([the contract](docs/MAPPING-V2.md#verifying-a-preparation-without-a-run)).
 
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
