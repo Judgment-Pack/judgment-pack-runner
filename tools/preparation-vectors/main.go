@@ -24,7 +24,9 @@
 // wrote the first ten again byte for byte. So were the research vectors,
 // the first of the kind research, twenty-six from the fixture plan of the
 // specification's dialect (§11), from the runs in testdata/research: the
-// run wrote the first twelve again byte for byte.
+// run wrote the first twelve again byte for byte. So was the thirty-ninth,
+// skipped-source-dependency-unavailable, the first to hold a skipped
+// source: the run wrote the first thirty-eight again byte for byte.
 package main
 
 import (
@@ -106,6 +108,14 @@ var specs = []spec{
 		note: "The valid case's mapping written as a dialect document of version 3, its one source bound: it names its input profile by id and digest, as a source of version 2 does. Runner writes a document of version 3 without provider, facts and evidence, the members of its version-1 mapping that its encoding of a version-2 document carries empty, so mappingDigest is the digest of the canon bytes of mapping.json as it is. The run, as Runner exported it (version 5), is signed, witnessed and bound. preparation.json has the form of the version-2 vectors' preparations, its version 3, the document's: a source of version 3 that is bound is prepared as one of version 2 is. A reader concludes verified-inputs, the record's binding matching the preparation."},
 	{name: "unbound-bound-at-import", from: "mapping-v3-imported", args: strongest, key: true, held: true, want: "verified-inputs",
 		note: "A dialect of version 3 published with its one source unbound, unbound.json: the source names the catalog platform intake-api and operation requests.read, the shape http and the record adapter-http, and no input profile. The binding document, binding.json, names that dialect by the digest of its canon bytes and binds the source to the installation's profile intake, by its id and digest. Runner bound them at import, as the run's request asked (source.import), and made the bound dialect, mapping.json: the published dialect with the source's platform, operation, shape and record removed and the profile and its digest added, every other member as written. The run keeps the bound dialect as its mapping and the two documents beside it, as given, and verify-run binds them again under the profiles it is given and holds the mapping to the result. The preparation's mappingDigest is the bound dialect's digest; it holds neither document's digest nor the names the binding removed. The source's record was recorded from a stand-in, in the test's process, of a gateway source of shape http, as http-shaped-source's was. A reader binds unbound.json with binding.json under profiles.json, holds the result to mapping.json, prepares it, and concludes verified-inputs, the record's binding matching the preparation."},
+}
+
+// afterResearch are the vectors added after the research vectors, each by a
+// run into a new directory that wrote every earlier vector again byte for
+// byte.
+var afterResearch = []spec{
+	{name: "skipped-source-dependency-unavailable", from: "mapping-v2-skipped-source", args: strongest, key: true, held: true, want: "verified-inputs",
+		note: "A run of three operations of one profile, as Runner exported it (version 5), signed, witnessed and bound; its two records were signed by the test under a key made for the run, standing in for a gateway, and no live service was asked. intake reads the case's request and its type, and resolves them. sponsor reads the request's sponsor, and its record names none: its claim is unknown, no-sponsor-on-record. endorsement declares two source parameters, each a fact target of an earlier source: approver, sponsor's /sponsor/id, and requestType, intake's /intake/type. sponsor's claim is not resolved, so endorsement is skipped: it is not acquired, sources.json holds no record of it, cites holds no citation of it, and its read does not apply. A reader concludes that the skipped source's outcome carries its claim, {facts: {}, evidenceAvailability: {}, acquisitionStatus: unknown, reason: dependency-unavailable, basis: []}, the status unknown and the reason dependency-unavailable, no arguments, and as parameters those that have a value: runAt, requestId and requestType, and not approver. Each of its lineage entries, the fact /endorsement and the evidence sponsor-endorsement, carries the status unknown, the reason dependency-unavailable, present false, basis [], no receipt, and dependencies: the source parameters it waited on, each as {parameter, source, pointer}, in the order of the parameters' names, approver from sponsor before requestType from intake, though intake comes first among the sources. Runner writes this form for a skipped source of every kind. A reader recomputing the preparation concludes verified-inputs, the record's binding matching the preparation."},
 }
 
 // vector is a vector's files as they are made.
@@ -194,7 +204,7 @@ func generate(runner, out string) error {
 		CanonicalForm: "docs/MAPPING-V2.md, \"The canonical form of a preparation\"",
 		Generator:     "tools/preparation-vectors, run once from the fixtures named by each vector's from; the vectors are not regenerated",
 	}
-	for _, s := range append(append([]spec{}, specs...), researchSpecs()...) {
+	for _, s := range append(append(append([]spec{}, specs...), researchSpecs()...), afterResearch...) {
 		e, err := write(s, runner, filepath.Join(out, s.name))
 		if err != nil {
 			return fmt.Errorf("%s: %w", s.name, err)

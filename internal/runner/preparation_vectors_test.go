@@ -20,7 +20,7 @@ const preparationVectors = "../../vectors/preparation/"
 // holds the SHA-256 of every file of every vector. The vectors were generated
 // once and are not regenerated: changing one is a change of the contract a
 // second reader is held to, and changes this digest with it.
-const preparationVectorsManifest = "sha256:62dd8998b30ca89688e78fcc83ecde4a2535df1a84e30d7f9feb43f00babd179"
+const preparationVectorsManifest = "sha256:f3de0964a8c5b8e8e3ef6324205c5662025454538839e4715f7362ec104cfbaa"
 
 // preparationVector is a vector as the manifest describes it
 // (vectors/preparation/README.md).
