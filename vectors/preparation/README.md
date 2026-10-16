@@ -209,20 +209,17 @@ each a fact target of an earlier source, `approver`, `sponsor`'s `/sponsor/id`, 
 `requestType`, `intake`'s `/intake/type`, and is skipped, since `sponsor`'s claim is not
 `resolved`. A skipped source is not acquired: `sources.json` holds no record of it,
 `cites` no citation, and its read does not apply.
-Runner writes four members of a skipped source, of every kind, otherwise than the
-specification's §9.2 and §9.3 state them, until its amendment for
-judgment-pack-spec#189 takes Runner's form:
+Runner writes the skipped-source form the specification's §§9.2–9.3 state since
+judgment-pack-spec#194 (`c51c81d`):
 
 - the outcome's `claim`, present: `{"acquisitionStatus": "unknown", "basis": [],
-  "evidenceAvailability": {}, "facts": {}, "reason": "dependency-unavailable"}` (the
-  text: absent);
-- the outcome's `status`, `unknown` (the text: `dependency-unavailable`);
-- each lineage entry's `status`, `unknown` (the text: the outcome's,
-  `dependency-unavailable`);
+  "evidenceAvailability": {}, "facts": {}, "reason": "dependency-unavailable"}`;
+- the outcome's `status`, `unknown`;
+- each lineage entry's `status`, `unknown`;
 - each lineage entry's `dependencies`, the source parameters it waited on, as objects
   `{"parameter", "source", "pointer"}` in the order of the parameters' names,
   `approver` before `requestType`, though `intake` comes before `sponsor` among the
-  sources (the text: no such member).
+  sources.
 
 Its other members are as the text states them: the outcome's `reason`
 `dependency-unavailable`, no `arguments`, and as `parameters` those that have a value
