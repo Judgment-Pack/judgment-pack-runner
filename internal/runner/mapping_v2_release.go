@@ -31,7 +31,7 @@ func (s *Service) checkReleaseProfiles(r Release) error {
 			// Each profile a research source is bound to, its AI profile
 			// and its web profiles, is still the one the release froze.
 			for _, ref := range sourceProfileRefs(source) {
-				p, e := profileFor(MappingSource{Kind: source.Kind, Profile: ref.ID, ProfileDigest: ref.Digest}, s.cfg.InputProfiles)
+				p, e := profileFor(MappingSource{Kind: source.Kind, Profile: ref.ID, ProfileDigest: ref.Digest}, s.inputProfiles())
 				if e != nil {
 					return inputProblem(e.Error())
 				}
@@ -43,7 +43,7 @@ func (s *Service) checkReleaseProfiles(r Release) error {
 			continue
 		}
 		if source.Profile != "" {
-			p, e := profileFor(source, s.cfg.InputProfiles)
+			p, e := profileFor(source, s.inputProfiles())
 			if e != nil {
 				return inputProblem(e.Error())
 			}

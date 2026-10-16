@@ -225,7 +225,7 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 	if p.Input == nil {
 		return errors.New("waiting occurrence has no input checkpoint")
 	}
-	plan, e := nextInput(*p.Input, s.cfg.InputProfiles, time.Now())
+	plan, e := nextInput(*p.Input, s.inputProfiles(), time.Now())
 	if e != nil {
 		return s.stopPreparation(o, "needs-attention", e.Error())
 	}
@@ -338,7 +338,7 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 	if len(encode(*p.Input)) > MaxBody {
 		return s.stopPreparation(o, "needs-attention", "Acquired inputs exceed the combined input limit.")
 	}
-	if _, e = nextInput(*p.Input, s.cfg.InputProfiles, time.Now()); e != nil {
+	if _, e = nextInput(*p.Input, s.inputProfiles(), time.Now()); e != nil {
 		return s.stopPreparation(o, "needs-attention", e.Error())
 	}
 	if !time.Now().Before(deadline) {

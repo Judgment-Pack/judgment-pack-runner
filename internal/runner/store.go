@@ -44,6 +44,8 @@ type Config struct {
 	disableDispatcher bool
 }
 type Service struct {
+	profilesMu             sync.RWMutex
+	registeredProfiles     atomic.Pointer[[]InputProfile]
 	unhealthy              atomic.Bool
 	background             sync.WaitGroup
 	cloudMu                sync.Mutex
@@ -72,9 +74,6 @@ type Service struct {
 
 func Open(cfg Config) (_ *Service, err error) {
 	if err = validateProfiles(cfg.InputProfiles); err != nil {
-		return nil, err
-	}
-	if err = validateBackgroundConfig(cfg); err != nil {
 		return nil, err
 	}
 	if err = json.Unmarshal(encode(cfg.CloudConnections), &cfg.CloudConnections); err != nil {
@@ -173,6 +172,14 @@ func Open(cfg Config) (_ *Service, err error) {
 	// journal here and is raised to schema "2", which every earlier Runner
 	// refuses (docs/design/activity-journal.md, section 4).
 	if err = s.migrateStore(); err != nil {
+		return nil, err
+	}
+	if err = s.loadRegisteredProfiles(); err != nil {
+		return nil, err
+	}
+	backgroundConfig := cfg
+	backgroundConfig.InputProfiles = s.inputProfiles()
+	if err = validateBackgroundConfig(backgroundConfig); err != nil {
 		return nil, err
 	}
 	s.runtime, s.runtimeDigest, err = s.pinRuntime(cfg.Runtime)
@@ -345,7 +352,7 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 	}
 	// An import is bound before the mapping is compared with the release's:
 	// the bound dialect is the mapping the run is held to.
-	input, err := importedInput(input, s.cfg.InputProfiles)
+	input, err := importedInput(input, s.inputProfiles())
 	if err != nil {
 		return Run{}, false, err
 	}

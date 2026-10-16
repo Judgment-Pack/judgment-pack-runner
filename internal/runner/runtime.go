@@ -209,7 +209,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 			return Release{}, err
 		}
 		if mapping.dialect() {
-			r.InputProfiles = profilesUsed(mapping, s.cfg.InputProfiles)
+			r.InputProfiles = profilesUsed(mapping, s.inputProfiles())
 		}
 	}
 	r.Config = `{"configVersion":"3","packs":{"target":{"path":"pack.json"}},"audit":{"dir":"audit"}}`

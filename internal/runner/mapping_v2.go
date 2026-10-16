@@ -15,7 +15,7 @@ func (s *Service) normalizeInput(i Input) (Input, error) {
 	if i.Source == nil || !i.Source.Mapping.dialect() && i.Source.Import == nil {
 		return normalizeInput(i)
 	}
-	return normalizeV2(i, s.cfg.InputProfiles, time.Now().UTC().Truncate(time.Second))
+	return normalizeV2(i, s.inputProfiles(), time.Now().UTC().Truncate(time.Second))
 }
 func sameJSON(a, b []byte) bool {
 	ac, e := canonical(a)
