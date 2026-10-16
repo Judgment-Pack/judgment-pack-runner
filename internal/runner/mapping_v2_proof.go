@@ -57,17 +57,17 @@ func validateProfiles(profiles []InputProfile) error {
 // admission, so receipt verification cannot accidentally use a merely decoded
 // key if a future caller reaches it by another path.
 //
-// A class is a profile's, for each binding to it, and not a gateway
-// source's (spec/dialect.md §5.1): a profile bound to a research source's
-// capability is generated for that binding, and the same gateway web source
-// bound to a web source is record, its profile for that binding carrying
-// that class. So one gateway source, its key, source and authority, may be
+// A class is a profile's, and a binding takes it only where the source's
+// kind admits that class (spec/dialect.md §5.1, RFC 0018 round 13): an
+// operation of any shape takes its profile's class, record or generated; a
+// research source's capability bindings take generated; a web-kind binding
+// is record. So one gateway source, its key, source and authority, may be
 // held by profiles of different classes, as it may by profiles of one class,
 // each with its own id. A source names its profile by id and digest and
 // takes that profile's class. Runner refuses the kind web by name and reads
 // the gateway's web source as an operation of shape http (refusedKind),
 // which may name the record profile while a research source's web
-// assignment names the generated one (runner #100).
+// assignment names the generated one (runner #100, #114).
 func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey, error) {
 	if len(profiles) > 16 {
 		return nil, errors.New("at most 16 input profiles")
