@@ -1784,3 +1784,33 @@ its existing registry container. Desk closes acquisition sessions as cleanup;
 that does not add seal verification to Runner. Signed response bytes are retained
 without JavaScript number conversion. Historical lineage and verification exports
 are read from the stored run and never cause another source acquisition.
+
+## Named Dialect artifact formats
+
+Spec RFC 0021 adds exact selectors `formatVersion: "2.0.0"` and `"3.0.0"`,
+an opaque `id`, and an independent three-component artifact `version` string.
+Runner advertises `dialect-format-2.0.0` and `dialect-format-3.0.0`. The supported
+source kinds remain operation and selected-file. These forms omit legacy root
+provider/facts/evidence and all optional empty members listed by the companion.
+Integer legacy documents retain their original format and identity.
+
+Canonical identity includes the named headers. Preparation `version` remains
+integer 2 or 3 for the selected translation family. At import, the original
+publication and binding stay retained beside the executable bound mapping;
+`preparation.mappingDigest` names the bound mapping. A release's additive
+`dialect: {id, version, digest}` names the original publication when supplied,
+or the directly bound document otherwise. This distinction survives restart
+and verification export.
+
+Job admission rejects a reused Dialect id/version with different published
+bytes among retained job revisions. Job upgrades retain the Dialect id and use
+Runtime's exact version comparison when its published digest changes. They
+never mutate an existing release or earlier run. Installation binding changes
+still require an explicit job upgrade, but do not invent a new published
+artifact version. Runtime arithmetic does not classify compatibility.
+
+The three staged identity fixture sets vendored under
+`internal/runner/testdata/artifact-identity` originate in Spec RFC 0021. Their
+file hashes, canonical bytes and recomputed preparations are checked separately
+from the unchanged published historical corpus. Tests also exercise named
+preview, execution, restart, idempotent replay and offline verification.

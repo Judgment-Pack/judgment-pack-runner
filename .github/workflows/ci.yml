@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Judgment-Pack/judgment-pack-runtime
-          ref: 4ea33155727b9b2ec6842b12b8fc1e5cc8f069b6 # merged artifact version tooling
+          ref: 015949caaab98d1370013bf6110feb93e86ffd90 # merged named Dialect artifact tooling
           path: .ci-runtime
           persist-credentials: false
       # The build names the pin's release, as the release build does, so a
@@ -60,7 +60,7 @@ jobs:
       # moves the version with it.
       - name: Build Runtime
         working-directory: .ci-runtime
-        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.32.0-dev.4ea3315" -o "$RUNNER_TEMP/jpack" ./cmd/jpack
+        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.33.0-dev.015949c" -o "$RUNNER_TEMP/jpack" ./cmd/jpack
       # A Runtime that signs and does not know the expected key, as every
       # release from v0.26.0 to v0.29.x: Runner must name the key a replaced
       # seed signed under (TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed,
@@ -107,11 +107,11 @@ jobs:
             JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
             JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
             go test -count=1 -v \
-            -run '^(TestTheRuntimesVerifierReadsTheChainOfRuns|TestASignedRunKeepsItsSignature|TestVerifyRunChecksARunTheRuntimeSigned|TestASeedReplacedAfterStartSignsNothing|TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed|TestAnOperationalEvaluationBindsItsPreparation|TestABindingTheRuntimeRefusesFailsTheRun|TestARecordWithoutTheBindingPassedFailsTheRun|TestARuntimeWithoutTheBindingIsGivenNone|TestVerifyRunHoldsTheRecordsBindingToThePreparation|TestVerifyRunReportsARecordTheRuntimeDidNotBind|TestARuntimeThatDoesNotSayItsReleaseEvaluatesNothing)$' \
+            -run '^(TestTheRuntimesVerifierReadsTheChainOfRuns|TestASignedRunKeepsItsSignature|TestVerifyRunChecksARunTheRuntimeSigned|TestASeedReplacedAfterStartSignsNothing|TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed|TestAnOperationalEvaluationBindsItsPreparation|TestABindingTheRuntimeRefusesFailsTheRun|TestARecordWithoutTheBindingPassedFailsTheRun|TestARuntimeWithoutTheBindingIsGivenNone|TestVerifyRunHoldsTheRecordsBindingToThePreparation|TestVerifyRunReportsARecordTheRuntimeDidNotBind|TestARuntimeThatDoesNotSayItsReleaseEvaluatesNothing|TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart)$' \
             ./internal/runner ./cmd/jpack-runner)" || { printf '%s\n' "$out"; exit 1; }
           printf '%s\n' "$out"
-          for name in TestTheRuntimesVerifierReadsTheChainOfRuns TestASignedRunKeepsItsSignature TestVerifyRunChecksARunTheRuntimeSigned TestASeedReplacedAfterStartSignsNothing TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed TestAnOperationalEvaluationBindsItsPreparation TestABindingTheRuntimeRefusesFailsTheRun TestARecordWithoutTheBindingPassedFailsTheRun TestARuntimeWithoutTheBindingIsGivenNone TestVerifyRunHoldsTheRecordsBindingToThePreparation TestVerifyRunReportsARecordTheRuntimeDidNotBind TestARuntimeThatDoesNotSayItsReleaseEvaluatesNothing; do
-            printf '%s\n' "$out" | grep -q -- "^--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
+          for name in TestTheRuntimesVerifierReadsTheChainOfRuns TestASignedRunKeepsItsSignature TestVerifyRunChecksARunTheRuntimeSigned TestASeedReplacedAfterStartSignsNothing TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed TestAnOperationalEvaluationBindsItsPreparation TestABindingTheRuntimeRefusesFailsTheRun TestARecordWithoutTheBindingPassedFailsTheRun TestARuntimeWithoutTheBindingIsGivenNone TestVerifyRunHoldsTheRecordsBindingToThePreparation TestVerifyRunReportsARecordTheRuntimeDidNotBind TestARuntimeThatDoesNotSayItsReleaseEvaluatesNothing TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart/2 TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart/3; do
+            printf '%s\n' "$out" | grep -q -- "^[[:space:]]*--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
           done
       - name: Check API document
         run: python3 -m json.tool openapi.json > /dev/null

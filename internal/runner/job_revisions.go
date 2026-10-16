@@ -28,6 +28,9 @@ type UpgradeJobRequest struct {
 // A preview is disposable. Once used by a job, its pack identity cannot be
 // reused with different bytes, even when another job is being created.
 func admitJobPack(tx *sql.Tx, r Release) error {
+	if err := admitJobDialect(tx, r); err != nil {
+		return err
+	}
 	var count int
 	err := tx.QueryRow(`SELECT count(*) FROM job_revisions j JOIN releases r ON r.id=j.release_id WHERE json_extract(r.record,'$.packId')=? AND json_extract(r.record,'$.packVersion')=? AND json_extract(r.record,'$.packDigest')<>?`, r.PackID, r.PackVersion, r.PackDigest).Scan(&count)
 	if err != nil {
@@ -101,6 +104,9 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 		if err = s.checkUpgradeVersion(ctx, old.PackVersion, next.PackVersion); err != nil {
 			return Job{}, err
 		}
+	}
+	if err = s.checkDialectUpgrade(ctx, old, next); err != nil {
+		return Job{}, err
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -212,7 +218,7 @@ func (s *Service) checkUpgradeVersion(ctx context.Context, base, candidate strin
 		return &apiError{409, "version_check_unavailable", "Runtime could not check the artifact version. Use a Runtime with artifact version tooling and check a new release."}
 	}
 	if r.Comparison != "greater" {
-		return &apiError{409, "artifact_version_required", "Changed pack content must have a greater reviewed artifact version. Choose the compatibility impact in the pack editor and check a new release."}
+		return &apiError{409, "artifact_version_required", "Changed artifact content must have a greater reviewed version. Choose its compatibility impact and check a new release."}
 	}
 	return nil
 }
