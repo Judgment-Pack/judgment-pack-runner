@@ -122,19 +122,14 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 }
 
 // verifyAcquisition verifies a single retained v3 acquisition, not a sealed
-// session/store. Unknown signed fields remain covered by the signature.
+// session/store. Unknown signed fields remain covered by the signature. It
+// holds every receipt to the specification's §5.2 (spec/dialect.md) alike:
+// an operation's, of dialect version 2 or 3, a selected Drive file's, and a
+// research source's retained responses and its record's own (research.go).
+// The receipt's adapter is the profile's adapter as a whole object, and its
+// observation and serving instants are each within the window
+// acquisitionTimes gives, with no rule between the two (runner #98).
 func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int) (json.RawMessage, *Citation, error) {
-	return verifyReceipt(raw, args, p, public, at, maxAge, false)
-}
-
-// verifyReceipt is verifyAcquisition. With research, it holds a research
-// source's retained response, or its record's own receipt, to the
-// specification's §5.2 where an operation's acquisition is held otherwise,
-// as before: the receipt's adapter is the profile's adapter, as a whole
-// object, and its observation and serving times are each within the
-// source's maxAge before at and 30 seconds after it, with no rule between
-// the two (researchTimes).
-func verifyReceipt(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int, research bool) (json.RawMessage, *Citation, error) {
 	fail := func(s string) (json.RawMessage, *Citation, error) { return nil, nil, errors.New(s) }
 	var response struct {
 		Result  json.RawMessage `json:"result"`
@@ -248,10 +243,11 @@ func verifyReceipt(raw, args []byte, p InputProfile, public ed25519.PublicKey, a
 	if p.Endpoint != nil {
 		endpoint = *p.Endpoint
 	}
-	if a["endpoint"] != endpoint || adapter["name"] != p.Adapter.Name || adapter["version"] != p.Adapter.Version || adapter["digest"] != p.Adapter.Digest {
-		return fail("adapter or endpoint differs from the trusted profile")
-	}
-	if research && !sameJSON(encode(adapter), encode(p.Adapter)) {
+	// The receipt's endpoint and adapter are, as JSON values, the profile's
+	// (§5.2, check 3): the adapter as a whole object, so that a signed
+	// receipt whose adapter carries a member the profile does not pin is
+	// refused, as one that lacks a member is by its form above.
+	if a["endpoint"] != endpoint || !sameJSON(encode(adapter), encode(p.Adapter)) {
 		return fail("adapter or endpoint differs from the trusted profile")
 	}
 	sig, _ := hex.DecodeString(str("signature"))
@@ -279,24 +275,42 @@ func verifyReceipt(raw, args []byte, p InputProfile, public ed25519.PublicKey, a
 	if !ok {
 		return fail("missing observation time")
 	}
-	if research {
-		if e := researchTimes(observed, str("servedAt"), at, maxAge); e != nil {
-			return nil, nil, e
-		}
-		return result, &Citation{str("sessionId"), int(index), hex.EncodeToString(sig)}, nil
-	}
-	obs, e := time.Parse(time.RFC3339Nano, observed)
-	if e != nil {
-		return fail("invalid observation time")
-	}
-	served, e := time.Parse(time.RFC3339Nano, str("servedAt"))
-	if e != nil {
-		return fail("acquisition is stale or from the future")
-	}
-	if obs.After(served.Add(30*time.Second)) || served.After(at.Add(30*time.Second)) || obs.After(at.Add(30*time.Second)) || obs.Before(at.Add(-time.Duration(maxAge)*time.Second)) {
-		return nil, nil, errAcquisitionStale
+	if e := acquisitionTimes(observed, str("servedAt"), at, maxAge); e != nil {
+		return nil, nil, e
 	}
 	return result, &Citation{str("sessionId"), int(index), hex.EncodeToString(sig)}, nil
+}
+
+// errAcquisitionStale is verifyAcquisition's finding for an instant outside
+// its window, which a research refusal names acquisition-stale.
+var errAcquisitionStale = errors.New("acquisition is stale or from the future")
+
+// acquisitionTimes holds a receipt's times to §5.2: the observation instant,
+// acquisition.observedAt, and the serving instant, servedAt, each against
+// at, the preparation's instant (verifiedAt): no more than maxAge seconds
+// before it and no more than 30 seconds after it, the edges inside;
+// errAcquisitionStale otherwise. No rule joins the two instants, so an
+// observation long after its service reads when both are within the window.
+// Both are read before either is judged: a time with no instant is invalid,
+// not stale. An operation's times are read as RFC 3339, a fraction of a
+// second included (runner #99); a research receipt's were held to whole
+// seconds before (receiptTimes), and are read alike.
+func acquisitionTimes(observed, served string, at time.Time, maxAge int) error {
+	observation, e := time.Parse(time.RFC3339Nano, observed)
+	if e != nil {
+		return errors.New("invalid observation time")
+	}
+	service, e := time.Parse(time.RFC3339Nano, served)
+	if e != nil {
+		return errors.New("invalid serving time")
+	}
+	earliest, latest := at.Add(-time.Duration(maxAge)*time.Second), at.Add(30*time.Second)
+	for _, instant := range []time.Time{observation, service} {
+		if instant.Before(earliest) || instant.After(latest) {
+			return errAcquisitionStale
+		}
+	}
+	return nil
 }
 
 func ParseInputProfiles(raw []byte) ([]InputProfile, error) {

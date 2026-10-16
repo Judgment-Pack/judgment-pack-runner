@@ -126,8 +126,11 @@ return an explicit bounded status envelope and guard it in a rule.
 Source kinds:
 
 - `operation`: one retained v3 gateway response `{result, receipt, salts}` from a
-  source of shape `airbyte`, `mcp` or `http`, whose receipt's `acquisition.shape`
-  must be the shape its profile pins. For `mcp` the request template names a fixed,
+  source of shape `airbyte`, `mcp` or `http`, whose receipt's `acquisition.shape`,
+  `acquisition.endpoint` and `acquisition.adapter` must be, as JSON values, the
+  shape, endpoint and adapter its profile pins: the adapter as a whole object, so
+  that a signed receipt whose adapter has a member more or a member fewer is
+  refused (spec/dialect.md §5.2, check 3). For `mcp` the request template names a fixed,
   operator-allowed tool. For another shape it is the request that source reads (for
   the gateway's `adapter-http`, a path, a method, a query and a body), formed by the
   mapping's author and held to the template rules below, which the receipt commits
@@ -554,8 +557,13 @@ answer to submit, in one session or in two.
 Citations are recorded by call index, and those of equal index in the mapping's
 order of sources. A preparation with a research source records them in the order
 of sources instead ([below](#research-sources)). Cached responses can be reused within their source's `maxAge`.
-`maxAge` is required, from 1 through 86,400 seconds. Observation and Gateway
-serving time permit at most 30 seconds of future clock skew.
+`maxAge` is required, from 1 through 86,400 seconds. A receipt's observation time
+(`acquisition.observedAt`) and its Gateway serving time (`servedAt`) are each held
+against the preparation's instant, `verifiedAt`: no more than the source's `maxAge`
+before it and no more than 30 seconds after it, for future clock skew, the edges
+inside. No rule joins the two, so an observation long after its serving reads when
+both are within that window; either outside it fails preparation as stale
+(spec/dialect.md §5.2). A time that does not parse fails as invalid, not stale.
 
 Runner supplies whole-second UTC `runAt` only to derivation rules. It is the
 input verification instant before queue admission, retained as `verifiedAt`.

@@ -1459,33 +1459,12 @@ func checkResponseProfiles(s MappingSource, r *researchRecipe, a *researchAcquis
 	return nil
 }
 
-// errAcquisitionStale is verifyAcquisition's finding for a time outside its
-// window, which a research refusal names acquisition-stale.
-var errAcquisitionStale = errors.New("acquisition is stale or from the future")
-
 // acquisitionCode is the finding a failed acquisition check names.
 func acquisitionCode(e error) string {
 	if errors.Is(e, errAcquisitionStale) {
 		return codeStale
 	}
 	return codeInvalid
-}
-
-// researchTimes holds a research receipt's times to §5.2: the observation
-// and the serving instants, each a timestamp (receiptTimes held their form
-// before), each no more than maxAge seconds before at and no more than 30
-// seconds after it; otherwise acquisition-stale. No rule joins the two.
-func researchTimes(observed, served string, at time.Time, maxAge int) error {
-	for _, instant := range []string{observed, served} {
-		t, e := time.Parse("2006-01-02T15:04:05Z", instant)
-		if e != nil {
-			return fmt.Errorf("invalid acquisition time")
-		}
-		if t.Before(at.Add(-time.Duration(maxAge)*time.Second)) || t.After(at.Add(30*time.Second)) {
-			return errAcquisitionStale
-		}
-	}
-	return nil
 }
 
 // retainedAsAcquired is a retained response as verifyAcquisition reads an
@@ -1566,7 +1545,7 @@ func replayResearch(a *researchAcquisition, request json.RawMessage, ai InputPro
 		if !receiptTimes(response.receipt) {
 			return nil, nil, researchFail(codeInvalid, "retained response %d, through the profile %s: its receipt's servedAt and acquisition.observedAt are not each a timestamp of whole seconds in UTC that names a time", n, profile.ID)
 		}
-		_, citation, e := verifyReceipt(retainedAsAcquired(response.result, response.receipt, response.salts), response.request, profile, keys[profile.ID], at, maxAge, true)
+		_, citation, e := verifyAcquisition(retainedAsAcquired(response.result, response.receipt, response.salts), response.request, profile, keys[profile.ID], at, maxAge)
 		if e != nil {
 			return nil, nil, researchFail(acquisitionCode(e), "retained response %d, through the profile %s: %v", n, profile.ID, e)
 		}
@@ -1583,7 +1562,7 @@ func replayResearch(a *researchAcquisition, request json.RawMessage, ai InputPro
 		if !receiptTimes(a.receipt) {
 			return nil, nil, researchFail(codeInvalid, "the record's own receipt, through the profile %s: its servedAt and acquisition.observedAt are not each a timestamp of whole seconds in UTC that names a time", ai.ID)
 		}
-		_, citation, e := verifyReceipt(retainedAsAcquired(a.raw, a.receipt, a.salts), request, ai, keys[ai.ID], at, maxAge, true)
+		_, citation, e := verifyAcquisition(retainedAsAcquired(a.raw, a.receipt, a.salts), request, ai, keys[ai.ID], at, maxAge)
 		if e != nil {
 			return nil, nil, researchFail(acquisitionCode(e), "the record's own receipt, through the profile %s: %v", ai.ID, e)
 		}
