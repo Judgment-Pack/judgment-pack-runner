@@ -13,12 +13,12 @@ package runner
 // TestPreparationVectorsAreByteExact holds every vector to. Nothing here
 // prepares otherwise than a run does.
 //
-// It is given more than §11 gives a verifier, and less. More: the expected
-// preparation's digest, supplied apart from the files, which is checked
-// against the preparation's bytes before anything is read, so that a fixture
-// whose preparation is not the one its publisher pinned is refused by name.
-// Less: no record. A reading's binding is therefore always not-checked:
-// nothing here holds a signed record to the preparation or to its instant.
+// Its command holds the expected preparation to a digest supplied apart from
+// the files before anything is read (PreparationPin): a precondition, as a
+// file it can open is, and no step of the reading, so a preparation the pin
+// does not name is not read and no report is written. The verifier is given
+// no record: a reading's binding is therefore always not-checked, and nothing
+// here holds a signed record to the preparation or to its instant.
 //
 // No clock is read: the instant is the given preparation's verifiedAt, held
 // to §1's timestamp form with an instant, and nothing else. No network, model
@@ -41,9 +41,6 @@ const (
 	codeCalculation = "calculation-invalid"
 	codeKindUnread  = "kind-unread"
 	codeDiffers     = "preparation-differs"
-	// codeDigestMismatch is Runner's own, outside §11: the preparation's bytes
-	// are not the ones the digest supplied with them names.
-	codeDigestMismatch = "preparation-digest-mismatch"
 )
 
 // The bounds of spec/dialect.md §12 that are measured on a document's bytes
@@ -63,9 +60,9 @@ const (
 	ResultFinding = "finding"
 )
 
-// refusalCodes are the codes §11 gives a refusal, and Runner's own; every
-// other code is a finding's.
-var refusalCodes = map[string]bool{codeOverBound: true, codeMalformed: true, "version-unread": true, codeKindUnread: true, codeDigestMismatch: true}
+// refusalCodes are the codes §11 gives a refusal; every other code is a
+// finding's.
+var refusalCodes = map[string]bool{codeOverBound: true, codeMalformed: true, "version-unread": true, codeKindUnread: true}
 
 // verifiedKinds are the source kinds the verifier reads: those the vectors
 // hold (spec/dialect.md §4, §14). A dialect that names another kind Runner
@@ -134,18 +131,32 @@ func verificationOutcome(err error) (result, code string) {
 	return ResultFinding, code
 }
 
-// PreparationFixture is what verify-preparation is given: each document's
-// bytes as read, and the expected preparation's digest, supplied apart from
-// them. Binding is nil when no binding document is given, and Sources when no
+// PreparationFixture is what the verifier reads: each document's bytes as
+// read. Binding is nil when no binding document is given, and Sources when no
 // acquisitions are, which is the empty object.
 type PreparationFixture struct {
-	Dialect           []byte
-	Binding           []byte
-	Case              []byte
-	Sources           []byte
-	Profiles          []byte
-	Preparation       []byte
-	PreparationDigest string
+	Dialect     []byte
+	Binding     []byte
+	Case        []byte
+	Sources     []byte
+	Profiles    []byte
+	Preparation []byte
+}
+
+// PreparationPin holds an expected preparation's bytes to the digest supplied
+// apart from them: verify-preparation's precondition, as a file it can open
+// is, and no step of the reading §11 defines. A preparation the pin does not
+// name is not the one its publisher pinned, and is not read. A preparation
+// over its bound is not digested: the reading refuses it, input-over-bound,
+// without reading it whole.
+func PreparationPin(preparation []byte, pin string) error {
+	if len(preparation) > maxPreparationDocument {
+		return nil
+	}
+	if got := digest(preparation); got != pin {
+		return fmt.Errorf("the preparation's bytes are %s, not %s, the digest supplied with them: it is not the preparation the digest pins, and it is not read", got, pin)
+	}
+	return nil
 }
 
 // PreparationReport is a reading, a refusal or a finding (spec/dialect.md
@@ -225,14 +236,6 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 		return PreparationReport{Result: result, Code: code, Reason: err.Error()}
 	}
 
-	// The expected preparation is the one its digest names, before anything
-	// is read: a file over its bound is not taken in to be digested.
-	if len(f.Preparation) > maxPreparationDocument {
-		return stop(codeOverBound, fmt.Sprintf("the preparation is over %d bytes", maxPreparationDocument))
-	}
-	if !validDigest(f.PreparationDigest) || digest(f.Preparation) != f.PreparationDigest {
-		return stop(codeDigestMismatch, fmt.Sprintf("the preparation's bytes are %s, not %s, the digest supplied with them: it is not the preparation the digest pins", digest(f.Preparation), f.PreparationDigest))
-	}
 	sources := f.Sources
 	if sources == nil {
 		sources = []byte(`{}`)
@@ -241,6 +244,8 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// §12's bounds on bytes, on every document before any is read (§11's
 	// first phase).
 	switch {
+	case len(f.Preparation) > maxPreparationDocument:
+		return stop(codeOverBound, fmt.Sprintf("the preparation is over %d bytes", maxPreparationDocument))
 	case len(f.Dialect) > maxPublishedDialect:
 		return stop(codeOverBound, fmt.Sprintf("the dialect is over %d bytes", maxPublishedDialect))
 	case len(f.Dialect)+len(f.Case)+len(sources) > MaxBody:
@@ -371,7 +376,9 @@ const PreparationVerifierVersion = 1
 // command's version and the release it was built from, the dialect versions
 // and named formats, source kinds and operation shapes it reads, the instant
 // it recomputes at, its report's form, results, codes and exit statuses, and
-// the bounds it holds documents to (spec/dialect.md §12).
+// the bounds it holds documents to (spec/dialect.md §12). Its preconditions
+// are checked before a reading, and one that fails is couldNotRun, with no
+// report: the expected preparation's digest (PreparationPin).
 func PreparationVerifierCapabilities(release string) []byte {
 	shapes := sortedKeys(adapterShapes)
 	capabilities := map[string]any{
@@ -388,9 +395,11 @@ func PreparationVerifierCapabilities(release string) []byte {
 			"version":    1,
 			"results":    []string{ResultReading, ResultRefusal, ResultFinding},
 			"binding":    []string{BindingNotChecked},
-			"refusals":   []string{codeOverBound, codeMalformed, codeKindUnread, codeDigestMismatch},
+			"refusals":   []string{codeOverBound, codeMalformed, codeKindUnread},
 			"findings":   []string{codeMismatch, codeParameter, codeReadFailed, codeMissing, codeUnexpected, codeInvalid, codeStale, codeSessions, codeCalculation, codeAdmission, codeDiffers},
 			"exitStatus": map[string]int{ResultReading: 0, ResultRefusal: 1, ResultFinding: 2, "couldNotRun": 3},
+			// Checked before a reading; one that fails is couldNotRun.
+			"preconditions": []string{"preparation-digest"},
 		},
 		"bounds": map[string]int{
 			"dialectBytes":      maxPublishedDialect,

@@ -13,7 +13,7 @@ import (
 // vectorFixture is a vector as verify-preparation is given it: its dialect,
 // bound (mapping.json), or, imported, published (unbound.json) with its
 // binding document; its case, acquisitions and profiles; and its
-// preparation.json with the digest preparation.sha256 gives.
+// preparation.json, which preparation.sha256 pins.
 func vectorFixture(t *testing.T, v preparationVector, imported bool) PreparationFixture {
 	t.Helper()
 	read := func(name string) []byte {
@@ -23,7 +23,10 @@ func vectorFixture(t *testing.T, v preparationVector, imported bool) Preparation
 		}
 		return b
 	}
-	f := PreparationFixture{Dialect: read("mapping.json"), Case: read("case.json"), Profiles: read("profiles.json"), Preparation: read("preparation.json"), PreparationDigest: string(read("preparation.sha256"))}
+	f := PreparationFixture{Dialect: read("mapping.json"), Case: read("case.json"), Profiles: read("profiles.json"), Preparation: read("preparation.json")}
+	if PreparationPin(f.Preparation, string(read("preparation.sha256"))) != nil {
+		t.Fatal("preparation.sha256 does not pin preparation.json")
+	}
 	if imported {
 		f.Dialect, f.Binding = read("unbound.json"), read("binding.json")
 	}
@@ -33,9 +36,9 @@ func vectorFixture(t *testing.T, v preparationVector, imported bool) Preparation
 	return f
 }
 
-// withPreparation is f given another preparation, with its own digest.
+// withPreparation is f given another preparation.
 func withPreparation(f PreparationFixture, preparation []byte) PreparationFixture {
-	f.Preparation, f.PreparationDigest = preparation, digest(preparation)
+	f.Preparation = preparation
 	return f
 }
 
@@ -176,8 +179,7 @@ func vectorNamed(t *testing.T, name string) preparationVector {
 
 // Each fault is refused or found by its name, with nothing reported but its
 // code: one change to a vector each. A changed retained response, under its
-// receipt as it was, is acquisition-invalid; a preparation that is not the one
-// its digest pins is refused before anything is read; a binding that names a
+// receipt as it was, is acquisition-invalid; a binding that names a
 // profile the verifier is not given by that id and digest, or one of another
 // shape or adapter, is profile-mismatch; a binding of another dialect, a
 // verifiedAt that is no instant, and a document of another form are
@@ -239,9 +241,6 @@ func TestVerifyPreparationRefusesAndFindsByName(t *testing.T) {
 				receipt["signature"] = strings.Repeat("0", 128)
 			})
 		}, ResultFinding, codeInvalid},
-		{"a wrong expected digest", valid, false, func(f *PreparationFixture) { f.PreparationDigest = digest([]byte("another preparation")) }, ResultRefusal, codeDigestMismatch},
-		{"an expected digest of another form", valid, false, func(f *PreparationFixture) { f.PreparationDigest = strings.ToUpper(f.PreparationDigest) }, ResultRefusal, codeDigestMismatch},
-		{"a preparation changed under its digest", valid, false, func(f *PreparationFixture) { f.Preparation = append(f.Preparation, ' ') }, ResultRefusal, codeDigestMismatch},
 		{"a wrong profile digest in the binding", imported, true, func(f *PreparationFixture) {
 			firstBinding(f, func(entry map[string]any) { entry["profileDigest"] = "sha256:" + strings.Repeat("1", 64) })
 		}, ResultFinding, codeMismatch},
@@ -374,7 +373,7 @@ func historicalFixture(t *testing.T, served time.Time) PreparationFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return PreparationFixture{Dialect: encode(input.Source.Mapping), Case: input.Source.Case, Sources: encode(input.Source.Sources), Profiles: encode([]InputProfile{p}), Preparation: preparation, PreparationDigest: digest(preparation)}
+	return PreparationFixture{Dialect: encode(input.Source.Mapping), Case: input.Source.Case, Sources: encode(input.Source.Sources), Profiles: encode([]InputProfile{p}), Preparation: preparation}
 }
 
 // The instant is the preparation's verifiedAt, and never the clock. Receipts
@@ -387,7 +386,7 @@ func TestVerifyPreparationRecomputesAtTheHistoricalInstant(t *testing.T) {
 	f := historicalFixture(t, then)
 	r := VerifyPreparation(f)
 	requireReport(t, r, ResultReading, "")
-	if r.Digest != f.PreparationDigest || r.UnsignedFreshness == nil || r.UnsignedFreshness.VerifiedAt != then.Format("2006-01-02T15:04:05Z") {
+	if r.Digest != digest(f.Preparation) || r.UnsignedFreshness == nil || r.UnsignedFreshness.VerifiedAt != then.Format("2006-01-02T15:04:05Z") {
 		t.Fatalf("the receipts of two days ago do not read at their own instant: %s", r.Line())
 	}
 	now := time.Now().UTC().Truncate(time.Second)
@@ -429,9 +428,68 @@ func TestAPreparationReportIsWrittenInTheCanonicalForm(t *testing.T) {
 func TestThePreparationVerifiersCapabilities(t *testing.T) {
 	want := `{"bounds":{"bindingBytes":65536,"clauses":64,"conditions":64,"dialectBytes":131072,"documentDepth":64,"envelopeBytes":2097152,"evidenceTargets":128,"exponent":308,"factTargets":256,"numberCharacters":128,"parameters":64,"preparationBytes":8388608,"profilesBytes":65536,"retainedResponses":64,"sources":16,"unwrap":4,"unwrappedBytes":200000,"valueDepth":32},` +
 		`"command":"verify-preparation","dialectVersions":[2,3],"formatVersions":["2.0.0","3.0.0"],"instant":"preparation.verifiedAt",` +
-		`"report":{"binding":["not-checked"],"exitStatus":{"couldNotRun":3,"finding":2,"reading":0,"refusal":1},"findings":["profile-mismatch","parameter-invalid","read-failed","acquisition-missing","acquisition-unexpected","acquisition-invalid","acquisition-stale","acquisition-sessions","calculation-invalid","admission-refused","preparation-differs"],"form":"spec/dialect.md §11","refusals":["input-over-bound","input-malformed","kind-unread","preparation-digest-mismatch"],"results":["reading","refusal","finding"],"version":1},` +
+		`"report":{"binding":["not-checked"],"exitStatus":{"couldNotRun":3,"finding":2,"reading":0,"refusal":1},"findings":["profile-mismatch","parameter-invalid","read-failed","acquisition-missing","acquisition-unexpected","acquisition-invalid","acquisition-stale","acquisition-sessions","calculation-invalid","admission-refused","preparation-differs"],"form":"spec/dialect.md §11","preconditions":["preparation-digest"],"refusals":["input-over-bound","input-malformed","kind-unread"],"results":["reading","refusal","finding"],"version":1},` +
 		`"runner":"v0.0.0-test","shapes":["airbyte","http","mcp"],"sourceKinds":["operation","research"],"version":1}`
 	if got := string(PreparationVerifierCapabilities("v0.0.0-test")); got != want {
 		t.Fatalf("the capabilities are\n%s\nnot\n%s", got, want)
+	}
+}
+
+// The expected preparation's digest is a precondition (PreparationPin), and
+// no step of the reading: the preparation it names passes; one it does not
+// name, of another form, or changed by a byte, does not, and the reason names
+// both digests. A preparation over its bound is not digested: the reading
+// refuses it, input-over-bound.
+func TestThePreparationPin(t *testing.T) {
+	f := vectorFixture(t, vectorNamed(t, "valid"), false)
+	pin := digest(f.Preparation)
+	if err := PreparationPin(f.Preparation, pin); err != nil {
+		t.Fatal(err)
+	}
+	other := digest([]byte("another preparation"))
+	for name, c := range map[string]struct {
+		preparation []byte
+		pin         string
+	}{
+		"another digest":           {f.Preparation, other},
+		"a digest of another form": {f.Preparation, strings.ToUpper(pin)},
+		"a preparation changed":    {append(append([]byte(nil), f.Preparation...), ' '), pin},
+		"no digest":                {f.Preparation, ""},
+	} {
+		err := PreparationPin(c.preparation, c.pin)
+		if err == nil || !strings.Contains(err.Error(), digest(c.preparation)) || !strings.Contains(err.Error(), "it is not read") {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	over := bytes.Repeat([]byte(" "), maxPreparationDocument+1)
+	if err := PreparationPin(over, other); err != nil {
+		t.Fatal("a preparation over its bound was digested:", err)
+	}
+	requireReport(t, VerifyPreparation(withPreparation(f, over)), ResultRefusal, codeOverBound)
+}
+
+// The refusals whose sentences are kept carry the codes §11 gives them: a
+// receipt that is no object, or none, is of another form; a number a read
+// unwraps over its bound, and a value nested deeper than a read applies to,
+// are over the bound; a string that holds no JSON value is read-failed.
+func TestTheSentencesKeptCarryTheirCodes(t *testing.T) {
+	for receipt := range receiptSentences {
+		input, profiles, at := validWithReceipt(t, receipt)
+		_, err := prepareV2(input, profiles, at, false, nil)
+		if result, code := verificationOutcome(err); err == nil || result != ResultRefusal || code != codeMalformed {
+			t.Fatalf("a receipt %q is %s %s: %v", receipt, result, code, err)
+		}
+	}
+	for held, want := range map[string]string{
+		`{"vendor":1e309}`: codeOverBound,
+		`{"vendor":` + strings.Repeat("1", 129) + `}`:           codeOverBound,
+		strings.Repeat("[", 40) + "1" + strings.Repeat("]", 40): codeOverBound,
+		`{"vendor":`: codeReadFailed,
+	} {
+		input, profiles, at := unwrapped(t, held)
+		_, err := prepareV2(input, profiles, at, false, nil)
+		if _, code := verificationOutcome(err); err == nil || code != want {
+			t.Fatalf("an unwrapped %q is %s, not %s: %v", held, code, want, err)
+		}
 	}
 }

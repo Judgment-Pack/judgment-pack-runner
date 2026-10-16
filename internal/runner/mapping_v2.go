@@ -84,12 +84,19 @@ func unwrapRead(read SourceRead, artifact any) (any, error) {
 		if len(s) > maxInputDocument {
 			return nil, withCode(codeOverBound, errors.New("unwrap requires one bounded JSON string"))
 		}
-		if measureBytes([]byte(s), 32) != nil {
-			return nil, withCode(codeOverBound, errors.New("unwrap contains invalid JSON"))
-		}
+		// The value it holds is measured on its bytes before it is read
+		// (spec/dialect.md §12), for the code a refusal names: nested deeper
+		// than a read applies to, input-over-bound. Its outcome and its
+		// sentence are the reader's. A number literal over its bound is
+		// boundedArtifact's, below, with its own sentence.
+		deep := measureNesting([]byte(s), 32) != nil
 		next, e := readInputJSON([]byte(s))
 		if e != nil {
-			return nil, withCode(codeReadFailed, errors.New("unwrap contains invalid JSON"))
+			code := codeReadFailed
+			if deep {
+				code = codeOverBound
+			}
+			return nil, withCode(code, errors.New("unwrap contains invalid JSON"))
 		}
 		artifact = next
 	}

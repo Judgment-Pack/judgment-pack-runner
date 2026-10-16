@@ -35,14 +35,18 @@ Verifies one preparation offline, as a preparation verifier of the specification
 dialect does (spec/dialect.md §11): it recomputes the preparation from the dialect,
 the case, the acquisitions and the profiles given, at the given preparation's own
 verifiedAt and at no other instant, through Runner's own preparation, and compares it
-with the given preparation in the canonical form. It first holds the preparation's
-bytes to the digest given with them. It asks no network, model or Runtime, needs no
-run, release or audit record, and writes nothing.
+with the given preparation in the canonical form. It asks no network, model or
+Runtime, needs no run, release or audit record, and writes nothing.
+
+Before it reads anything it holds the preparation's bytes to --preparation-digest: a
+precondition, as a file it can open is. A preparation the digest does not name is not
+read: the command could not run.
 
 It writes one report on standard output, one line, and the reason on standard error,
-and exits 0 for a reading, 1 for a refusal and 2 for a finding; 3, writing no report,
-when it could not run, as on an argument it does not take, a file it cannot open, or
--h. --capabilities prints what it reads, as one JSON object, and exits 0.
+and exits 0 for a reading, 1 for a refusal and 2 for a finding; 3, writing no report
+and saying why on standard error, when it could not run: an argument it does not take,
+a file it cannot open, a preparation its digest does not name, or -h. --capabilities
+prints what it reads, as one JSON object, and exits 0.
 
 A reading establishes that the preparation recomputes from these inputs. Its binding
 is not-checked: no record is given, so nothing here commits the preparation or its
@@ -65,7 +69,7 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 	profilesPath := flags.String("profiles", "", "the input profiles the verification trusts, one JSON array: verification inputs, such as a fixture's, not an installation's configuration")
 	sourcesPath := flags.String("sources", "", "optional: the acquisitions, one JSON object by source name, as a fixture's sources.json holds them; absent, there are none")
 	preparationPath := flags.String("preparation", "", "the expected preparation; its verifiedAt is the only instant it is recomputed at")
-	preparationDigest := flags.String("preparation-digest", "", "the expected preparation's digest, sha256: and 64 lowercase hexadecimal characters, supplied apart from the files and checked against the preparation's bytes before anything is read")
+	preparationDigest := flags.String("preparation-digest", "", "the expected preparation's digest, sha256: and 64 lowercase hexadecimal characters, supplied apart from the files: a precondition, checked against the preparation's bytes before anything is read; a preparation it does not name is not read, and the command exits 3 with no report")
 	capabilities := flags.Bool("capabilities", false, "print what verify-preparation reads, as one JSON object, and nothing else")
 	couldNot := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "verify-preparation: could not run: "+format+"\n", a...)
@@ -105,7 +109,7 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 	if given["unbound"] {
 		dialectPath = *unbound
 	}
-	fixture := runner.PreparationFixture{PreparationDigest: *preparationDigest}
+	fixture := runner.PreparationFixture{}
 	for _, file := range []struct {
 		path  string
 		into  *[]byte
@@ -126,6 +130,11 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 			return couldNot("%v", err)
 		}
 		*file.into = b
+	}
+	// The pin, before anything is read: a precondition, as a file the
+	// command can open is, and no reading of §11's (runner.PreparationPin).
+	if err := runner.PreparationPin(fixture.Preparation, *preparationDigest); err != nil {
+		return couldNot("%v", err)
 	}
 	report := runner.VerifyPreparation(fixture)
 	fmt.Fprintf(stdout, "%s\n", report.Line())

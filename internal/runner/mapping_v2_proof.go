@@ -160,11 +160,17 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	if e != nil {
 		return fail("result is outside the gateway canonical domain")
 	}
+	// A receipt that is missing, or that is no object, is of another form
+	// than §5.2's (input-malformed); one outside the canonical domain fails
+	// check 1 (acquisition-invalid). Each keeps its sentence.
 	canonicalReceipt, e := proofCanon(response.Receipt)
-	if len(response.Receipt) == 0 || e == nil && canonicalReceipt[0] != '{' {
+	if len(response.Receipt) == 0 {
 		return malformed("malformed receipt")
 	}
 	if e != nil {
+		if receipt := strings.TrimSpace(string(response.Receipt)); receipt != "" && receipt[0] != '{' {
+			return malformed("malformed receipt")
+		}
 		return fail("malformed receipt")
 	}
 	var r map[string]any

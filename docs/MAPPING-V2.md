@@ -1631,9 +1631,12 @@ jpack-runner verify-preparation --dialect dialect.json [--binding binding.json] 
   are none.
 - `--preparation` is the expected preparation, and `--preparation-digest` its
   digest, supplied apart from the files, as an Exchange entry pins a fixture's
-  `preparationDigest`. The digest is checked against the file's bytes before
-  anything is read: a preparation it does not name is refused,
-  `preparation-digest-mismatch`, Runner's own code, outside §11.
+  `preparationDigest`. The digest is a precondition of the command, as a file
+  it can open is, and no step of §11's reading: it is checked against the
+  file's bytes before anything is read, and a preparation it does not name is
+  not read. The command could not run: it exits 3, writes no report, and says
+  why on standard error. A preparation over its bound is not digested; the
+  reading refuses it, `input-over-bound`.
 - The instant is the given preparation's `verifiedAt`, held to the timestamp
   form with an instant (§1), and nothing else: there is no fallback to the
   current time. Receipts stale today and fresh at that instant read; receipts
@@ -1662,7 +1665,8 @@ binding is.
 It writes §11's report on standard output, one line in that canonical form,
 and why on standard error, and exits 0 for a reading, 1 for a refusal and 2 for
 a finding; 3, with no report, when it could not run: an argument it does not
-take, a file it cannot open, `-h`. A refusal is exactly
+take, a file it cannot open, a preparation its digest does not name, `-h`. Its
+refusals are §11's and no other. A refusal is exactly
 `{"refusal":"input-malformed","result":"refusal"}` and a finding
 `{"finding":"acquisition-invalid","result":"finding"}`. A reading is exactly
 `result`, `digest`, `binding`, `facts`, `evidence`, `targetsByClass`, and
@@ -1683,8 +1687,9 @@ object for a caller to check before it calls: the command's version
 (`"version":1`), the release it was built from (`runner`), the dialect versions
 (`[2,3]`) and named formats (`"2.0.0"`, `"3.0.0"`), the source kinds and shapes
 it reads, the instant it recomputes at, its report's form, results, binding,
-refusal and finding codes and exit statuses, and the bounds it holds the
-documents to.
+refusal and finding codes and exit statuses, its preconditions
+(`"preconditions":["preparation-digest"]`, each `couldNotRun` when it fails),
+and the bounds it holds the documents to.
 
 **What a reading establishes, and what it does not** (§13, §14). A reading
 establishes that the preparation, byte for byte in the canonical form,

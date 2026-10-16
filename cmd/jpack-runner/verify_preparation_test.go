@@ -181,16 +181,18 @@ func TestVerifyPreparationCapabilities(t *testing.T) {
 	}
 }
 
-// A preparation that is not the one the digest supplied with it names is
-// refused by name before anything is read, and so is one over its bound,
-// which is not read whole.
-func TestVerifyPreparationRefusesAPreparationItsDigestDoesNotName(t *testing.T) {
+// The expected preparation's digest is a precondition, as a file the command
+// can open is: a preparation the digest supplied with it does not name is not
+// read, and the command could not run, exit 3, with no report and the reason
+// on standard error. A preparation over its bound is not read whole, nor
+// digested: the reading refuses it, input-over-bound.
+func TestVerifyPreparationHoldsThePreparationToItsDigest(t *testing.T) {
 	dir := "../../vectors/preparation/valid/"
 	given := []string{"--dialect", dir + "mapping.json", "--case", dir + "case.json", "--profiles", dir + "profiles.json", "--sources", dir + "sources.json"}
 	other := "sha256:" + strings.Repeat("0", 64)
 	status, stdout, stderr := runVerifyPreparation(append(given, "--preparation", dir+"preparation.json", "--preparation-digest", other)...)
-	if status != 1 || stdout != `{"refusal":"preparation-digest-mismatch","result":"refusal"}`+"\n" || !strings.HasPrefix(stderr, "verify-preparation: preparation-digest-mismatch: ") || !strings.Contains(stderr, other) {
-		t.Fatalf("%d %s %s", status, stdout, stderr)
+	if status != couldNotRun || stdout != "" || !strings.HasPrefix(stderr, "verify-preparation: could not run: the preparation's bytes are ") || !strings.Contains(stderr, other) || strings.Count(stderr, "\n") != 1 {
+		t.Fatalf("%d %q %q", status, stdout, stderr)
 	}
 	large := filepath.Join(t.TempDir(), "preparation.json")
 	if err := os.WriteFile(large, bytes.Repeat([]byte(" "), 8<<20+1), 0o600); err != nil {
@@ -221,6 +223,7 @@ func TestVerifyPreparationCouldNotRun(t *testing.T) {
 		"no dialect":                       rest,
 		"no expected digest":               append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-2]...),
 		"a digest of another form":         append(append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-1]...), strings.ToUpper(string(sum))),
+		"a digest that does not name it":   append(append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-1]...), "sha256:"+strings.Repeat("0", 64)),
 		"a file that is not there":         append([]string{"--dialect", dir + "absent.json"}, rest...),
 		"a directory":                      append([]string{"--dialect", dir}, rest...),
 		"a flag naming no file":            append([]string{"--dialect", dir + "mapping.json", "--binding", ""}, rest...),
@@ -236,5 +239,24 @@ func TestVerifyPreparationCouldNotRun(t *testing.T) {
 	// Given as it should be, the same files read.
 	if status, _, stderr := runVerifyPreparation(append([]string{"--dialect", dir + "mapping.json"}, rest...)...); status != 0 {
 		t.Fatal(stderr)
+	}
+}
+
+// readAtMost reads no more of a file than its limit, so a document over its
+// bound is refused by its length and never taken in whole.
+func TestReadAtMostReadsNoMoreThanItsLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.json")
+	content := bytes.Repeat([]byte("0123456789"), 100)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int64{1, 10, 999} {
+		got, err := readAtMost(path, limit)
+		if err != nil || !bytes.Equal(got, content[:limit]) {
+			t.Fatalf("readAtMost(%d) read %d bytes: %v", limit, len(got), err)
+		}
+	}
+	if got, err := readAtMost(path, 5000); err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("readAtMost read %d bytes of a shorter file: %v", len(got), err)
 	}
 }

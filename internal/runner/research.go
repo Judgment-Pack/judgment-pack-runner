@@ -1086,7 +1086,14 @@ func researchAcquisitionBounds(value SourceValue, r *researchRecipe) error {
 // at most maxDepth; and each number literal, a maximal run outside strings
 // of the characters 0 to 9, +, -, ., e and E, at most 128 characters, its
 // exponent of a magnitude at most 308.
-func measureBytes(data []byte, maxDepth int) error {
+func measureBytes(data []byte, maxDepth int) error { return measureScan(data, maxDepth, true) }
+
+// measureNesting is measureBytes for the nesting alone.
+func measureNesting(data []byte, maxDepth int) error { return measureScan(data, maxDepth, false) }
+
+// measureScan is measureBytes, its number literals measured when literals
+// is set.
+func measureScan(data []byte, maxDepth int, literals bool) error {
 	const literal = "0123456789+-.eE"
 	depth, inString, escaped := 0, false, false
 	for i := 0; i < len(data); i++ {
@@ -1109,7 +1116,7 @@ func measureBytes(data []byte, maxDepth int) error {
 			}
 		case c == ']' || c == '}':
 			depth--
-		case strings.IndexByte(literal, c) >= 0:
+		case literals && strings.IndexByte(literal, c) >= 0:
 			end := i
 			for end < len(data) && strings.IndexByte(literal, data[end]) >= 0 {
 				end++
