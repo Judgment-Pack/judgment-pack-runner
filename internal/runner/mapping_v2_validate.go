@@ -312,9 +312,9 @@ func validateDialect(m InputMapping, open bool) error { return validateDialectMo
 // validateDialectMode is validateDialect. Offline, as VerifyPreparation reads
 // a dialect, every source is held to its form before any kind is refused
 // (spec/dialect.md §11's fifth and sixth phases): a source of kind http, sql
-// or web to its own (unreadKindForm), where a run refuses it by name, and a
-// local file's source parameters to the rules of every source's (§3, §4),
-// where a run refuses any. VerifyPreparation refuses the kind after.
+// or web to its own (unreadKindForm), where a run refuses it by name.
+// VerifyPreparation refuses the kind after. A local file's source parameters
+// are held to the rules of every source's (§3, §4) on every path.
 func validateDialectMode(m InputMapping, open, offline bool) error {
 	if e := m.validateArtifactIdentity(); e != nil {
 		return e
@@ -417,8 +417,8 @@ func validateDialectMode(m InputMapping, open, offline bool) error {
 			if s.Profile == "" || !validDigest(s.ProfileDigest) || s.MaxAge < 1 || s.MaxAge > 86400 || len(s.Arguments) == 0 {
 				return fail("verified sources require a pinned profile, arguments and maxAge 1..86400")
 			}
-		case s.Profile != "" || s.ProfileDigest != "" || s.MaxAge != 0 || len(s.Arguments) > 0 || len(s.Parameters) > 0 && !offline:
-			return fail("local files cannot declare verification metadata or dependencies")
+		case s.Profile != "" || s.ProfileDigest != "" || s.MaxAge != 0 || len(s.Arguments) > 0:
+			return fail("local files cannot declare a profile, a profile digest, maxAge or arguments")
 		}
 		local := map[string]string{}
 		if e := checkParams(s.Parameters, false, local); e != nil {

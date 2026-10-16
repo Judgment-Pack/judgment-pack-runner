@@ -146,7 +146,11 @@ Source kinds:
   the shape, which the profile the mapping pins by digest and the receipt it cites
   carry.
 - `selected-file`, `provider: "local-file"`: `sources[name].snapshot` is the v1
-  selected JSON snapshot. No profile or request arguments. Its class is asserted.
+  selected JSON snapshot. No profile, profile digest, `maxAge` or request
+  arguments. Its class is asserted. It may declare source parameters, as any
+  source may (spec/dialect.md §3, §4): a local file has no request, so their
+  values are carried into its outcome's `parameters` and its lineage's
+  `dependencies`, and a parameter with no value skips the source.
 - `selected-file`, `provider: "google-drive"`: the existing selected snapshot
   retains the response and `salts.args` in `proof.response`. A pinned record
   profile for `drive`, `maxAge` and an arguments template are required. Resolve
@@ -1662,9 +1666,8 @@ member its kind does not list refused even when written empty, as `"from": ""`
 on a case parameter or `"provider": ""` on an operation, a version-3 or named
 dialect only as written ([above](#named-dialect-artifact-formats)), every source
 of a kind the command does not read held to its form as well (an `http`, `sql`
-or `web` source to the members and forms §4.3 gives its kind, and a local
-file's source parameters to the rules of every source's, §3, where a run
-refuses them), and the binding document's form (§4.4: exactly `dialect`, the
+or `web` source to the members and forms §4.3 gives its kind), and the
+binding document's form (§4.4: exactly `dialect`, the
 digest of the dialect given, and `sources`, naming exactly its unbound sources,
 each a profile's id and digest, a research source's with its `webProfiles`),
 all before any kind is refused (`input-malformed`); after every form, a kind
