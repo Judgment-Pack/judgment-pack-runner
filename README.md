@@ -329,7 +329,10 @@ own reader ([the contract](docs/MAPPING-V2.md#verifying-a-preparation-without-a-
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
 `/v1/inputs/next` planner. Supply trusted installation profiles with Desk's
-`--runner-input-profiles /absolute/file.json` flag. The original v1 file picker
+`--runner-input-profiles /absolute/file.json` flag. Trusted hosts can also add a
+durable immutable profile through `POST /v1/input-profiles` without restarting
+active jobs; see [profile registration](docs/design/installed-input-profiles.md)
+for authority, conflicts and limits. The original v1 file picker
 remains available. This integration requires the matching local working-tree
 builds; the revision table above identifies the previously published v1 baseline.
 HTTP SQL/model adapters, sealed-session verification and scheduling remain later work.

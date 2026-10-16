@@ -22,6 +22,14 @@ func TestRegisteredProfilesPersistWithoutRestartingOrMutatingPins(t *testing.T) 
 	if response.Code != http.StatusCreated {
 		t.Fatal(response.Code, response.Body.String())
 	}
+	var registered any
+	if err := json.Unmarshal(response.Body.Bytes(), &registered); err != nil {
+		t.Fatal(err)
+	}
+	doc := readOpenAPI(t)
+	if problems := doc.check("registration", doc.schema("InstalledInputProfile"), registered); len(problems) != 0 {
+		t.Fatal(problems)
+	}
 	if response = serve(t, s, "POST", "/v1/input-profiles", raw, nil); response.Code != http.StatusOK {
 		t.Fatal(response.Code, response.Body.String())
 	}

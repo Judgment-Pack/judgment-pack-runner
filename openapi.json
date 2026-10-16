@@ -422,7 +422,7 @@
     "/input-profiles": {
       "get": {
         "operationId": "listInputProfiles",
-        "description": "Trusted installation profiles and canonical digests. Read-only; profile installation is host configuration.",
+        "description": "Trusted bootstrap and durable registered installation profiles with canonical digests. Imported fixtures never install authority.",
         "responses": {
           "200": {
             "description": "Profiles",
@@ -431,22 +431,74 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "properties": {
-                      "profile": {
-                        "$ref": "#/components/schemas/InputProfile"
-                      },
-                      "digest": {
-                        "type": "string",
-                        "pattern": "^sha256:[a-f0-9]{64}$"
-                      }
-                    },
-                    "required": [
-                      "profile",
-                      "digest"
-                    ],
-                    "additionalProperties": false
+                    "$ref": "#/components/schemas/InstalledInputProfile"
                   }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "registerInputProfile",
+        "description": "Trusted-host configuration only. Add one immutable profile (request at most 32 KiB) without restarting workers. Persist before visibility. An identical retry returns the same digest; changed contents under an existing ID are refused. At most 16 combined profiles; none is evicted. Does not acquire data, change releases or authorize model execution. Bearer authentication is required and browser Origin requests are refused.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputProfile"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Profile durably registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstalledInputProfile"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Identical profile already registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstalledInputProfile"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Profile ID already names different contents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid profile or combined installation limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5476,6 +5528,23 @@
             "$ref": "#/components/schemas/BindingDocument"
           }
         }
+      },
+      "InstalledInputProfile": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/InputProfile"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "profile",
+          "digest"
+        ],
+        "additionalProperties": false
       }
     }
   }
