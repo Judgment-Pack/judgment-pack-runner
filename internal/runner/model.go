@@ -29,25 +29,26 @@ type PreviewRequest struct {
 	TestSource *TestSource `json:"testSource,omitempty"`
 }
 type Release struct {
-	InputProfiles   []InputProfile  `json:"inputProfiles,omitempty"`
-	MappingWarnings []string        `json:"mappingWarnings,omitempty"`
-	SchemaVersion   string          `json:"schemaVersion"`
-	ID              string          `json:"id"`
-	Pack            string          `json:"pack"`
-	PackDigest      string          `json:"packDigest"`
-	PackID          string          `json:"packId"`
-	PackVersion     string          `json:"packVersion"`
-	Title           string          `json:"title"`
-	RuntimeDigest   string          `json:"runtimeDigest"`
-	CreatedAt       string          `json:"createdAt"`
-	Config          string          `json:"config"`
-	Lock            string          `json:"lock"`
-	Validation      json.RawMessage `json:"validation"`
-	Sample          Input           `json:"sample"`
-	Preview         json.RawMessage `json:"preview"`
-	Tests           string          `json:"tests"`
-	TestEvidence    *ReleaseTests   `json:"testEvidence,omitempty"`
-	InputMapping    *InputMapping   `json:"inputMapping,omitempty"`
+	Dialect         *DialectIdentity `json:"dialect,omitempty"`
+	InputProfiles   []InputProfile   `json:"inputProfiles,omitempty"`
+	MappingWarnings []string         `json:"mappingWarnings,omitempty"`
+	SchemaVersion   string           `json:"schemaVersion"`
+	ID              string           `json:"id"`
+	Pack            string           `json:"pack"`
+	PackDigest      string           `json:"packDigest"`
+	PackID          string           `json:"packId"`
+	PackVersion     string           `json:"packVersion"`
+	Title           string           `json:"title"`
+	RuntimeDigest   string           `json:"runtimeDigest"`
+	CreatedAt       string           `json:"createdAt"`
+	Config          string           `json:"config"`
+	Lock            string           `json:"lock"`
+	Validation      json.RawMessage  `json:"validation"`
+	Sample          Input            `json:"sample"`
+	Preview         json.RawMessage  `json:"preview"`
+	Tests           string           `json:"tests"`
+	TestEvidence    *ReleaseTests    `json:"testEvidence,omitempty"`
+	InputMapping    *InputMapping    `json:"inputMapping,omitempty"`
 }
 type Job struct {
 	InitialTriggerID     string `json:"initialTriggerId,omitempty"`

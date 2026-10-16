@@ -248,6 +248,9 @@ func validateMappingV2(m InputMapping) error { return validateDialect(m, false) 
 // reads a published dialect (dialect_v3.go); without it, as every dialect
 // Runner prepares is read, it is refused by name.
 func validateDialect(m InputMapping, open bool) error {
+	if e := m.validateArtifactIdentity(); e != nil {
+		return e
+	}
 	prefix := "Mapping v2: "
 	if m.Version == 3 {
 		prefix = "Mapping v3: "

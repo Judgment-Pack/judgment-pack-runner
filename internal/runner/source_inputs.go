@@ -27,6 +27,9 @@ type EvidenceMapping struct {
 	Source      string `json:"source"`
 }
 type InputMapping struct {
+	FormatVersion    string            `json:"-"`
+	ArtifactID       string            `json:"-"`
+	ArtifactVersion  string            `json:"-"`
 	Case             *CaseMapping      `json:"case,omitempty"`
 	Sources          []MappingSource   `json:"sources,omitempty"`
 	Admits           *Admission        `json:"admits,omitempty"`

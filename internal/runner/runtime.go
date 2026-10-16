@@ -205,6 +205,9 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	if req.Input.Source != nil {
 		mapping := req.Input.Source.Mapping
 		r.InputMapping = &mapping
+		if r.Dialect, err = releaseDialectIdentity(r); err != nil {
+			return Release{}, err
+		}
 		if mapping.dialect() {
 			r.InputProfiles = profilesUsed(mapping, s.cfg.InputProfiles)
 		}

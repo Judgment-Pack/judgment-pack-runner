@@ -45,6 +45,9 @@ func (m InputMapping) dialect() bool { return m.Version == 2 || m.Version == 3 }
 // of them: its encoding is the document with no member Runner adds.
 func (m InputMapping) MarshalJSON() ([]byte, error) {
 	type plain InputMapping
+	if m.FormatVersion != "" {
+		return m.marshalArtifact()
+	}
 	if m.Version != 3 {
 		return json.Marshal(plain(m))
 	}
@@ -200,7 +203,7 @@ func asWritten(written []byte, m InputMapping) error {
 // the check. A dialect of version 2, however its path is named, is read as
 // before. A request's other faults are refused where they are read.
 func keptAsWritten(request []byte, decoded InputMapping, path ...string) error {
-	if decoded.Version != 3 {
+	if decoded.Version != 3 && decoded.FormatVersion == "" {
 		return nil
 	}
 	written, e := exactlyAt(request, path...)

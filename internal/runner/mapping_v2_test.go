@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -225,7 +226,13 @@ func TestV2StrictRulesTemplatesAndNumericDomain(t *testing.T) {
 	}
 }
 
-func TestV2RealRuntimeReleaseRunOfflineAndRestart(t *testing.T) {
+func TestV2RealRuntimeReleaseRunOfflineAndRestart(t *testing.T) { mappingLifecycle(t, 0) }
+func TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart(t *testing.T) {
+	for _, family := range []int{2, 3} {
+		t.Run(fmt.Sprint(family), func(t *testing.T) { mappingLifecycle(t, family) })
+	}
+}
+func mappingLifecycle(t *testing.T, family int) {
 	cfg := testConfig(t)
 	input, p, key, at := v2Fixture(t)
 	cfg.InputProfiles = []InputProfile{p}
@@ -233,6 +240,18 @@ func TestV2RealRuntimeReleaseRunOfflineAndRestart(t *testing.T) {
 	input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
 	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}}
 	input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), encode(sample()), at, 0)}
+	var publishedDigest string
+	if family != 0 {
+		input.Source.Mapping.Version = family
+		input.Source.Mapping = namedMapping(input.Source.Mapping, "1.0.0")
+		if family == 3 {
+			published := encode(unboundOf(input.Source.Mapping, "vendor", "postgres", "vendors.read", "mcp", "dbhub"))
+			publishedDigest = digest(canonTest(t, published))
+			input.Source.Import = &DialectImport{Dialect: published, Binding: bindingOf(t, published, map[string]InputProfile{"vendor": p})}
+		} else {
+			publishedDigest = mappingV2Hash(input.Source.Mapping)
+		}
+	}
 	s, e := Open(cfg)
 	if e != nil {
 		t.Fatal(e)
@@ -248,6 +267,9 @@ func TestV2RealRuntimeReleaseRunOfflineAndRestart(t *testing.T) {
 	}
 	if len(release.InputProfiles) != 1 || len(release.MappingWarnings) == 0 {
 		t.Fatal("release trust/coverage absent")
+	}
+	if family != 0 && (release.Dialect == nil || release.Dialect.Version != "1.0.0" || release.Dialect.Digest != publishedDigest) {
+		t.Fatal("release lost published identity", release.Dialect)
 	}
 	job, e := s.createJob("Verified vendor", release.ID)
 	if e != nil {
@@ -266,7 +288,7 @@ func TestV2RealRuntimeReleaseRunOfflineAndRestart(t *testing.T) {
 	}
 	bundle := verificationExport(release, done, 2)
 	raw := encode(bundle)
-	if dir := os.Getenv("JPACK_V2_TEST_EXPORT_DIR"); dir != "" {
+	if dir := os.Getenv("JPACK_V2_TEST_EXPORT_DIR"); family == 0 && dir != "" {
 		for name, data := range map[string][]byte{"run.json": raw, "profiles.json": encode([]InputProfile{p}), "release-digest.txt": []byte(bundle.ReleaseDigest)} {
 			if e = os.WriteFile(dir+"/"+name, data, 0600); e != nil {
 				t.Fatal(e)
@@ -290,6 +312,15 @@ func TestV2RealRuntimeReleaseRunOfflineAndRestart(t *testing.T) {
 	s, e = Open(cfg)
 	if e != nil {
 		t.Fatal(e)
+	}
+	if family != 0 {
+		retained, err := s.release(release.ID)
+		if err != nil || retained.Dialect == nil || *retained.Dialect != *release.Dialect {
+			t.Fatal("restart changed named release", err)
+		}
+		if family == 3 && retained.Sample.Source.Import == nil {
+			t.Fatal("restart lost publication and binding")
+		}
 	}
 	again, replayed, e := s.submit(job.ID, "v2-1", input)
 	if e != nil || !replayed || again.ID != run.ID {
