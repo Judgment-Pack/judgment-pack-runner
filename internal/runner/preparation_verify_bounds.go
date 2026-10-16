@@ -99,9 +99,12 @@ func preparationCountBounds(dialect, acquisitions, profiles, binding any) bool {
 			if long(f["name"], 64) || long(f["description"], 2048) {
 				return true
 			}
-			name, kind := text(f["name"]), text(f["type"])
-			if _, ok := types[name]; !ok {
-				switch kind {
+			// Only a declaration whose name is a string types its answers:
+			// the reader skips any other, and a run's recipe, which
+			// researchRecordBounds measures a record by, refuses it.
+			name, named := f["name"].(string)
+			if _, ok := types[name]; named && !ok {
+				switch kind := text(f["type"]); kind {
 				case "text", "decimal", "boolean", "integer", "range", "text-list":
 					types[name] = kind
 				}
@@ -148,28 +151,6 @@ func preparationCountBounds(dialect, acquisitions, profiles, binding any) bool {
 		}
 		return 0
 	}
-	overValue := func(v any, kind string) bool {
-		switch kind {
-		case "text":
-			return long(v, 8192)
-		case "decimal":
-			return long(v, 128)
-		case "range":
-			m := object(v)
-			return long(m["min"], 128) || long(m["max"], 128)
-		case "text-list":
-			a := list(v)
-			if len(a) > 64 {
-				return true
-			}
-			for _, x := range a {
-				if long(x, 1024) {
-					return true
-				}
-			}
-		}
-		return false
-	}
 	for name, value := range acq {
 		result := object(object(value)["response"])["result"]
 		if depth(result) > 32 {
@@ -192,12 +173,15 @@ func preparationCountBounds(dialect, acquisitions, profiles, binding any) bool {
 				return true
 			}
 			a := object(value)
-			if len(list(a["cites"])) > 64 || overValue(a["value"], types[field]) || len(list(a["values"])) > 64 {
+			// Each value by its field's declared type, as a live research
+			// record is measured (valueOver): a decimal and a range endpoint
+			// in characters, a text and a list item in bytes.
+			if len(list(a["cites"])) > 64 || valueOver(a["value"], types[field]) || len(list(a["values"])) > 64 {
 				return true
 			}
 			for _, value := range list(a["values"]) {
 				o := object(value)
-				if len(list(o["cites"])) > 64 || overValue(o["value"], types[field]) {
+				if len(list(o["cites"])) > 64 || valueOver(o["value"], types[field]) {
 					return true
 				}
 			}

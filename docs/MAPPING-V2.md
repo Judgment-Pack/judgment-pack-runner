@@ -1643,24 +1643,48 @@ jpack-runner verify-preparation --dialect dialect.json [--binding binding.json] 
   fresh today and outside their window at that instant are
   `acquisition-stale`.
 
-Then, in the order §11 gives them: §12's bounds on the documents' bytes, then
-each document read strictly, then the nesting of each acquisition's result
-(`input-over-bound`, `input-malformed`); the forms of the profiles, the
-acquisitions, the instant and the dialect, a version-3 or named dialect only as
-written ([above](#named-dialect-artifact-formats)), and a binding document's at
-import (`input-malformed`); a kind the command does not read, `kind-unread`: it
-reads `operation`, of the shapes `airbyte`, `mcp` and `http`, and `research`, the
-kinds the vectors hold, and refuses `selected-file`, and `http`, `sql` and `web`,
-by name; and then Runner's own preparation, at that instant, whose findings
-are §11's: `profile-mismatch` (a profile not given by its id and digest, or of
-another shape or adapter than the source it is bound to), `parameter-invalid`,
+Then, in the order §11 gives them: §12's bounds on the documents' bytes
+(`input-over-bound`); each document read strictly (`input-malformed`); §12's
+counted bounds, wherever they can be measured before any form, and the nesting
+of each acquisition's result (`input-over-bound`), so that a count over its
+maximum is refused for the count and not for a malformed member beside it: the
+sources, the parameters in a scope, the clauses, the conditions one `all` or
+`any` lists, the `unwrap` pointers, the fact and evidence targets, the retained
+responses and every research maximum, a research answer measured by its
+field's declared type as a run measures one (a decimal and a range endpoint in
+characters, a text and a list item in bytes), and a declaration whose `name` is
+not a string typing nothing; the forms of the profiles, the acquisitions, each
+one `{"response": …}` of §5.2's form, a selected file's included, the instant
+and the dialect, each object of a version-2 dialect held to its own kind's
+members (a case parameter exactly `pointer` and `type`, a source parameter
+exactly `from`, `pointer` and `type`, a source §4's members and its kind's), a
+member its kind does not list refused even when written empty, as `"from": ""`
+on a case parameter or `"provider": ""` on an operation, a version-3 or named
+dialect only as written ([above](#named-dialect-artifact-formats)), and a
+binding document's at import (`input-malformed`); after every form, a kind the
+command does not read, `kind-unread`: it reads `operation`, of the shapes
+`airbyte`, `mcp` and `http`, and `research`, the kinds the vectors hold, and
+refuses `selected-file`, and `http`, `sql` and `web`, by name; and then
+Runner's own preparation, at that instant, whose findings are §11's:
+`profile-mismatch` (a profile not given by its id and digest, or of another
+shape or adapter than the source it is bound to), `parameter-invalid`,
 `acquisition-missing`, `acquisition-unexpected`, `acquisition-invalid` (a
 retained response changed under its receipt among them), `acquisition-stale`,
 `acquisition-sessions`, `calculation-invalid`, `read-failed` and
-`admission-refused`. Last, the recomputed preparation is compared with the
-given one in the [canonical form](#the-canonical-form-of-a-preparation):
-`preparation-differs` when it is not, as the old preparation under a changed
-binding is.
+`admission-refused`. Two of them come later offline than in a run's
+preparation, where §11 puts them: a member of the acquisitions that names no
+source is `acquisition-unexpected` only after the last source, so that one
+beside a stale receipt is `acquisition-stale`, where a run's preparation
+refuses it before it reads any source; and `admission-refused` comes after
+every source's acquisition and read, where a run, and the plan before one,
+refuse an admission before any source is called. Last, the recomputed
+preparation is compared with the given one in the
+[canonical form](#the-canonical-form-of-a-preparation): `preparation-differs`
+when it is not, as the old preparation under a changed binding is. Its
+`mappingDigest` is the digest of the dialect as given: offline, a dialect of
+the integer version 2 is digested as it is written, with `provider`, `facts`
+and `evidence` written or left out (§2: a verifier adds or removes nothing),
+where a run keeps a version-2 document as Runner encodes it.
 
 It writes §11's report on standard output, one line in that canonical form,
 and why on standard error, and exits 0 for a reading, 1 for a refusal and 2 for

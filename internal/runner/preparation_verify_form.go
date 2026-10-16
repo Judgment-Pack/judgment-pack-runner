@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// exactAcquisitionMembers holds each acquisition to the one member §5.2
+// gives every source's, response: a selected file's included, whose kind is
+// not read (§11's sixth phase).
 func exactAcquisitionMembers(raw []byte) bool {
 	var values map[string]map[string]json.RawMessage
 	if json.Unmarshal(raw, &values) != nil {
@@ -17,7 +20,7 @@ func exactAcquisitionMembers(raw []byte) bool {
 			return false
 		}
 		for k := range v {
-			if k != "response" && k != "snapshot" {
+			if k != "response" {
 				return false
 			}
 		}
@@ -30,7 +33,60 @@ func exactDialectForm(raw []byte, m InputMapping) error {
 	}
 	// Family 2 permits explicit empty optional members. Validate exact keys
 	// without comparing against Go's omit-empty writer.
-	return exactPreparationKeys(raw, reflect.TypeOf(m))
+	if err := exactPreparationKeys(raw, reflect.TypeOf(m)); err != nil {
+		return err
+	}
+	return exactKindMembers(raw)
+}
+
+// exactKindMembers holds each object of a version-2 dialect whose Go struct
+// several kinds share to its own kind's members, as spec/dialect.md §3, §4,
+// §4.1 and §4.2 list them and the specification's reader holds them: a case
+// parameter exactly pointer and type, a source parameter exactly from,
+// pointer and type, an operation §4's members and §4.1's, and a
+// selected-file §4's, its provider and that provider's. exactPreparationKeys
+// admits every kind's members, and once decoded a member of another kind
+// written with its zero value, "from": "" or "provider": "", is not told
+// from one not written.
+func exactKindMembers(raw []byte) error {
+	v, err := readInputJSONDepth(raw, maxDocumentDepth)
+	if err != nil {
+		return err
+	}
+	object := func(v any) map[string]any { m, _ := v.(map[string]any); return m }
+	unknown := errors.New("a member its kind does not have, or without one it has")
+	top := object(v)
+	for _, p := range object(object(top["case"])["parameters"]) {
+		if !closedMembers(object(p), []string{"pointer", "type"}, nil) {
+			return unknown
+		}
+	}
+	sources, _ := top["sources"].([]any)
+	for _, value := range sources {
+		s := object(value)
+		for _, p := range object(s["parameters"]) {
+			if !closedMembers(object(p), []string{"from", "pointer", "type"}, nil) {
+				return unknown
+			}
+		}
+		common := []string{"name", "kind", "read"}
+		var required, optional []string
+		switch {
+		case s["kind"] == "operation":
+			required, optional = []string{"profile", "profileDigest", "maxAge", "arguments"}, []string{"parameters", "calculation"}
+		case s["kind"] == "selected-file" && s["provider"] == "local-file":
+			required, optional = []string{"provider"}, []string{"parameters"}
+		case s["kind"] == "selected-file" && s["provider"] == "google-drive":
+			required, optional = []string{"provider", "profile", "profileDigest", "maxAge", "arguments"}, []string{"parameters"}
+		default:
+			// Another kind or provider is validateDialect's to refuse.
+			continue
+		}
+		if !closedMembers(s, append(common, required...), optional) {
+			return unknown
+		}
+	}
+	return nil
 }
 
 func exactPreparationKeys(raw []byte, typ reflect.Type) error {
@@ -118,15 +174,9 @@ func preparationAcquisitionForms(m InputMapping, acquisitions map[string]SourceV
 			}
 			continue
 		}
-		if known && source.Kind == "selected-file" {
-			if len(value.Response) > 0 || len(value.Snapshot) == 0 {
-				return researchFail(codeMalformed, "invalid selected file")
-			}
-			continue
-		}
-		if len(value.Snapshot) > 0 {
-			return researchFail(codeMalformed, "unexpected snapshot")
-		}
+		// Every other acquisition, a selected file's among them, has §5.2's
+		// envelope; a kind the verifier does not read is refused after every
+		// form (§11's sixth phase).
 		if !operationEnvelopeForm(value.Response) {
 			return researchFail(codeMalformed, "invalid acquisition envelope")
 		}
