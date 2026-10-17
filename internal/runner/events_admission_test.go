@@ -289,6 +289,39 @@ func TestEveryAdmissionRefusalIsJournaledOnce(t *testing.T) {
 
 // The store-wide route for a job serves what the job's route does, its
 // release's preview included, and Runner's own entries besides.
+func TestSubmitRunIdempotencyKeyVisibleASCIIBoundaries(t *testing.T) {
+	s := openJournal(t, journalConfig(t))
+	t.Cleanup(func() { s.Close() })
+
+	cases := []struct {
+		name string
+		key  string
+		want int
+	}{
+		{"one character", "k", 404},
+		{"128 characters", strings.Repeat("k", 128), 404},
+		{"first visible character", "!", 404},
+		{"last visible character", "~", 404},
+		{"empty", "", 400},
+		{"129 characters", strings.Repeat("k", 129), 400},
+		{"space", "a b", 400},
+		{"control character", "a\x01b", 400},
+		{"DEL", "a\x7fb", 400},
+		{"non-ASCII letter", "é", 400},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := serve(t, s, "POST", "/v1/jobs/job_unknown/runs", `{"facts":{}}`, map[string]string{
+				"Idempotency-Key": c.key,
+			})
+			if got.Code != c.want {
+				t.Fatalf("answered %d, want %d; body: %s", got.Code, c.want, got.Body.String())
+			}
+		})
+	}
+}
+
 func TestTheStoreWideRouteForAJobHasItsReleasesEntries(t *testing.T) {
 	w := newCoverWorld(t)
 	var page EventPage
