@@ -191,6 +191,13 @@ func TestEveryAdmissionRefusalIsJournaledOnce(t *testing.T) {
 		{"deliver-event: a trigger the store does not hold", 401, nil, func(w *coverWorld) int {
 			return post(w, "/v1/triggers/trg_unknown/events", valid("e")(""), map[string]string{"X-Trigger-Token": strings.Repeat("0", 64)})
 		}},
+		{"deliver-event: a record delivery while the queue is full", 429, &want{"deliver-event", "queue_full", "installation"}, func(w *coverWorld) int {
+			tr, _ := w.eventTrigger("queue")
+			for range queueLimit {
+				w.admitted(tr, nil)
+			}
+			return post(w, "/v1/triggers/"+tr.ID+"/deliveries", string(encode(RecordDelivery{ReleaseID: w.job.ReleaseID, Event: EventDelivery{ID: "e", OccurredAt: now(), Input: journalInput()}})), nil)
+		}},
 		{"create-job: an unsupported member", 400, &want{"create-job", "invalid_request", "installation"}, create(func(w *coverWorld) string {
 			return `{"name":"x","releaseId":"` + otherRelease(w, "not-run").ID + `","reviewed":true,"unexpected":true}`
 		})},

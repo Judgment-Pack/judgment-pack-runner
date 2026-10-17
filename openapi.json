@@ -1698,7 +1698,7 @@
             }
           }
         },
-        "description": "Owner-authenticated local control delivery of a previously persisted immutable record envelope. Bind releaseId to the reviewed release. Older occurredAt timestamps are allowed for outbox recovery; future timestamps, source freshness, mapping checks and queue expiry still apply. Persist exact bytes before the first request. Exact retries return the original occurrence, even when paused; changed payloads conflict. This route is not exposed through the public Desk event-token ingress."
+        "description": "Owner-authenticated local control delivery of a previously persisted immutable record envelope. Bind releaseId to the reviewed release. Older occurredAt timestamps are allowed for outbox recovery; future timestamps, source freshness, mapping checks and queue expiry still apply. Persist exact bytes before the first request. Exact retries return the original occurrence, even when paused; changed payloads conflict. While the local queue of pending occurrences is full the delivery is refused with 429 queue_full, retryable, and nothing is admitted: deliver the same bytes again later. Unlike deliverEvent, it is never recorded as skipped for a full queue. This route is not exposed through the public Desk event-token ingress."
       }
     },
     "/triggers/{trigger}/deliveries/{event}": {

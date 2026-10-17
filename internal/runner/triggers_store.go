@@ -399,6 +399,14 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 	if e = s.admitOccurrenceAs(tx, t, &o, "event:"+event.ID, payload, publisher); e != nil {
 		return o, false, e
 	}
+	// A record delivery is refused while the queue is full, not recorded as
+	// skipped: its identity is the record revision's, which a skipped
+	// occurrence would answer for good. The transaction is not committed, so
+	// nothing is admitted or journaled, and the outbox delivers the same
+	// envelope again. A credential's delivery is skipped, as it always was.
+	if expectedRelease != "" && o.State == "skipped" && o.Reason == "queue-full" {
+		return Occurrence{}, false, &apiError{429, "queue_full", "The local queue is full. Deliver the same record again after queued occurrences are submitted."}
+	}
 	// The occurrence is bound to the credential that created it, for that
 	// credential's read of its result.
 	if hash != "" {
