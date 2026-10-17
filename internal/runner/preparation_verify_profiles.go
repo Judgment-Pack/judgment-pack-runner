@@ -25,10 +25,10 @@ import (
 // verifierProfiles reads the profiles a verifier is given, one JSON array
 // already read as §1 reads a document (document is its value, raw its bytes),
 // as §5.1 states each profile: an object of exactly id, publicKey, class,
-// source, authority, shape, adapter and endpoint, and optionally tools,
-// calculator and research, each of its form (profileForm). Each profile it
-// returns carries the digest of its canon bytes as given, which profileHash
-// names for it.
+// source, authority, shape, adapter and endpoint, and optionally
+// endpointScope, tools, calculator and research, each of its form
+// (profileForm). Each profile it returns carries the digest of its canon
+// bytes as given, which profileHash names for it.
 func verifierProfiles(document any, raw []byte) ([]InputProfile, error) {
 	list, ok := document.([]any)
 	var elements []json.RawMessage
@@ -63,12 +63,14 @@ func verifierProfiles(document any, raw []byte) ([]InputProfile, error) {
 // null, tools, when given, distinct non-empty strings, which a profile of
 // shape mcp gives and not empty, a calculator of exactly name and version,
 // strings, on a profile of class record and shape mcp, and a research
-// declaration of §5.1's form. Its maxima, three capabilities and a model of
-// 256 bytes, are counted before any form (preparationCountBounds).
+// declaration of §5.1's form, and an endpointScope of §5.1's form on the
+// profiles §5.1 admits it on (endpointScopeForm). Its maxima, three
+// capabilities, a model of 256 bytes, and 32 scope entries of 2048 bytes
+// each, are counted before any form (preparationCountBounds).
 func profileForm(value any, ids map[string]bool) error {
 	p, ok := value.(map[string]any)
-	if !ok || !closedMembers(p, []string{"id", "publicKey", "class", "source", "authority", "shape", "adapter", "endpoint"}, []string{"tools", "calculator", "research"}) {
-		return errors.New("a profile is an object of exactly id, publicKey, class, source, authority, shape, adapter and endpoint, and optionally tools, calculator and research")
+	if !ok || !closedMembers(p, []string{"id", "publicKey", "class", "source", "authority", "shape", "adapter", "endpoint"}, []string{"endpointScope", "tools", "calculator", "research"}) {
+		return errors.New("a profile is an object of exactly id, publicKey, class, source, authority, shape, adapter and endpoint, and optionally endpointScope, tools, calculator and research")
 	}
 	str := func(v any) bool { _, ok := v.(string); return ok }
 	id, _ := p["id"].(string)
@@ -141,6 +143,28 @@ func profileForm(value any, ids map[string]bool) error {
 		}
 		if text, _ := model.(string); named && text == "" {
 			return errors.New("its research model is not a non-empty string")
+		}
+	}
+	if scope, present := p["endpointScope"]; present {
+		list, ok := scope.([]any)
+		entries := make([]string, 0, len(list))
+		for _, entry := range list {
+			text, isString := entry.(string)
+			ok = ok && isString
+			entries = append(entries, text)
+		}
+		if !ok {
+			return errors.New("its endpointScope is not an array of strings")
+		}
+		h := scopeHolder{class: p["class"].(string), shape: shape, adapter: adapter["name"].(string), endpointNull: p["endpoint"] == nil}
+		if research, declared := p["research"].(map[string]any); declared {
+			h.declared, h.capabilities = true, []string{}
+			for _, c := range research["capabilities"].([]any) {
+				h.capabilities = append(h.capabilities, c.(string))
+			}
+		}
+		if err := endpointScopeForm(h, entries); err != nil {
+			return fmt.Errorf("its endpointScope: %w", err)
 		}
 	}
 	return nil

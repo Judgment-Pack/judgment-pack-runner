@@ -14,7 +14,13 @@ type InputProfile struct {
 	Shape     string     `json:"shape"`
 	Adapter   AdapterPin `json:"adapter"`
 	Endpoint  *string    `json:"endpoint"`
-	Tools     []string   `json:"tools,omitempty"`
+	// EndpointScope, when set, is the profile's endpoint constraint in
+	// place of one exact endpoint, which is then null: the endpoint prefixes,
+	// or the wildcard, a page receipt's endpoint must match (spec/dialect.md
+	// §5.1, endpoint_scope.go). Its digest pins the whole scope. Absent, the
+	// profile encodes as before.
+	EndpointScope EndpointScope `json:"endpointScope,omitempty"`
+	Tools         []string      `json:"tools,omitempty"`
 	// Calculator, when set, is the installation's statement that each allowed
 	// tool computes a deterministic function of the inputs it echoes and the
 	// tables it reports, calling no model. Absent, the profile encodes as before.

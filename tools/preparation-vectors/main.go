@@ -30,7 +30,9 @@
 // the fortieth and forty-first, acquired-dependent-source and
 // acquired-dependent-source-unknown, the first to hold an acquired source
 // that declares source parameters: the run wrote the first thirty-nine again
-// byte for byte.
+// byte for byte. So were the six after them, the endpoint-scope vectors, the
+// first whose page profile carries an endpoint scope (RFC 0018 round 15,
+// runner #141): the run wrote the first forty-one again byte for byte.
 package main
 
 import (
@@ -126,6 +128,48 @@ var afterResearch = []spec{
 		note: "A run of three operations of one profile, as Runner exported it (version 5), signed, witnessed and bound, as acquired-dependent-source's but that endorsement's record names no endorsement; its three records were signed by the test under a key made for the run, standing in for a gateway, and no live service was asked. sponsor's record names the sponsor S-1, and its claim is resolved, so endorsement is acquired with both its source parameters valued, approver from sponsor's /sponsor/id and requestType from intake's /intake/type; its claim is unknown, not-endorsed. A reader concludes that an acquired source whose claim is unknown carries dependencies too: each of its lineage entries, the fact /endorsement, not present, and the evidence sponsor-endorsement, present with the availability unknown, carries every source parameter it declares as objects {parameter, source, pointer} in the order of the parameters' names, approver from sponsor before requestType from intake, though intake comes first among the sources. The parameters' values are carried into its request: the outcome's parameters are approver S-1 and requestType data-access with requestId and runAt, and its arguments are the request they were written into, {tool: lookup, arguments: {table: endorsements, approver: S-1, requestType: data-access}}. Each of its entries carries endorsement's receipt and the outcome's status and reason, unknown and not-endorsed; no other source's entry carries dependencies. A reader recomputing the preparation concludes verified-inputs, the record's binding matching the preparation."},
 }
 
+// scopeRun is what every endpoint-scope vector's run is: how its documents
+// were made, which no reader can check, and what nothing in it is.
+const scopeRun = "A run of one research source, company-pages, as Runner exported it (version 5), signed, witnessed and bound, under an installation whose page profile, pages, carries an endpoint scope in place of one endpoint (spec/dialect.md, section 5.1, RFC 0018 round 15): its endpoint null and its endpointScope %s; its class generated, its research declaration the capability page alone, its shape http and its adapter adapter-web. The scope's whole value is in the profile's digest, which binding.json pins. The dialect, of version 3, was published with the source unbound (unbound.json) and bound at import by binding.json to the AI profile assistant, which pins one endpoint, and to pages for page; mapping.json is the bound dialect. The source asks for answer and page. Its research record (sources.json) retains the answer and two pages read through pages, each with its request, its result, the receipt a gateway signed and the salts, and its answers cite them: the company's id the answer and the first page, its headcount the first page, whether it is active the second; its read copies the answers to /company. The responses were served, in the test's process, by a stand-in of a gateway over TLS on the loopback address, at hosts of example.com that the test's client reaches at it, each receipt minted as a gateway mints one, under the stand-in's key, at call indexes of one session; a page's receipt names as acquisition.endpoint the page's final URL, its query removed, as the gateway's web adapter writes it. No model was asked, no page outside the test's process was read, and every identifier, URL and observation is synthetic. "
+
+// scopeReads is what a reader does with an endpoint-scope vector that reads.
+const scopeReads = " A reader binds unbound.json with binding.json under profiles.json and holds the result to mapping.json, replays each retained response under the profile it names, over its own request, holding each page receipt's endpoint to the profile's scope in place of one endpoint (section 5.2, check 3) and every other member of check 3 exactly, recomputes the preparation from the record, and concludes verified-inputs, the record's binding matching the preparation: one reviewed page profile verified the reads of two URLs. Replay asks nothing, so a second installation given these files verifies them without a network."
+
+// scopeFixture is the run the endpoint-scope refusals are made from.
+const scopeFixture = "research/endpoint-scope-two-paths-one-origin"
+
+// scopePrefix is the scope of scopeFixture's page profile, as written.
+const scopePrefix = `["https://docs.example.com/guides"]`
+
+// afterScope are the endpoint-scope vectors, added after the forty-one: two
+// runs that read, and four refusals made from the first.
+var afterScope = []spec{
+	{name: "endpoint-scope-two-paths-one-origin", from: scopeFixture, args: strongest, key: true, held: true, want: "verified-inputs",
+		note: fmt.Sprintf(scopeRun, scopePrefix) + "The scope is one prefix, https://docs.example.com/guides. The two pages were requested at https://docs.example.com/guides/alpha?item=company-0007-a and https://docs.example.com/guides/beta?item=company-0007-b, two paths of one origin, and their receipts name the endpoints https://docs.example.com/guides/alpha and https://docs.example.com/guides/beta, each of which the prefix admits: the host equal, and the path the prefix's followed by a literal slash." + scopeReads},
+	{name: "endpoint-scope-wildcard-two-origins", from: "research/endpoint-scope-wildcard-two-origins", args: strongest, key: true, held: true, want: "verified-inputs",
+		note: fmt.Sprintf(scopeRun, `["https://*"]`) + "The scope is the wildcard, https://*, which only a profile of class generated may carry. The two pages were requested at https://alpha.example.com/notes/one?item=company-0007-a and https://beta.example.com/notes/two?item=company-0007-b, two origins, and their receipts name the endpoints https://alpha.example.com/notes/one and https://beta.example.com/notes/two. The wildcard admits every endpoint in the constrained page form, and each is in it: https, a DNS name of two or more labels, no port but 443, and no user, query, fragment, IP literal or dot segment. It asserts no public reachability: no name is resolved." + scopeReads},
+	{name: "endpoint-scope-endpoint-outside", from: scopeFixture, args: strongest, key: true, held: true,
+		want:    "Source company-pages: retained response 2, through the profile pages: the endpoint is outside the trusted profile's endpoint scope (acquisition-invalid). No decision was requested.",
+		altered: "In the export's research record of the source company-pages, the third retained response, the second page, is replaced by a response the stand-in served next in the run's session, through the same profile, at call index 3, which the run did not retain (the fixture's unretained.json, outside): requested at https://docs.example.com/guides-archive/beta?item=company-0007-b, its receipt naming the endpoint https://docs.example.com/guides-archive/beta, signed under the profile's key. The answers, every receipt and the recorded preparation are as they were.",
+		alter:   unretainedResponse("outside"),
+		note:    fmt.Sprintf(scopeRun, scopePrefix) + "The two-paths run with its second page replaced by a page whose receipt, signed under the profile's key, names an endpoint outside the scope: /guides-archive/beta begins with the prefix's path, /guides, but not at a literal slash, so the prefix does not admit it, where a comparison of strings by prefix alone would. preparation.json is the preparation the run recorded, which the export retains, and the Runner computes none from the changed inputs. A reader replays the third response under its profile and concludes acquisition-invalid: its endpoint is outside the profile's scope (section 5.2, check 3), though its signature, its commitment to its request and its result digest hold. verify-run refuses it with no report."},
+	{name: "endpoint-scope-redirect-outside", from: scopeFixture, args: strongest, key: true, held: true,
+		want:    "Source company-pages: retained response 2, through the profile pages: the endpoint is outside the trusted profile's endpoint scope (acquisition-invalid). No decision was requested.",
+		altered: "In the export's research record of the source company-pages, the third retained response, the second page, is replaced by a response the stand-in served next in the run's session, through the same profile, at call index 4, which the run did not retain (the fixture's unretained.json, redirected): requested at https://docs.example.com/guides/moved?item=company-0007-b, inside the scope, and redirected by the stand-in to https://elsewhere.example.com/landing?item=company-0007-b, its receipt naming that final URL with its query removed, https://elsewhere.example.com/landing, as the gateway's web adapter names the URL a followed redirect ends at; signed under the profile's key. The answers, every receipt and the recorded preparation are as they were.",
+		alter:   unretainedResponse("redirected"),
+		note:    fmt.Sprintf(scopeRun, scopePrefix) + "The two-paths run with its second page replaced by a page requested inside the scope whose redirect ended outside it, on another host. preparation.json is the preparation the run recorded, which the export retains, and the Runner computes none from the changed inputs. A reader holds the endpoint the receipt names, the final URL, to the scope, and concludes acquisition-invalid (section 5.2, check 3, and \"Which URL is held\"), though the signature, the commitment to the request and the result digest hold; the requested URL, which the receipt commits, is not itself held to the scope in replay. verify-run refuses it with no report."},
+	{name: "endpoint-scope-changed-constraint", from: scopeFixture, args: strongest, key: true, held: true,
+		want:    "release profile is not independently trusted",
+		altered: "profiles.json's page profile, pages, carries its scope widened by one entry, [\"https://docs.example.com/guides\",\"https://elsewhere.example.com\"] where it was " + scopePrefix + "; every other file is as the run wrote it, binding.json and mapping.json naming the profile by the digest it had.",
+		alter:   changedProfiles(`"endpointScope":`+scopePrefix, `"endpointScope":["https://docs.example.com/guides","https://elsewhere.example.com"]`),
+		note:    fmt.Sprintf(scopeRun, scopePrefix) + "The installation's page profile changed after the run: its scope, which its digest holds whole, admits more than the scope the binding reviewed. preparation.json is the preparation the run recorded, which the export retains, and the Runner computes none from the changed inputs. A reader binding unbound.json with binding.json under profiles.json finds the binding naming pages by a digest that is not the given profile's, and concludes profile-mismatch before any response is replayed: a changed scope is another profile, which a binding must name anew. verify-run refuses it with no report."},
+	{name: "endpoint-scope-changed-request", from: scopeFixture, args: strongest, key: true, held: true,
+		want:    "Source company-pages: retained response 2, through the profile pages: response does not match the frozen request and this case's parameters (acquisition-invalid). No decision was requested.",
+		altered: "In the export's research record of the source company-pages, the request of the third retained response, the second page, names https://docs.example.com/guides/gamma?item=company-0007-b where it named https://docs.example.com/guides/beta?item=company-0007-b; its receipt, which commits the request as it was, and the recorded preparation are as they were.",
+		alter:   changedResponse(`"request":{"url":"https://docs.example.com/guides/beta?item=company-0007-b"}`, `"request":{"url":"https://docs.example.com/guides/gamma?item=company-0007-b"}`),
+		note:    fmt.Sprintf(scopeRun, scopePrefix) + "The two-paths run with the second page's request changed under its receipt. The changed URL is inside the scope, and replay holds no requested URL to the scope; the receipt's commitment holds the request's bytes. preparation.json is the preparation the run recorded, which the export retains, and the Runner computes none from the changed inputs. A reader replays the third response over its own request, finds that the receipt's arguments commitment is not of it, and concludes acquisition-invalid (section 5.2, check 4). verify-run refuses it with no report."},
+}
+
 // vector is a vector's files as they are made.
 type vector struct {
 	run, profiles []byte
@@ -212,7 +256,7 @@ func generate(runner, out string) error {
 		CanonicalForm: "docs/MAPPING-V2.md, \"The canonical form of a preparation\"",
 		Generator:     "tools/preparation-vectors, run once from the fixtures named by each vector's from; the vectors are not regenerated",
 	}
-	for _, s := range append(append(append([]spec{}, specs...), researchSpecs()...), afterResearch...) {
+	for _, s := range append(append(append(append([]spec{}, specs...), researchSpecs()...), afterResearch...), afterScope...) {
 		e, err := write(s, runner, filepath.Join(out, s.name))
 		if err != nil {
 			return fmt.Errorf("%s: %w", s.name, err)
@@ -640,6 +684,60 @@ func changedResponse(from, to string) func(*vector) error {
 			return err
 		}
 		v.run = splice(v.run, start, end, changed)
+		v.retained = "recorded"
+		return nil
+	}
+}
+
+// unretainedResponse replaces, once, the third retained response of the
+// export's research record of company-pages, its second page, with the
+// response the fixture's unretained.json names: one the stand-in served next
+// in the run's session through the same profile, which the run did not
+// retain, its receipt as signed. Nothing else changes: not the answers, which
+// cite it by its index as they cited the page it replaces, and not the
+// preparation the run recorded, which the export retains and
+// preparation.json holds, since the Runner computes none from the changed
+// inputs.
+func unretainedResponse(name string) func(*vector) error {
+	return func(v *vector) error {
+		raw, err := os.ReadFile(filepath.Join(fixtures, scopeFixture, "unretained.json"))
+		if err != nil {
+			return err
+		}
+		var unretained map[string]json.RawMessage
+		if err = json.Unmarshal(raw, &unretained); err != nil || len(unretained[name]) == 0 {
+			return fmt.Errorf("the fixture keeps no response %s apart: %v", name, err)
+		}
+		start, end, err := span(v.run, "run", "input", "source", "sources", "company-pages", "response", "result", "responses")
+		if err != nil {
+			return err
+		}
+		var responses []json.RawMessage
+		if err = json.Unmarshal(v.run[start:end], &responses); err != nil || len(responses) != 3 {
+			return fmt.Errorf("the record does not retain three responses: %v", err)
+		}
+		changed, err := replace(v.run[start:end], string(responses[2]), string(unretained[name]), 1)
+		if err != nil {
+			return err
+		}
+		v.run = splice(v.run, start, end, changed)
+		v.retained = "recorded"
+		return nil
+	}
+}
+
+// changedProfiles changes, once, the vector's profiles, profiles.json, and
+// nothing else: not the binding document or the bound dialect, which name the
+// profile by the digest it had, and not the preparation the run recorded,
+// which the export retains and preparation.json holds, since the Runner
+// computes none from the changed inputs.
+func changedProfiles(from, to string) func(*vector) error {
+	return func(v *vector) error {
+		changed, err := replace(v.profiles, from, to, 1)
+		if err != nil {
+			return err
+		}
+		v.profiles = changed
 		v.retained = "recorded"
 		return nil
 	}

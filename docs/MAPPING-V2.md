@@ -15,7 +15,8 @@ orchestration and retained lineage view. No new repository or shared module is i
 Source classes are `asserted`, `record`, and `generated`. Case/local-file data is
 asserted. For authenticated sources the installation, not a mapping/API caller,
 supplies a trusted profile. A profile pins source, authority, gateway public key,
-adapter name/version/digest, shape, endpoint, class, permitted read tools and, for a
+adapter name/version/digest, shape, endpoint or, for a page channel, endpoint
+scope ([below](#research-sources)), class, permitted read tools and, for a
 channel a research source is bound to, the research capabilities and model it
 declares ([below](#research-sources)). Its
 canonical digest is frozen into the mapping; the release retains the profile.
@@ -134,7 +135,8 @@ Source kinds:
   `acquisition.endpoint` and `acquisition.adapter` must be, as JSON values, the
   shape, endpoint and adapter its profile pins: the adapter as a whole object, so
   that a signed receipt whose adapter has a member more or a member fewer is
-  refused (spec/dialect.md §5.2, check 3). For `mcp` the request template names a fixed,
+  refused (spec/dialect.md §5.2, check 3). A profile that carries an endpoint
+  scope binds no operation (`profile-mismatch`; [Research sources](#research-sources)). For `mcp` the request template names a fixed,
   operator-allowed tool. For another shape it is the request that source reads (for
   the gateway's `adapter-http`, a path, a method, a query and a body), formed by the
   mapping's author and held to the template rules below, which the receipt commits
@@ -528,12 +530,98 @@ establishes (spec/dialect.md §13): that each receipt holds its request and its
 bytes under its trusted profile, and that the model and capabilities the source
 declares match the profiles bound.
 
+**An endpoint scope** (spec/dialect.md §5.1, §5.2 check 3, §11, §12 and §13:
+RFC 0018 round 15, judgment-pack-spec#207 at `56bec90`; runner #141). A page
+profile may carry `endpointScope` in place of one exact `endpoint`, so that one
+reviewed profile verifies the reads of more than one URL:
+
+```json
+{"id": "pages", "class": "generated", "shape": "http", "source": "web",
+ "adapter": {"name": "adapter-web", "…": "…"}, "endpoint": null,
+ "endpointScope": ["https://docs.example.com/guides"],
+ "research": {"capabilities": ["page"]}, "…": "…"}
+```
+
+- **The member.** One to 32 distinct entries of at most 2048 bytes each; over
+  either bound is `input-over-bound`, counted before any form, on a profile of
+  any shape. `endpoint` is written `null` beside it; the member is admitted only
+  on shape `http` with `adapter.name` `adapter-web`; a `research` declaration,
+  when present, is exactly `["page"]`, and every `generated` profile carrying the
+  member has one. Each entry is a prefix in the constrained page form, or exactly
+  the wildcard `https://*`, which only a `generated` profile may carry. The form
+  is `https://`, a host of two or more dot-separated labels, each of 1 to 63
+  ASCII letters, digits and hyphens that starts and ends with a letter or digit,
+  the last starting with a letter; then nothing, `:443` or `:` followed by
+  nothing; then nothing or a path that begins with `/`. It has at most 2048
+  characters from U+0021 to U+007E, and no user, query, fragment, backslash, IP
+  literal, other port, `%` without two hexadecimal digits after it, or dot
+  segment, literal or percent-spelled (`.`, `..`, `%2e`, `.%2E`, …, between
+  literal slashes). Anything else, `null` and `[]` included, is
+  `input-malformed`. Every path that takes profiles holds the member alike: an
+  installation's at start and at registration (`POST /v1/input-profiles`),
+  `verify-run`'s `--profiles`, and `verify-preparation`'s, which are digested
+  over their canon bytes. Runner's own limits on an installation's profiles,
+  such as 32 KiB each, stay on the live paths alone. The whole scope, its
+  entries and their order, enters the profile's digest. A changed scope is
+  another profile, which every binding must name anew.
+- **The binding.** Such a profile binds a research source's `page` assignment;
+  the dialect's kind `web`, which §5.1 also admits it on, Runner refuses by name.
+  Assigned for `answer` or `search`, or bound to an operation or a selected file,
+  it is `profile-mismatch`, and so is a `record` profile assigned to research, as
+  any is. `search` and `answer` keep their exact provider endpoints.
+- **Check 3.** A receipt verified under such a profile, a retained page
+  response's, names as `acquisition.endpoint` a string in the constrained page
+  form that an entry admits. Its adapter and shape are compared exactly, as
+  ever. A failure, an endpoint outside the form included, is
+  `acquisition-invalid`. A prefix admits an endpoint when the hosts are equal,
+  ASCII `A` to `Z` compared as `a` to `z`, no port, `:443` and `:` alike denoting
+  port 443; and when the prefix's path is absent or `/`, or the endpoint's path
+  equals it or begins with it followed by `/`, or, the prefix ending in `/`,
+  begins with it. So `/docs` admits `/docs` and `/docs/x`, never `/docsx`.
+  Paths are compared byte for byte, case and percent spelling included, nothing
+  decoded or normalized, and no subdomain matches. The wildcard admits every
+  endpoint in the form, of any host, and asserts no public reachability: no
+  name is resolved. One matcher (`endpointInScope`) serves a run, an import,
+  `verify-run` and `verify-preparation`, written from the text with no URL
+  library. The endpoint held is the one the receipt names: the final URL after
+  followed redirects, its query removed, as the gateway's web adapter writes it.
+  So a page requested inside the scope whose redirect ends outside it fails.
+  Without `endpointScope`, check 3 is the exact comparison it was, and the
+  profile's form and digest are unchanged.
+- **Admission before acquisition is the caller's.** Runner sends no page
+  request. It reads a research source's retained responses as its caller
+  assembled them. The one source it acquires itself, an operation, through the
+  gateway in the background or in a workflow, cannot be bound to a scoped
+  profile: its plan refuses one, `profile-mismatch`, before any source is called.
+  A caller that reads pages for a research source, such as Desk's shared
+  executor, MUST check every requested page URL against the page assignment's
+  scope before it sends the request (§5.1). The URL is in the endpoint form,
+  optionally followed by `?` and a query of characters from U+0021 to U+007E
+  other than `#`, each `%` followed by two hexadecimal digits, and is at most
+  2048 bytes. It is matched with only its first `?` and what follows removed,
+  and committed unchanged. An invalid or out-of-scope URL fails as
+  `acquisition-invalid` before any acquisition for it, every discovered URL
+  alike. A read reached through the gateway's grounding redirect needs that
+  redirect's endpoint in the scope, or the wildcard. Replay does not hold the
+  requested URL to the scope: it holds the receipt's endpoint, and check 4 the
+  request's bytes. A receipt outside the scope that a caller retains anyway is
+  refused at verification, `acquisition-invalid`, on every path above.
+- **What it establishes** (§13): that each receipt's final endpoint lay in the
+  installation's reviewed scope, as the gateway's adapter testified under its
+  signature. It does not establish the page's content or relevance, that the
+  host is public, anything about the requested URL's scope or intermediate
+  redirects, or that the caller checked admission.
+
 **The vectors.** The research vectors
 ([`vectors/preparation`](../vectors/preparation/README.md)) are the first of the
 kind: twenty-six runs of the specification's two examples, `gtm-company-person`
 and `work-item-triage`, recorded from responses a stand-in served in the tests'
 process, each evaluated, signed, witnessed and bound, and two findings made from
-them.
+them. The six endpoint-scope vectors hold the scope: two runs of one research
+source reading two pages under one scoped page profile, two paths of one origin
+under a prefix and two origins under the wildcard, and four refusals made from
+the first, of an endpoint outside the prefix, of a redirect that ends outside
+it, of a changed scope and of a changed request.
 
 ## Numeric and resource profile
 
@@ -1713,9 +1801,11 @@ where a run keeps a version-2 document as Runner encodes it.
 The profiles given are held to §5.1 alone, as the specification's reader holds
 them, and each is digested as given. A profile is an object of exactly `id`,
 `publicKey`, `class`, `source`, `authority`, `shape`, `adapter` and `endpoint`,
-and optionally `tools`, `calculator` and `research`, each of the form §5.1's
-table gives it, and a declaration over §12's research maxima is
-`input-over-bound`; anything else is `input-malformed`. Its digest, the one a
+and optionally `endpointScope`, `tools`, `calculator` and `research`, each of
+the form §5.1's table gives it, an endpoint scope on the profiles §5.1 admits
+it on ([Research sources](#research-sources)); a declaration over §12's
+research maxima, and a scope of more than 32 entries or with an entry of more
+than 2048 bytes, are `input-over-bound`; anything else is `input-malformed`. Its digest, the one a
 source, a binding document or a retained response must name it by, is the
 digest of its canon bytes as written (§5.1: "Its digest is the digest of its
 canon bytes"), an empty `tools` array included. The limits Runner sets on an
@@ -1776,8 +1866,16 @@ vectors with any of its versions yet (§14).
 On the forty-one vectors and on the Exchange's example fixtures, given as the
 Exchange's tests give them, its reports are byte for byte those of the
 specification's own reader, `tools/dialect_verify.py`, at the commit
-`e10421b` of judgment-pack-spec; the tests hold each vector to its manifest
-and each example fixture to its `preparationDigest`. Where an input has more
+`e10421b` of judgment-pack-spec; on the six endpoint-scope vectors and on each
+probe of the specification's `tests/test_dialect_scope.py`, they are those of
+that reader at the commit `56bec90` (judgment-pack-spec#207). The tests hold
+each vector to its manifest and each example fixture to its
+`preparationDigest`. Of `endpoint-scope-changed-constraint`, whose profile
+changed after the run, `verify-preparation` finds `profile-mismatch`, a
+binding naming the profile by a digest the profile given does not have, where
+`verify-run`, which holds a release's frozen profiles to the profiles it is
+given before it replays anything, refuses the export first: `release profile is
+not independently trusted`. Where an input has more
 than one fault, it reports the first Runner's preparation meets, which is not
 always the first in §11's order. A case document that is not one object is
 refused, `input-malformed`, as every run's case is, where the specification's

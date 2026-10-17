@@ -20,7 +20,7 @@ const preparationVectors = "../../vectors/preparation/"
 // holds the SHA-256 of every file of every vector. The vectors were generated
 // once and are not regenerated: changing one is a change of the contract a
 // second reader is held to, and changes this digest with it.
-const preparationVectorsManifest = "sha256:30482dfdec4fa3960824fbb686229686c40005427c422092c210a204cf0be09e"
+const preparationVectorsManifest = "sha256:31c90c49f78d18cad791d184c7c73c98d8b60a32d5b5ffb3ad308ae75a0b195a"
 
 // preparationVector is a vector as the manifest describes it
 // (vectors/preparation/README.md).
@@ -142,11 +142,14 @@ func TestPreparationVectorsAreByteExact(t *testing.T) {
 					t.Fatalf("the manifest names the import's files otherwise: %+v", *v.Import)
 				}
 				source.Import = &DialectImport{Dialect: file["unbound.json"], Binding: file["binding.json"]}
+				// A profile changed after the run does not bind: the import
+				// is refused as the preparation below refuses it.
 				bound, err := bindDialect(*source.Import, profiles)
 				if err != nil {
-					t.Fatal("the vector's import does not bind:", err)
-				}
-				if !bytes.Equal(canonTest(t, encode(bound)), canonTest(t, file["mapping.json"])) {
+					if v.Preparation.Retained != "recorded" || v.VerifyRun.Error == nil || !refusedAsVerifyRun(t, err, *v.VerifyRun.Error) {
+						t.Fatal("the vector's import does not bind:", err)
+					}
+				} else if !bytes.Equal(canonTest(t, encode(bound)), canonTest(t, file["mapping.json"])) {
 					t.Fatalf("the bound dialect is not mapping.json:\n%s\n%s", encode(bound), file["mapping.json"])
 				}
 			} else if _, ok := file["unbound.json"]; ok {
@@ -164,10 +167,14 @@ func TestPreparationVectorsAreByteExact(t *testing.T) {
 			// A vector whose inputs were changed after the run, retained
 			// "recorded", is one the Runner computes no preparation from: it
 			// refuses the inputs as verify-run does, and preparation.json is
-			// the preparation the run recorded, held fixed.
+			// the preparation the run recorded, held fixed. Where verify-run
+			// refuses the release's frozen profile first, a profile changed
+			// after the run, the Runner's preparation, given no release, finds
+			// the binding naming the profile by another digest
+			// (recordedFinding).
 			prepared, err := prepareV2(Input{Source: source}, profiles, at, false, nil)
 			if v.Preparation.Retained == "recorded" {
-				if v.Altered == nil || err == nil || v.VerifyRun.Error == nil || err.Error() != *v.VerifyRun.Error {
+				if v.Altered == nil || err == nil || v.VerifyRun.Error == nil || !refusedAsVerifyRun(t, err, *v.VerifyRun.Error) {
 					t.Fatalf("the Runner does not refuse the changed inputs as verify-run does: %v", err)
 				}
 				var recorded VerificationBundle
@@ -292,4 +299,41 @@ func sortedStrings(s []string) []string {
 	out := append([]string(nil), s...)
 	sort.Strings(out)
 	return out
+}
+
+// releaseProfileUntrusted is verify-run's refusal of an export whose release
+// froze a profile it is not given: it holds the release's profiles to the
+// ones it trusts before it replays anything.
+const releaseProfileUntrusted = "release profile is not independently trusted"
+
+// recordedFinding is the finding a preparation verifier, given no release,
+// names of a vector whose inputs were changed after the run (retained
+// "recorded"): the code verify-run's refusal names at its end; or, where
+// verify-run refuses the release's frozen profile first, a profile changed
+// after the run, profile-mismatch, a binding naming the profile by a digest
+// the profile given does not have (spec/dialect.md §5.1). named says whether
+// verify-run's refusal names it.
+func recordedFinding(t *testing.T, refusal string) (code string, named bool) {
+	t.Helper()
+	if found := codeNamed.FindStringSubmatch(refusal); found != nil {
+		return found[1], true
+	}
+	if refusal != releaseProfileUntrusted {
+		t.Fatalf("verify-run's refusal names no code: %s", refusal)
+	}
+	return codeMismatch, false
+}
+
+// refusedAsVerifyRun says whether the Runner's preparation refuses a
+// vector's changed inputs as verify-run does: with its sentence, or, where
+// verify-run refuses the release's frozen profile first, with the finding
+// recordedFinding names.
+func refusedAsVerifyRun(t *testing.T, err error, refusal string) bool {
+	t.Helper()
+	code, named := recordedFinding(t, refusal)
+	if named {
+		return err.Error() == refusal
+	}
+	_, got := verificationOutcome(err)
+	return got == code
 }

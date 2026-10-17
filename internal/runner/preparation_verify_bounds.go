@@ -121,7 +121,7 @@ func preparationCountBounds(dialect, acquisitions, profiles, binding any) bool {
 	}
 	for _, value := range list(profiles) {
 		r := object(object(value)["research"])
-		if len(list(r["capabilities"])) > 3 || long(r["model"], 256) {
+		if len(list(r["capabilities"])) > 3 || long(r["model"], 256) || endpointScopeOver(object(value)["endpointScope"]) {
 			return true
 		}
 	}

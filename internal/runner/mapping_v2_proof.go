@@ -93,7 +93,13 @@ func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey,
 		if c := p.Calculator; c != nil && (p.Class != "record" || p.Shape != "mcp" || c.Name == "" || len(c.Name) > 256 || c.Version == "" || len(c.Version) > 256) {
 			return nil, errors.New("a calculator profile is a record MCP profile naming its calculator and version")
 		}
+		if p.EndpointScope != nil && endpointScopeOver(scopeEntries(p.EndpointScope)) {
+			return nil, researchFail(codeOverBound, "the input profile %s's endpointScope has more than %d entries, or an entry of more than %d bytes", p.ID, maxScopeEntries, maxScopeEntryBytes)
+		}
 		if e := researchDeclarationForm(p); e != nil {
+			return nil, e
+		}
+		if e := installedScopeForm(p); e != nil {
 			return nil, e
 		}
 		ids[p.ID] = true
@@ -115,6 +121,13 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 		if p.ID == s.Profile {
 			if profileHash(p) != s.ProfileDigest {
 				return p, withCode(codeMismatch, errors.New("trusted input profile changed; review a new release"))
+			}
+			// An endpoint scope binds a research source's page assignment
+			// and a web-kind source alone (spec/dialect.md §5.1): an
+			// operation, of any shape, and a selected file are of another
+			// kind. Runner refuses the kind web by name (refusedKind).
+			if (s.Kind == "operation" || s.Provider == "google-drive") && p.EndpointScope != nil {
+				return p, withCode(codeMismatch, fmt.Errorf("source %s: the profile %s carries an endpoint scope, which binds a research source's page assignment alone", s.Name, p.ID))
 			}
 			if s.Kind == "operation" && !adapterShapes[p.Shape] {
 				return p, withCode(codeMismatch, errors.New("an operation is read from an adapter source: its profile's shape must be airbyte, mcp or http"))
@@ -276,9 +289,21 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	// The receipt's endpoint and adapter are, as JSON values, the profile's
 	// (§5.2, check 3): the adapter as a whole object, so that a signed
 	// receipt whose adapter carries a member the profile does not pin is
-	// refused, as one that lacks a member is by its form above.
-	if a["endpoint"] != endpoint || !sameJSON(encode(adapter), encode(p.Adapter)) {
-		return fail("adapter or endpoint differs from the trusted profile")
+	// refused, as one that lacks a member is by its form above. Under an
+	// endpoint scope only the endpoint's comparison changes: the receipt's
+	// endpoint, the final URL the gateway's web adapter read, is in the
+	// constrained page form and matches the scope (endpointInScope).
+	if p.EndpointScope == nil {
+		if a["endpoint"] != endpoint || !sameJSON(encode(adapter), encode(p.Adapter)) {
+			return fail("adapter or endpoint differs from the trusted profile")
+		}
+	} else {
+		if !sameJSON(encode(adapter), encode(p.Adapter)) {
+			return fail("adapter or endpoint differs from the trusted profile")
+		}
+		if held, _ := a["endpoint"].(string); !endpointInScope(held, p.EndpointScope) {
+			return fail("the endpoint is outside the trusted profile's endpoint scope")
+		}
 	}
 	sig, _ := hex.DecodeString(str("signature"))
 	delete(r, "signature")
