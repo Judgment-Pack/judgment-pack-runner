@@ -149,7 +149,8 @@ func workflowAttemptInput(w workflowInventory, id string) (Input, error) {
 }
 
 type workflowAttemptResult struct {
-	Run []byte
+	Run        []byte
+	Signatures []byte
 	// Only an exact complete Runtime stdout can establish evaluation-error.
 	EvaluationError []byte
 	// Interrupted/cancelled and acquisition availability are host assertions.
@@ -172,7 +173,10 @@ func finishWorkflowAttempt(w workflowInventory, id string, result workflowAttemp
 	}
 	next := w.copy()
 	attempt := &next.Execution.Instances[index].Attempts[len(instance.Attempts)-1]
-	if attempt.RunDigest != nil || attempt.PreparationDigest != nil || attempt.AuditDigest != nil {
+	if attempt.AuditDigest != nil || attempt.EvaluationErrorDigest != nil {
+		return w, errWorkflowTransition
+	}
+	if attempt.RunDigest != nil && len(result.Run) == 0 {
 		return w, errWorkflowTransition
 	}
 	attempt.State, attempt.Failure = result.State, nil
@@ -183,6 +187,9 @@ func finishWorkflowAttempt(w workflowInventory, id string, result workflowAttemp
 			return w, errWorkflowBound
 		}
 		if strictJSON(result.Run, &bundle) != nil || !sameJSON(result.Run, encode(bundle)) || exportWithinLimits(result.Run, bundle) != nil || (bundle.Version != 2 && bundle.Version != 3) || bundle.ReleaseDigest != frozen.ReleaseDigest || releaseDigest(bundle.Release) != frozen.ReleaseDigest || bundle.Run.ReleaseID != bundle.Release.ID || bundle.Run.Input.Source == nil || !mappingMatchesRelease(bundle.Release, bundle.Run.Input) {
+			return w, errWorkflowTransition
+		}
+		if !workflowCheckpointIdentity(w, id, bundle) {
 			return w, errWorkflowTransition
 		}
 		// Structural checks apply even when preparation never completed. An
@@ -283,6 +290,10 @@ func finishWorkflowAttempt(w workflowInventory, id string, result workflowAttemp
 				return w, errWorkflowTransition
 			}
 			attempt.EvaluationErrorDigest = workflowPin(next.keep("evaluation-error", result.EvaluationError))
+		case "preparation-failed", "admission-refused":
+			if len(result.EvaluationError) > 0 || attempt.PreparationDigest != nil || len(bundle.Run.Audit) > 0 || len(bundle.Run.Result) > 0 || workflowPreparationFailure(bundle.Run, profiles) != result.Failure {
+				return w, errWorkflowTransition
+			}
 		case "acquisition-failed":
 			if len(result.EvaluationError) > 0 || attempt.PreparationDigest != nil || len(bundle.Run.Audit) > 0 || len(bundle.Run.Result) > 0 {
 				return w, errWorkflowTransition
@@ -293,6 +304,16 @@ func finishWorkflowAttempt(w workflowInventory, id string, result workflowAttemp
 		attempt.Failure = workflowPin(result.Failure)
 	default:
 		return w, errWorkflowTransition
+	}
+	if len(result.Signatures) > 0 {
+		if attempt.AuditDigest == nil || len(result.Signatures) > maxSidecar {
+			return w, errWorkflowTransition
+		}
+		key := workflowSignatureKey(id, attempt.Number, *attempt.RunDigest)
+		if old, ok := next.Artifacts[key]; ok && !bytes.Equal(old, result.Signatures) {
+			return w, errWorkflowTransition
+		}
+		next.Artifacts[key] = bytes.Clone(result.Signatures)
 	}
 	next.Execution.Instances[index].State, next.Execution.Instances[index].Failure = attempt.State, attempt.Failure
 	delete(next.Pending, id)

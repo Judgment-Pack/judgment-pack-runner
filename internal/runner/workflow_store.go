@@ -213,7 +213,7 @@ func workflowArtifactKey(key string) bool {
 		return false
 	}
 	switch kind {
-	case "workflow", "case", "published", "binding", "bound", "pack", "release", "selection", "output", "payload", "preparation", "audit", "run", "evaluation-error":
+	case "workflow", "case", "published", "binding", "bound", "pack", "release", "selection", "output", "payload", "preparation", "audit", "run", "evaluation-error", "audit-signatures":
 		return true
 	}
 	return false

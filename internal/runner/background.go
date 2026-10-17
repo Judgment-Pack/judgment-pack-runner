@@ -124,40 +124,58 @@ func (s *Service) acquireAutomatic(parent context.Context, input Input) (Input, 
 		if next == nil || next.Kind != "operation" {
 			return input, bad("automatic_source_unavailable", "A fresh local source is missing.")
 		}
-		gateway := ""
-		for _, g := range s.cfg.GatewayConnections {
-			if g.Profile == next.Profile {
-				gateway = g.URL
-			}
+		value, err := s.acquirePlannedOperation(ctx, *next)
+		if err != nil {
+			return input, err
 		}
-		if gateway == "" {
-			return input, bad("gateway_connection_required", "The Gateway connection is no longer available.")
-		}
-		session := id("job.")
-		raw, e := automaticCall(ctx, gateway+"/acquire", encode(map[string]any{"session": session, "source": next.Source, "arguments": next.Arguments}), 1<<20)
-		// Housekeeping is bounded and never retries the acquisition itself.
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(parent), 3*time.Second)
-		_, _ = automaticCall(cleanup, gateway+"/seal", encode(map[string]string{"session": session}), 64<<10)
-		stop()
-		if e != nil {
-			return input, e
-		}
-		var response struct {
-			Receipt struct {
-				Session string `json:"sessionId"`
-				Index   int    `json:"callIndex"`
-			} `json:"receipt"`
-		}
-		if json.Unmarshal(raw, &response) != nil || response.Receipt.Session != session || response.Receipt.Index != 0 {
-			return input, bad("gateway_receipt_mismatch", "The Gateway response does not belong to this acquisition.")
-		}
-		input.Source.Sources[next.Name] = SourceValue{Response: raw}
+		input.Source.Sources[next.Name] = value
 		if len(encode(input)) > MaxBody {
 			return input, bad("input_too_large", "Acquired inputs exceed the combined input limit.")
 		}
 	}
 	return input, bad("automatic_plan_failed", "The acquisition plan did not finish within its source limit.")
 }
+
+// acquirePlannedOperation performs one fresh call. Its caller checkpoints the
+// returned response before another request, and never retries an uncertain call.
+func (s *Service) acquirePlannedOperation(parent context.Context, next PlannedSource) (SourceValue, error) {
+	if next.Kind != "operation" {
+		return SourceValue{}, bad("automatic_source_unavailable", "A fresh operation source is required.")
+	}
+	gateway := ""
+	for _, g := range s.cfg.GatewayConnections {
+		if g.Profile == next.Profile {
+			gateway = g.URL
+		}
+	}
+	if gateway == "" {
+		return SourceValue{}, bad("gateway_connection_required", "The Gateway connection is no longer available.")
+	}
+	session := id("job.")
+	raw, e := automaticCall(parent, gateway+"/acquire", encode(map[string]any{"session": session, "source": next.Source, "arguments": next.Arguments}), 1<<20)
+	// Housekeeping is bounded and never retries the acquisition itself.
+	cleanup, stop := context.WithTimeout(context.WithoutCancel(parent), 3*time.Second)
+	_, _ = automaticCall(cleanup, gateway+"/seal", encode(map[string]string{"session": session}), 64<<10)
+	stop()
+	if e != nil {
+		return SourceValue{}, e
+	}
+	var response struct {
+		Receipt struct {
+			Session string `json:"sessionId"`
+			Index   int    `json:"callIndex"`
+		} `json:"receipt"`
+	}
+	if json.Unmarshal(raw, &response) != nil || response.Receipt.Session != session || response.Receipt.Index != 0 {
+		value := SourceValue{}
+		if json.Valid(raw) {
+			value.Response = raw
+		}
+		return value, bad("gateway_receipt_mismatch", "The Gateway response does not belong to this acquisition.")
+	}
+	return SourceValue{Response: raw}, nil
+}
+
 func automaticCall(ctx context.Context, target string, body []byte, limit int64) ([]byte, error) {
 	req, e := http.NewRequestWithContext(ctx, "POST", target, bytes.NewReader(body))
 	if e != nil {

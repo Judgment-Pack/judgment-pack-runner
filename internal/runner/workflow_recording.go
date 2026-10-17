@@ -149,6 +149,14 @@ func (w workflowInventory) recordingFiles() (map[string][]byte, error) {
 					files[base+"audit-signatures.json"] = bytes.Clone(run.Run.AuditSignatures)
 				}
 			}
+			if attempt.AuditDigest != nil {
+				if signatures, ok := w.Artifacts[workflowSignatureKey(instance.ID, attempt.Number, *attempt.RunDigest)]; ok {
+					if len(signatures) == 0 || len(signatures) > maxSidecar {
+						return nil, errWorkflowTransition
+					}
+					files[base+"audit-signatures.json"] = bytes.Clone(signatures)
+				}
+			}
 			if attempt.PreparationDigest != nil {
 				if err := retained(base+"preparation.json", "preparation", *attempt.PreparationDigest, false); err != nil {
 					return nil, err
