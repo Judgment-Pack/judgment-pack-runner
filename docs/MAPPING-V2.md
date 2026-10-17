@@ -704,7 +704,7 @@ re-execution. An export without lineage is checked as
 that says so.
 
 Every retained result disposition must match the audit record, independently of
---runtime; a difference fails with audit-disposition-mismatch. The record
+--runtime; a difference fails with audit-disposition-mismatch. The preparation is verified independently of the disposition, which it does not read: beside the finding the report carries what was checked of the export (targetsByClass, unsignedFreshness, unsignedParameters, binding, runChain, signature), standard error says so, and a --require flag the export fails is added to the error; if the preparation fails its own verification, the report is the finding alone and the error carries both refusals. A refusal before the preparation is verified (the export's envelope, the release's digest, the record's bytes, chain entry or signature sidecar) reports alone. The record
 signature covers the exact audit bytes, not the export envelope: version,
 releaseDigest, release, inputs, chain (entry and checkpoint), run.trigger,
 run.schemaVersion, run.id, run.jobId, run.releaseId, run.revision, run.state,
@@ -724,7 +724,16 @@ the new binding, which only --require-witnessed, against a checkpoint held
 independently, shows. Separate release-digest, input, chain and checkpoint
 checks bind only what their documented scope states.
 
-The audit-disposition mismatch exits 1 with this report:
+The audit-disposition mismatch exits 1. Where the preparation verified, the
+report is the one a verified export has, with the status
+`audit-disposition-mismatch` and `retainedDisposition` `differs-from-audit`:
+
+```text
+{"binding":{"status":"matches"},"exactBytes":"not-in-export","exportVersion":2,"retainedDisposition":"differs-from-audit","scope":"retained input derivation and audit binding; not sealed-session completeness or policy truth","status":"audit-disposition-mismatch","targetsByClass":{"asserted":3,"record":0,"generated":0}}
+```
+
+Where the preparation failed its own verification too, the report is the
+finding alone, and the error carries both refusals:
 
 ```text
 {"retainedDisposition":"differs-from-audit","status":"audit-disposition-mismatch"}

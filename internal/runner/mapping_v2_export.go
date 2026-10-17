@@ -92,7 +92,14 @@ type VerifiedRun struct {
 	Binding  *BindingReport
 	bundle   VerificationBundle
 	prepared Input
+	checked  bool
 }
+
+// Checked says that the export's preparation verified. It is true of every
+// VerifiedRun VerifyInputs returns without an error, and of the one it returns
+// with ErrAuditDispositionMismatch when the preparation verified beside that
+// finding; it is false when the preparation was refused too.
+func (v VerifiedRun) Checked() bool { return v.checked }
 
 // VerifyInputs is VerifyRun, and returns what it verified. The classes are
 // counted from the recomputed lineage, which is the retained lineage: an export
@@ -101,20 +108,41 @@ type VerifiedRun struct {
 func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string) (VerifiedRun, error) {
 	var judged []judgedFreshness
 	b, prepared, e := verifyInputs(raw, profiles, trustedReleaseDigest, &judged)
-	if e != nil {
+	// A disposition that differs from the audit record is a finding beside
+	// the preparation's verification, which depends on nothing in the
+	// disposition: when the preparation verified, its checked report is kept
+	// and the finding is returned with it. When it did not, the error carries
+	// both refusals and the report is empty.
+	var both *PreparationRefusedWithFinding
+	finding := e != nil && errors.Is(e, ErrAuditDispositionMismatch) && !errors.As(e, &both)
+	if e != nil && !finding {
 		return VerifiedRun{}, e
 	}
 	if b.Inputs == InputsNotMapped {
 		// No lineage records a class for any target, no rule reads a
 		// parameter, no freshness was judged, and no preparation is bound:
 		// there is nothing to count.
-		return VerifiedRun{bundle: b, prepared: prepared}, nil
+		return VerifiedRun{bundle: b, prepared: prepared, checked: true}, e
 	}
-	binding, e := checkBinding(b)
-	if e != nil {
-		return VerifiedRun{}, e
+	binding, be := checkBinding(b)
+	if be != nil {
+		return VerifiedRun{}, errors.Join(e, be)
 	}
-	return VerifiedRun{classesOf(prepared.Preparation.Lineage), unsignedParameters(b.Run.Input.Source.Mapping, prepared.Preparation), unsignedFreshness(prepared.Preparation, judged), binding, b, prepared}, nil
+	return VerifiedRun{classesOf(prepared.Preparation.Lineage), unsignedParameters(b.Run.Input.Source.Mapping, prepared.Preparation), unsignedFreshness(prepared.Preparation, judged), binding, b, prepared, true}, e
+}
+
+// PreparationRefusedWithFinding is the error of an export whose retained
+// disposition differs from its audit record and whose preparation also failed
+// its own verification: it is both refusals, and there is no checked report.
+// errors.Is finds ErrAuditDispositionMismatch and the preparation's refusal.
+type PreparationRefusedWithFinding struct{ Preparation error }
+
+func (e *PreparationRefusedWithFinding) Error() string {
+	return ErrAuditDispositionMismatch.Error() + "; the preparation is refused as well: " + e.Preparation.Error()
+}
+
+func (e *PreparationRefusedWithFinding) Unwrap() []error {
+	return []error{ErrAuditDispositionMismatch, e.Preparation}
 }
 
 // Inputs is InputsNotMapped for an export of a run whose job has no input
@@ -246,21 +274,36 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 			return b, prepared, errors.New("a completed run's result and audit disposition must not be null")
 		}
 		if len(resultDisposition) == 0 || string(resultDisposition) == "null" || !sameJSON(resultDisposition, auditDisposition) {
+			// The preparation is verified all the same: nothing it
+			// checks reads the disposition. The finding is returned with
+			// what verified, or joined to the refusal that did not.
+			prepared, e = verifyPreparation(b, profiles, judged)
+			if e != nil {
+				return b, prepared, &PreparationRefusedWithFinding{e}
+			}
 			return b, prepared, ErrAuditDispositionMismatch
 		}
 	}
+	prepared, e = verifyPreparation(b, profiles, judged)
+	return b, prepared, e
+}
+
+// verifyPreparation is verifyInputs's check of the export's inputs, once its
+// envelope, release digest, record and dispositions have been held to it. It
+// reads nothing of either disposition.
+func verifyPreparation(b VerificationBundle, profiles []InputProfile, judged *[]judgedFreshness) (prepared Input, e error) {
 	switch b.Inputs {
 	case "":
 	case InputsNotMapped:
 		prepared, e = verifyNotMapped(b)
-		return b, prepared, e
+		return prepared, e
 	default:
-		return b, prepared, errors.New(`the export's inputs member is not one Runner writes: only "not-mapped" is`)
+		return prepared, errors.New(`the export's inputs member is not one Runner writes: only "not-mapped" is`)
 	}
 	r := b.Run
 	release := b.Release
 	if r.ReleaseID != release.ID || digest([]byte(release.Pack)) != release.PackDigest || r.Input.Preparation == nil || !mappingMatchesRelease(release, r.Input) {
-		return b, prepared, errors.New("run and frozen release differ")
+		return prepared, errors.New("run and frozen release differ")
 	}
 	for _, p := range release.InputProfiles {
 		found := false
@@ -268,24 +311,24 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 			found = found || profileHash(p) == profileHash(trusted)
 		}
 		if !found {
-			return b, prepared, errors.New("release profile is not independently trusted")
+			return prepared, errors.New("release profile is not independently trusted")
 		}
 	}
 	at, e := time.Parse("2006-01-02T15:04:05Z", r.Input.Preparation.VerifiedAt)
 	if e != nil {
-		return b, prepared, e
+		return prepared, e
 	}
 	prepared, e = prepareV2(r.Input, profiles, at, false, judged)
 	if e != nil {
-		return b, prepared, e
+		return prepared, e
 	}
 	if !sameJSON(encode(prepared.Preparation), encode(r.Input.Preparation)) {
-		return b, prepared, errors.New("retained lineage does not match recomputation")
+		return prepared, errors.New("retained lineage does not match recomputation")
 	}
 	if r.State == "completed" && !auditRecordsInputs(r.Audit, release, prepared, prepared.Preparation.Cites) {
-		return b, prepared, errors.New("retained audit inputs or citations do not match verified inputs")
+		return prepared, errors.New("retained audit inputs or citations do not match verified inputs")
 	}
-	return b, prepared, nil
+	return prepared, nil
 }
 
 func exactDisposition(raw json.RawMessage) (json.RawMessage, error) {

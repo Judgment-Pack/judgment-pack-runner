@@ -79,7 +79,7 @@ func TestVerifyRunBindsASignedDisposition(t *testing.T) {
 					if !errors.Is(err, runner.ErrDispositionMemberName) || out != "" || human != "" {
 						t.Fatal(err, out, human)
 					}
-				} else if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
+				} else if !errors.Is(err, runner.ErrAuditDispositionMismatch) || !strings.Contains(out, `"retainedDisposition":"differs-from-audit"`) || !strings.Contains(out, `"status":"audit-disposition-mismatch"`) || strings.Contains(out, "verified-") {
 					t.Fatal(err, out, human)
 				}
 			}

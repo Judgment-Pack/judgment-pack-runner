@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -69,7 +70,9 @@ func TestVerifyRunReportsEachPreparationVector(t *testing.T) {
 				}
 				return
 			}
-			if err == nil || err.Error() != *want.Error || want.Exit != 1 || stderr.Len() != 0 {
+			// Only the finding of a disposition that differs from the audit record
+			// says anything on standard error: what was checked beside it.
+			if err == nil || err.Error() != *want.Error || want.Exit != 1 || (stderr.Len() != 0) != (want.Status != nil && *want.Status == "audit-disposition-mismatch" && want.Report != nil && strings.Contains(*want.Report, `"targetsByClass"`)) {
 				t.Fatalf("verify-run refuses with %v and says %q, not %q", err, stderr.String(), *want.Error)
 			}
 		})

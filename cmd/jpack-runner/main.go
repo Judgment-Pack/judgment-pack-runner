@@ -116,7 +116,15 @@ func serve() error {
 }
 
 const verificationCoverage = "Every retained result disposition must match the audit record, independently of --runtime; a " +
-	"difference fails with audit-disposition-mismatch. The record signature covers the exact audit bytes, " +
+	"difference fails with audit-disposition-mismatch. " +
+	"The preparation is verified independently of the disposition, which it does not read: beside the " +
+	"finding the report carries what was checked of the export (targetsByClass, unsignedFreshness, " +
+	"unsignedParameters, binding, runChain, signature), standard error says so, and a --require flag the " +
+	"export fails is added to the error; if the preparation fails its own verification, the report is the " +
+	"finding alone and the error carries both refusals. A refusal before the preparation is verified (the " +
+	"export's envelope, the release's digest, the record's bytes, chain entry or signature sidecar) " +
+	"reports alone. " +
+	"The record signature covers the exact audit bytes, " +
 	"not the export envelope: version, releaseDigest, release, inputs, chain (entry and checkpoint), " +
 	"run.trigger, run.schemaVersion, run.id, run.jobId, run.releaseId, run.revision, run.state, run.input " +
 	"(including source and preparation.verifiedAt), run.createdAt, run.startedAt, run.finishedAt, " +
@@ -178,11 +186,19 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	verified, err := runner.VerifyInputs(raw, profiles, *release)
+	// A retained disposition that differs from the audit record is a finding
+	// beside the preparation's verification, which reads nothing of the
+	// disposition: when the preparation verified, its checked report is kept
+	// beside the finding. When it did not, the refusal is in the error beside
+	// the finding, and the report is the finding alone.
+	var finding error
 	if errors.Is(err, runner.ErrAuditDispositionMismatch) {
-		json.NewEncoder(stdout).Encode(map[string]string{"status": "audit-disposition-mismatch", "retainedDisposition": "differs-from-audit"})
-		return err
-	}
-	if err != nil {
+		if !verified.Checked() {
+			json.NewEncoder(stdout).Encode(map[string]string{"status": "audit-disposition-mismatch", "retainedDisposition": "differs-from-audit"})
+			return err
+		}
+		finding = err
+	} else if err != nil {
 		return err
 	}
 	classes, scope := targetsOf(verified), scopeOf(verified, inputsScope)
@@ -195,6 +211,10 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// or that --require-signed asks for and no valid one covers.
 	chain, err := checkChain(verified, *chainFile, expect, *requireWitnessed)
 	if err != nil {
+		if finding != nil {
+			json.NewEncoder(stdout).Encode(map[string]string{"status": "audit-disposition-mismatch", "retainedDisposition": "differs-from-audit"})
+			return errors.Join(finding, err)
+		}
 		return err
 	}
 	sig := checkSignature(verified, publicKey)
@@ -203,12 +223,22 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	reportOf := func(status, disposition string) verifyReport {
 		return verifyReport{Binding: verified.Binding, recordReport: record, RunChain: chain, Signature: sig, Status: status, RetainedDisposition: disposition, Scope: scope, TargetsByClass: classes, UnsignedFreshness: verified.Freshness, UnsignedParameters: verified.Unsigned}
 	}
-	if status, err := chainRefusal(chain, *requireWitnessed); err != nil {
+	// Beside the finding a refusal below is added to the error and the report
+	// says the finding; otherwise it is the report's own status, and ends the
+	// check.
+	var refusals []error
+	refuse := func(status string, err error) bool {
+		if finding != nil {
+			refusals = append(refusals, err)
+			return false
+		}
 		json.NewEncoder(stdout).Encode(reportOf(status, "matches-audit"))
+		return true
+	}
+	if status, err := chainRefusal(chain, *requireWitnessed); err != nil && refuse(status, err) {
 		return err
 	}
-	if status, err := signatureRefusal(sig, *requireSigned); err != nil {
-		json.NewEncoder(stdout).Encode(reportOf(status, "matches-audit"))
+	if status, err := signatureRefusal(sig, *requireSigned); err != nil && refuse(status, err) {
 		return err
 	}
 	// The record's binding of the preparation is held to the export's
@@ -216,8 +246,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// binding of another scheme, or another preparation's, is refused, and so,
 	// with --require-bound, is a record that carries none. The refusal comes
 	// before a re-execution, which then does not run.
-	if status, err := bindingRefusal(verified.Binding, verified.Inputs(), *requireBound); err != nil {
-		json.NewEncoder(stdout).Encode(reportOf(status, "matches-audit"))
+	if status, err := bindingRefusal(verified.Binding, verified.Inputs(), *requireBound); err != nil && refuse(status, err) {
 		return err
 	}
 	// An asserted target, and a parameter that its source's receipt does not
@@ -225,12 +254,25 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// rewrite consistently, and so are the inputs of a run without lineage.
 	// The refusal comes before a re-execution, which then does not run.
 	if *requireSourced {
-		if status, err := refuseUnsourced(verified.Inputs(), verified.Classes, verified.Unsigned); err != nil {
-			json.NewEncoder(stdout).Encode(reportOf(status, "matches-audit"))
+		if status, err := refuseUnsourced(verified.Inputs(), verified.Classes, verified.Unsigned); err != nil && refuse(status, err) {
 			return err
 		}
 	}
 	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + freshnessSentence(verified.Freshness, committed(verified.Binding, sig)) + notMappedSentence(verified.Inputs()) + record.sentence() + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion()) + bindingSentence(verified.Binding, sig)
+	if finding != nil {
+		// What verified is reported beside the finding, with the sentence
+		// that says what it covers; no evaluator is replayed.
+		beside := ""
+		if verified.Inputs() == "" {
+			beside = " The run's preparation was verified independently of it."
+		}
+		fmt.Fprintln(stderr, "audit-disposition-mismatch: the retained disposition differs from the audit record."+beside+said)
+		json.NewEncoder(stdout).Encode(reportOf("audit-disposition-mismatch", "differs-from-audit"))
+		if len(refusals) == 0 {
+			return finding
+		}
+		return errors.Join(append([]error{finding}, refusals...)...)
+	}
 	if *runtime == "" {
 		// The retained answer matches the audit record; no evaluator was replayed.
 		fmt.Fprintln(stderr, "verified-inputs: the run's inputs match its record. Its retained disposition matches its audit record; the evaluator was not replayed."+said)

@@ -182,7 +182,7 @@ func TestVerifyRunReportsUnsignedParametersEndToEnd(t *testing.T) {
 	run["result"] = changed
 	bundle["run"], _ = json.Marshal(run)
 	out, human, err = verifyWith(t, bundle, digest, profiles, runtime)
-	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
+	if err != runner.ErrAuditDispositionMismatch || out != withUnsigned(report("audit-disposition-mismatch", "differs-from-audit", inputsOnly, 0, 3, 0), at) || !strings.Contains(human, unsignedLine) || strings.Contains(human, "verified-") {
 		t.Fatal(err, out, human)
 	}
 }

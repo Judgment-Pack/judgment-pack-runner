@@ -189,7 +189,9 @@ func TestVerifyRunReExecutesARunWithoutLineage(t *testing.T) {
 	run["result"] = bytes.Replace(run["result"], []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"decline-redirect"`), 1)
 	e.bundle["run"], _ = json.Marshal(run)
 	out, said, err = verify(t, e.bundle, e.digest, runtime)
-	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || said != "" {
+	// An export without lineage has no preparation: the finding is reported
+	// beside what is checked of it, which says so.
+	if err != runner.ErrAuditDispositionMismatch || !strings.HasPrefix(out, `{"exactBytes":"matches-record","exportVersion":4,"inputs":"not-mapped",`) || !strings.Contains(out, `"retainedDisposition":"differs-from-audit",`) || strings.Contains(out, "targetsByClass") || !strings.HasSuffix(out, `"scope":"`+notMappedInputs+`","status":"audit-disposition-mismatch"}`+"\n") || !strings.HasPrefix(said, "audit-disposition-mismatch: the retained disposition differs from the audit record."+notMappedSaid) {
 		t.Fatal(err, out, said)
 	}
 }

@@ -225,10 +225,31 @@ func TestVerifyRunChecksTheRetainedDisposition(t *testing.T) {
 	}
 	run["result"] = changed
 	bundle["run"], _ = json.Marshal(run)
+	// The changed disposition is a finding beside the preparation's checked
+	// report: the preparation verified, and the report carries what it found.
 	out, human, err = verify(t, bundle, digest)
-	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || out != auditDispositionMismatchReport || human != "" {
+	if err != runner.ErrAuditDispositionMismatch || out != report("audit-disposition-mismatch", "differs-from-audit", inputsOnly, 3, 0, 0) || !strings.HasPrefix(human, "audit-disposition-mismatch: the retained disposition differs from the audit record. The run's preparation was verified independently of it. ") {
 		t.Fatal(err, out, human)
 	}
+	// A preparation that fails its own verification beside the changed
+	// disposition: the report is the finding alone, and the error is both.
+	var input map[string]json.RawMessage
+	if err := json.Unmarshal(run["input"], &input); err != nil {
+		t.Fatal(err)
+	}
+	tampered := bytes.Replace(run["input"], []byte(`"class":"asserted"`), []byte(`"class":"record"`), 1)
+	if bytes.Equal(tampered, run["input"]) {
+		t.Fatal("fixture has no lineage class to change")
+	}
+	good := run["input"]
+	run["input"] = tampered
+	bundle["run"], _ = json.Marshal(run)
+	out, human, err = verify(t, bundle, digest)
+	var both *runner.PreparationRefusedWithFinding
+	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || !errors.As(err, &both) || both.Preparation == nil || !strings.Contains(err.Error(), "retained lineage does not match recomputation") || out != auditDispositionMismatchReport || human != "" {
+		t.Fatal(err, out, human)
+	}
+	run["input"] = good
 	var result, audit map[string]json.RawMessage
 	if err := json.Unmarshal(run["result"], &result); err != nil {
 		t.Fatal(err)
@@ -247,6 +268,8 @@ func TestVerifyRunChecksTheRetainedDisposition(t *testing.T) {
 	}
 }
 
+// auditDispositionMismatchReport is the finding alone, as verify-run reports it
+// when the preparation was refused too, or before it was verified.
 const auditDispositionMismatchReport = `{"retainedDisposition":"differs-from-audit","status":"audit-disposition-mismatch"}` + "\n"
 
 // With the release's Runtime the report says the disposition was checked, and
