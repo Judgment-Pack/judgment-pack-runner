@@ -1692,6 +1692,25 @@ the integer version 2 is digested as it is written, with `provider`, `facts`
 and `evidence` written or left out (§2: a verifier adds or removes nothing),
 where a run keeps a version-2 document as Runner encodes it.
 
+The profiles given are held to §5.1 alone, as the specification's reader holds
+them, and each is digested as given. A profile is an object of exactly `id`,
+`publicKey`, `class`, `source`, `authority`, `shape`, `adapter` and `endpoint`,
+and optionally `tools`, `calculator` and `research`, each of the form §5.1's
+table gives it, and a declaration over §12's research maxima is
+`input-over-bound`; anything else is `input-malformed`. Its digest, the one a
+source, a binding document or a retained response must name it by, is the
+digest of its canon bytes as written (§5.1: "Its digest is the digest of its
+canon bytes"), an empty `tools` array included. The limits Runner sets on an
+installation's own profiles ([above](#supported-input-and-trust-configuration))
+are not §5.1's and do not apply offline: at most 16 profiles of at most 32 KiB
+each, an id of a name's form, a source and an authority written non-empty and
+of at most 256 bytes, an adapter's name and version written non-empty, an
+endpoint of at most 2048 bytes, at most 64 tools of at most 256 bytes each, and
+a calculator's name and version written non-empty and of at most 256 bytes. A
+run, an import and `verify-run` still hold an installation's profiles to them,
+and digest a profile as Runner admitted it and writes it, which leaves an empty
+`tools` array out.
+
 It writes §11's report on standard output, one line in that canonical form,
 and why on standard error, and exits 0 for a reading, 1 for a refusal and 2 for
 a finding; 3, with no report, when it could not run: an argument it does not

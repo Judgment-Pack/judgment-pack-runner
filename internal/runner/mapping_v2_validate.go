@@ -85,7 +85,18 @@ func proofCanon(raw []byte) ([]byte, error) {
 	}
 	return derivation.Canon(raw)
 }
-func profileHash(p InputProfile) string   { b, _ := proofCanon(encode(p)); return digest(b) }
+
+// profileHash is a profile's digest: an installation's profile's is the
+// digest of the profile Runner admitted, as it writes it; one the
+// preparation verifier is given carries the digest of its canon bytes as
+// given (spec/dialect.md §5.1, verifierProfiles), which is its digest.
+func profileHash(p InputProfile) string {
+	if p.canonDigest != "" {
+		return p.canonDigest
+	}
+	b, _ := proofCanon(encode(p))
+	return digest(b)
+}
 func mappingV2Hash(m InputMapping) string { b, _ := proofCanon(encode(m)); return digest(b) }
 func classValid(c string) bool            { return c == "asserted" || c == "record" || c == "generated" }
 func paramValue(v any, typ string) bool {

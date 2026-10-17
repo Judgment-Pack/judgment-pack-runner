@@ -23,8 +23,9 @@ package runner
 // No clock is read: the instant is the given preparation's verifiedAt, held
 // to §1's timestamp form with an instant, and nothing else. No network, model
 // or Runtime is asked, and nothing is written. The profiles are the ones the
-// caller gives as verification inputs, such as an Exchange fixture's; they are
-// not an installation's configuration, and a reading establishes that the
+// caller gives as verification inputs, such as an Exchange fixture's, held to
+// §5.1 alone and each digested as given (verifierProfiles); they are not an
+// installation's configuration, and a reading establishes that the
 // preparation recomputes from these inputs, not that any record is true
 // (spec/dialect.md §13, §14).
 
@@ -32,7 +33,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 )
 
 // The codes of spec/dialect.md §11 that only the preparation verifier names
@@ -299,23 +299,12 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// preparation's instant and the dialect; the binding document's is the
 	// import step's, below.
 
-	var profileMembers []map[string]json.RawMessage
-	if json.Unmarshal(f.Profiles, &profileMembers) != nil || profileMembers == nil {
-		return stop(codeMalformed, "the profiles must be an array")
-	}
-	for _, profile := range profileMembers {
-		for _, member := range []string{"id", "publicKey", "class", "source", "authority", "shape", "adapter", "endpoint"} {
-			if _, present := profile[member]; !present {
-				return stop(codeMalformed, "a profile omits a required member")
-			}
-		}
-	}
-	profiles, err := ParseInputProfiles(f.Profiles)
+	// The profiles are held to §5.1 alone, and each is digested as given,
+	// its canon bytes (verifierProfiles): Runner's own limits on an
+	// installation's profiles are not §5.1's.
+	profiles, err := verifierProfiles(read["the profiles"], f.Profiles)
 	if err != nil {
 		return stop(codeMalformed, "the profiles: "+err.Error())
-	}
-	if exactPreparationKeys(f.Profiles, reflect.TypeOf(profiles)) != nil {
-		return stop(codeMalformed, "the profiles contain invalid members")
 	}
 	source := &SourceInput{Case: f.Case}
 	if err = strictJSON(sources, &source.Sources); err != nil || source.Sources == nil || !exactAcquisitionMembers(sources) {

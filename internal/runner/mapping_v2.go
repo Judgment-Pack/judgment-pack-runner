@@ -170,7 +170,14 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 
 // offline changes only finding precedence; acquisition and derivation stay shared.
 func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool, judged *[]judgedFreshness, offline bool) (Input, error) {
-	profileKeys, e := validateProfileKeys(profiles)
+	// An installation's profiles are held to Runner's admission; the
+	// verifier's were held to spec/dialect.md §5.1 alone when it read them
+	// (verifierProfiles), and only their keys are taken here.
+	admitProfiles := validateProfileKeys
+	if offline {
+		admitProfiles = verifierProfileKeys
+	}
+	profileKeys, e := admitProfiles(profiles)
 	if e != nil {
 		return i, e
 	}

@@ -26,6 +26,11 @@ type InputProfile struct {
 	// the installation's declaration, never an observation of the model,
 	// and its digest pins it. Absent, the profile encodes as before.
 	Research *ResearchDeclaration `json:"research,omitempty"`
+	// canonDigest is set only on a profile the preparation verifier is
+	// given: the digest of its canon bytes as given (spec/dialect.md §5.1,
+	// verifierProfiles), which profileHash names for it. An installation's
+	// profile has none, and is digested as Runner admitted it.
+	canonDigest string
 }
 
 // ResearchDeclaration is a profile's research member (spec/dialect.md
