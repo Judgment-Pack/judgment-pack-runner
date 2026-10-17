@@ -220,6 +220,7 @@ func TestWorkflowAttemptOutputStatesAndBounds(t *testing.T) {
 			if instance.State != tc.state || failure != tc.failure || len(done.Execution.OutputSets[0].Records) != tc.count {
 				t.Fatal(instance, done.Execution.OutputSets)
 			}
+			workflowReaderWant(t, workflowReaderInput(t, done, nil), ResultReading, "")
 			if instance.Attempts[0].PreparationDigest == nil || instance.Attempts[0].AuditDigest == nil {
 				t.Fatal("lost successful evaluation on output refusal")
 			}
@@ -283,6 +284,13 @@ func TestWorkflowErrorRetainsExactStdoutAndPreparation(t *testing.T) {
 	if len(done.Execution.OutputSets[0].Records) != 0 {
 		t.Fatal("error produced outputs")
 	}
+	input := workflowReaderInput(t, done, profiles)
+	workflowReaderWant(t, input, ResultReading, "")
+	changed := workflowReaderCopy(input)
+	path := "instances/instance-1/attempts/1/evaluation-error.json"
+	changed.Files[path] = bytes.TrimSuffix(changed.Files[path], []byte("\n"))
+	workflowReaderWant(t, changed, ResultFinding, "digest-mismatch")
+
 }
 
 func TestWorkflowUnpreparedRunCannotSmuggleAuditSideMembers(t *testing.T) {

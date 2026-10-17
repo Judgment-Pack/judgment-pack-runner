@@ -42,6 +42,11 @@ func TestWorkflowHostRetainsMismatchedGatewayResponse(t *testing.T) {
 // This is a synthetic operation journey over real Runner planning and Runtime
 // evaluation. No live model, website, true person or workflow verifier is claimed.
 func TestWorkflowHostCompaniesSelectedPeople(t *testing.T) {
+	workflowCompanyPeopleRecording(t)
+}
+
+func workflowCompanyPeopleRecording(t *testing.T) (workflowInventory, []InputProfile) {
+	t.Helper()
 	cfg := testConfig(t)
 	base, key := testProfile(t)
 	base.Class = "generated"
@@ -217,4 +222,5 @@ func TestWorkflowHostCompaniesSelectedPeople(t *testing.T) {
 			}
 		}
 	}
+	return root, profiles
 }
