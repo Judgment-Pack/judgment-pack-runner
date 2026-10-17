@@ -46,13 +46,17 @@ type workflowSelectionPolicy struct {
 	Mode string        `json:"mode"`
 	Rule *workflowRule `json:"rule,omitempty"`
 }
+type workflowDialectRef struct {
+	FormatVersion string          `json:"formatVersion,omitempty"`
+	ID            string          `json:"id,omitempty"`
+	Version       json.RawMessage `json:"version"`
+	Digest        string          `json:"digest"`
+}
+
 type workflowStage struct {
-	ID      string `json:"id"`
-	Dialect struct {
-		Version int    `json:"version"`
-		Digest  string `json:"digest"`
-	} `json:"dialect"`
-	Pack struct {
+	ID      string             `json:"id"`
+	Dialect workflowDialectRef `json:"dialect"`
+	Pack    struct {
 		ID     string `json:"id"`
 		Digest string `json:"digest"`
 	} `json:"pack"`
@@ -145,16 +149,25 @@ func workflowObject(v any, required ...string) (map[string]any, bool) {
 	return o, true
 }
 func workflowPointer(p string, root bool) ([]string, error) {
+	if len(p) > 1024 {
+		return nil, errWorkflowForm
+	}
+	if strings.HasPrefix(p, "/") && strings.Count(p, "/") > 32 {
+		return nil, errWorkflowBound
+	}
+	return workflowPointerTokens(p, root)
+}
+
+// Syntax is separate from declaration bounds: a many-output record appends
+// its index to a valid declared pointer, which may already be at its bound.
+func workflowPointerTokens(p string, root bool) ([]string, error) {
 	if p == "" && root {
 		return nil, nil
 	}
-	if len(p) > 1024 || !strings.HasPrefix(p, "/") {
+	if !strings.HasPrefix(p, "/") {
 		return nil, errWorkflowForm
 	}
 	parts := strings.Split(p[1:], "/")
-	if len(parts) > 32 {
-		return nil, errWorkflowBound
-	}
 	for i, p := range parts {
 		for at := 0; at < len(p); at++ {
 			if p[at] == '~' {
@@ -232,7 +245,11 @@ func readWorkflow(raw []byte) (workflowDocument, []byte, error) {
 	for _, rawStage := range stages {
 		if stage, ok := rawStage.(map[string]any); ok {
 			if pin, ok := stage["dialect"].(map[string]any); ok {
-				if version, exists := pin["version"]; exists && version != json.Number("2") && version != json.Number("3") {
+				if format, named := pin["formatVersion"]; named {
+					if format != "2.0.0" && format != "3.0.0" {
+						return d, nil, errWorkflowVersion
+					}
+				} else if version, exists := pin["version"]; exists && version != json.Number("2") && version != json.Number("3") {
 					return d, nil, errWorkflowVersion
 				}
 			}
@@ -261,7 +278,15 @@ func readWorkflow(raw []byte) (workflowDocument, []byte, error) {
 		if !ok || !workflowID.MatchString(stage.ID) || seen[stage.ID] {
 			return d, nil, errWorkflowForm
 		}
-		if _, ok := workflowObject(s["dialect"], "version", "digest"); !ok {
+		dialectKeys := []string{"version", "digest"}
+		if stage.Dialect.FormatVersion != "" {
+			dialectKeys = append(dialectKeys, "formatVersion", "id")
+			var version string
+			if json.Unmarshal(stage.Dialect.Version, &version) != nil || !artifactVersionGrammar.MatchString(version) || stage.Dialect.ID == "" || len(stage.Dialect.ID) > 1024 || strings.IndexFunc(stage.Dialect.ID, func(c rune) bool { return c <= 32 || c == 127 }) >= 0 {
+				return d, nil, errWorkflowForm
+			}
+		}
+		if _, ok := workflowObject(s["dialect"], dialectKeys...); !ok {
 			return d, nil, errWorkflowForm
 		}
 		if _, ok := workflowObject(s["pack"], "id", "digest"); !ok {
