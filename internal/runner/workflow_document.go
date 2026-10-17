@@ -145,16 +145,25 @@ func workflowObject(v any, required ...string) (map[string]any, bool) {
 	return o, true
 }
 func workflowPointer(p string, root bool) ([]string, error) {
+	if len(p) > 1024 {
+		return nil, errWorkflowForm
+	}
+	if strings.HasPrefix(p, "/") && strings.Count(p, "/") > 32 {
+		return nil, errWorkflowBound
+	}
+	return workflowPointerTokens(p, root)
+}
+
+// Syntax is separate from declaration bounds: a many-output record appends
+// its index to a valid declared pointer, which may already be at its bound.
+func workflowPointerTokens(p string, root bool) ([]string, error) {
 	if p == "" && root {
 		return nil, nil
 	}
-	if len(p) > 1024 || !strings.HasPrefix(p, "/") {
+	if !strings.HasPrefix(p, "/") {
 		return nil, errWorkflowForm
 	}
 	parts := strings.Split(p[1:], "/")
-	if len(parts) > 32 {
-		return nil, errWorkflowBound
-	}
 	for i, p := range parts {
 		for at := 0; at < len(p); at++ {
 			if p[at] == '~' {
