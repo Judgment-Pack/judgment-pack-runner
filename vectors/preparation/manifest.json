@@ -2309,7 +2309,7 @@
         "exit": 1,
         "status": null,
         "report": null,
-        "error": "release profile is not independently trusted"
+        "error": "release profile is not independently trusted (profile-mismatch). No decision was requested."
       }
     },
     {

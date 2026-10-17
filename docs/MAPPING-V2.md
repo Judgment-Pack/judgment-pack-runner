@@ -1874,8 +1874,8 @@ each vector to its manifest and each example fixture to its
 changed after the run, `verify-preparation` finds `profile-mismatch`, a
 binding naming the profile by a digest the profile given does not have, where
 `verify-run`, which holds a release's frozen profiles to the profiles it is
-given before it replays anything, refuses the export first: `release profile is
-not independently trusted`. Where an input has more
+given before it replays anything, refuses the export first, with the same code:
+`release profile is not independently trusted (profile-mismatch)`. Where an input has more
 than one fault, it reports the first Runner's preparation meets, which is not
 always the first in §11's order. A case document that is not one object is
 refused, `input-malformed`, as every run's case is, where the specification's

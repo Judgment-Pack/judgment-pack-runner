@@ -76,6 +76,12 @@ func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey,
 	ids := map[string]bool{}
 	keys := map[string]ed25519.PublicKey{}
 	for _, p := range profiles {
+		// §12's bounds on an endpoint scope come first, before every limit
+		// Runner sets on an installation's profile, so that a scope over
+		// them is input-over-bound on every path.
+		if p.EndpointScope != nil && endpointScopeOver(scopeEntries(p.EndpointScope)) {
+			return nil, researchFail(codeOverBound, "the input profile %s's endpointScope has more than %d entries, or an entry of more than %d bytes", p.ID, maxScopeEntries, maxScopeEntryBytes)
+		}
 		if len(encode(p)) > 32<<10 {
 			return nil, errors.New("input profile exceeds 32 KiB")
 		}
@@ -92,9 +98,6 @@ func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey,
 		}
 		if c := p.Calculator; c != nil && (p.Class != "record" || p.Shape != "mcp" || c.Name == "" || len(c.Name) > 256 || c.Version == "" || len(c.Version) > 256) {
 			return nil, errors.New("a calculator profile is a record MCP profile naming its calculator and version")
-		}
-		if p.EndpointScope != nil && endpointScopeOver(scopeEntries(p.EndpointScope)) {
-			return nil, researchFail(codeOverBound, "the input profile %s's endpointScope has more than %d entries, or an entry of more than %d bytes", p.ID, maxScopeEntries, maxScopeEntryBytes)
 		}
 		if e := researchDeclarationForm(p); e != nil {
 			return nil, e

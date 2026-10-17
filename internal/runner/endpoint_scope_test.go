@@ -646,3 +646,25 @@ func TestNoAcquisitionIsPlannedUnderAnEndpointScope(t *testing.T) {
 		t.Fatalf("an operation under an endpoint scope is planned: %+v %v", plan, err)
 	}
 }
+
+// §12's count comes before every limit Runner sets on an installation's
+// profile: a scope of 33 entries of 1100 bytes each, a profile over Runner's
+// own 32 KiB, is input-over-bound on the live path, as it is offline.
+func TestAScopeOverItsCountIsOverBoundBeforeRunnersOwnLimits(t *testing.T) {
+	entries := []any{}
+	for i := range 33 {
+		prefix := "https://a.example/" + string(rune('a'+i%26)) + string(rune('a'+i/26)) + "/"
+		entries = append(entries, prefix+strings.Repeat("x", 1100-len(prefix)))
+	}
+	profile := scopedPageProfile(func(p map[string]any) { p["endpointScope"] = entries })
+	if len(encode(profile)) <= 32<<10 {
+		t.Fatal("the profile is within Runner's own limit")
+	}
+	_, err := ParseInputProfiles(encode([]any{profile}))
+	if _, code := verificationOutcome(err); err == nil || code != codeOverBound {
+		t.Fatalf("an installation's profile is refused as %v", err)
+	}
+	f := parityFixture(t)
+	f.Profiles = encode(append(profilesOf(t, f), profile))
+	requireReport(t, VerifyPreparation(f), ResultRefusal, codeOverBound)
+}

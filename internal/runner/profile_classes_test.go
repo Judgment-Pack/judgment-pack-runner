@@ -323,7 +323,7 @@ func TestARunOfOneGatewaySourceUnderTwoClassesIsVerified(t *testing.T) {
 		}
 	}
 	generatedOnly := []InputProfile{profileNamed(t, d.profiles, "assistant"), profileNamed(t, d.profiles, "page")}
-	if _, err = VerifyInputs(encode(bundle), generatedOnly, bundle.ReleaseDigest); err == nil || err.Error() != "release profile is not independently trusted" {
+	if _, err = VerifyInputs(encode(bundle), generatedOnly, bundle.ReleaseDigest); err == nil || err.Error() != "release profile is not independently trusted (profile-mismatch). No decision was requested." {
 		t.Fatalf("verify-run took the record profile from the export: %v", err)
 	}
 }

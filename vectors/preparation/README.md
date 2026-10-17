@@ -156,7 +156,7 @@ The record a binding is read from is in `run.json`: the record's exact bytes,
 | `endpoint-scope-wildcard-two-origins` | `research/endpoint-scope-wildcard-two-origins` | nothing: the same source reads two pages of two origins under one page profile scoped to the wildcard `https://*` | `verified-inputs`, binding `matches`, signed and witnessed |
 | `endpoint-scope-endpoint-outside` | `research/endpoint-scope-two-paths-one-origin` | the second page replaced by one the stand-in served next in the session, whose signed receipt names `https://docs.example.com/guides-archive/beta`, outside the prefix | refused: `Source company-pages: retained response 2, through the profile pages: the endpoint is outside the trusted profile's endpoint scope (acquisition-invalid). …` |
 | `endpoint-scope-redirect-outside` | `research/endpoint-scope-two-paths-one-origin` | the second page replaced by one requested inside the scope whose redirect ended at `https://elsewhere.example.com/landing`, the endpoint its signed receipt names | refused: as `endpoint-scope-endpoint-outside` |
-| `endpoint-scope-changed-constraint` | `research/endpoint-scope-two-paths-one-origin` | the page profile's scope widened by one entry in `profiles.json`; the binding pins the digest it had | refused: `release profile is not independently trusted` (`verify-preparation`: `profile-mismatch`) |
+| `endpoint-scope-changed-constraint` | `research/endpoint-scope-two-paths-one-origin` | the page profile's scope widened by one entry in `profiles.json`; the binding pins the digest it had | refused: `release profile is not independently trusted (profile-mismatch). No decision was requested.` |
 | `endpoint-scope-changed-request` | `research/endpoint-scope-two-paths-one-origin` | the second page's retained request names another URL inside the scope; its receipt as it was | refused: `Source company-pages: retained response 2, through the profile pages: response does not match the frozen request and this case's parameters (acquisition-invalid). …` |
 
 The valid case is also the calculated-values case: its one source is a calculator
@@ -301,9 +301,9 @@ as the gateway's web adapter writes it. A reader concludes, of each:
   binding reviewed, so its digest is not the one the binding names:
   `profile-mismatch`, before any response is replayed. `verify-run`, which holds
   the release's frozen profiles to the profiles it is given before it replays
-  anything, refuses the export there first, `release profile is not
-  independently trusted`, and its refusal names no code; a preparation verifier,
-  given no release, names `profile-mismatch`.
+  anything, refuses the export there first, with the same code: `release profile
+  is not independently trusted (profile-mismatch)`; a preparation verifier, given
+  no release, names `profile-mismatch` for the binding.
 - `endpoint-scope-changed-request`: the second page's request names another URL
   inside the scope, and its receipt's commitment is not of it:
   `acquisition-invalid`, check 4. Replay holds no requested URL to the scope.
@@ -412,8 +412,9 @@ in them are those of the run that wrote them, and are data now.
   which takes a binding. Their records were recorded from the research runs'
   stand-in, in the test's process, over TLS on the loopback address, at hosts of
   `example.com` that the test's client reaches at the stand-in and that the test
-  certificate names; the stand-in follows a redirect as the gateway's web adapter
-  does, and names the final URL, its query removed. Each receipt was signed under
+  certificate names; the stand-in serves the redirect and the test's client follows
+  it, as the gateway's web adapter does, and the stand-in names the final URL, its
+  query removed. Each receipt was signed under
   a key made for the run. The profiles name the adapters `adapter-sources` and
   `adapter-web`, version `stand-in`, and the model `synthetic-research-model-1`. No
   model was asked and no page outside the test's process was read; every

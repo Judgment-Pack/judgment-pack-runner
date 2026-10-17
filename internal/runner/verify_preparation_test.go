@@ -88,9 +88,9 @@ var codeNamed = regexp.MustCompile(`\(([a-z]+(?:-[a-z]+)+)\)\. No decision was r
 // not-checked, whose facts and evidence are the ones the export retains and
 // whose counts, unsigned parameters and unsigned freshness are the members
 // verify-run reports; or, for a vector whose inputs were changed after the
-// run (retained "recorded"), the finding verify-run names, with its sentence,
-// or, where verify-run refuses the release's frozen profile first, the
-// finding of the binding that names it (recordedFinding).
+// run (retained "recorded"), the finding verify-run names, with its sentence
+// or, where verify-run refuses the release first, the binding's
+// (offlineRefusals).
 // A vector bound at import reads the same published with its binding document
 // as bound. Where the export retains another preparation (retained
 // "altered"), that preparation is found preparation-differs: the old
@@ -111,10 +111,9 @@ func TestVerifyPreparationReadsEachVector(t *testing.T) {
 				r := VerifyPreparation(vectorFixture(t, v, imported))
 				lines = append(lines, string(r.Line()))
 				if v.Preparation.Retained == "recorded" {
-					code, named := recordedFinding(t, *v.VerifyRun.Error)
-					requireReport(t, r, ResultFinding, code)
-					if named && r.Reason != *v.VerifyRun.Error {
-						t.Fatalf("the finding says %q, not verify-run's %q", r.Reason, *v.VerifyRun.Error)
+					requireReport(t, r, ResultFinding, recordedFinding(t, *v.VerifyRun.Error))
+					if want := offlineRefusal(v, imported); r.Reason != want {
+						t.Fatalf("the finding says %q, not %q", r.Reason, want)
 					}
 					continue
 				}
