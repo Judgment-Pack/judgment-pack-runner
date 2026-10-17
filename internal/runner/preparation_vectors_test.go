@@ -20,7 +20,7 @@ const preparationVectors = "../../vectors/preparation/"
 // holds the SHA-256 of every file of every vector. The vectors were generated
 // once and are not regenerated: changing one is a change of the contract a
 // second reader is held to, and changes this digest with it.
-const preparationVectorsManifest = "sha256:30482dfdec4fa3960824fbb686229686c40005427c422092c210a204cf0be09e"
+const preparationVectorsManifest = "sha256:b93af57a8165888dd43081a67a5aa7ea43cf3b49076af3c734479afbec589129"
 
 // preparationVector is a vector as the manifest describes it
 // (vectors/preparation/README.md).
@@ -142,11 +142,14 @@ func TestPreparationVectorsAreByteExact(t *testing.T) {
 					t.Fatalf("the manifest names the import's files otherwise: %+v", *v.Import)
 				}
 				source.Import = &DialectImport{Dialect: file["unbound.json"], Binding: file["binding.json"]}
+				// A profile changed after the run does not bind: the import
+				// step refuses it as the preparation below does.
 				bound, err := bindDialect(*source.Import, profiles)
 				if err != nil {
-					t.Fatal("the vector's import does not bind:", err)
-				}
-				if !bytes.Equal(canonTest(t, encode(bound)), canonTest(t, file["mapping.json"])) {
+					if v.Preparation.Retained != "recorded" || v.VerifyRun.Error == nil || !refusedAsVerifyRun(t, v, err) {
+						t.Fatal("the vector's import does not bind:", err)
+					}
+				} else if !bytes.Equal(canonTest(t, encode(bound)), canonTest(t, file["mapping.json"])) {
 					t.Fatalf("the bound dialect is not mapping.json:\n%s\n%s", encode(bound), file["mapping.json"])
 				}
 			} else if _, ok := file["unbound.json"]; ok {
@@ -164,10 +167,13 @@ func TestPreparationVectorsAreByteExact(t *testing.T) {
 			// A vector whose inputs were changed after the run, retained
 			// "recorded", is one the Runner computes no preparation from: it
 			// refuses the inputs as verify-run does, and preparation.json is
-			// the preparation the run recorded, held fixed.
+			// the preparation the run recorded, held fixed: with the code
+			// verify-run's refusal names, and with its sentence or, where
+			// verify-run refuses the release first, the binding's
+			// (offlineRefusals).
 			prepared, err := prepareV2(Input{Source: source}, profiles, at, false, nil)
 			if v.Preparation.Retained == "recorded" {
-				if v.Altered == nil || err == nil || v.VerifyRun.Error == nil || err.Error() != *v.VerifyRun.Error {
+				if v.Altered == nil || err == nil || v.VerifyRun.Error == nil || !refusedAsVerifyRun(t, v, err) {
 					t.Fatalf("the Runner does not refuse the changed inputs as verify-run does: %v", err)
 				}
 				var recorded VerificationBundle
@@ -292,4 +298,52 @@ func sortedStrings(s []string) []string {
 	out := append([]string(nil), s...)
 	sort.Strings(out)
 	return out
+}
+
+// recordedFinding is the finding a preparation verifier names of a vector
+// whose inputs were changed after the run (retained "recorded"): the code
+// verify-run's refusal names at its end.
+func recordedFinding(t *testing.T, refusal string) string {
+	t.Helper()
+	found := codeNamed.FindStringSubmatch(refusal)
+	if found == nil {
+		t.Fatalf("verify-run's refusal names no code: %s", refusal)
+	}
+	return found[1]
+}
+
+// offlineRefusals are the sentences with which a preparation given no release
+// refuses a vector's changed inputs, where they are not verify-run's.
+// verify-run holds the export's release to the profiles it is given before
+// it replays anything, and refuses there a profile changed after the run,
+// profile-mismatch; a run's preparation and verify-preparation, which read no
+// release, refuse the binding that names the profile by the digest it had,
+// with the same code. Given the published dialect with its binding document,
+// the import step refuses it, naming itself first: "Mapping v3: ".
+var offlineRefusals = map[string]string{
+	"endpoint-scope-changed-constraint": "source company-pages: it is bound for page to the profile pages by a digest that is not the digest of this installation's profile pages (profile-mismatch)",
+}
+
+// offlineRefusal is the sentence with which a preparation given no release
+// refuses a recorded vector's inputs: verify-run's, or the one
+// offlineRefusals pins, after "Mapping v3: " when it is given the published
+// dialect with its binding document (imported).
+func offlineRefusal(v preparationVector, imported bool) string {
+	sentence, pinned := offlineRefusals[v.Name]
+	switch {
+	case !pinned:
+		return *v.VerifyRun.Error
+	case imported:
+		return "Mapping v3: " + sentence
+	}
+	return sentence
+}
+
+// refusedAsVerifyRun says whether the Runner's preparation refuses a
+// vector's changed inputs as verify-run does: with the code verify-run's
+// refusal names, and with its sentence, or the one offlineRefusals pins.
+func refusedAsVerifyRun(t *testing.T, v preparationVector, err error) bool {
+	t.Helper()
+	_, code := verificationOutcome(err)
+	return code == recordedFinding(t, *v.VerifyRun.Error) && err.Error() == offlineRefusal(v, v.Import != nil)
 }

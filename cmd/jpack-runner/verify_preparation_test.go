@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -37,7 +38,9 @@ func reportOf(t *testing.T, stdout string) map[string]json.RawMessage {
 // its manifest says a preparation verifier reads it, given as a fixture is:
 // preparation.json, with preparation.sha256 as the expected digest. A vector
 // whose inputs were changed after the run (retained "recorded") is the
-// finding verify-run names, exit 2; every other is a reading of
+// finding verify-run names, exit 2, with its sentence or the one
+// offlineRefusals pins;
+// every other is a reading of
 // preparation.sha256, exit 0, its binding not-checked. A vector bound at
 // import is read alike, and reported byte for byte alike, given bound, given
 // published with --binding, as the specification's verifier is called, and
@@ -62,8 +65,8 @@ func TestVerifyPreparationReportsEachVector(t *testing.T) {
 			} `json:"verifyRun"`
 		} `json:"vectors"`
 	}
-	if err = json.Unmarshal(raw, &m); err != nil || len(m.Vectors) != 41 {
-		t.Fatal("not the forty-one vectors:", err, len(m.Vectors))
+	if err = json.Unmarshal(raw, &m); err != nil || len(m.Vectors) != 47 {
+		t.Fatal("not the forty-seven vectors:", err, len(m.Vectors))
 	}
 	for _, v := range m.Vectors {
 		t.Run(v.Name, func(t *testing.T) {
@@ -85,7 +88,18 @@ func TestVerifyPreparationReportsEachVector(t *testing.T) {
 				status, stdout, stderr := runVerifyPreparation(append(form, given...)...)
 				report := reportOf(t, stdout)
 				if v.Preparation.Retained == "recorded" {
-					if status != 2 || stdout != `{"finding":"acquisition-invalid","result":"finding"}`+"\n" || stderr != "verify-preparation: acquisition-invalid: "+*v.VerifyRun.Error+"\n" {
+					code := recordedFinding(t, *v.VerifyRun.Error)
+					said, named := strings.CutPrefix(stderr, "verify-preparation: "+code+": ")
+					said, ended := strings.CutSuffix(said, "\n")
+					want, pinned := offlineRefusals[v.Name]
+					if !pinned {
+						want = *v.VerifyRun.Error
+					} else if len(form) == 4 {
+						// Published with its binding document, the import step
+						// refuses it, naming itself first.
+						want = "Mapping v3: " + want
+					}
+					if status != 2 || stdout != `{"finding":"`+code+`","result":"finding"}`+"\n" || !named || !ended || said != want {
 						t.Fatalf("%v: %d %s %s", form, status, stdout, stderr)
 					}
 				} else if status != 0 || string(report["result"]) != `"reading"` || string(report["digest"]) != `"`+v.Preparation.SHA256+`"` || string(report["binding"]) != `"not-checked"` || !strings.HasPrefix(stderr, "verify-preparation: reading: ") || strings.Count(stderr, "\n") != 1 {
@@ -99,6 +113,29 @@ func TestVerifyPreparationReportsEachVector(t *testing.T) {
 			}
 		})
 	}
+}
+
+// recordedFinding is the finding verify-preparation names of a vector whose
+// inputs were changed after the run: the code verify-run's refusal names at
+// its end.
+func recordedFinding(t *testing.T, refusal string) string {
+	t.Helper()
+	found := regexp.MustCompile(`\(([a-z]+(?:-[a-z]+)+)\)\. No decision was requested\.$`).FindStringSubmatch(refusal)
+	if found == nil {
+		t.Fatalf("verify-run's refusal names no code: %s", refusal)
+	}
+	return found[1]
+}
+
+// offlineRefusals are the sentences verify-preparation gives a vector's
+// changed inputs where they are not verify-run's: verify-run holds the
+// export's release to the profiles it is given before it replays anything,
+// and refuses there a profile changed after the run; verify-preparation,
+// given no release, refuses the binding that names the profile by the digest
+// it had, with the same code, and given the published dialect with its
+// binding document, after "Mapping v3: ", the import step's name.
+var offlineRefusals = map[string]string{
+	"endpoint-scope-changed-constraint": "source company-pages: it is bound for page to the profile pages by a digest that is not the digest of this installation's profile pages (profile-mismatch)",
 }
 
 // exchangeFixtures is where the Exchange's example fixtures are copied

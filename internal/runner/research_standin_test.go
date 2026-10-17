@@ -47,11 +47,14 @@ type researchStandIn struct {
 	previous any
 	// answers is the endpoint's answer to each question asked.
 	answers map[string]any
+	// redirects is where a page of a host of example.com, named by its host
+	// and path, redirects to.
+	redirects map[string]string
 }
 
 func newResearchStandIn(t *testing.T) *researchStandIn {
 	t.Helper()
-	h := &researchStandIn{answers: map[string]any{}, session: researchSession}
+	h := &researchStandIn{answers: map[string]any{}, redirects: map[string]string{}, session: researchSession}
 	h.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "POST" && (r.URL.Path == "/answers" || r.URL.Path == "/answers-2"):
@@ -70,7 +73,12 @@ func newResearchStandIn(t *testing.T) *researchStandIn {
 			q := r.URL.Query().Get("q")
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(encode(map[string]any{"query": q, "hits": []map[string]string{{"url": "https://" + r.Host + "/page?item=search-result-1", "title": "A synthetic page"}}}))
-		case r.Method == "GET" && (r.URL.Path == "/page" || r.URL.Path == "/reader"):
+		case r.Method == "GET" && h.redirects[r.Host+r.URL.Path] != "":
+			// A page that moved: the redirect keeps the request's query.
+			http.Redirect(w, r, h.redirects[r.Host+r.URL.Path]+"?"+r.URL.RawQuery, http.StatusFound)
+		case r.Method == "GET" && (r.URL.Path == "/page" || r.URL.Path == "/reader" || strings.HasSuffix(r.Host, ".example.com")):
+			// A public page: at the stand-in's own address, or at a host of
+			// example.com, which the test's client reaches at the stand-in.
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Header().Set("ETag", `"`+r.URL.Query().Get("item")+`-1"`)
 			w.Write([]byte("A synthetic page about " + r.URL.Query().Get("item") + ". Every figure on it is invented for a test."))
@@ -116,7 +124,12 @@ var researchRevision = strings.Repeat("5e", 32)
 // record holds: the profile it came through, the request the gateway
 // commits to, the result and the receipt the gateway signed, and the salts.
 // An answer and a search are asked with the question as the query; a page
-// by its URL, item naming it.
+// by its URL: under a profile of one endpoint, that endpoint with item
+// naming the page, and under a profile of an endpoint scope, which pins no
+// one endpoint, item itself, the URL as requested. The test's client reaches
+// a host of example.com at the stand-in, and follows a redirect, as the
+// gateway's web adapter does: the receipt's endpoint is the final URL, its
+// query removed (spec/dialect.md §5.2, "Which URL is held").
 func (h *researchStandIn) retain(t *testing.T, p InputProfile, capability, question, item string, at time.Time) map[string]any {
 	t.Helper()
 	var request map[string]any
@@ -130,7 +143,10 @@ func (h *researchStandIn) retain(t *testing.T, p InputProfile, capability, quest
 		request = map[string]any{"connection": "search", "revision": researchRevision, "query": question, "maxResults": 5}
 		sent, err = http.NewRequest("GET", *p.Endpoint+"?q="+url.QueryEscape(question), nil)
 	case "page":
-		page := *p.Endpoint + "?item=" + url.QueryEscape(item)
+		page := item
+		if p.Endpoint != nil {
+			page = *p.Endpoint + "?item=" + url.QueryEscape(item)
+		}
 		request = map[string]any{"url": page}
 		sent, err = http.NewRequest("GET", page, nil)
 	default:
@@ -160,7 +176,7 @@ func (h *researchStandIn) retain(t *testing.T, p InputProfile, capability, quest
 	if strings.HasPrefix(headers["content-type"], "application/json") {
 		result["bodyEncoding"], result["body"] = "json", json.RawMessage(canonTest(t, body))
 	}
-	endpoint := *sent.URL
+	endpoint := *answer.Request.URL
 	endpoint.RawQuery = ""
 	statement := map[string]any{"method": sent.Method, "endpoint": endpoint.String(), "request": request}
 	snapshot := any(nil)

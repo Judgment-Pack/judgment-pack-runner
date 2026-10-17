@@ -3615,6 +3615,18 @@
               "null"
             ]
           },
+          "endpointScope": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "maxLength": 2048,
+              "description": "One entry: an endpoint prefix or https://*. Each entry is ASCII, each character from U+0021 to U+007E, so its 2048-character maxLength equals spec/dialect.md section 5.1's 2048 UTF-8 bytes."
+            },
+            "description": "An endpoint constraint in place of one exact endpoint, which is then null (spec/dialect.md section 5.1): 1 to 32 distinct endpoint prefixes, each https://, a DNS name of two or more labels, nothing, :443 or : with nothing, and an optional path beginning with /, with no user, query, fragment, IP literal, other port or dot segment; or exactly https://*, admitted on a generated profile only. Only on shape http with adapter.name adapter-web; a generated profile carrying it declares research capabilities exactly [\"page\"]. A page receipt's acquisition.endpoint must match an entry: hosts equal with ASCII case folded, the three spellings of port 443 one port, the path a prefix at a literal / boundary, nothing decoded. The whole scope enters the profile's digest. It binds a research source's page assignment alone; an operation or a selected file bound to it is profile-mismatch."
+          },
           "tools": {
             "type": "array",
             "items": {

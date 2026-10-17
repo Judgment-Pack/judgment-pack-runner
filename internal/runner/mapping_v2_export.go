@@ -310,8 +310,12 @@ func verifyPreparation(b VerificationBundle, profiles []InputProfile, judged *[]
 		for _, trusted := range profiles {
 			found = found || profileHash(p) == profileHash(trusted)
 		}
+		// A release's frozen profile that is not among the profiles given
+		// is one its dialect names by a digest no trusted profile has
+		// (spec/dialect.md §5.1): profile-mismatch, named as a run's
+		// refusals name their codes.
 		if !found {
-			return prepared, errors.New("release profile is not independently trusted")
+			return prepared, withCode(codeMismatch, errors.New("release profile is not independently trusted (profile-mismatch). No decision was requested."))
 		}
 	}
 	at, e := time.Parse("2006-01-02T15:04:05Z", r.Input.Preparation.VerifiedAt)
