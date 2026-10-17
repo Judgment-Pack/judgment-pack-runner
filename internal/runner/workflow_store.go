@@ -16,14 +16,52 @@ type workflowStore struct{ db *sql.DB }
 var errWorkflowRevision = errors.New("workflow revision changed; reload before applying this transition")
 
 func newWorkflowStore(db *sql.DB) (*workflowStore, error) {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS workflow_executions (
- id TEXT PRIMARY KEY, revision INTEGER NOT NULL, document BLOB NOT NULL, record BLOB NOT NULL);
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS workflow_executions (
+ id TEXT PRIMARY KEY, revision INTEGER NOT NULL, document BLOB NOT NULL, record BLOB NOT NULL, pending BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS workflow_artifacts (
  execution TEXT NOT NULL, key TEXT NOT NULL, body BLOB NOT NULL,
  PRIMARY KEY(execution,key), FOREIGN KEY(execution) REFERENCES workflow_executions(id));`)
 	if err != nil {
 		return nil, err
 	}
+	// Earlier private selection stores have no active attempts. Preserve all
+	// records/artifacts while adding an explicitly empty host-activity map.
+	rows, err := tx.Query(`PRAGMA table_info(workflow_executions)`)
+	if err != nil {
+		return nil, err
+	}
+	hasPending := false
+	for rows.Next() {
+		var ordinal, required, primary int
+		var name, kind string
+		var defaultValue any
+		if err = rows.Scan(&ordinal, &name, &kind, &required, &defaultValue, &primary); err != nil {
+			break
+		}
+		hasPending = hasPending || name == "pending"
+	}
+	rowErr := rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if rowErr != nil {
+		return nil, rowErr
+	}
+	if !hasPending {
+		if _, err = tx.Exec(`ALTER TABLE workflow_executions ADD COLUMN pending BLOB NOT NULL DEFAULT '{}'`); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+
 	return &workflowStore{db}, nil
 }
 func (s *workflowStore) create(w workflowInventory) error {
@@ -35,7 +73,7 @@ func (s *workflowStore) create(w workflowInventory) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO workflow_executions(id,revision,document,record) VALUES(?,1,?,?)`, w.Execution.Execution, encode(w.Document), encode(w.Execution))
+	_, err = tx.Exec(`INSERT INTO workflow_executions(id,revision,document,record,pending) VALUES(?,1,?,?,?)`, w.Execution.Execution, encode(w.Document), encode(w.Execution), encode(w.Pending))
 	if err != nil {
 		return err
 	}
@@ -72,14 +110,17 @@ func (s *workflowStore) load(id string) (workflowInventory, int, error) {
 		return w, 0, err
 	}
 	defer tx.Rollback()
-	var document, record []byte
-	if err = tx.QueryRow(`SELECT revision,document,record FROM workflow_executions WHERE id=?`, id).Scan(&revision, &document, &record); err != nil {
+	var document, record, pending []byte
+	if err = tx.QueryRow(`SELECT revision,document,record,pending FROM workflow_executions WHERE id=?`, id).Scan(&revision, &document, &record, &pending); err != nil {
 		return w, 0, err
 	}
 	if err = json.Unmarshal(document, &w.Document); err != nil {
 		return w, 0, err
 	}
 	if err = json.Unmarshal(record, &w.Execution); err != nil {
+		return w, 0, err
+	}
+	if err = json.Unmarshal(pending, &w.Pending); err != nil {
 		return w, 0, err
 	}
 	rows, err := tx.Query(`SELECT key,body FROM workflow_artifacts WHERE execution=? ORDER BY key`, id)
@@ -125,7 +166,7 @@ func (s *workflowStore) save(w workflowInventory, revision int) error {
 	if !bytes.Equal(document, encode(w.Document)) {
 		return errWorkflowTransition
 	}
-	res, err := tx.Exec(`UPDATE workflow_executions SET revision=revision+1,record=? WHERE id=? AND revision=?`, encode(w.Execution), w.Execution.Execution, revision)
+	res, err := tx.Exec(`UPDATE workflow_executions SET revision=revision+1,record=?,pending=? WHERE id=? AND revision=?`, encode(w.Execution), encode(w.Pending), w.Execution.Execution, revision)
 	if err != nil {
 		return err
 	}

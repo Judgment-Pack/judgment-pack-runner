@@ -2,8 +2,8 @@ package runner
 
 // The private selection writer measures the actual draft §11 recording layout,
 // not the deduplicated SQLite blob store. These are in-memory file bytes; this
-// helper neither writes paths nor verifies an execution. Attempt recordings are
-// refused until their full artifact inventory is implemented.
+// helper neither writes paths nor verifies an execution. Attempt files are derived from their retained
+// exports and checked against each separately retained pin.
 import (
 	"bytes"
 	"fmt"
@@ -122,12 +122,56 @@ func (w workflowInventory) recordingFiles() (map[string][]byte, error) {
 		}
 	}
 	for _, instance := range w.Execution.Instances {
-		if !workflowID.MatchString(instance.ID) || len(instance.Attempts) != 0 {
+		if !workflowID.MatchString(instance.ID) {
 			return nil, errWorkflowTransition
 		}
 		if instance.CaseDigest != nil {
 			if err := retained("instances/"+instance.ID+"/case.json", "case", *instance.CaseDigest, false); err != nil {
 				return nil, err
+			}
+		}
+		for _, attempt := range instance.Attempts {
+			base := fmt.Sprintf("instances/%s/attempts/%d/", instance.ID, attempt.Number)
+			var run VerificationBundle
+			if attempt.RunDigest != nil {
+				if err := retained(base+"run.json", "run", *attempt.RunDigest, false); err != nil {
+					return nil, err
+				}
+				if strictJSON(files[base+"run.json"], &run) != nil || run.Run.Input.Source == nil {
+					return nil, errWorkflowTransition
+				}
+				sources := member(files[base+"run.json"], "run", "input", "source", "sources")
+				if len(sources) == 0 {
+					sources = []byte(`{}`)
+				}
+				files[base+"sources.json"] = bytes.Clone(sources)
+				if len(run.Run.AuditSignatures) > 0 {
+					files[base+"audit-signatures.json"] = bytes.Clone(run.Run.AuditSignatures)
+				}
+			}
+			if attempt.PreparationDigest != nil {
+				if err := retained(base+"preparation.json", "preparation", *attempt.PreparationDigest, false); err != nil {
+					return nil, err
+				}
+				var preparation Preparation
+				if strictJSON(files[base+"preparation.json"], &preparation) != nil || run.Run.Input.Preparation == nil || !sameJSON(encode(run.Run.Input.Preparation), files[base+"preparation.json"]) {
+					return nil, errWorkflowTransition
+				}
+				files[base+"preparation.sha256"] = []byte(*attempt.PreparationDigest + "\n")
+				files[base+"verified-at.txt"] = []byte(preparation.VerifiedAt + "\n")
+			}
+			if attempt.AuditDigest != nil {
+				if err := retained(base+"audit.json", "audit", *attempt.AuditDigest, false); err != nil {
+					return nil, err
+				}
+				if !bytes.Equal(files[base+"audit.json"], workflowRunAudit(run)) {
+					return nil, errWorkflowTransition
+				}
+			}
+			if attempt.EvaluationErrorDigest != nil {
+				if err := retained(base+"evaluation-error.json", "evaluation-error", *attempt.EvaluationErrorDigest, false); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

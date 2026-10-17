@@ -23,7 +23,11 @@ func workflowInventoryFixture(t *testing.T, limit int, configure ...func(map[str
 	for _, apply := range configure {
 		apply(doc)
 	}
-	w, err := newWorkflowInventory(encode(doc), []byte(`{"id":7,"notInherited":"private"}`), "execution-a", []workflowFreezeInput{in, in}, []InputProfile{f.profile}, runtime)
+	inputs := make([]workflowFreezeInput, len(doc["stages"].([]any)))
+	for i := range inputs {
+		inputs[i] = in
+	}
+	w, err := newWorkflowInventory(encode(doc), []byte(`{"id":7,"notInherited":"private"}`), "execution-a", inputs, []InputProfile{f.profile}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}

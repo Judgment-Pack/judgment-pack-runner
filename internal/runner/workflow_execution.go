@@ -85,6 +85,7 @@ type workflowInventory struct {
 	Document  workflowDocument
 	Execution workflowExecution
 	Artifacts map[string][]byte
+	Pending   map[string]int
 }
 
 var errWorkflowTransition = errors.New("workflow transition is not admitted")
@@ -106,6 +107,10 @@ func (w workflowInventory) copy() workflowInventory {
 	_ = json.Unmarshal(encode(w.Execution), &execution)
 	out.Execution = execution
 	out.Artifacts = make(map[string][]byte, len(w.Artifacts))
+	out.Pending = make(map[string]int, len(w.Pending))
+	for id, attempt := range w.Pending {
+		out.Pending[id] = attempt
+	}
 	// Retained artifact slices and the document are immutable after admission.
 	// Copy only their index; copying all receipt bytes on every transition would
 	// multiply the branch byte budget in memory.
@@ -149,7 +154,7 @@ func newWorkflowInventory(raw, root []byte, execution string, inputs []workflowF
 	if err != nil {
 		return w, err
 	}
-	w = workflowInventory{Document: doc, Artifacts: map[string][]byte{}, Execution: workflowExecution{ExecutionVersion: 1, WorkflowDigest: digest(canonical), Execution: execution, RootCaseDigest: digest(rootCase), Frozen: []workflowFrozenStage{}, Instances: []workflowInstance{}, OutputSets: []workflowStageSet{}, Selections: make([]*string, len(stages))}}
+	w = workflowInventory{Document: doc, Pending: map[string]int{}, Artifacts: map[string][]byte{}, Execution: workflowExecution{ExecutionVersion: 1, WorkflowDigest: digest(canonical), Execution: execution, RootCaseDigest: digest(rootCase), Frozen: []workflowFrozenStage{}, Instances: []workflowInstance{}, OutputSets: []workflowStageSet{}, Selections: make([]*string, len(stages))}}
 	w.keep("workflow", canonical)
 	w.keep("case", rootCase)
 	for i, stage := range stages {
@@ -223,6 +228,11 @@ func selectWorkflow(w workflowInventory, raw []byte, dispositions map[string]jso
 		return w, errWorkflowTransition
 	}
 	stage := w.Document.Stages[index]
+	for _, instance := range w.Execution.Instances {
+		if instance.Stage == stage.ID && w.Pending[instance.ID] != 0 {
+			return w, errWorkflowTransition
+		}
+	}
 	set := w.outputSet(index)
 	selection, canonical, err := readWorkflowSelection(raw, set, stage, w.Document.Limits.MaxRecords, dispositions)
 	if err != nil {
