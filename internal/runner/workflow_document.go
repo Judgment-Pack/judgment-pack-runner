@@ -46,13 +46,17 @@ type workflowSelectionPolicy struct {
 	Mode string        `json:"mode"`
 	Rule *workflowRule `json:"rule,omitempty"`
 }
+type workflowDialectRef struct {
+	FormatVersion string          `json:"formatVersion,omitempty"`
+	ID            string          `json:"id,omitempty"`
+	Version       json.RawMessage `json:"version"`
+	Digest        string          `json:"digest"`
+}
+
 type workflowStage struct {
-	ID      string `json:"id"`
-	Dialect struct {
-		Version int    `json:"version"`
-		Digest  string `json:"digest"`
-	} `json:"dialect"`
-	Pack struct {
+	ID      string             `json:"id"`
+	Dialect workflowDialectRef `json:"dialect"`
+	Pack    struct {
 		ID     string `json:"id"`
 		Digest string `json:"digest"`
 	} `json:"pack"`
@@ -241,7 +245,11 @@ func readWorkflow(raw []byte) (workflowDocument, []byte, error) {
 	for _, rawStage := range stages {
 		if stage, ok := rawStage.(map[string]any); ok {
 			if pin, ok := stage["dialect"].(map[string]any); ok {
-				if version, exists := pin["version"]; exists && version != json.Number("2") && version != json.Number("3") {
+				if format, named := pin["formatVersion"]; named {
+					if format != "2.0.0" && format != "3.0.0" {
+						return d, nil, errWorkflowVersion
+					}
+				} else if version, exists := pin["version"]; exists && version != json.Number("2") && version != json.Number("3") {
 					return d, nil, errWorkflowVersion
 				}
 			}
@@ -270,7 +278,15 @@ func readWorkflow(raw []byte) (workflowDocument, []byte, error) {
 		if !ok || !workflowID.MatchString(stage.ID) || seen[stage.ID] {
 			return d, nil, errWorkflowForm
 		}
-		if _, ok := workflowObject(s["dialect"], "version", "digest"); !ok {
+		dialectKeys := []string{"version", "digest"}
+		if stage.Dialect.FormatVersion != "" {
+			dialectKeys = append(dialectKeys, "formatVersion", "id")
+			var version string
+			if json.Unmarshal(stage.Dialect.Version, &version) != nil || !artifactVersionGrammar.MatchString(version) || stage.Dialect.ID == "" || len(stage.Dialect.ID) > 1024 || strings.IndexFunc(stage.Dialect.ID, func(c rune) bool { return c <= 32 || c == 127 }) >= 0 {
+				return d, nil, errWorkflowForm
+			}
+		}
+		if _, ok := workflowObject(s["dialect"], dialectKeys...); !ok {
 			return d, nil, errWorkflowForm
 		}
 		if _, ok := workflowObject(s["pack"], "id", "digest"); !ok {
