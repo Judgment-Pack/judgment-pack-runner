@@ -210,12 +210,18 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// and a re-execution does not run. So does a record signature that fails,
 	// or that --require-signed asks for and no valid one covers.
 	chain, err := checkChain(verified, *chainFile, expect, *requireWitnessed)
+	// Beside the finding, a chain check that could not run does not discard
+	// the preparation's checked report: the report has no runChain member, a
+	// sentence says the check did not run, and the error carries why.
+	var refusals []error
+	unavailable := ""
 	if err != nil {
-		if finding != nil {
-			json.NewEncoder(stdout).Encode(map[string]string{"status": "audit-disposition-mismatch", "retainedDisposition": "differs-from-audit"})
-			return errors.Join(finding, err)
+		if finding == nil {
+			return err
 		}
-		return err
+		refusals = append(refusals, err)
+		unavailable = " The check of the export's entry in the installation's chain of runs did not run: " + err.Error() + "."
+		chain = nil
 	}
 	sig := checkSignature(verified, publicKey)
 	// Every report carries what was checked; each says its own status, and
@@ -226,7 +232,6 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	// Beside the finding a refusal below is added to the error and the report
 	// says the finding; otherwise it is the report's own status, and ends the
 	// check.
-	var refusals []error
 	refuse := func(status string, err error) bool {
 		if finding != nil {
 			refusals = append(refusals, err)
@@ -258,7 +263,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
-	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + freshnessSentence(verified.Freshness, committed(verified.Binding, sig)) + notMappedSentence(verified.Inputs()) + record.sentence() + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion()) + bindingSentence(verified.Binding, sig)
+	said := assertedSentence(verified.Classes) + unsignedSentence(verified.Classes, verified.Unsigned) + freshnessSentence(verified.Freshness, committed(verified.Binding, sig)) + notMappedSentence(verified.Inputs()) + record.sentence() + unavailable + chainSentence(chain) + signatureSentence(sig, verified.ExportVersion()) + bindingSentence(verified.Binding, sig)
 	if finding != nil {
 		// What verified is reported beside the finding, with the sentence
 		// that says what it covers; no evaluator is replayed.

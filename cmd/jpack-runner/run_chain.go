@@ -94,6 +94,15 @@ func chainSentence(c *runner.RunChainReport) string {
 	if c == nil {
 		return ""
 	}
+	if c.Status != "valid" {
+		// A failed check claims nothing: no agreement, no consistency, no
+		// witness. The report's runChain member holds the findings.
+		first := ""
+		if len(c.Findings) > 0 {
+			first = " (" + c.Findings[0].Name + ")"
+		}
+		return fmt.Sprintf(" The check of the export's entry in the installation's chain of runs failed%s, so nothing here relies on the entry, the chain or the held checkpoints; the report's runChain member holds the findings.", first)
+	}
 	said := fmt.Sprintf(" The export's entry in the installation's chain of runs, at sequence %d, binds this run to those bytes", c.Checkpoint.Sequence)
 	switch {
 	case c.Witnessed:

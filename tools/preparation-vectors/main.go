@@ -657,9 +657,17 @@ func verifyRun(runner, dir string, args []string) (verifyEntry, error) {
 	switch {
 	case errors.As(err, &exit):
 		e.Exit = exit.ExitCode()
+		// Standard error ends with one line of refusal, "runner: " and the
+		// error. Before it, only a disposition finding says anything: one line
+		// of explanatory sentences, beginning with the finding's name, that
+		// states what was checked beside it.
 		said := strings.TrimSuffix(stderr.String(), "\n")
-		refusal, ok := strings.CutPrefix(said, "runner: ")
-		if !ok || strings.Contains(refusal, "\n") {
+		explained, last := "", said
+		if i := strings.LastIndex(said, "\n"); i >= 0 {
+			explained, last = said[:i], said[i+1:]
+		}
+		refusal, ok := strings.CutPrefix(last, "runner: ")
+		if !ok || strings.Contains(refusal, "\n") || explained != "" && (strings.Contains(explained, "\n") || !strings.HasPrefix(explained, "audit-disposition-mismatch: ")) {
 			return e, fmt.Errorf("verify-run refused without one line of refusal: %q", stderr.String())
 		}
 		e.Error = &refusal

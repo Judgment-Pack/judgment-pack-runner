@@ -79,11 +79,55 @@ func TestVerifyRunBindsASignedDisposition(t *testing.T) {
 					if !errors.Is(err, runner.ErrDispositionMemberName) || out != "" || human != "" {
 						t.Fatal(err, out, human)
 					}
-				} else if !errors.Is(err, runner.ErrAuditDispositionMismatch) || !strings.Contains(out, `"retainedDisposition":"differs-from-audit"`) || !strings.Contains(out, `"status":"audit-disposition-mismatch"`) || strings.Contains(out, "verified-") {
+				} else if err != runner.ErrAuditDispositionMismatch {
 					t.Fatal(err, out, human)
+				} else {
+					// The preparation of this export (none: it has no lineage)
+					// verified beside the finding: its checked members and
+					// sentences are the report's, not the finding alone.
+					for _, want := range []string{`"exactBytes":"matches-record"`, `"exportVersion":5`, `"inputs":"not-mapped"`, `"recordDigest":"sha256:`, `"retainedDisposition":"differs-from-audit"`, `"runChain":{`, `"witnessed":true`, `"signature":{`, `"status":"signed"`, `"scope":"` + notMappedInputs + `"`, `"status":"audit-disposition-mismatch"`} {
+						if !strings.Contains(out, want) {
+							t.Fatalf("the report lacks %s: %s", want, out)
+						}
+					}
+					if strings.Contains(out, "targetsByClass") || out == auditDispositionMismatchReport || !strings.HasPrefix(human, "audit-disposition-mismatch: the retained disposition differs from the audit record."+notMappedSaid+" The export's bytes") || !strings.Contains(human, "The record's signature verifies") {
+						t.Fatal(out, human)
+					}
 				}
 			}
 		})
+	}
+	t.Run("refused preparation", findingAloneBesideARefusedPreparation)
+}
+
+// A changed disposition beside retained inputs the audit record does not name:
+// the preparation is refused too, and the report is the finding alone.
+func findingAloneBesideARefusedPreparation(t *testing.T) {
+	v := readNotMappedVector(t, "v1-file-mapping-run")
+	raw, err := os.ReadFile(v.dir + "run.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundle, run map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &bundle); err != nil || json.Unmarshal(bundle["run"], &run) != nil {
+		t.Fatal(err)
+	}
+	run["result"] = bytes.Replace(run["result"], []byte(`"outcomeId":"proceed"`), []byte(`"outcomeId":"fabricated-approval"`), 1)
+	input := bytes.Replace(run["input"], []byte(`"appropriateness":"pass"`), []byte(`"appropriateness":"fail"`), 1)
+	if bytes.Equal(input, run["input"]) {
+		t.Fatal("fixture has no retained input to change")
+	}
+	run["input"] = input
+	bundle["run"], _ = json.Marshal(run)
+	changed, _ := json.Marshal(bundle)
+	file := filepath.Join(t.TempDir(), "run.json")
+	if err = os.WriteFile(file, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, human, err := verifyFiles(file, v.dir+"profiles.json", v.digest, "--public-key", key1, "--require-signed")
+	var both *runner.PreparationRefusedWithFinding
+	if !errors.Is(err, runner.ErrAuditDispositionMismatch) || !errors.As(err, &both) || out != auditDispositionMismatchReport || human != "" {
+		t.Fatal(err, out, human)
 	}
 }
 
