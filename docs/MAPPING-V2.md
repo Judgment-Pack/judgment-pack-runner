@@ -1194,7 +1194,13 @@ stores the path. It passes the path to each operational evaluation's Runtime as
 `JPACK_SIGNING_KEY`, and to nothing else: no validation, lock, rehearsal or
 saved test is given it. The Runtime reads the variable whatever configVersion a
 project declares, so the release's configuration stays at configVersion `"3"`,
-unchanged. Naming the key in that configuration, `audit.signingKey`, would need
+unchanged. That configuration is exactly
+`{"configVersion":"3","packs":{"target":{"path":"pack.json"}},"audit":{"dir":"audit"}}`,
+written by `POST /v1/previews`, the only request that creates a release, and it
+declares the audit directory because Runner passes `--cites` for every
+operational run whose preparation cites receipts, which a Runtime carrying its
+ADR-0051 refuses (`JPS-INVOCATION-CITES`, exit 3) in a project whose
+configuration declares none (#68). Naming the key in that configuration, `audit.signingKey`, would need
 configVersion `"6"`, which no released Runtime reads, and would put the path in
 every release and export. The Runtime checks the key again as it opens it, and
 signs nothing with a key it refuses. Runtime 0.25.0 and earlier do not sign,
