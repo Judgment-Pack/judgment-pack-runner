@@ -256,10 +256,11 @@ func TestAStoreAnEarlierRunnerWroteOpensWithItsRefusedProfileSetAside(t *testing
 }
 
 // A set-aside profile is never bound: every place Runner resolves the
-// installation's profiles refuses a binding, a job, a run or a workflow that
-// names it, by its name, never as a profile the installation does not hold.
-// A job bound to it stays stored, and a run queued under it before it was
-// set aside ends without starting. A configured Gateway connection naming it
+// installation's profiles refuses a binding, a job or a run that names it,
+// by its name, never as a profile the installation does not hold. A job
+// bound to it stays stored, an identical retry of what was accepted before
+// is answered as it was, and a run queued under it before it was set aside
+// ends without starting. A configured Gateway connection naming it
 // refuses to start, naming it. Here the profile is set aside for a public key
 // an earlier Runner admitted (MAPPING-V2.md, "Upgrade note"); its id is what
 // every place refuses, and the job and run were made under the definition
@@ -326,17 +327,15 @@ func TestASetAsideProfileIsNeverBound(t *testing.T) {
 	if r := serve(t, s, "POST", "/v1/jobs/"+job.ID+"/runs", string(encode(input)), map[string]string{"Idempotency-Key": "before"}); r.Code != 200 || !strings.Contains(r.Body.String(), `"id":"`+queued.ID+`"`) {
 		t.Fatal("an identical retry is not answered with its acceptance:", r.Code, r.Body.String())
 	}
+	// So is a repeated creation of the job made before: it is returned as it
+	// was, as a release no longer tested-enough returns one (release_untested).
+	if r := serve(t, s, "POST", "/v1/jobs", string(encode(map[string]any{"name": "Vendors", "releaseId": first.ID, "reviewed": true})), nil); r.Code != 201 || !strings.Contains(r.Body.String(), `"id":"`+job.ID+`"`) {
+		t.Fatal("a repeated creation of the job made before is not answered with it:", r.Code, r.Body.String())
+	}
 	requireSetAside(t, "checking the job's release", s.checkReleaseProfiles(first), p.ID)
 	requireSetAside(t, "acquiring in the background", s.validateGatewayMapping(first), p.ID)
 	_, err = s.nextInput(planned, time.Now())
 	requireSetAside(t, "preparing an occurrence", err, p.ID)
-	published := encode(f.published)
-	raw, in, _ := workflowFreezeFixture(t, published, bindingOf(t, published, map[string]InputProfile{"vendor": f.profile}), []InputProfile{f.profile})
-	_, err = s.freezeWorkflow(raw, []workflowFreezeInput{in})
-	requireSetAside(t, "freezing a workflow", err, p.ID)
-	raw, in, _ = workflowFreezeFixture(t, encode(mapping), nil, []InputProfile{p})
-	_, err = s.freezeWorkflow(raw, []workflowFreezeInput{in})
-	requireSetAside(t, "freezing a workflow of a bound dialect", err, p.ID)
 
 	// The run queued before the profile was set aside ends without starting,
 	// naming it; the job and the run stay stored and served.
@@ -409,7 +408,8 @@ func TestASetAsideProfileCountsTowardTheBound(t *testing.T) {
 
 // What fails as a set, not as one profile, still refuses to open the store,
 // and leaves its row as it was: a row that is unreadable, of another form or
-// over its storage bound; more than 16 stored profiles, or 16 with the
+// over its storage bound, an element that is not a profile in the form
+// registration takes, null or {} included, among them; more than 16 stored profiles, or 16 with the
 // configured ones, a set-aside one counted; an id stored twice, a set-aside
 // profile's included; and a stored profile, set aside or admitted, whose id
 // a configured profile of another definition has.
@@ -440,6 +440,11 @@ func TestWhatAStoredSetStillRefusesToOpen(t *testing.T) {
 		{"an unreadable row", `[{"id":"vendors"`, nil, "registered input profiles are invalid: "},
 		{"a member no profile has", strings.Replace(row(p), `"id":`, `"unknown":1,"id":`, 1), nil, "registered input profiles are invalid: "},
 		{"no array", `null`, nil, "registered input profiles are invalid"},
+		{"a null element beside a profile", "[null," + row(p)[1:], nil, "registered input profiles are invalid: element 0 is not a profile in its exact form: it is not a JSON object"},
+		{"an empty object beside a profile", "[{}," + row(p)[1:], nil, "registered input profiles are invalid: element 0 is not a profile in its exact form: it has no member id"},
+		{"a null element alone", `[null]`, nil, "registered input profiles are invalid: element 0 is not a profile in its exact form: it is not a JSON object"},
+		{"a profile without its endpoint", strings.Replace(row(refused), `"endpoint":"postgresql://vendor-records",`, "", 1), nil, "registered input profiles are invalid: element 0 is not a profile in its exact form: it has no member endpoint"},
+		{"a member named otherwise but for case", strings.Replace(row(refused), `"class":`, `"Class":`, 1), nil, "registered input profiles are invalid: element 0 is not a profile in its exact form: unknown member"},
 		{"a row over its storage bound", "[" + strings.Repeat(" ", registeredProfilesBound) + "]", nil, "registered input profiles exceed their storage bound"},
 		{"seventeen stored, one set aside", row(many(17, named("earlier", refused))...), nil, "registered input profiles are invalid: at most 16 input profiles"},
 		{"sixteen stored, one set aside, and one configured", row(many(16, named("earlier", refused))...), []InputProfile{named("configured", p)}, "At most 16 installation input profiles are supported"},
@@ -465,5 +470,115 @@ func TestWhatAStoredSetStillRefusesToOpen(t *testing.T) {
 				t.Fatal("the row changed:", got)
 			}
 		})
+	}
+}
+
+// A set-aside profile's bytes are kept as the store spells them, not as
+// Runner would write them: an entry with escaped slashes and an escaped
+// hyphen, members in another order, whitespace inside and a literal &, beside
+// an exact profile, is byte for byte in the row after a registration and
+// after the store reopens. The listing serves both shapes as openapi.json's
+// oneOf gives them, the set-aside one compacted and escaped as every answer
+// is.
+func TestASetAsideProfileKeepsItsBytesAsSpelled(t *testing.T) {
+	cfg := journalConfig(t)
+	openJournal(t, cfg).Close()
+	exact, _ := testProfile(t)
+	scoped, _ := earlierScoped(t)
+	spelled := `{ "endpointScope" : [ "https:\/\/a.example\/api\/v4\/projects\/group%2Fproject" ] , "research":{"capabilities":["page"]},` +
+		` "id" : "page", "publicKey":"` + scoped.PublicKey + `", "class":"generated", "source":"` + scoped.Source + `", "authority":"R&D Authority",` +
+		` "shape":"http", "adapter":{"version":"` + scoped.Adapter.Version + `","name":"adapter\u002dweb","digest":"` + scoped.Adapter.Digest + `"}, "endpoint" : null }`
+	row := "[" + string(encode(exact)) + "," + spelled + "]"
+	setStoredRow(t, cfg, row)
+	s := openJournal(t, cfg)
+	defer func() { s.Close() }()
+	if aside := s.SetAside(); len(aside) != 1 || aside[0].ID != "page" || !strings.HasSuffix(aside[0].Reason, "(input-malformed)") || len(s.inputProfiles()) != 1 {
+		t.Fatalf("set aside %+v, installed %d", aside, len(s.inputProfiles()))
+	}
+	if got := heldRowOf(t, s); got != row {
+		t.Fatal("opening changed the row:", got)
+	}
+	another := exact
+	another.ID = "another"
+	if r := serve(t, s, "POST", "/v1/input-profiles", string(encode(another)), nil); r.Code != 201 {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	rewritten := row[:len(row)-1] + "," + string(encode(another)) + "]"
+	if got := heldRowOf(t, s); got != rewritten {
+		t.Fatalf("the row is\n%s\nnot\n%s", got, rewritten)
+	}
+	s.Close()
+	if got := storedRowOf(t, cfg); got != rewritten {
+		t.Fatal("the row changed at close:", got)
+	}
+	s = openJournal(t, cfg)
+	if got := heldRowOf(t, s); got != rewritten || len(s.SetAside()) != 1 || len(s.inputProfiles()) != 2 {
+		t.Fatal("reopened, the row or the profiles changed:", got)
+	}
+	listed := serve(t, s, "GET", "/v1/input-profiles", "", nil)
+	doc := readOpenAPI(t)
+	listing := doc["paths"].(map[string]any)["/input-profiles"].(map[string]any)["get"].(map[string]any)["responses"].(map[string]any)["200"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	entries, ok := decodeNumbers(t, listed.Body.Bytes()).([]any)
+	if problems := doc.check("listing", listing, entries); listed.Code != 200 || !ok || len(entries) != 3 || len(problems) != 0 {
+		t.Fatal(listed.Code, problems, listed.Body.String())
+	}
+	installed, setAside := doc.schema("InstalledInputProfile"), doc.schema("SetAsideInputProfile")
+	for i, entry := range entries {
+		asInstalled, asSetAside := doc.check("installed", installed, entry), doc.check("set aside", setAside, entry)
+		if (i < 2) != (len(asInstalled) == 0) || (i == 2) != (len(asSetAside) == 0) {
+			t.Fatalf("entry %d matches the installed shape %v and the set-aside shape %v", i, asInstalled, asSetAside)
+		}
+	}
+	var served []map[string]json.RawMessage
+	if err := json.Unmarshal(listed.Body.Bytes(), &served); err != nil {
+		t.Fatal(err)
+	}
+	if !sameJSON(served[2]["profile"], []byte(spelled)) {
+		t.Fatalf("the set-aside profile is served as\n%s\nnot as the value stored\n%s", served[2]["profile"], spelled)
+	}
+	if strings.Contains(string(served[2]["profile"]), " :") || !strings.Contains(string(served[2]["profile"]), `"authority":"R\u0026D Authority"`) {
+		t.Fatal("the set-aside profile is not served compacted and escaped:", string(served[2]["profile"]))
+	}
+}
+
+// A registration that would carry the row past its storage bound is refused,
+// input_profile_limit, and the store still opens: a set-aside entry may be
+// stored larger than Runner writes it, so the row's length is checked, not
+// assumed from the bound on each profile. One that fits is taken.
+func TestARegistrationPastTheRowsStorageBoundIsRefused(t *testing.T) {
+	cfg := journalConfig(t)
+	openJournal(t, cfg).Close()
+	scoped, _ := earlierScoped(t)
+	written := string(encode(scoped))
+	padding := registeredProfilesBound - 12000 - len(written)
+	padded := "{" + strings.Repeat(" ", padding) + written[1:]
+	row := "[" + padded + "]"
+	setStoredRow(t, cfg, row)
+	s := openJournal(t, cfg)
+	defer func() { s.Close() }()
+	if len(s.SetAside()) != 1 || s.SetAside()[0].ID != "page" {
+		t.Fatal("the padded profile is not set aside")
+	}
+	large, _ := testProfile(t)
+	large.ID = "large"
+	large.Adapter.Name = strings.Repeat("a", 20000)
+	if err := validateProfiles([]InputProfile{large}); err != nil || len(row)+1+len(encode(large)) <= registeredProfilesBound {
+		t.Fatal("the fixture does not pass the row's bound:", err)
+	}
+	r := serve(t, s, "POST", "/v1/input-profiles", string(encode(large)), nil)
+	if r.Code != 422 || !strings.Contains(r.Body.String(), `"code":"input_profile_limit"`) {
+		t.Fatal("a registration past the row's bound was answered", r.Code, r.Body.String())
+	}
+	if heldRowOf(t, s) != row || len(s.inputProfiles()) != 0 {
+		t.Fatal("a refused registration changed the profiles")
+	}
+	small, _ := testProfile(t)
+	if r = serve(t, s, "POST", "/v1/input-profiles", string(encode(small)), nil); r.Code != 201 {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	s.Close()
+	s = openJournal(t, cfg)
+	if len(s.SetAside()) != 1 || len(s.inputProfiles()) != 1 || heldRowOf(t, s) != row[:len(row)-1]+","+string(encode(small))+"]" {
+		t.Fatal("the store did not reopen with its row")
 	}
 }

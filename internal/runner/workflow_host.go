@@ -7,22 +7,6 @@ import (
 	"path/filepath"
 )
 
-// freezeWorkflow freezes a draft workflow's stages under this installation's
-// profiles and pinned Runtime (freezeWorkflowStages). A stage whose binding
-// document or release names a set-aside profile is refused by that profile's
-// name first, never as one the installation does not hold.
-func (s *Service) freezeWorkflow(raw []byte, inputs []workflowFreezeInput) ([]workflowStageSnapshot, error) {
-	for _, in := range inputs {
-		if err := s.refuseSetAsideIDs(bindingProfileIDs(in.Binding)); err != nil {
-			return nil, err
-		}
-		if err := s.refuseSetAsideMapping(in.Release.InputMapping); err != nil {
-			return nil, err
-		}
-	}
-	return freezeWorkflowStages(raw, inputs, s.inputProfiles(), s.runtimeDigest)
-}
-
 // This adapter uses Runner's existing Gateway connection and pinned Runtime.
 // It is private until the full workflow reader and public routes are ready.
 // It does not implement research: Desk must use its shared executor and retain

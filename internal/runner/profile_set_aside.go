@@ -15,8 +15,8 @@ package runner
 // rather than as a profile the installation does not hold, each place
 // Runner resolves the installation's profiles first refuses one that names
 // it (refuseSetAside): planning and preparation, a preview, an import, job
-// creation and upgrade, a run's submission and its start, and a workflow's
-// freeze.
+// creation and upgrade, and a run's submission and its start. A workflow
+// route, when there is one, binds through these.
 
 import (
 	"encoding/json"

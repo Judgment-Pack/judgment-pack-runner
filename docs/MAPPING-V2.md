@@ -210,35 +210,56 @@ before. An operator who upgrades a store holding such a profile sees:
 - **A line at start**, on standard error, for each:
   `runner: the registered input profile "<id>" is set aside, kept and never bound: <reason>`.
 - **The listing.** `GET /v1/input-profiles` lists it after the installed
-  profiles, as the store holds it, with its digest, `"state": "set-aside"` and
-  `"reason"`.
-- **Never bound.** A binding, a job or a workflow that names it is refused as
+  profiles, with its digest, `"state": "set-aside"` and `"reason"`. Its
+  `profile` is its stored bytes, served compacted and JSON-escaped as every
+  answer is; the row keeps them exactly.
+- **Under the Desk, neither.** The Desk does not show Runner's standard error,
+  and lists every entry as a profile. A Desk operator learns of a set-aside
+  profile only when a binding to it is refused.
+- **Never bound.** A binding, a job or a run that names it is refused as
   `input_profile_set_aside` (422), naming the profile and the reason: planning
   and preparation (`POST /v1/inputs/next`, an occurrence's preparation,
   background acquisition), a preview, an import's binding document, creating a
-  job from a release that names it, upgrading a job to one, a run's
-  submission, and a workflow's freeze. It is never refused as a profile the
-  installation does not hold, and never resolved to another. A job bound to
-  it stays stored, with its runs and their exports; a new run of it is
-  refused, and a run queued before the upgrade ends `failed` without starting,
-  with `reason` `profile-set-aside` and a problem naming the profile.
-  Upgrading the job to a release bound to another profile moves it on. A
-  Gateway connection configured for it refuses to start, naming it.
+  new job from a release that names it, upgrading a job to one, and a run's
+  submission. It is never refused as a profile the installation does not
+  hold, and never resolved to another. A run queued before the upgrade ends
+  `failed` without starting, with `reason` `profile-set-aside` and a problem
+  naming the profile.
+- **Retries.** An identical retry of what was accepted before the upgrade is
+  answered as it was: repeating the creation of a job made before returns that
+  job, and a run's retry under the same idempotency key returns the run
+  accepted then. A run whose input is an import is the exception: the import is
+  bound before the retry is looked up, so its retry is refused as
+  `input_profile_set_aside`.
+- **A job bound to it** stays stored, with its runs and their exports, and a
+  new run of it is refused. `verify-run` given the set-aside profile among its
+  `--profiles` refuses it as the specification reads it, `input-malformed`, so
+  such a run's export reads as `input-malformed` there. Upgrading the job to a
+  release bound to another profile moves it on, under the upgrade's own rules:
+  finish, cancel or reconcile its pending occurrences first, those the refusal
+  left `needs-attention` included, and pause the job's triggers.
+- **A Gateway connection** configured for it refuses to start, naming it.
+  Remove the connection from the installation's configuration, or point it at
+  another profile.
 - **Kept.** It stays in the row byte for byte, also when a registration
   rewrites the row; its id stays taken, so registering that id again is
-  refused as `input_profile_conflict`; and it counts toward the 16 profiles.
+  refused as `input_profile_conflict`; and it counts toward the 16 profiles. A
+  registration that would carry the row past its storage bound is refused as
+  `input_profile_limit`.
 
 What fails as a set, not as one profile, still refuses to open the store: a
-row over its storage bound, unreadable, or not an array of profiles with
-exactly their members; more than 16 stored profiles, or more than 16 with the
-configured ones, a set-aside one counted; an id stored twice; and a stored
-profile, set aside or not, whose id a configured profile of another definition
-has. A configured profile this Runner refuses is not set aside: Runner refuses
-to start, naming the profile and why (`configured input profile "<id>" is
-refused: …`), and the operator edits the configuration. The offline verifier
-is unchanged: `verify-run --profiles` and `verify-preparation` read the
-profiles they are given as the specification does, and one the form refuses
-is `input-malformed`.
+row over its storage bound, unreadable, or not an array of JSON objects each
+with exactly a profile's members, named as written, and every member
+registration requires (an element `null` or `{}` included); more than 16
+stored profiles, or more than 16 with the configured ones, a set-aside one
+counted; an id stored twice; and a stored profile, set aside or not, whose id
+a configured profile of another definition has. Only a profile of that form
+which admission refuses is set aside. A configured profile this Runner refuses
+is not set aside: Runner refuses to start, naming the profile and why
+(`configured input profile "<id>" is refused: …`), and the operator edits the
+configuration. The offline verifier is unchanged: `verify-run --profiles` and
+`verify-preparation` read the profiles they are given as the specification
+does, and one the form refuses is `input-malformed`.
 
 ## Calculated values
 

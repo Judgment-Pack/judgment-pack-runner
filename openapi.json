@@ -339,7 +339,8 @@
               "minLength": 1,
               "maxLength": 128,
               "pattern": "^[!-~]+$"
-            }
+            },
+            "description": "An identical retry under the same key returns the run first accepted, also after a profile its mapping names was set aside. A retry whose input is an import that names a set-aside profile is refused as 422 input_profile_set_aside: the import is bound before the retry is looked up."
           }
         ]
       }
@@ -422,7 +423,7 @@
     "/input-profiles": {
       "get": {
         "operationId": "listInputProfiles",
-        "description": "Trusted bootstrap and durable registered installation profiles with canonical digests. Imported fixtures never install authority. After them, each registered profile set aside when Runner opened its store: one an earlier Runner admitted and this Runner's form refuses on its own, such as a scoped page profile whose endpointScope entry RFC 0018 round 16 refuses. It is listed as the store holds it, with state set-aside and the reason; it is kept byte for byte, its ID stays taken, it counts toward the 16 profiles, and a binding, job, run or workflow that names it is refused as input_profile_set_aside, naming it.",
+        "description": "Trusted bootstrap and durable registered installation profiles with canonical digests. Imported fixtures never install authority. After them, each registered profile set aside when Runner opened its store: one an earlier Runner admitted and this Runner's form refuses on its own, such as a scoped page profile whose endpointScope entry RFC 0018 round 16 refuses. It is listed with state set-aside and the reason, its profile the stored bytes served compacted and JSON-escaped as every answer is; the store's row keeps them exactly. Its ID stays taken, it counts toward the 16 profiles, and a binding, job or run that names it is refused as input_profile_set_aside, naming it.",
         "responses": {
           "200": {
             "description": "Profiles",
@@ -1944,7 +1945,7 @@
           "reviewed"
         ],
         "additionalProperties": false,
-        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. An installation booted with requireTestedReleases refuses a new job from a not-run release with 409 release_untested; repeating the creation of an existing job still returns it. Coverage never gates. Reusing an immutable release and name is idempotent."
+        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. An installation booted with requireTestedReleases refuses a new job from a not-run release with 409 release_untested; repeating the creation of an existing job still returns it. Coverage never gates. Reusing an immutable release and name is idempotent. A new job from a release that names a profile set aside when Runner opened its store is refused as 422 input_profile_set_aside; repeating the creation of a job made before still returns it."
       },
       "Job": {
         "type": "object",
@@ -2179,7 +2180,7 @@
               "binding-refused",
               "profile-set-aside"
             ],
-            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it; binding-refused, for a mapping-v2 run whose Runtime refused the preparation's binding Runner passed (JPS-INVOCATION-BINDING), a defect of Runner, never retried without the binding. profile-set-aside, for a mapping-v2 run queued before a profile its release names was set aside when Runner opened its store, which never starts; its problem names the profile. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
+            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it; binding-refused, for a mapping-v2 run whose Runtime refused the preparation's binding Runner passed (JPS-INVOCATION-BINDING), a defect of Runner, never retried without the binding; profile-set-aside, for a mapping-v2 run queued before a profile its release names was set aside when Runner opened its store, which never starts; its problem names the profile. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
           },
           "signing": {
             "type": "object",
@@ -5568,11 +5569,11 @@
       },
       "SetAsideInputProfile": {
         "type": "object",
-        "description": "A registered profile Runner set aside when it opened its store: one an earlier Runner admitted and this Runner's admission refuses on its own. Never bound: a binding, job, run or workflow that names it is refused as input_profile_set_aside, naming it. A failure of the stored set, such as a malformed row, more than 16 profiles, an ID stored twice or the ID of a configured profile of another definition, still refuses to open the store; a configured profile this Runner refuses still refuses to start.",
+        "description": "A registered profile Runner set aside when it opened its store: one an earlier Runner admitted and this Runner's admission refuses on its own. Never bound: a binding, job or run that names it is refused as input_profile_set_aside, naming it. A failure of the stored set, such as a malformed row, more than 16 profiles, an ID stored twice or the ID of a configured profile of another definition, still refuses to open the store; a configured profile this Runner refuses still refuses to start.",
         "properties": {
           "profile": {
             "type": "object",
-            "description": "The profile as the store holds it, which this Runner's form refuses."
+            "description": "The stored profile, which this Runner's form refuses: its stored bytes, served compacted and JSON-escaped as every answer is. The store's row keeps them exactly."
           },
           "digest": {
             "type": "string",

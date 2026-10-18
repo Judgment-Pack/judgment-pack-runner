@@ -76,7 +76,8 @@ func (s *Service) inputProfiles() []InputProfile {
 // Each that this Runner's admission refuses on its own, as validateProfiles
 // refuses that profile alone, is set aside (profile_set_aside.go) and the
 // others load. What fails as a set refuses to open the store: a row over its
-// storage bound, unreadable or not an array of profiles in their exact form;
+// storage bound, unreadable, or not an array of JSON objects each with exactly
+// a profile's members and every member registration requires;
 // more than 16 stored profiles, or more than 16 with the configured ones, a
 // set-aside one counted; an id stored twice; and a stored profile, admitted or
 // set aside, whose id a configured profile of another definition has.
@@ -99,6 +100,11 @@ func (s *Service) loadRegisteredProfiles() error {
 	var stored []json.RawMessage
 	if profiles == nil || json.Unmarshal([]byte(raw), &stored) != nil || len(stored) != len(profiles) {
 		return errors.New("registered input profiles are invalid")
+	}
+	for i, element := range stored {
+		if e := storedProfileForm(element); e != nil {
+			return fmt.Errorf("registered input profiles are invalid: element %d is not a profile in its exact form: %w", i, e)
+		}
 	}
 	if len(profiles) > 16 {
 		return errors.New("registered input profiles are invalid: at most 16 input profiles")
@@ -131,6 +137,31 @@ func (s *Service) loadRegisteredProfiles() error {
 	}
 	s.storedProfiles, s.setAside = stored, setAside
 	s.registeredProfiles.Store(&admitted)
+	return nil
+}
+
+// requiredProfileMembers are the members a profile is registered with, each
+// present, endpoint null included.
+var requiredProfileMembers = []string{"id", "publicKey", "class", "source", "authority", "shape", "adapter", "endpoint"}
+
+// storedProfileForm holds an element of the row to the form registration
+// takes: a JSON object of exactly a profile's members, named as written, with
+// every member registration requires. An element of another form, null or
+// {} included, is a row Runner did not write, and the store does not open;
+// only a profile of this form that admission refuses is set aside.
+func storedProfileForm(raw json.RawMessage) error {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil || members == nil {
+		return errors.New("it is not a JSON object")
+	}
+	if e := exactPreparationKeys(raw, reflect.TypeOf(InputProfile{})); e != nil {
+		return e
+	}
+	for _, key := range requiredProfileMembers {
+		if _, present := members[key]; !present {
+			return fmt.Errorf("it has no member %s", key)
+		}
+	}
 	return nil
 }
 
@@ -223,7 +254,7 @@ func (s *Service) registerInputProfileHandler(w http.ResponseWriter, r *http.Req
 		failure(w, bad("invalid_input_profile", "Supply one input profile."))
 		return
 	}
-	for _, key := range []string{"id", "publicKey", "class", "source", "authority", "shape", "adapter", "endpoint"} {
+	for _, key := range requiredProfileMembers {
 		if _, present := members[key]; !present {
 			failure(w, bad("invalid_input_profile", "The input profile omits a required member."))
 			return

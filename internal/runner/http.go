@@ -102,7 +102,8 @@ func (s *Service) Handler(token string) http.Handler {
 			profiles = append(profiles, map[string]any{"profile": p, "digest": profileHash(p)})
 		}
 		// A registered profile set aside when the store opened is listed
-		// after them as the store holds it, with its state and reason.
+		// after them, with its state and reason: its stored bytes, served
+		// compacted and escaped as every answer is (the row keeps them exact).
 		for _, p := range s.SetAside() {
 			profiles = append(profiles, map[string]any{"profile": p.stored, "digest": p.digest, "state": "set-aside", "reason": p.Reason})
 		}

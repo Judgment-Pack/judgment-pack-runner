@@ -273,10 +273,6 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	if err != nil {
 		return Job{}, err
 	}
-	// A release made before a profile it names was set aside makes no job.
-	if err = s.refuseSetAsideMapping(r.InputMapping); err != nil {
-		return Job{}, err
-	}
 	if !releaseReady(r) {
 		return Job{}, &apiError{409, "release_not_ready", "Saved tests failed or could not complete. Correct the pack or cases and check a new release before creating a job."}
 	}
@@ -318,6 +314,11 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	// as any repeated creation is, and keeps running.
 	if s.cfg.RequireTestedReleases && r.Tests == "not-run" {
 		return Job{}, &apiError{409, "release_untested", "This installation creates jobs only from releases whose saved tests ran and passed. Save tests for this pack, then check a new release."}
+	}
+	// Likewise, a release that names a profile set aside since it was made
+	// makes no new job; a job made from it before is returned as it was.
+	if err = s.refuseSetAsideMapping(r.InputMapping); err != nil {
+		return Job{}, err
 	}
 	if err = admitJobPack(tx, r); err != nil {
 		return Job{}, err
