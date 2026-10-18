@@ -74,7 +74,7 @@ type Service struct {
 
 func Open(cfg Config) (_ *Service, err error) {
 	if err = validateProfiles(cfg.InputProfiles); err != nil {
-		return nil, err
+		return nil, profileRefusal("configured", cfg.InputProfiles, err)
 	}
 	if err = json.Unmarshal(encode(cfg.CloudConnections), &cfg.CloudConnections); err != nil {
 		return nil, err

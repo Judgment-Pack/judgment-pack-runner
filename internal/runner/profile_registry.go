@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -81,7 +82,12 @@ func (s *Service) loadRegisteredProfiles() error {
 		return errors.New("registered input profiles exceed their storage bound")
 	}
 	profiles, err := ParseInputProfiles([]byte(raw))
-	if err != nil || profiles == nil {
+	switch {
+	case err != nil && profiles != nil:
+		return profileRefusal("registered", profiles, err)
+	case err != nil:
+		return fmt.Errorf("registered input profiles are invalid: %w", err)
+	case profiles == nil:
 		return errors.New("registered input profiles are invalid")
 	}
 	if _, err = combinedProfiles(s.cfg.InputProfiles, profiles); err != nil {
@@ -89,6 +95,22 @@ func (s *Service) loadRegisteredProfiles() error {
 	}
 	s.registeredProfiles.Store(&profiles)
 	return nil
+}
+
+// profileRefusal is the refusal of an installation's profiles, configured or
+// registered, that admission (validateProfiles) refuses with err: it names the
+// first profile at which the set fails, the first whose admission with those
+// before it fails, and gives that refusal as the reason. A store holding a
+// profile an earlier Runner admitted and this one refuses, such as a scope
+// entry RFC 0018 round 16 refuses, is not opened; the refusal says which
+// profile and why (recovery: runner #154).
+func profileRefusal(whose string, profiles []InputProfile, err error) error {
+	for i := range profiles {
+		if e := validateProfiles(profiles[:i+1]); e != nil {
+			return fmt.Errorf("%s input profile %q is refused: %w", whose, profiles[i].ID, e)
+		}
+	}
+	return fmt.Errorf("%s input profiles are invalid: %w", whose, err)
 }
 
 func (s *Service) registerInputProfile(p InputProfile) (bool, error) {

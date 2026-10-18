@@ -564,9 +564,12 @@ reviewed profile verifies the reads of more than one URL:
   and `page;v=1`, `x;..`, `x%3b..`, `...;x` and `a%2eb` are not. Nothing is
   decoded: every other escape, `%2e` and `%2E` outside a dot segment included,
   stays literal bytes and supplies no segment boundary. Anything else, `null`
-  and `[]` included, is `input-malformed`. Every path that takes profiles holds
-  the member alike: an installation's at start and at registration
-  (`POST /v1/input-profiles`),
+  and `[]` included, is `input-malformed`. So is a configured or registered
+  scoped profile with an entry round 16 refuses, one an earlier Runner admitted
+  such as an entry with an escaped slash: Runner refuses to open its store, and
+  the refusal names the profile and why (recovery is runner #154). Every path
+  that takes profiles holds the member alike: an installation's at start and at
+  registration (`POST /v1/input-profiles`),
   `verify-run`'s `--profiles`, and `verify-preparation`'s, which are digested
   over their canon bytes. Runner's own limits on an installation's profiles,
   such as 32 KiB each, stay on the live paths alone. The whole scope, its
