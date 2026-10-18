@@ -1,0 +1,61 @@
+{
+  "profile": "judgment-pack-runner/execution-payload/1",
+  "canonicalProfile": "judgment-pack-runner/canonical/1",
+  "release": "release.json",
+  "releaseDigest": "sha256:f0e06e5bc6fa81be7a39d1529c626fd1fc5794dd2fa04c42d4cdcb099ff79b25",
+  "vectors": [
+    {
+      "name": "numbers-omitted",
+      "facts": "facts.json",
+      "descriptor": "numbers-omitted.descriptor.json",
+      "digest": "sha256:7576a83cfc973a4ae224bd38be661c6666f0ba943da7ac2622268ff9663f95f3"
+    },
+    {
+      "name": "numbers-null",
+      "facts": "facts.json",
+      "descriptor": "numbers-null.descriptor.json",
+      "evidence": "null.json",
+      "digest": "sha256:1ccebb87c518c5e65d008285432b6cfe9fe16c3d43671170b85c57b322102c0b"
+    },
+    {
+      "name": "other-integer",
+      "facts": "facts-other-integer.json",
+      "descriptor": "other-integer.descriptor.json",
+      "digest": "sha256:27015195988bd8b650d4db8c2819c52a39e5526c77c5d370e9c815707299ef49"
+    },
+    {
+      "name": "other-spelling",
+      "facts": "facts-other-spelling.json",
+      "descriptor": "other-spelling.descriptor.json",
+      "digest": "sha256:c79881424aaadbab2e088d23ac3641194cc39f56f057b6c1d7ba3fa458b73c7c"
+    },
+    {
+      "name": "scalar-zero",
+      "facts": "zero.json",
+      "descriptor": "scalar-zero.descriptor.json",
+      "digest": "sha256:dfba967d043f3ba71323e5e8a3d66b1f165be1a949d0cd7cd676e34508c82ef5"
+    },
+    {
+      "name": "scalar-false",
+      "facts": "false.json",
+      "descriptor": "scalar-false.descriptor.json",
+      "digest": "sha256:56928735775960ba2b8379c15aa196816978ba17957445770acf8d926ee5e029"
+    },
+    {
+      "name": "scalar-null",
+      "facts": "null.json",
+      "descriptor": "scalar-null.descriptor.json",
+      "digest": "sha256:e0cdd429c04af6077176765c595862513587b0e21dc662b2727b3215e97dd300"
+    },
+    {
+      "name": "prepared-signed",
+      "facts": "facts.json",
+      "descriptor": "prepared-signed.descriptor.json",
+      "evidence": "evidence.json",
+      "preparation": "preparation.json",
+      "source": "source.json",
+      "publicKey": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "digest": "sha256:a8bf5c67daa7127bdd7a76f319886c05a291c6556ba784fa52748f9199d2077f"
+    }
+  ]
+}
