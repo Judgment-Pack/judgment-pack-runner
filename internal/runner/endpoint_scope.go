@@ -2,7 +2,9 @@ package runner
 
 // Endpoint scopes (spec/dialect.md §5.1, "An endpoint constraint", "The
 // endpoint form for a constrained page", the wildcard and "Matching"; §5.2,
-// check 3; §11; §12; RFC 0018 round 15, judgment-pack-spec#207; runner #141).
+// check 3; §11; §12; RFC 0018 round 15, judgment-pack-spec#207; runner #141;
+// round 16, judgment-pack-spec#215, the path's traversal spellings; runner
+// #152).
 //
 // An input profile may carry endpointScope in place of one exact endpoint, so
 // that one reviewed page profile verifies reads of more than one URL. Every
@@ -144,10 +146,11 @@ func endpointScopeForm(h scopeHolder, entries []string) error {
 // 63 ASCII letters, digits and hyphens, starting and ending with a letter or
 // a digit, the last starting with a letter; so no user, IP literal, trailing
 // dot, underscore or wildcard. The path has no ?, # or backslash; each % is
-// followed by two hexadecimal digits; and no segment between literal slashes
-// is one or two tokens each ., %2e or %2E. Nothing is decoded. It returns the
-// host with ASCII letters folded to lower case, for comparison only, and the
-// path as written.
+// followed by two hexadecimal digits; it has no escaped slash or backslash;
+// and no segment between literal slashes is a dot segment, alone or before
+// its first ; or escaped delimiter (pathForm). Nothing is decoded. It returns
+// the host with ASCII letters folded to lower case, for comparison only, and
+// the path as written.
 func pageEndpoint(s string) (host, path string, ok bool) {
 	if len(s) > maxScopeEntryBytes {
 		return "", "", false
@@ -213,10 +216,14 @@ func dnsName(host string) bool {
 }
 
 // pathForm is §5.1's path: empty, or beginning with /, with no ?, # or
-// backslash; each % followed by two hexadecimal digits of either case; and
-// no segment, split at each literal /, that is one or two tokens each of
-// which is ., %2e or %2E. An escaped slash is no boundary, and nothing is
-// decoded.
+// backslash; each % followed by two hexadecimal digits of either case; no
+// escaped slash or backslash, %2f, %2F, %5c or %5C, anywhere in it (round
+// 16); and, split at each literal /, no segment that is a dot segment, nor
+// one whose part before its first ;, %3b, %3B, %3f, %3F, %23 or %00,
+// whichever comes first, is a dot segment (round 16). A segment with none of
+// those is its own part before them, so one test holds both. Every other
+// escape, %2e and %2E outside a dot segment included, stays literal bytes
+// and supplies no boundary, and nothing is decoded.
 func pathForm(path string) bool {
 	if path == "" {
 		return true
@@ -232,6 +239,9 @@ func pathForm(path string) bool {
 			if i+2 >= len(path) || !hexDigit(path[i+1]) || !hexDigit(path[i+2]) {
 				return false
 			}
+			if escapeIs(path[i+1:i+3], "2f", "5c") {
+				return false
+			}
 		}
 	}
 	start := 0
@@ -239,7 +249,7 @@ func pathForm(path string) bool {
 		if i < len(path) && path[i] != '/' {
 			continue
 		}
-		if dotSegment(path[start:i]) {
+		if dotSegment(segmentHead(path[start:i])) {
 			return false
 		}
 		start = i + 1
@@ -247,8 +257,36 @@ func pathForm(path string) bool {
 	return true
 }
 
-// dotSegment says whether a segment is one or two tokens, each ., %2e or
-// %2E: a dot segment, literal or percent-spelled.
+// segmentHead is a segment's part before its first ;, %3b, %3B, %3f, %3F,
+// %23 or %00, whichever comes first, or the whole segment when it has none.
+// Each % in a path of the form begins an escape of two hexadecimal digits, so
+// the escapes are read where each % stands.
+func segmentHead(segment string) string {
+	for i := 0; i < len(segment); i++ {
+		switch {
+		case segment[i] == ';':
+			return segment[:i]
+		case segment[i] == '%' && i+2 < len(segment) && escapeIs(segment[i+1:i+3], "3b", "3f", "23", "00"):
+			return segment[:i]
+		}
+	}
+	return segment
+}
+
+// escapeIs says whether the two hexadecimal digits after a % are one of
+// escapes, ASCII letters compared in either case: %2f and %2F alike.
+func escapeIs(digits string, escapes ...string) bool {
+	folded := asciiLower(digits)
+	for _, escape := range escapes {
+		if folded == escape {
+			return true
+		}
+	}
+	return false
+}
+
+// dotSegment says whether a segment, or a segment's part, is one or two
+// tokens, each ., %2e or %2E: a dot segment, literal or percent-spelled.
 func dotSegment(segment string) bool {
 	tokens := 0
 	for segment != "" {

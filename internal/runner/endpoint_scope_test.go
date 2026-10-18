@@ -12,7 +12,8 @@ import (
 )
 
 // The endpoint scope of RFC 0018 round 15 (spec/dialect.md §5.1, §5.2 check
-// 3, §11 and §12; judgment-pack-spec#207; runner #141). The cases are the
+// 3, §11 and §12; judgment-pack-spec#207; runner #141), its page path held to
+// round 16's form (judgment-pack-spec#215; runner #152). The cases are the
 // specification's own probes, tests/test_dialect_scope.py, held here on
 // Runner's two paths: the offline verifier, given its profiles as a
 // fixture's, and a run, given them as an installation's. The change's
@@ -22,6 +23,23 @@ import (
 // scopePrefix is the prefix the specification's probes scope a page
 // profile to.
 const scopePrefix = "https://a.example/docs"
+
+// round16Refused are the paths under scopePrefix that round 15's form admitted
+// and round 16's refuses, the specification's ROUND_16_REFUSED in its order:
+// an escaped slash or backslash anywhere in the path, or a dot segment before
+// its segment's first ;, %3b, %3B, %3f, %3F, %23 or %00.
+var round16Refused = []string{
+	"/a%2fb", "/a%2Fb", "/a%5cb", "/a%5Cb", "/%2e%2e%2fadmin", "/..;x", "/..;/admin",
+	"/%2e%2e;x", "/%2E%2e;/admin", "/.;", "/.;/admin", "/.%2e;y=1", "/x/..;",
+	"/..%3b/admin", "/%2e%2e%3B/admin", "/.%3fx", "/..%3F", "/..%23x", "/.%00/x",
+	"/..;;x", "/..;a=b;c/admin", "/..;x%3by", "/..%23x;y",
+}
+
+// round16Admitted are the neighbours round 16 still admits, endpoint and
+// scope alike: a ; on an ordinary segment, dots after a segment's first ; or
+// escaped delimiter, three dots before a parameter and an escaped dot inside
+// a segment.
+var round16Admitted = []string{"/page;v=1", "/a;b", "/x;../y", "/...;x", "/a%2eb", "/x%3b../y"}
 
 // scopeVector is the vector the probes alter: its person source asks for
 // answer, search and page, its page through the profile page.
@@ -40,7 +58,6 @@ func TestThePageEndpointForm(t *testing.T) {
 		"https://a.example:443":                           {"a.example", ""},
 		"https://a.example:":                              {"a.example", ""},
 		"https://a.example/docs/%7e/x":                    {"a.example", "/docs/%7e/x"},
-		"https://a.example/docs/%2Fx":                     {"a.example", "/docs/%2Fx"},
 		"https://a.example/@name":                         {"a.example", "/@name"},
 		"https://a.example/...":                           {"a.example", "/..."},
 		"https://a.example/.x/x.":                         {"a.example", "/.x/x."},
@@ -53,6 +70,14 @@ func TestThePageEndpointForm(t *testing.T) {
 		host, path, ok := pageEndpoint(endpoint)
 		if !ok || host != want[0] || path != want[1] {
 			t.Errorf("%s reads as %v %q %q, not %q %q", endpoint, ok, host, path, want[0], want[1])
+		}
+	}
+	// Round 16's neighbours: what follows a segment's first ; or escaped
+	// delimiter is no part of its dot-segment test, and every other escape,
+	// %2e outside a dot segment included, stays literal bytes.
+	for _, path := range append(round16Admitted, "/.x;", "/x.;/..x", "/%2e%2e%2e;x", "/%3b..", "/;/..x", "/a%252fb", "/%2e%25", "/x%3B%2e%2e") {
+		if host, got, ok := pageEndpoint(scopePrefix + path); !ok || host != "a.example" || got != "/docs"+path {
+			t.Errorf("%s%s reads as %v %q %q", scopePrefix, path, ok, host, got)
 		}
 	}
 	for _, endpoint := range []string{
@@ -69,9 +94,15 @@ func TestThePageEndpointForm(t *testing.T) {
 		scopePrefix + "/%2e/x", scopePrefix + "/%2E/x", scopePrefix + "/.%2E/x", scopePrefix + "/%2E%2e/x",
 		scopePrefix + "/%2e./x", scopePrefix + "/x/..", "https://a.example/./",
 		"https://a.example/" + strings.Repeat("x", 2031),
+		scopePrefix + "/%2Fx", scopePrefix + "%2Fx", "https://a.example/%5C", "https://a.example/.;", "https://a.example/..%00",
 	} {
 		if _, _, ok := pageEndpoint(endpoint); ok {
 			t.Errorf("%q is read in the constrained page form", endpoint)
+		}
+	}
+	for _, path := range round16Refused {
+		if _, _, ok := pageEndpoint(scopePrefix + path); ok {
+			t.Errorf("%q is read in the constrained page form", scopePrefix+path)
 		}
 	}
 }
@@ -129,6 +160,14 @@ func TestEndpointScopeMatching(t *testing.T) {
 		{[]string{scopeWildcard}, scopePrefix + "/%2e/x", false},
 		{[]string{scopeWildcard}, "", false},
 		{[]string{scopePrefix}, scopePrefix + "/../x", false},
+		{[]string{scopePrefix}, scopePrefix + "/..;x", false},
+		{[]string{scopeWildcard}, scopePrefix + "/..%3b/admin", false},
+		{[]string{scopeWildcard}, scopePrefix + "/a%5cb", false},
+		{[]string{scopePrefix + "/a;b"}, scopePrefix + "/a;b/x", true},
+		{[]string{scopePrefix + "/a;b"}, scopePrefix + "/a;bx", false},
+		{[]string{scopePrefix}, scopePrefix + "/page;v=1", true},
+		{[]string{scopePrefix}, scopePrefix + "/x%3b../y", true},
+		{[]string{scopePrefix + "/x"}, scopePrefix + "/x%3b../y", false},
 	} {
 		if got := endpointInScope(tt.endpoint, tt.scope); got != tt.in {
 			t.Errorf("%v admits %q: %v, not %v", tt.scope, tt.endpoint, got, tt.in)
@@ -204,6 +243,13 @@ func scopeProfileForms() []struct {
 		{"an IP literal", scopedPageProfile(set("endpointScope", []any{"https://127.0.0.1"})), codeMalformed},
 		{"another port", scopedPageProfile(set("endpointScope", []any{"https://a.example:444"})), codeMalformed},
 		{"a trailing dot", scopedPageProfile(set("endpointScope", []any{"https://a.example./"})), codeMalformed},
+		{"an escaped slash", scopedPageProfile(set("endpointScope", []any{scopePrefix + "/a%2fb"})), codeMalformed},
+		{"an escaped backslash", scopedPageProfile(set("endpointScope", []any{scopePrefix + "/a%5Cb"})), codeMalformed},
+		{"a dot segment before a parameter", scopedPageProfile(set("endpointScope", []any{scopePrefix + "/..;x"})), codeMalformed},
+		{"a dot segment before an escaped delimiter", scopedPageProfile(set("endpointScope", []any{scopePrefix + "/..%3b/admin"})), codeMalformed},
+		{"a dot segment before a parameter beside an admitted entry", scopedPageProfile(set("endpointScope", []any{scopePrefix, scopePrefix + "/.;"})), codeMalformed},
+		{"a parameter on an ordinary segment", scopedPageProfile(set("endpointScope", []any{scopePrefix + "/a;b"})), ""},
+		{"dots after an escaped delimiter", scopedPageProfile(set("endpointScope", []any{scopePrefix + "/x%3b../y"})), ""},
 		{"33 entries", scopedPageProfile(set("endpointScope", over)), codeOverBound},
 		{"33 entries on a command profile, before its form", scopedPageProfile(func(p map[string]any) { p["shape"], p["endpointScope"] = "command", over }), codeOverBound},
 		{"an entry of 2049 bytes", scopedPageProfile(set("endpointScope", []any{longest + "x"})), codeOverBound},
@@ -263,6 +309,8 @@ func TestRegistrationTakesAnEndpointScope(t *testing.T) {
 			delete(p, "research")
 		}, 422},
 		{"beside an endpoint", func(p map[string]any) { p["endpoint"] = scopePrefix }, 422},
+		{"an escaped slash", func(p map[string]any) { p["endpointScope"] = []any{scopePrefix + "/a%2Fb"} }, 422},
+		{"a dot segment before a parameter", func(p map[string]any) { p["endpointScope"] = []any{scopePrefix + "/%2e%2e;x"} }, 422},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var changed map[string]any
@@ -482,7 +530,7 @@ func scopeProbes() []struct {
 		{"the wildcard", scopeProbe{scope: scope(scopeWildcard), endpoints: endpoints("https://new.example/a", "https://next.example/b")}, ""},
 		{"path case", scopeProbe{endpoints: endpoints("https://a.example/Docs/one")}, codeInvalid},
 		{"a host suffix", scopeProbe{endpoints: endpoints("https://sub.a.example/docs")}, codeInvalid},
-		{"an encoded slash is no boundary", scopeProbe{endpoints: endpoints(scopePrefix + "%2Fx")}, codeInvalid},
+		{"an escaped slash at the prefix boundary is outside the form", scopeProbe{endpoints: endpoints(scopePrefix + "%2Fx")}, codeInvalid},
 		{"the escape spelled as the prefix spells it", scopeProbe{scope: scope(scopePrefix + "/%7e"), endpoints: endpoints(scopePrefix + "/%7e/x")}, ""},
 		{"the escape's case differs", scopeProbe{scope: scope(scopePrefix + "/%7e"), endpoints: endpoints(scopePrefix + "/%7E")}, codeInvalid},
 		{"no escape is decoded", scopeProbe{scope: scope(scopePrefix + "/%7e"), endpoints: endpoints(scopePrefix + "/~")}, codeInvalid},
@@ -539,7 +587,27 @@ func scopeProbes() []struct {
 			code  string
 		}{"the endpoint " + string(encode(endpoint))[:min(40, len(encode(endpoint)))] + " under the wildcard", scopeProbe{scope: scope(scopeWildcard), endpoints: endpoints(endpoint)}, codeInvalid})
 	}
-	return probes
+	type probe = struct {
+		name  string
+		probe scopeProbe
+		code  string
+	}
+	// Round 16: each path round 15 admitted under scopePrefix and round 16
+	// refuses, as a receipt's endpoint and as a scope entry; and the
+	// neighbours it still admits.
+	for _, path := range round16Refused {
+		probes = append(probes,
+			probe{"round 16: the endpoint " + path, scopeProbe{endpoints: endpoints(scopePrefix + path)}, codeInvalid},
+			probe{"round 16: the scope entry " + path, scopeProbe{scope: scope(scopePrefix + path)}, codeMalformed})
+	}
+	return append(probes,
+		probe{"round 16: a parameter on an ordinary segment", scopeProbe{endpoints: endpoints(scopePrefix + "/page;v=1")}, ""},
+		probe{"round 16: a parameter in a scope entry", scopeProbe{scope: scope(scopePrefix + "/a;b"), endpoints: endpoints(scopePrefix + "/a;b/x")}, ""},
+		probe{"round 16: dots after the first parameter", scopeProbe{endpoints: endpoints(scopePrefix + "/x;../y")}, ""},
+		probe{"round 16: three dots with a parameter", scopeProbe{endpoints: endpoints(scopePrefix + "/...;x")}, ""},
+		probe{"round 16: an escaped dot inside a segment", scopeProbe{endpoints: endpoints(scopePrefix + "/a%2eb")}, ""},
+		probe{"round 16: dots after an escaped delimiter", scopeProbe{endpoints: endpoints(scopePrefix + "/x%3b../y")}, ""},
+	)
 }
 
 // Each of the specification's probes reads, is refused or is found as the

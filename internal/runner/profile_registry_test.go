@@ -273,3 +273,44 @@ func TestRegisteredProfilesCanBackConfiguredGatewayOnRestart(t *testing.T) {
 		t.Fatal("persisted profile is not available to the configured connection")
 	}
 }
+
+// A store holding a registered profile that an earlier Runner admitted and
+// this one refuses is not opened, and the refusal names that profile and
+// why: here a scoped profile whose entry has an escaped slash, which RFC 0018
+// round 16 refuses (runner #152), registered beside an exact profile, in the
+// one row the store writes. The exact profile is held with it (recovery:
+// runner #154). A configured profile so refused is named alike.
+func TestAStoreHoldingAProfileThisRunnerRefusesNamesIt(t *testing.T) {
+	cfg := journalConfig(t)
+	s := openJournal(t, cfg)
+	defer func() { s.Close() }()
+	exact, _ := testProfile(t)
+	if _, err := s.registerInputProfile(exact); err != nil {
+		t.Fatal(err)
+	}
+	var scoped InputProfile
+	if err := strictJSON(encode(scopedPageProfile(func(p map[string]any) {
+		p["endpointScope"] = []any{"https://example.com/docs/%2Fx"}
+	})), &scoped); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", registeredProfilesKey, string(encode([]InputProfile{exact, scoped}))); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	const reason = "an endpointScope entry is not an endpoint prefix in the constrained page form, nor the wildcard https://* (input-malformed)"
+	for whose, cfg := range map[string]Config{"registered": cfg, "configured": journalConfig(t)} {
+		if whose == "configured" {
+			cfg.InputProfiles = []InputProfile{exact, scoped}
+		}
+		other, err := Open(cfg)
+		if err == nil {
+			other.Close()
+			t.Fatalf("a store holding a %s profile this Runner refuses was opened", whose)
+		}
+		t.Logf("%s: %v", whose, err)
+		if !strings.Contains(err.Error(), whose+` input profile "scoped" is refused`) || !strings.HasSuffix(err.Error(), reason) {
+			t.Fatalf("the refusal names neither the %s profile nor why: %v", whose, err)
+		}
+	}
+}
