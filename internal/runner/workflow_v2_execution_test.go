@@ -3,8 +3,6 @@ package runner
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -621,29 +619,60 @@ func TestWorkflowV2UnsupportedRunVersionPrecedesSupportedClosedForm(t *testing.T
 }
 
 func TestWorkflowV2ActualRuntimeSidecarIsSeparatelyPinnedAndCounted(t *testing.T) {
+	workflowV2ActualRuntimeSidecar(t, "runtime-signatures")
+}
+
+func TestWorkflowV2ActualRuntimeSidecarUnderSymlinkedTempRoot(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, alias := filepath.Join(base, "physical"), filepath.Join(base, "alias")
+	if err := os.Mkdir(physical, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(physical, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", alias)
+	// A fresh subtest chooses its own temp root after TMPDIR changes. This
+	// exercises the /var -> /private/var placement common on macOS on Unix.
+	t.Run("signed-attempt", func(t *testing.T) {
+		temporary := t.TempDir()
+		resolved, err := filepath.EvalSymlinks(temporary)
+		if err != nil || temporary == resolved {
+			t.Fatal("fixture did not use a symlinked temporary root", err)
+		}
+		workflowV2ActualRuntimeSidecar(t, "runtime-signatures-symlink-temp")
+	})
+}
+
+func workflowV2ActualRuntimeSidecar(t *testing.T, recording string) {
+	t.Helper()
 	f := newWorkflowV2RuntimeTest(t)
 	w := workflowV2StartRoot(t, f.inventory(t, 1<<30))
 	if err := f.store.create("signed-runtime", w); err != nil {
 		t.Fatal(err)
 	}
-	seed := bytes.Repeat([]byte{19}, ed25519.SeedSize)
-	key := ed25519.NewKeyFromSeed(seed)
-	public := key.Public().(ed25519.PublicKey)
-	keyFile := filepath.Join(t.TempDir(), "audit.seed")
-	if err := os.WriteFile(keyFile, []byte(hex.EncodeToString(seed)), 0600); err != nil {
-		t.Fatal(err)
-	}
+	// Runtime requires the signing key's physical path, including on macOS
+	// where a temporary root can pass through /var -> /private/var.
+	keyFile, public := signingKey(t), mustKey(t, vectorKey1)
 	directory := t.TempDir()
 	var actualSidecar []byte
+	evaluationCalls := 0
 	f.driver.Evaluate = func(ctx context.Context, release Release, input Input, runID string) (workflowEvaluation, error) {
-		result, audit, sidecar, _, err := evaluateWith(ctx, os.Getenv("JPACK_TEST_BIN"), release, input, filepath.Join(directory, runID), false, signingInputs{path: keyFile, publicKey: hex.EncodeToString(public)})
+		evaluationCalls++
+		result, audit, sidecar, _, err := evaluateWith(ctx, os.Getenv("JPACK_TEST_BIN"), release, input, filepath.Join(directory, runID), false, signingInputs{path: keyFile, publicKey: vectorKey1})
 		actualSidecar = bytes.Clone(sidecar)
 		return workflowEvaluation{Result: result, Audit: audit, Signatures: sidecar}, err
 	}
-	f.driver.Trace = workflowV2JourneyTrace(t, "runtime-signatures")
+	f.driver.Trace = workflowV2JourneyTrace(t, recording)
 	done, err := f.driver.run(context.Background(), "v2-execution", "signed-runtime")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if evaluationCalls != 1 || len(actualSidecar) == 0 {
+		t.Fatalf("expected one signed Runtime evaluation: calls=%d sidecar bytes=%d", evaluationCalls, len(actualSidecar))
 	}
 	files, err := done.recordingFiles()
 	if err != nil {
@@ -675,5 +704,5 @@ func TestWorkflowV2ActualRuntimeSidecarIsSeparatelyPinnedAndCounted(t *testing.T
 	if without+len(sidecar) != total {
 		t.Fatal("sidecar byte exemption")
 	}
-	workflowV2ExportJourney(t, "runtime-signatures/completed", done, nil)
+	workflowV2ExportJourney(t, recording+"/completed", done, nil)
 }
