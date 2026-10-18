@@ -12,6 +12,9 @@ import (
 )
 
 func (s *Service) normalizeInput(i Input) (Input, error) {
+	if e := s.refuseSetAside(i); e != nil {
+		return i, e
+	}
 	if i.Source == nil || !i.Source.Mapping.dialect() && i.Source.Import == nil {
 		return normalizeInput(i)
 	}

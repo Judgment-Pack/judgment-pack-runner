@@ -86,6 +86,11 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	if err != nil {
 		return Job{}, err
 	}
+	// A job is never upgraded to a release that names a set-aside profile;
+	// upgrading away from one is how its job moves to a new profile.
+	if err = s.refuseSetAsideMapping(next.InputMapping); err != nil {
+		return Job{}, err
+	}
 	if old.PackID != next.PackID {
 		return Job{}, bad("pack_identity_changed", "A job upgrade must keep the same pack identity. Create another job for a different pack.")
 	}

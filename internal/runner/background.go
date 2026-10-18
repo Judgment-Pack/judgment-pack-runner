@@ -74,6 +74,9 @@ func (s *Service) validateGatewayMapping(r Release) error {
 	if r.InputMapping == nil || !r.InputMapping.dialect() {
 		return bad("automatic_mapping_required", "Choose a version 2 mapping for connected acquisition.")
 	}
+	if e := s.refuseSetAsideMapping(r.InputMapping); e != nil {
+		return e
+	}
 	if e := preflightV2(*r.InputMapping, s.inputProfiles()); e != nil {
 		return e
 	}
@@ -113,7 +116,7 @@ func (s *Service) acquireAutomatic(parent context.Context, input Input) (Input, 
 	ctx, cancel := context.WithTimeout(parent, 120*time.Second)
 	defer cancel()
 	for step := 0; step <= len(input.Source.Mapping.Sources); step++ {
-		plan, e := nextInput(input, s.inputProfiles(), time.Now())
+		plan, e := s.nextInput(input, time.Now())
 		if e != nil {
 			return input, e
 		}

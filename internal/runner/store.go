@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
@@ -70,6 +71,12 @@ type Service struct {
 	wake        chan struct{}
 	previewGate chan struct{}
 	closeOnce   sync.Once
+	// storedProfiles is each profile the store's row holds, as it holds it,
+	// admitted or set aside; setAside is each set aside when the store opened
+	// (profile_set_aside.go), fixed from then on. storedProfiles changes only
+	// under profilesMu, with a registration.
+	storedProfiles []json.RawMessage
+	setAside       []SetAsideProfile
 }
 
 func Open(cfg Config) (_ *Service, err error) {
@@ -176,6 +183,15 @@ func Open(cfg Config) (_ *Service, err error) {
 	}
 	if err = s.loadRegisteredProfiles(); err != nil {
 		return nil, err
+	}
+	// A configured Gateway connection names an installed profile, and one
+	// that names a set-aside profile is refused by that profile's name.
+	for _, g := range cfg.GatewayConnections {
+		for _, p := range s.setAside {
+			if g.Profile == p.ID {
+				return nil, fmt.Errorf("a Gateway connection names the registered input profile %q, which is set aside: %s", p.ID, p.Reason)
+			}
+		}
 	}
 	backgroundConfig := cfg
 	backgroundConfig.InputProfiles = s.inputProfiles()
@@ -299,6 +315,11 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	if s.cfg.RequireTestedReleases && r.Tests == "not-run" {
 		return Job{}, &apiError{409, "release_untested", "This installation creates jobs only from releases whose saved tests ran and passed. Save tests for this pack, then check a new release."}
 	}
+	// Likewise, a release that names a profile set aside since it was made
+	// makes no new job; a job made from it before is returned as it was.
+	if err = s.refuseSetAsideMapping(r.InputMapping); err != nil {
+		return Job{}, err
+	}
 	if err = admitJobPack(tx, r); err != nil {
 		return Job{}, err
 	}
@@ -349,6 +370,15 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 	}
 	if s.unhealthy.Load() {
 		return Run{}, false, &apiError{503, "dispatcher_stopped", "The dispatcher stopped after a storage error. Restart Desk after checking the runner storage."}
+	}
+	// An import that names a set-aside profile is refused by its name before
+	// it is bound. A mapping that names one is refused once an identical
+	// retry has been answered (checkReleaseProfiles), which still returns
+	// its original acceptance.
+	if input.Source != nil && input.Source.Import != nil {
+		if err := s.refuseSetAside(input); err != nil {
+			return Run{}, false, err
+		}
 	}
 	// An import is bound before the mapping is compared with the release's:
 	// the bound dialect is the mapping the run is held to.
@@ -521,6 +551,17 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.FinishedAt = now()
 			r.Problem = "The automatic run expired in the queue before evaluation."
 			r.Reason = runQueueExpired
+			return true, s.changeRun(r)
+		}
+	}
+	// A run queued before a profile its release names was set aside never
+	// starts: it ends, failed, naming the profile.
+	if release, e := s.release(r.ReleaseID); e == nil {
+		if e = s.refuseSetAsideMapping(release.InputMapping); e != nil {
+			r.State = "failed"
+			r.FinishedAt = now()
+			r.Problem = e.Error()
+			r.Reason = runProfileSetAside
 			return true, s.changeRun(r)
 		}
 	}

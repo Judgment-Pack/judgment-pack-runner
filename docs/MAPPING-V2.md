@@ -30,8 +30,10 @@ authority, may be held under profiles of different classes, as under profiles
 of one class, each with its own id, and each source takes the class of the
 profile it names. A profile repeating another's id is refused.
 
-**Upgrade note.** An installation whose trusted profile contains a malformed
-public key that an earlier Runner accepted now refuses to start. A release or
+**Upgrade note.** An installation whose configured profile contains a
+malformed public key that an earlier Runner accepted now refuses to start; a
+registered one is set aside when Runner opens its store ([A registered profile
+this Runner refuses](#a-registered-profile-this-runner-refuses)). A release or
 verification export that freezes such a profile no longer runs or verifies.
 
 `record` identifies the acquisition channel, not the authorship or truth of every
@@ -54,8 +56,9 @@ second implementation; it is not a third independent implementation.
 ## Supported input and trust configuration
 
 The trusted boot line optionally supplies `inputProfiles: [...]`. Profiles contain
-public verification configuration only. No HTTP endpoint can create or modify
-profiles. `GET /v1/input-profiles` returns profiles with their canonical digests for
+public verification configuration only. No HTTP endpoint can modify a profile;
+the trusted host's `POST /v1/input-profiles` registers a new, immutable one.
+`GET /v1/input-profiles` returns profiles with their canonical digests for
 review; this does not authorize arbitrary acquisition. A profile's `shape` is one
 the gateway defines (gateway SPEC.md §1.2a, `acquisition.shape`): `airbyte`, `mcp`,
 `http` or `command`. A profile for an operation must be of an adapter's shape,
@@ -192,6 +195,71 @@ By default targets admit asserted and record. Use `admits.facts` and
 `admits.evidence` maps to replace a target's admitted class list, for example:
 `{"facts":{"/vendor/risk":["generated"]}}`. Admission applies to all possible
 outputs, including branches the preview did not reach.
+
+### A registered profile this Runner refuses
+
+Registered profiles are kept in one row of the store, each as registration wrote
+it. When Runner opens its store, each registered profile its admission refuses
+on its own, one an earlier Runner admitted, is set aside (runner #154): a scoped
+page profile whose entry RFC 0018 round 16 refuses, such as
+`https://host.example/api/v4/projects/group%2Fproject` ([An endpoint
+scope](#research-sources)), or a public key the upgrade note above names. Every
+other registered profile, an exact one beside it included, loads and works as
+before. An operator who upgrades a store holding such a profile sees:
+
+- **A line at start**, on standard error, for each:
+  `runner: the registered input profile "<id>" is set aside, kept and never bound: <reason>`.
+- **The listing.** `GET /v1/input-profiles` lists it after the installed
+  profiles, with its digest, `"state": "set-aside"` and `"reason"`. Its
+  `profile` is its stored bytes, served compacted and JSON-escaped as every
+  answer is; the row keeps them exactly.
+- **Under the Desk, neither.** The Desk does not show Runner's standard error,
+  and lists every entry as a profile. A Desk operator learns of a set-aside
+  profile only when a binding to it is refused.
+- **Never bound.** A binding, a job or a run that names it is refused as
+  `input_profile_set_aside` (422), naming the profile and the reason: planning
+  and preparation (`POST /v1/inputs/next`, an occurrence's preparation,
+  background acquisition), a preview, an import's binding document, creating a
+  new job from a release that names it, upgrading a job to one, and a run's
+  submission. It is never refused as a profile the installation does not
+  hold, and never resolved to another. A run queued before the upgrade ends
+  `failed` without starting, with `reason` `profile-set-aside` and a problem
+  naming the profile.
+- **Retries.** An identical retry of what was accepted before the upgrade is
+  answered as it was: repeating the creation of a job made before returns that
+  job, and a run's retry under the same idempotency key returns the run
+  accepted then. A run whose input is an import is the exception: the import is
+  bound before the retry is looked up, so its retry is refused as
+  `input_profile_set_aside`.
+- **A job bound to it** stays stored, with its runs and their exports, and a
+  new run of it is refused. `verify-run` given the set-aside profile among its
+  `--profiles` refuses it as the specification reads it, `input-malformed`, so
+  such a run's export reads as `input-malformed` there. Upgrading the job to a
+  release bound to another profile moves it on, under the upgrade's own rules:
+  finish, cancel or reconcile its pending occurrences first, those the refusal
+  left `needs-attention` included, and pause the job's triggers.
+- **A Gateway connection** configured for it refuses to start, naming it.
+  Remove the connection from the installation's configuration, or point it at
+  another profile.
+- **Kept.** It stays in the row byte for byte, also when a registration
+  rewrites the row; its id stays taken, so registering that id again is
+  refused as `input_profile_conflict`; and it counts toward the 16 profiles. A
+  registration that would carry the row past its storage bound is refused as
+  `input_profile_limit`.
+
+What fails as a set, not as one profile, still refuses to open the store: a
+row over its storage bound, unreadable, or not an array of JSON objects each
+with exactly a profile's members, named as written, and every member
+registration requires (an element `null` or `{}` included); more than 16
+stored profiles, or more than 16 with the configured ones, a set-aside one
+counted; an id stored twice; and a stored profile, set aside or not, whose id
+a configured profile of another definition has. Only a profile of that form
+which admission refuses is set aside. A configured profile this Runner refuses
+is not set aside: Runner refuses to start, naming the profile and why
+(`configured input profile "<id>" is refused: …`), and the operator edits the
+configuration. The offline verifier is unchanged: `verify-run --profiles` and
+`verify-preparation` read the profiles they are given as the specification
+does, and one the form refuses is `input-malformed`.
 
 ## Calculated values
 
@@ -566,8 +634,11 @@ reviewed profile verifies the reads of more than one URL:
   stays literal bytes and supplies no segment boundary. Anything else, `null`
   and `[]` included, is `input-malformed`. So is a configured or registered
   scoped profile with an entry round 16 refuses, one an earlier Runner admitted
-  such as an entry with an escaped slash: Runner refuses to open its store, and
-  the refusal names the profile and why (recovery is runner #154). Every path
+  such as an entry with an escaped slash. A registered one is set aside when
+  Runner opens its store, reported and never bound, and the store opens with
+  the others ([A registered profile this Runner
+  refuses](#a-registered-profile-this-runner-refuses)); a configured one
+  refuses to start, naming the profile and why. Every path
   that takes profiles holds the member alike: an installation's at start and at
   registration (`POST /v1/input-profiles`),
   `verify-run`'s `--profiles`, and `verify-preparation`'s, which are digested
