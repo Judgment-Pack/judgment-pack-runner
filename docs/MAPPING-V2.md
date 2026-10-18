@@ -531,7 +531,8 @@ bytes under its trusted profile, and that the model and capabilities the source
 declares match the profiles bound.
 
 **An endpoint scope** (spec/dialect.md §5.1, §5.2 check 3, §11, §12 and §13:
-RFC 0018 round 15, judgment-pack-spec#207 at `56bec90`; runner #141). A page
+RFC 0018 round 15, judgment-pack-spec#207 at `56bec90`, its page path held to
+round 16, judgment-pack-spec#215 at `4bec33a`; runner #141, #152). A page
 profile may carry `endpointScope` in place of one exact `endpoint`, so that one
 reviewed profile verifies the reads of more than one URL:
 
@@ -554,11 +555,18 @@ reviewed profile verifies the reads of more than one URL:
   the last starting with a letter; then nothing, `:443` or `:` followed by
   nothing; then nothing or a path that begins with `/`. It has at most 2048
   characters from U+0021 to U+007E, and no user, query, fragment, backslash, IP
-  literal, other port, `%` without two hexadecimal digits after it, or dot
-  segment, literal or percent-spelled (`.`, `..`, `%2e`, `.%2E`, …, between
-  literal slashes). Anything else, `null` and `[]` included, is
-  `input-malformed`. Every path that takes profiles holds the member alike: an
-  installation's at start and at registration (`POST /v1/input-profiles`),
+  literal, other port or `%` without two hexadecimal digits after it. The path
+  has no escaped slash or backslash, `%2f`, `%2F`, `%5c` or `%5C`, anywhere in
+  it. Split at each literal `/`, no segment is a dot segment, one or two tokens
+  each `.`, `%2e` or `%2E`, and no segment's part before its first `;`, `%3b`,
+  `%3B`, `%3f`, `%3F`, `%23` or `%00`, whichever comes first, is one. So `..`,
+  `.%2E`, `..;x`, `.;`, `%2e%2e;`, `..%3bx` and `.%00` are refused as segments,
+  and `page;v=1`, `x;..`, `x%3b..`, `...;x` and `a%2eb` are not. Nothing is
+  decoded: every other escape, `%2e` and `%2E` outside a dot segment included,
+  stays literal bytes and supplies no segment boundary. Anything else, `null`
+  and `[]` included, is `input-malformed`. Every path that takes profiles holds
+  the member alike: an installation's at start and at registration
+  (`POST /v1/input-profiles`),
   `verify-run`'s `--profiles`, and `verify-preparation`'s, which are digested
   over their canon bytes. Runner's own limits on an installation's profiles,
   such as 32 KiB each, stay on the live paths alone. The whole scope, its
@@ -573,7 +581,8 @@ reviewed profile verifies the reads of more than one URL:
   response's, names as `acquisition.endpoint` a string in the constrained page
   form that an entry admits. Its adapter and shape are compared exactly, as
   ever. A failure, an endpoint outside the form included, is
-  `acquisition-invalid`. A prefix admits an endpoint when the hosts are equal,
+  `acquisition-invalid`; one form (`pageEndpoint`) holds an entry and an
+  endpoint alike. A prefix admits an endpoint when the hosts are equal,
   ASCII `A` to `Z` compared as `a` to `z`, no port, `:443` and `:` alike denoting
   port 443; and when the prefix's path is absent or `/`, or the endpoint's path
   equals it or begins with it followed by `/`, or, the prefix ending in `/`,
@@ -610,7 +619,12 @@ reviewed profile verifies the reads of more than one URL:
   installation's reviewed scope, as the gateway's adapter testified under its
   signature. It does not establish the page's content or relevance, that the
   host is public, anything about the requested URL's scope or intermediate
-  redirects, or that the caller checked admission.
+  redirects, or that the caller checked admission. The scope holds the URL as
+  written, not what a server serves for it: the form refuses the spellings above,
+  but double encoding such as `%252e`, an overlong or full-width dot or solidus
+  (`%c0%ae`, `%ef%bc%8e`, `%ef%bc%8f`) and a server's own rewriting remain the
+  operator's, as the gateway's redirect policy is. A server that folds path case
+  causes a false refusal, not an escape.
 
 **The vectors.** The research vectors
 ([`vectors/preparation`](../vectors/preparation/README.md)) are the first of the
@@ -1867,8 +1881,9 @@ On the forty-one vectors and on the Exchange's example fixtures, given as the
 Exchange's tests give them, its reports are byte for byte those of the
 specification's own reader, `tools/dialect_verify.py`, at the commit
 `e10421b` of judgment-pack-spec; on the six endpoint-scope vectors and on each
-probe of the specification's `tests/test_dialect_scope.py`, they are those of
-that reader at the commit `56bec90` (judgment-pack-spec#207). The tests hold
+probe of the specification's `tests/test_dialect_scope.py`, round 15's and
+round 16's, they are those of that reader at the commit `4bec33a`
+(judgment-pack-spec#215). The tests hold
 each vector to its manifest and each example fixture to its
 `preparationDigest`. Of `endpoint-scope-changed-constraint`, whose profile
 changed after the run, `verify-preparation` finds `profile-mismatch`, a
