@@ -422,7 +422,7 @@
     "/input-profiles": {
       "get": {
         "operationId": "listInputProfiles",
-        "description": "Trusted bootstrap and durable registered installation profiles with canonical digests. Imported fixtures never install authority.",
+        "description": "Trusted bootstrap and durable registered installation profiles with canonical digests. Imported fixtures never install authority. After them, each registered profile set aside when Runner opened its store: one an earlier Runner admitted and this Runner's form refuses on its own, such as a scoped page profile whose endpointScope entry RFC 0018 round 16 refuses. It is listed as the store holds it, with state set-aside and the reason; it is kept byte for byte, its ID stays taken, it counts toward the 16 profiles, and a binding, job, run or workflow that names it is refused as input_profile_set_aside, naming it.",
         "responses": {
           "200": {
             "description": "Profiles",
@@ -431,7 +431,14 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/InstalledInputProfile"
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/InstalledInputProfile"
+                      },
+                      {
+                        "$ref": "#/components/schemas/SetAsideInputProfile"
+                      }
+                    ]
                   }
                 }
               }
@@ -451,7 +458,7 @@
       },
       "post": {
         "operationId": "registerInputProfile",
-        "description": "Trusted-host configuration only. Add one immutable profile (request at most 32 KiB) without restarting workers. Persist before visibility. An identical retry returns the same digest; changed contents under an existing ID are refused. At most 16 combined profiles; none is evicted. Does not acquire data, change releases or authorize model execution. Bearer authentication is required and browser Origin requests are refused.",
+        "description": "Trusted-host configuration only. Add one immutable profile (request at most 32 KiB) without restarting workers. Persist before visibility. An identical retry returns the same digest; changed contents under an existing ID are refused, and so is the ID of a profile set aside when Runner opened its store. At most 16 combined profiles, a set-aside one included; none is evicted. The store's row keeps every profile it holds as it holds it, a set-aside one byte for byte. Does not acquire data, change releases or authorize model execution. Bearer authentication is required and browser Origin requests are refused.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2169,9 +2176,10 @@
           "reason": {
             "enum": [
               "queue-expired",
-              "binding-refused"
+              "binding-refused",
+              "profile-set-aside"
             ],
-            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it; binding-refused, for a mapping-v2 run whose Runtime refused the preparation's binding Runner passed (JPS-INVOCATION-BINDING), a defect of Runner, never retried without the binding. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
+            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it; binding-refused, for a mapping-v2 run whose Runtime refused the preparation's binding Runner passed (JPS-INVOCATION-BINDING), a defect of Runner, never retried without the binding. profile-set-aside, for a mapping-v2 run queued before a profile its release names was set aside when Runner opened its store, which never starts; its problem names the profile. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
           },
           "signing": {
             "type": "object",
@@ -5555,6 +5563,35 @@
         "required": [
           "profile",
           "digest"
+        ],
+        "additionalProperties": false
+      },
+      "SetAsideInputProfile": {
+        "type": "object",
+        "description": "A registered profile Runner set aside when it opened its store: one an earlier Runner admitted and this Runner's admission refuses on its own. Never bound: a binding, job, run or workflow that names it is refused as input_profile_set_aside, naming it. A failure of the stored set, such as a malformed row, more than 16 profiles, an ID stored twice or the ID of a configured profile of another definition, still refuses to open the store; a configured profile this Runner refuses still refuses to start.",
+        "properties": {
+          "profile": {
+            "type": "object",
+            "description": "The profile as the store holds it, which this Runner's form refuses."
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "description": "The profile's digest, as a binding to it names it."
+          },
+          "state": {
+            "const": "set-aside"
+          },
+          "reason": {
+            "type": "string",
+            "description": "This Runner's refusal of the profile."
+          }
+        },
+        "required": [
+          "profile",
+          "digest",
+          "state",
+          "reason"
         ],
         "additionalProperties": false
       }

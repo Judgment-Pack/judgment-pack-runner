@@ -26,6 +26,11 @@ func (s *Service) checkReleaseProfiles(r Release) error {
 	if r.InputMapping == nil || !r.InputMapping.dialect() {
 		return nil
 	}
+	// A profile set aside since the release was made is refused by name,
+	// never as one the installation does not hold.
+	if e := s.refuseSetAsideMapping(r.InputMapping); e != nil {
+		return e
+	}
 	for _, source := range r.InputMapping.Sources {
 		if isResearch(source) {
 			// Each profile a research source is bound to, its AI profile

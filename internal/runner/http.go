@@ -101,6 +101,11 @@ func (s *Service) Handler(token string) http.Handler {
 		for _, p := range s.inputProfiles() {
 			profiles = append(profiles, map[string]any{"profile": p, "digest": profileHash(p)})
 		}
+		// A registered profile set aside when the store opened is listed
+		// after them as the store holds it, with its state and reason.
+		for _, p := range s.SetAside() {
+			profiles = append(profiles, map[string]any{"profile": p.stored, "digest": p.digest, "state": "set-aside", "reason": p.Reason})
+		}
 		write(w, 200, profiles)
 	})
 	mux.HandleFunc("GET /v1/runs/{run}/verification", func(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +176,7 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
-		plan, err := nextInput(input, s.inputProfiles(), time.Now().UTC().Truncate(time.Second))
+		plan, err := s.nextInput(input, time.Now().UTC().Truncate(time.Second))
 		if err != nil {
 			failure(w, err)
 			return

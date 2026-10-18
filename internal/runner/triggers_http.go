@@ -140,7 +140,7 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 				failure(w, e)
 				return
 			}
-			if _, e = nextInput(seed, s.inputProfiles(), time.Now()); e != nil {
+			if _, e = s.nextInput(seed, time.Now()); e != nil {
 				failure(w, e)
 				return
 			}

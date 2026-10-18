@@ -84,6 +84,11 @@ func serve() error {
 		return err
 	}
 	defer service.Close()
+	// Each registered profile set aside at open is named, with its reason,
+	// on standard error; standard output carries the protocol alone.
+	for _, p := range service.SetAside() {
+		fmt.Fprintln(os.Stderr, "runner:", p)
+	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return err

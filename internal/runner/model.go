@@ -103,10 +103,12 @@ type Run struct {
 	// Reason says, as a code, why a run ended without an evaluation:
 	// queue-expired, for an automatic run whose queue time ran out before the
 	// dispatcher reached it; binding-refused, for a run whose Runtime refused
-	// the preparation's binding Runner passed (binding.go). Its state stays
-	// failed, and its problem the sentence it was. A run that expired before
-	// Runner kept the code has none, and is not given one. Kept and served as
-	// InterruptedAt is, and not part of a verification export.
+	// the preparation's binding Runner passed (binding.go); profile-set-aside,
+	// for a run queued before a profile its release names was set aside when
+	// the store opened (profile_set_aside.go), which never starts. Its state
+	// stays failed, and its problem the sentence it was. A run that expired
+	// before Runner kept the code has none, and is not given one. Kept and
+	// served as InterruptedAt is, and not part of a verification export.
 	Reason string `json:"-"`
 	// Signing is what Runner found of the record's signature, for an
 	// installation with a signing key: signed under the expected key, or
