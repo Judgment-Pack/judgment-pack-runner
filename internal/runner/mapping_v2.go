@@ -602,13 +602,9 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		sort.SliceStable(prep.Cites, func(a, b int) bool { return prep.Cites[a].CallIndex < prep.Cites[b].CallIndex })
 	}
 	c.MappingDigest = hash
-	mapped := Input{Facts: encode(facts), Source: c, Preparation: prep}
-	for _, l := range prep.Lineage {
-		if l.Kind == "evidence" {
-			mapped.Evidence = encode(evidence)
-			break
-		}
-	}
+	// Both derived objects are Runtime inputs, including an empty evidence
+	// object. Omitting it would evaluate/retain null instead of the derivation.
+	mapped := Input{Facts: encode(facts), Evidence: encode(evidence), Source: c, Preparation: prep}
 	if len(i.Facts) > 0 && !sameJSON(i.Facts, mapped.Facts) {
 		return i, inputProblem("supplied facts differ from the verified derivation")
 	}

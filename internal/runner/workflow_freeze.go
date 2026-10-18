@@ -38,6 +38,10 @@ func freezeWorkflowStages(raw []byte, inputs []workflowFreezeInput, profiles []I
 	if err != nil {
 		return nil, err
 	}
+	return freezeWorkflowDocumentStages(d, inputs, profiles, runtimeDigest)
+}
+
+func freezeWorkflowDocumentStages(d workflowDocument, inputs []workflowFreezeInput, profiles []InputProfile, runtimeDigest string) ([]workflowStageSnapshot, error) {
 	if !workflowDigest.MatchString(runtimeDigest) || len(inputs) != len(d.Stages) {
 		return nil, errWorkflowBinding
 	}
@@ -215,6 +219,9 @@ func workflowSourceAdmission(m InputMapping, profiles []InputProfile) error {
 				return err
 			}
 			class = profile.Class
+			if err := profileRequestForm(source, profile, m); err != nil {
+				return err
+			}
 		}
 		facts, evidence, err := readTargets(source.Read)
 		if err != nil {

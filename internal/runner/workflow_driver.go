@@ -66,18 +66,6 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 	if w.Pending[instanceID] == 0 {
 		return w, nil
 	} // inherited bound: no acquisition
-	index := w.instanceIndex(instanceID)
-	frozen := w.Execution.Frozen[w.stageIndex(w.Execution.Instances[index].Stage)]
-	var release Release
-	if err = strictJSON(w.Artifacts["release/"+frozen.ReleaseDigest], &release); err != nil {
-		return w, err
-	}
-	input, err := workflowAttemptInput(w, instanceID)
-	if err != nil {
-		return w, err
-	}
-	stamp := d.now().Format("2006-01-02T15:04:05Z")
-	run := Run{SchemaVersion: "1", ID: id("workflow-run_"), ReleaseID: release.ID, Revision: 1, State: "interrupted", Input: input, CreatedAt: stamp, StartedAt: stamp, RequestedBy: "workflow", Attempt: w.Pending[instanceID]}
 	save := func(next workflowInventory, transitionErr error) error {
 		if transitionErr != nil {
 			return transitionErr
@@ -89,37 +77,73 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 		w = next
 		return nil
 	}
-	checkpoint := func() error {
-		return save(checkpointWorkflowAttempt(w, instanceID, encode(verificationExport(release, run, 3)), d.Profiles))
+	err = d.driveAdmitted(ctx, w, instanceID,
+		func(raw []byte) error { return save(checkpointWorkflowAttempt(w, instanceID, raw, d.Profiles)) },
+		func(result workflowAttemptResult) error {
+			return save(finishWorkflowAttempt(w, instanceID, result, d.Profiles))
+		}, nil, nil, false)
+	return w, err
+}
+
+// driveAdmitted shares actual planning, acquisition and Runtime invocation. The
+// writer-specific hooks own durable custody and accounting; this never begins,
+// retries or independently authorizes an attempt.
+func (d workflowDriver) driveAdmitted(ctx context.Context, w workflowInventory, instanceID string,
+	checkpointRun func([]byte) error, finishRun func(workflowAttemptResult) error,
+	received func(workflowAcquisition, SourceValue) error,
+	receivedEvaluation func(Run, workflowEvaluation, error) error, preferComplete bool) error {
+	var err error
+	index := w.instanceIndex(instanceID)
+	frozen := w.Execution.Frozen[w.stageIndex(w.Execution.Instances[index].Stage)]
+	var release Release
+	if err = strictJSON(w.Artifacts["release/"+frozen.ReleaseDigest], &release); err != nil {
+		return err
 	}
-	finish := func(state, failure string, coreError []byte) (workflowInventory, error) {
+	input, err := workflowAttemptInput(w, instanceID)
+	if err != nil {
+		return err
+	}
+	stamp := d.now().Format("2006-01-02T15:04:05Z")
+	run := Run{SchemaVersion: "1", ID: id("workflow-run_"), ReleaseID: release.ID, Revision: 1, State: "interrupted", Input: input, CreatedAt: stamp, StartedAt: stamp, RequestedBy: "workflow", Attempt: w.Pending[instanceID]}
+	checkpoint := func() error {
+		return checkpointRun(encode(verificationExport(release, run, 3)))
+	}
+	finish := func(state, failure string, coreError []byte) error {
 		run.State = state
-		run.FinishedAt = d.now().Format("2006-01-02T15:04:05Z")
+		if !preferComplete || (failure != "preparation-failed" && failure != "admission-refused") {
+			run.FinishedAt = d.now().Format("2006-01-02T15:04:05Z")
+		}
 		result := workflowAttemptResult{Run: encode(verificationExport(release, run, 3)), State: state, Failure: failure, EvaluationError: coreError, Signatures: run.AuditSignatures}
-		err := save(finishWorkflowAttempt(w, instanceID, result, d.Profiles))
-		return w, err
+		return finishRun(result)
 	}
 	if err = checkpoint(); err != nil {
-		return w, err
+		return err
 	}
 	for step := 0; step <= len(input.Source.Mapping.Sources); step++ {
 		if ctx.Err() != nil {
 			return finish("cancelled", "", nil)
 		}
-		plan, planErr := nextInput(run.Input, d.Profiles, d.now())
+		planAt := d.now()
+		plan, planErr := nextInput(run.Input, d.Profiles, planAt)
 		if planErr != nil {
 			run.State = "failed"
-			run.FinishedAt = d.now().Format("2006-01-02T15:04:05Z")
-			failure := workflowPreparationFailure(run, d.Profiles)
+			failure := ""
+			if preferComplete {
+				run.FinishedAt = planAt.Format("2006-01-02T15:04:05Z")
+				failure = workflowV2PreparationFailure(run, d.Profiles)
+			} else {
+				run.FinishedAt = d.now().Format("2006-01-02T15:04:05Z")
+				failure = workflowPreparationFailure(run, d.Profiles)
+			}
 			if failure == "" {
-				return w, planErr
+				return planErr
 			}
 			return finish("failed", failure, nil)
 		}
 		if plan.Input != nil {
 			run.Input = *plan.Input
 			if err = checkpoint(); err != nil {
-				return w, err
+				return err
 			}
 			if ctx.Err() != nil {
 				return finish("cancelled", "", nil)
@@ -132,6 +156,27 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 			_ = json.Unmarshal(encode(release), &ownedRelease)
 			evaluated, evalErr := d.Evaluate(ctx, ownedRelease, workflowOwnedInput(run.Input), run.ID)
 			evaluated = workflowEvaluation{bytes.Clone(evaluated.Result), bytes.Clone(evaluated.Audit), bytes.Clone(evaluated.Signatures), bytes.Clone(evaluated.ErrorEnvelope)}
+			if receivedEvaluation != nil {
+				if err := receivedEvaluation(run, evaluated, evalErr); err != nil {
+					return err
+				}
+			}
+			if preferComplete {
+				if len(evaluated.Signatures) > 0 && len(evaluated.Audit) == 0 {
+					return errWorkflowTransition
+				}
+				if len(evaluated.ErrorEnvelope) > 0 && (len(evaluated.Result) > 0 || len(evaluated.Audit) > 0) {
+					return errWorkflowTransition
+				}
+				if len(evaluated.Audit) > 0 && len(evaluated.ErrorEnvelope) == 0 {
+					run.Result = evaluated.Result
+					run.retainAudit(evaluated.Audit, evaluated.Signatures)
+					return finish("completed", "", nil)
+				}
+				if workflowEvaluationError(evaluated.ErrorEnvelope) {
+					return finish("failed", "evaluation-error", evaluated.ErrorEnvelope)
+				}
+			}
 			if errors.Is(evalErr, errSidecarUnread) && len(evaluated.Result) > 0 && len(evaluated.Audit) > 0 {
 				evalErr = nil
 			}
@@ -145,7 +190,7 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 				return finish("interrupted", "", nil)
 			}
 			if len(evaluated.ErrorEnvelope) > 0 {
-				return w, errWorkflowTransition
+				return errWorkflowTransition
 			}
 			run.Result = evaluated.Result
 			run.retainAudit(evaluated.Audit, evaluated.Signatures)
@@ -155,22 +200,27 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 			return finish("failed", "acquisition-failed", nil)
 		}
 		if _, exists := run.Input.Source.Sources[plan.Next.Name]; exists {
-			return w, errWorkflowTransition
+			return errWorkflowTransition
 		}
 		// The checkpoint already committed above contains every earlier answer.
-		request := workflowAcquisition{execution, instanceID, run.Attempt, workflowOwnedInput(run.Input), *plan.Next}
+		request := workflowAcquisition{w.Execution.Execution, instanceID, run.Attempt, workflowOwnedInput(run.Input), *plan.Next}
 		request.Next.Arguments = append(json.RawMessage(nil), plan.Next.Arguments...)
 		value, acquireErr := d.Acquire(ctx, request)
 		value = SourceValue{Response: bytes.Clone(value.Response), Snapshot: bytes.Clone(value.Snapshot)}
+		if received != nil && (len(value.Response) > 0 || len(value.Snapshot) > 0) {
+			if err := received(request, value); err != nil {
+				return err
+			}
+		}
 		// A callback may return a response alongside an error. Preserve any complete
 		// JSON response before deciding whether the operation was interrupted.
 		if len(value.Response) > 0 || len(value.Snapshot) > 0 {
 			if len(value.Response) > 0 && !json.Valid(value.Response) || len(value.Snapshot) > 0 && !json.Valid(value.Snapshot) {
-				return w, fmt.Errorf("source returned an unretainable response: %w", errWorkflowTransition)
+				return fmt.Errorf("source returned an unretainable response: %w", errWorkflowTransition)
 			}
 			run.Input.Source.Sources[plan.Next.Name] = value
 			if err = checkpoint(); err != nil {
-				return w, err
+				return err
 			}
 		}
 		if acquireErr != nil {
@@ -186,5 +236,5 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 			return finish("interrupted", "", nil)
 		}
 	}
-	return w, errWorkflowTransition
+	return errWorkflowTransition
 }

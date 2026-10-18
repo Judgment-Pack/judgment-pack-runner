@@ -10,6 +10,12 @@ import (
 )
 
 func (w workflowInventory) recordingFiles() (map[string][]byte, error) {
+	return w.recordingFilesHistory(w.Execution.Instances, nil, nil)
+}
+
+// V2 supplies proof-owned immutable history, never a caller's baseline file map.
+// Controls still describe the current active execution exactly once.
+func (w workflowInventory) recordingFilesHistory(instances []workflowInstance, outputs, selections []string) (map[string][]byte, error) {
 	files := map[string][]byte{}
 	put := func(path string, raw []byte) error {
 		if len(raw) == 0 {
@@ -54,6 +60,26 @@ func (w workflowInventory) recordingFiles() (map[string][]byte, error) {
 	files["execution.json"] = record
 	files["execution.sha256"] = []byte(digest(record) + "\n")
 	files["workflow.sha256"] = []byte(w.Execution.WorkflowDigest + "\n")
+	if outputs == nil {
+		outputs = []string{}
+		for _, set := range w.Execution.OutputSets {
+			for _, pin := range set.Records {
+				output, _, err := w.record(pin)
+				if err != nil || output.Lineage.Stage != set.Stage {
+					return nil, errWorkflowTransition
+				}
+			}
+			outputs = append(outputs, set.Records...)
+		}
+	}
+	if selections == nil {
+		selections = []string{}
+		for _, pin := range w.Execution.Selections {
+			if pin != nil {
+				selections = append(selections, *pin)
+			}
+		}
+	}
 	if len(w.Execution.Frozen) != len(w.Document.Stages) || len(w.Execution.OutputSets) != len(w.Document.Stages) || len(w.Execution.Selections) != len(w.Document.Stages) {
 		return nil, errWorkflowTransition
 	}
@@ -98,18 +124,27 @@ func (w workflowInventory) recordingFiles() (map[string][]byte, error) {
 			return nil, err
 		}
 		files["sets/"+stage.Stage+".json"] = set
-		if pin := w.Execution.Selections[i]; pin != nil {
+		for _, pin := range selections {
 			var selection workflowSelection
-			if strictJSON(w.Artifacts["selection/"+*pin], &selection) != nil {
+			if strictJSON(w.Artifacts["selection/"+pin], &selection) != nil {
 				return nil, errWorkflowTransition
 			}
-			if err := retained(fmt.Sprintf("selections/%s/%d.json", stage.Stage, selection.Revision), "selection", *pin, false); err != nil {
+			if selection.UpstreamStage != stage.Stage {
+				continue
+			}
+			if err := retained(fmt.Sprintf("selections/%s/%d.json", stage.Stage, selection.Revision), "selection", pin, false); err != nil {
 				return nil, err
 			}
 		}
-		for _, pin := range w.Execution.OutputSets[i].Records {
+		for _, pin := range outputs {
 			output, payload, err := w.record(pin)
-			if err != nil || output.Lineage.Stage != stage.Stage || !workflowID.MatchString(output.Lineage.Instance) || output.Lineage.Index < 0 {
+			if err != nil {
+				return nil, err
+			}
+			if output.Lineage.Stage != stage.Stage {
+				continue
+			}
+			if !workflowID.MatchString(output.Lineage.Instance) || output.Lineage.Index < 0 {
 				return nil, errWorkflowTransition
 			}
 			base := fmt.Sprintf("outputs/%s/%s/%d/", stage.Stage, output.Lineage.Instance, output.Lineage.Index)
@@ -121,7 +156,7 @@ func (w workflowInventory) recordingFiles() (map[string][]byte, error) {
 			}
 		}
 	}
-	for _, instance := range w.Execution.Instances {
+	for _, instance := range instances {
 		if !workflowID.MatchString(instance.ID) {
 			return nil, errWorkflowTransition
 		}

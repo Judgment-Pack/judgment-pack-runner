@@ -1,5 +1,10 @@
 # Draft workflow implementation
 
+This page describes the version-1 experiment. The separate
+[proposed version-2 admission experiment](workflow-admission-experiment.md) retains
+accounting proofs and branch history for independent verification; it does not
+replace or silently widen the version-1 reader.
+
 Runner #121 tracks execution and offline verification of Spec's **Draft** RFC 0020. The implementation is private: there is no workflow API, CLI or conformance claim. A private experimental offline reader covers retained workflow consistency, with the byte-only refusal limitation below. The draft pins Runner `66e264e` and Runtime `785ea589` (`v0.34.0`); named formats retain their published identity when bound.
 
 ## Documents, freezing and selection
