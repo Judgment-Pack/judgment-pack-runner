@@ -2,9 +2,10 @@
 
 `judgment-pack-runner/execution-payload/1` is an experimental, private Runner
 payload descriptor for the single-Pack run admission work in Runner #147. The
-codec has no execution callers, HTTP routes, boot configuration, store schema or
-permission effect. It neither interprets a Policy nor establishes approval,
-dependency eligibility, authority freshness or an execution grant. It does not
+private `local-admin-manual-pack/1` gate now uses it at actual operational
+admission and launch. The codec itself adds no HTTP routes, boot configuration,
+store schema or permission effect. It neither interprets a Policy nor establishes
+approval, dependency eligibility, authority freshness or an execution grant. It does not
 change legacy releases, `releaseDigest`, preparation bindings or verification
 exports. This profile is not an adopted portable Spec contract or a conformance
 claim. It does not add public graph jobs.

@@ -106,9 +106,14 @@ existing independent lease before opening state or starting workers and inherits
 it into every Runtime invocation. A Runtime that survives its Runner keeps the
 lease until exit, including for a release preview or saved check. Configured state
 must already exist; missing/corrupt enrollment refuses with no creation or reset.
-Unconfigured boots retain existing Jobs behavior. The closed capability response
-is version 2 and reports `governanceAdmission: false`: ownership grants no policy
-permission and does not make jobs governed.
+Unconfigured boots retain existing Jobs behavior. Ownership grants no policy
+permission. Supported admission hosts report closed capability version 3 with
+`governanceAdmission: true` scoped solely to `local-admin-manual-pack/1`; hosts
+without admission support retain ownership-only version 2 with
+`governanceAdmission: false`. The separate experimental
+[manual gate](docs/design/manual-admission-gate.md) requires retained enrollment,
+matching boot and execution demands, and fresh anchored authority admission.
+A probe response alone grants no permission.
 
 ## Upgrading a job
 
