@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -46,9 +47,29 @@ func TestManualInheritedAuthorityDescriptorHelper(t *testing.T) {
 			t.Fatal("unsupported descriptor-probe bound", limit.Cur)
 		}
 		for fd := 3; uint64(fd) < limit.Cur; fd++ {
+			// Authority endpoints are AF_UNIX/SOCK_STREAM. SO_TYPE identifies
+			// non-stream native sockets without requiring their protocol to
+			// implement getsockname (Apple getsockname(2): EOPNOTSUPP).
+			kind, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_TYPE)
+			if err == syscall.EBADF || err == syscall.ENOTSOCK {
+				continue
+			}
+			if err != nil {
+				t.Fatalf("descriptor type probe failed for %d: %v", fd, err)
+			}
+			if kind != syscall.SOCK_STREAM {
+				continue
+			}
 			address, err := syscall.Getsockname(fd)
+			// Go's BSD anyToSockaddr returns EAFNOSUPPORT for families it
+			// cannot decode; AF_UNIX is explicitly supported. Darwin also
+			// documents protocol-level EOPNOTSUPP; XNU's Unix uipc_sockaddr
+			// implements this operation (uipc_usrreq.c), returning 0/EINVAL.
+			if err == syscall.EAFNOSUPPORT || runtime.GOOS == "darwin" && err == syscall.EOPNOTSUPP {
+				continue
+			}
 			if err != nil && err != syscall.EBADF && err != syscall.ENOTSOCK {
-				t.Fatalf("descriptor probe failed for %d: %v", fd, err)
+				t.Fatalf("stream descriptor name probe failed for %d: %v", fd, err)
 			}
 			if _, ok := address.(*syscall.SockaddrUnix); err == nil && ok {
 				t.Fatalf("Runtime inherited authority socket %d", fd)
@@ -155,31 +176,44 @@ func TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec(t *testing.T) {
 // Prove the finite native descriptor observer distinguishes a deliberately
 // leaked authority socket from the positive lease-only worker above.
 func TestManualAuthorityDescriptorObserverDetectsSocket(t *testing.T) {
-	fixture := executorFixture(t)
-	lease, err := fixture.acquire()
-	executorMust(t, err)
-	defer lease.Close()
-	syscall.ForkLock.RLock()
-	sockets, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
-	if err == nil {
-		syscall.CloseOnExec(sockets[0])
-		syscall.CloseOnExec(sockets[1])
-	}
-	syscall.ForkLock.RUnlock()
-	executorMust(t, err)
-	inherited := os.NewFile(uintptr(sockets[0]), "deliberately-inherited-authority")
-	defer inherited.Close()
-	defer syscall.Close(sockets[1])
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestManualInheritedAuthorityDescriptorHelper$")
-	cmd.Env = append(os.Environ(), "JPACK_MANUAL_FD_TEST=runtime", "JPACK_EXPECTED_LEASE_FD=4", "JPACK_EXPECTED_OWNERSHIP="+fixture.leaf())
-	cmd.ExtraFiles = []*os.File{inherited}
-	var output bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &output, &output
-	_, err = lease.Start(cmd)
-	executorMust(t, err)
-	if err = cmd.Wait(); err == nil || !bytes.Contains(output.Bytes(), []byte("Runtime inherited authority socket 3")) {
-		t.Fatalf("observer missed deliberately inherited authority socket: %v %s", err, output.String())
+	for _, kind := range []int{syscall.SOCK_STREAM, syscall.SOCK_DGRAM} {
+		name := "stream-leak"
+		if kind == syscall.SOCK_DGRAM {
+			name = "unrelated-datagram"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := executorFixture(t)
+			lease, err := fixture.acquire()
+			executorMust(t, err)
+			defer lease.Close()
+			syscall.ForkLock.RLock()
+			sockets, err := syscall.Socketpair(syscall.AF_UNIX, kind, 0)
+			if err == nil {
+				syscall.CloseOnExec(sockets[0])
+				syscall.CloseOnExec(sockets[1])
+			}
+			syscall.ForkLock.RUnlock()
+			executorMust(t, err)
+			inherited := os.NewFile(uintptr(sockets[0]), "deliberately-inherited-socket")
+			defer inherited.Close()
+			defer syscall.Close(sockets[1])
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestManualInheritedAuthorityDescriptorHelper$")
+			cmd.Env = append(os.Environ(), "JPACK_MANUAL_FD_TEST=runtime", "JPACK_EXPECTED_LEASE_FD=4", "JPACK_EXPECTED_OWNERSHIP="+fixture.leaf())
+			cmd.ExtraFiles = []*os.File{inherited}
+			var output bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &output, &output
+			_, err = lease.Start(cmd)
+			executorMust(t, err)
+			err = cmd.Wait()
+			if kind == syscall.SOCK_STREAM {
+				if err == nil || !bytes.Contains(output.Bytes(), []byte("Runtime inherited authority socket 3")) {
+					t.Fatalf("observer missed deliberately inherited authority socket: %v %s", err, output.String())
+				}
+			} else if err != nil {
+				t.Fatalf("observer confused datagram with authority stream: %v %s", err, output.String())
+			}
+		})
 	}
 }
