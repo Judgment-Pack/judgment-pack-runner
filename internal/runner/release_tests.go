@@ -124,7 +124,7 @@ func (s *Service) checkReleaseTests(ctx context.Context, r Release, matrix strin
 			return fail()
 		}
 	}
-	out, runErr := invoke(ctx, bin, dir, "test", "packs", "test", "--id", "target", "--config", "jpack.json", "--format", "json")
+	out, runErr := s.invoke(ctx, bin, dir, "test", "packs", "test", "--id", "target", "--config", "jpack.json", "--format", "json")
 	if json.Valid(out) {
 		e.Report = out
 	}

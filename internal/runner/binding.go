@@ -107,7 +107,11 @@ var errRecordBinding = errors.New("operational audit binding does not match this
 // one built without its release's version does, which is given none. An
 // answer that cannot be read is an error, never taken for an old Runtime.
 func bindingStatusOf(ctx context.Context, bin, dir string) (string, error) {
-	out, err := invoke(ctx, bin, dir, "version", "version", "--format", "json")
+	return bindingStatusInvoking(ctx, bin, dir, invokeWith)
+}
+
+func bindingStatusInvoking(ctx context.Context, bin, dir string, invoke runtimeInvoker) (string, error) {
+	out, err := invoke(ctx, bin, dir, "version", nil, "version", "--format", "json")
 	var answer struct {
 		Tool struct {
 			Version string `json:"version"`

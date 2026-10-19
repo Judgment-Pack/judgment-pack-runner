@@ -18,7 +18,7 @@ type ExecutorLeaseIdentity struct {
 	FileDevice, FileInode uint64
 }
 
-// ExecutorLease is an inactive ownership primitive, not permission to execute
+// ExecutorLease is an ownership primitive, not permission to execute
 // work. It holds an exclusive lock on an independently pinned external file.
 // Close releases this process's descriptors; an inheriting child keeps its
 // copy, and therefore the lock, until that copy closes. Do not copy this value.
@@ -48,7 +48,8 @@ func AcquireExecutorLease(root, stateDir, workspace string, expected ExecutorLea
 //
 // The child must preserve this descriptor throughout the protected work and
 // must never explicitly unlock it. Wrappers must pass it on to the actual
-// worker. That host/Runtime integration is not implemented by this primitive.
+// worker. Service Runtime invocations use this boundary; standalone users must
+// establish their own worker descriptor-preservation contract.
 func (l *ExecutorLease) Start(cmd *exec.Cmd) (int, error) {
 	if l == nil {
 		return -1, errors.New("executor lease is closed")
@@ -91,4 +92,16 @@ func (l *ExecutorLease) Close() error {
 	err := errors.Join(l.file.Close(), l.root.Close(), l.state.Close())
 	l.file, l.root, l.state = nil, nil, nil
 	return err
+}
+
+func executorWorkspaceID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, c := range []byte(id) {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }

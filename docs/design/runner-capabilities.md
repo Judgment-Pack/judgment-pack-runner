@@ -1,11 +1,12 @@
 # Runner pre-start capabilities
 
-Status: private experimental host/companion contract, version 1, 2026-10-18.
+Status: private experimental host/companion contract, version 2, 2026-10-18.
 This implements the capability-negotiation foundation of Desk's Policy execution
 admission design. It does not implement governed activation, resource registration,
 per-attempt admission, withdrawal enforcement or Runtime dispatch authorization.
-Execution-payload and executor-lease helpers remain inactive foundations. Existing
-jobs remain ungoverned.
+Explicit trusted-host enrollment can enable external executor ownership. Execution
+payloads remain an inactive foundation; ownership grants no governance permission.
+All jobs remain ungoverned.
 
 ## Probe before boot
 
@@ -19,20 +20,23 @@ It exits successfully after writing this single UTF-8 JSON object and a newline
 to stdout, with no stderr output:
 
 ```json
-{"version":1,"capabilities":["jobs/1","required-boot-capabilities/1"],"governanceAdmission":false}
+{"version":2,"capabilities":["jobs/1","required-boot-capabilities/1","executor-ownership/1"],"governanceAdmission":false}
 ```
 
-Version 1 is a closed shape: exactly these three case-sensitive members, integer
-`version: 1`, this ordered array of supported capability strings, and boolean
+Version 2 is a closed shape: exactly these three case-sensitive members, integer
+`version: 2`, this ordered array of supported capability strings, and boolean
 `governanceAdmission: false`. No duplicate members are permitted. There are no
 installation paths, identifiers, configuration values, credentials or secrets in
 the response. The response is less than 512 bytes. A shape or semantic change
 requires an explicitly reviewed contract version; consumers must not interpret
-unknown versions as version 1.
+unknown versions as version 2. The earlier version 1 response was also closed;
+adding executor ownership deliberately changes the response version.
 
 `jobs/1` names the existing companion protocol. `required-boot-capabilities/1`
 means Runner strictly checks the optional boot requirement below before opening
-its service. Governance admission is explicitly unsupported: a payload descriptor,
+its service. `executor-ownership/1` means a supplied trusted ownership binding is
+required before the service opens and is inherited by every Service Runtime
+invocation ([binding and lifetime](executor-ownership.md)). Governance admission is explicitly unsupported: a payload descriptor,
 lease helper, version string or successful probe does not establish permission to
 execute. No governed execution capability is advertised. Requiring an unknown
 capability, including `governance-admission/1`, refuses startup.
@@ -58,8 +62,8 @@ launch. Checking one path and later executing different bytes at that path is
 not a trustworthy capability check. The host must also repeat its required
 capabilities in the actual boot line: inspecting capabilities alone does not
 protect against changed binaries, a different launch path or a boot mismatch.
-Those host-side timeout, capture and executable-identity controls are requirements
-for future host integration, not features implemented by this Runner command.
+Those host-side timeout, capture and executable-identity controls are host
+requirements, not effects of this Runner command.
 
 ## Actual boot requirement
 
@@ -106,6 +110,28 @@ stderr diagnostic. It exits nonzero. Passing the requirement only establishes
 support for the named features; the normal boot/service validation still runs
 and can refuse independently.
 
+
+## Ownership and requirement agreement
+
+The additional boot member `executorOwnership` uses the closed version-1 binding
+in [executor-ownership-boot.json](executor-ownership-boot.json). Its root must be a
+clean absolute path, its machine workspace a bounded identifier, and its Runner
+workspace must exactly equal the boot's `workspace`. Filesystem device/inode pins
+are canonical unsigned decimal **strings**, never JSON numbers; inodes are positive.
+The binding names the independently retained external lease, not portable store
+metadata or request-selected paths.
+
+The boot must explicitly require `executor-ownership/1` if and only if it supplies
+`executorOwnership`. Requiring ownership without its binding, supplying a binding
+without its explicit requirement, null/malformed bindings, unknown/case-aliased
+members and duplicate keys all refuse before `Open`. No fallback removes this
+requirement after a failed start. A boot without ownership or its requirement
+retains existing local Jobs behavior.
+
+Ownership binding and requirement syntax are checked before `Open`; `Open` then
+acquires and verifies the existing external lease before any portable-directory
+creation, store access, Runtime pinning, recovery or worker/provider startup.
+
 ## Verification
 
 Targeted command tests use stdin that panics on any read and missing configuration
@@ -115,3 +141,11 @@ and hence all worker startup. They cover unsupported governance, malformed and
 closed-shape requirements, duplicate/escaped/case-alias downgrade attempts,
 limits, and preservation of valid legacy boot values. Repository CI supplies
 the broader platform, integration and race checks.
+
+Ownership tests also cover canonical uint64 encoding beyond JavaScript's exact
+integer range, exact machine/Runner identities and the shared boot fixture.
+Service tests exercise real previews, saved checks, dispatch, upgrades and the
+private workflow adapter, and refuse launches after close. The Linux real-Runtime
+process-lifetime test described in [executor ownership](executor-ownership.md)
+observes the exact pinned executable and its inherited lease before stopping its
+owner. It requires `JPACK_TEST_BIN`; a skipped integration is not verification.

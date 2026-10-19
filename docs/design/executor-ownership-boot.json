@@ -1,0 +1,16 @@
+{
+  "requiredCapabilities": {
+    "version": 1,
+    "capabilities": ["jobs/1", "required-boot-capabilities/1", "executor-ownership/1"]
+  },
+  "executorOwnership": {
+    "version": 1,
+    "root": "/trusted/machine/executors/ws_machine",
+    "machineWorkspace": "ws_machine",
+    "runnerWorkspace": "runner-existing-identity",
+    "rootDevice": "123",
+    "rootInode": "456",
+    "fileDevice": "123",
+    "fileInode": "789"
+  }
+}

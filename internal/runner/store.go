@@ -16,6 +16,9 @@ import (
 )
 
 type Config struct {
+	// ExecutorOwnership opts this workspace into trusted external ownership.
+	// Open snapshots it before taking the lease; nil preserves legacy behavior.
+	ExecutorOwnership              *ExecutorOwnership
 	Dir, Runtime, Workspace, Owner string
 	InputProfiles                  []InputProfile
 	InputRoot                      string
@@ -59,6 +62,9 @@ type Service struct {
 	db                     *sql.DB
 	lock                   *os.File
 	runtime, runtimeDigest string
+
+	// executor is fixed at Open and remains non-nil after Close.
+	executor *ExecutorLease
 	// expectedKey is the public key of the signing key as Runner read it at
 	// start, fixed for as long as it runs: the key each run's record must be
 	// signed under. Nil without a signing key.
@@ -80,6 +86,25 @@ type Service struct {
 }
 
 func Open(cfg Config) (_ *Service, err error) {
+	// Snapshot the binding before any side effects. Never derive pins from state.
+	var executor *ExecutorLease
+	if cfg.ExecutorOwnership != nil {
+		owned := *cfg.ExecutorOwnership
+		cfg.ExecutorOwnership = &owned
+		if err = owned.Validate(cfg.Workspace); err != nil {
+			return nil, err
+		}
+		executor, err = AcquireExecutorLease(owned.Root, cfg.Dir, owned.MachineWorkspace, owned.identity())
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err != nil {
+				executor.Close()
+			}
+		}()
+	}
+
 	if err = validateProfiles(cfg.InputProfiles); err != nil {
 		return nil, profileRefusal("configured", cfg.InputProfiles, err)
 	}
@@ -106,7 +131,7 @@ func Open(cfg Config) (_ *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, expectedKey: expectedKey, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
+	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, executor: executor, expectedKey: expectedKey, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
 	defer func() {
 		if err != nil {
 			if s.db != nil {
@@ -234,6 +259,9 @@ func (s *Service) Close() {
 			s.attempts.Close()
 		}
 		s.lock.Close()
+		if s.executor != nil {
+			s.executor.Close()
+		}
 	})
 }
 func (s *Service) release(id string) (Release, error) {
