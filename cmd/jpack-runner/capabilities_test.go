@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/runner"
 )
 
 type unreadableBoot struct{}
@@ -25,6 +27,11 @@ func TestCapabilitiesCommandDoesNotReadBootOrInitializeRunner(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	status := runnerCommand([]string{"capabilities", "--format", "json"}, unreadableBoot{}, &stdout, &stderr)
 	want := "{\"version\":2,\"capabilities\":[\"jobs/1\",\"required-boot-capabilities/1\",\"executor-ownership/1\"],\"governanceAdmission\":false}\n"
+	members := 3
+	if runner.ManualAdmissionAvailable() {
+		want = "{\"version\":3,\"capabilities\":[\"jobs/1\",\"required-boot-capabilities/1\",\"executor-ownership/1\",\"policy-manual-pack-run/1\"],\"governanceAdmission\":true,\"governanceProfiles\":[\"local-admin-manual-pack/1\"]}\n"
+		members = 4
+	}
 	if status != 0 || stdout.String() != want || stderr.Len() != 0 || stdout.Len() > 512 {
 		t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout.String(), stderr.String())
 	}
@@ -33,7 +40,7 @@ func TestCapabilitiesCommandDoesNotReadBootOrInitializeRunner(t *testing.T) {
 	}
 	decoder := json.NewDecoder(&stdout)
 	var report map[string]json.RawMessage
-	if err := decoder.Decode(&report); err != nil || len(report) != 3 {
+	if err := decoder.Decode(&report); err != nil || len(report) != members {
 		t.Fatalf("not one closed capability object: %v %v", report, err)
 	}
 	if err := decoder.Decode(&report); err != io.EOF {

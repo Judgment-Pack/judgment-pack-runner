@@ -84,6 +84,9 @@ func (s *Service) durableMapping(r Release) bool {
 	return operations > 0
 }
 func (s *Service) prepareOccurrence(ctx context.Context) error {
+	if s.cfg.ExecutorAdmission != nil {
+		return manualUnsupported()
+	}
 	s.automationMu.Lock()
 	if s.unhealthy.Load() {
 		s.automationMu.Unlock()

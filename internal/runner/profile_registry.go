@@ -182,6 +182,9 @@ func profileRefusal(whose string, profiles []InputProfile, err error) error {
 }
 
 func (s *Service) registerInputProfile(p InputProfile) (bool, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return false, manualUnsupported()
+	}
 	if err := validateProfiles([]InputProfile{p}); err != nil {
 		return false, bad("invalid_input_profile", "Supply one valid installation input profile.")
 	}

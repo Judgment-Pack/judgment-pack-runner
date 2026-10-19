@@ -55,6 +55,9 @@ func (s *Service) cloudProblem(id string, e error) {
 	}
 }
 func (s *Service) cloudWorker(ctx context.Context, c CloudConnection) {
+	if s.cfg.ExecutorAdmission != nil {
+		return
+	}
 	var transport cloudTransport
 	for ctx.Err() == nil {
 		var e error

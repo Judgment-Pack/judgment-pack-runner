@@ -12,6 +12,35 @@ type recordFilter struct {
 	Review bool
 }
 
+// A list is a stable public projection, independent of Run's durable encoding.
+// Do not embed Run/storedRun or copy arbitrary stored members: private fields
+// such as exact manual admission preimages must never become list metadata.
+type runListSummary struct {
+	Trigger       *TriggerOrigin `json:"trigger,omitempty"`
+	SchemaVersion *string        `json:"schemaVersion,omitempty"`
+	ID            *string        `json:"id,omitempty"`
+	JobID         *string        `json:"jobId,omitempty"`
+	ReleaseID     *string        `json:"releaseId,omitempty"`
+	Revision      *int           `json:"revision,omitempty"`
+	State         *string        `json:"state,omitempty"`
+	CreatedAt     *string        `json:"createdAt,omitempty"`
+	StartedAt     *string        `json:"startedAt,omitempty"`
+	FinishedAt    *string        `json:"finishedAt,omitempty"`
+	RequestedBy   *string        `json:"requestedBy,omitempty"`
+	Attempt       *int           `json:"attempt,omitempty"`
+	Problem       *string        `json:"problem,omitempty"`
+	InterruptedAt *string        `json:"interruptedAt,omitempty"`
+	Reason        *string        `json:"reason,omitempty"`
+	Signing       *RunSigning    `json:"signing,omitempty"`
+	Binding       *RunBinding    `json:"binding,omitempty"`
+	Result        *runListResult `json:"result,omitempty"`
+	JobName       string         `json:"jobName"`
+}
+type runListResult struct {
+	Disposition   json.RawMessage `json:"disposition"`
+	HandoffTarget json.RawMessage `json:"handoffTarget"`
+}
+
 func validRunState(state string) bool {
 	switch state {
 	case "queued", "running", "completed", "failed", "interrupted":
@@ -71,23 +100,18 @@ func (s *Service) filteredRecords(kind, jobID string, after int64, filter record
 			break
 		}
 		var summary map[string]json.RawMessage
+		if kind == "runs" {
+			var public runListSummary
+			if err = json.Unmarshal(raw, &public); err != nil {
+				return nil, 0, err
+			}
+			public.JobName = label
+			raw = encode(public)
+		}
 		if err = json.Unmarshal(raw, &summary); err != nil {
 			return nil, 0, err
 		}
-		if kind == "runs" {
-			delete(summary, "input")
-			delete(summary, "audit")
-			delete(summary, "auditBytes")
-			delete(summary, "auditSignatures")
-			summary["jobName"] = encode(label)
-			if raw := summary["result"]; len(raw) > 0 {
-				var result map[string]json.RawMessage
-				if err = json.Unmarshal(raw, &result); err != nil {
-					return nil, 0, err
-				}
-				summary["result"] = encode(map[string]json.RawMessage{"disposition": result["disposition"], "handoffTarget": result["handoffTarget"]})
-			}
-		} else {
+		if kind != "runs" {
 			summary["packTitle"] = encode(label)
 			summary["packVersion"] = encode(version)
 		}

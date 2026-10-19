@@ -62,6 +62,9 @@ func (s *Service) writeTrigger(t Trigger, hash string, history bool) error {
 	return tx.Commit()
 }
 func (s *Service) configureTrigger(jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return Trigger{}, manualUnsupported()
+	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	job, e := s.job(jobID)
@@ -142,6 +145,9 @@ func (s *Service) configureTrigger(jobID, triggerID string, revision int, c Trig
 	return t, tx.Commit()
 }
 func (s *Service) setTriggerState(triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return Trigger{}, "", manualUnsupported()
+	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	t, hash, e := s.trigger(triggerID)
@@ -254,6 +260,9 @@ func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
 	return tx.Commit()
 }
 func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, string, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return Trigger{}, "", manualUnsupported()
+	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	t, _, e := s.trigger(triggerID)
@@ -285,6 +294,9 @@ func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, str
 	return t, secret, e
 }
 func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return Occurrence{}, false, manualUnsupported()
+	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	t, hash, e := s.trigger(triggerID)
@@ -312,6 +324,9 @@ func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occur
 // persists the complete envelope before delivery; old timestamps are allowed, but
 // source freshness and queue expiry still apply at admission/execution.
 func (s *Service) deliverRecord(triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return Occurrence{}, false, manualUnsupported()
+	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	t, _, e := s.trigger(triggerID)
@@ -325,6 +340,9 @@ func (s *Service) deliverRecord(triggerID, releaseID string, event EventDelivery
 }
 
 func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, expectedRelease string) (Occurrence, bool, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return Occurrence{}, false, manualUnsupported()
+	}
 	if t.Config.Kind != "event" {
 		return Occurrence{}, false, bad("not_event_trigger", "This trigger does not accept event delivery.")
 	}

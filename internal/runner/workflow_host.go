@@ -14,12 +14,18 @@ import (
 func (s *Service) workflowDriver(store *workflowStore) workflowDriver {
 	return workflowDriver{Store: store, Profiles: s.inputProfiles(),
 		Acquire: func(ctx context.Context, request workflowAcquisition) (SourceValue, error) {
+			if s.cfg.ExecutorAdmission != nil {
+				return SourceValue{}, manualUnsupported()
+			}
 			if request.Next.Kind != "operation" {
 				return SourceValue{}, errWorkflowAcquisitionUnavailable
 			}
 			return s.acquirePlannedOperation(ctx, request.Next)
 		},
 		Evaluate: func(ctx context.Context, release Release, input Input, key string) (workflowEvaluation, error) {
+			if s.cfg.ExecutorAdmission != nil {
+				return workflowEvaluation{}, manualUnsupported()
+			}
 			root := filepath.Join(s.cfg.Dir, "workflow-attempts")
 			if err := os.MkdirAll(root, 0700); err != nil {
 				return workflowEvaluation{}, err

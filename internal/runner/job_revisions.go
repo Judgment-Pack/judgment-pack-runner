@@ -53,6 +53,9 @@ func recordInitialJob(tx *sql.Tx, j Job) error {
 }
 
 func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRequest) (Job, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return Job{}, manualUnsupported()
+	}
 	if !req.Reviewed || req.BaseRevision < 1 || req.BaseRevision == math.MaxInt || req.ReleaseID == "" || req.BaseReleaseID == "" {
 		return Job{}, bad("review_required", "Review the checked release and the job revision being replaced.")
 	}

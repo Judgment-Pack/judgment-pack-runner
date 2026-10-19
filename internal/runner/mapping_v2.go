@@ -12,6 +12,9 @@ import (
 )
 
 func (s *Service) normalizeInput(i Input) (Input, error) {
+	if s.cfg.ExecutorAdmission != nil && (i.Source != nil || i.Preparation != nil) {
+		return Input{}, manualUnsupported()
+	}
 	if e := s.refuseSetAside(i); e != nil {
 		return i, e
 	}

@@ -277,6 +277,9 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	return r, s.saveRelease(r)
 }
 func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
+	if !rehearsal && s.cfg.ExecutorAdmission != nil {
+		return nil, nil, nil, nil, errManualInactive
+	}
 	if input.Source != nil && input.Source.Mapping.dialect() {
 		if input.Preparation == nil || !mappingMatchesRelease(r, input) {
 			return nil, nil, nil, nil, errors.New("missing or mismatched verified preparation")

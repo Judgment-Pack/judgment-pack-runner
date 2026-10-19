@@ -94,6 +94,9 @@ func (s *Service) refuseSetAsideMapping(m *InputMapping) error {
 // nextInput is nextInput under the installation's profiles, refusing first an
 // input that names a set-aside profile.
 func (s *Service) nextInput(i Input, at time.Time) (InputPlan, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return InputPlan{}, manualUnsupported()
+	}
 	if e := s.refuseSetAside(i); e != nil {
 		return InputPlan{}, e
 	}

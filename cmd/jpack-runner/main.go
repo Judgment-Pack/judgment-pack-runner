@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,12 @@ func runnerCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		} else {
 			_, err = fmt.Fprintln(stdout, "jpack-runner", buildinfo.Version())
 		}
+	case args[0] == "prepare-manual-store":
+		if len(args) != 1 {
+			err = fmt.Errorf("prepare-manual-store takes one trusted JSON request on stdin")
+		} else {
+			return prepareManualStore(stdin, stdout)
+		}
 	case args[0] == "relocate-workspace":
 		if len(args) == 2 && args[1] == "--capabilities" {
 			_, err = fmt.Fprintln(stdout, `{"version":1}`)
@@ -57,6 +64,18 @@ func runnerCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "runner:", err)
+		return 1
+	}
+	return 0
+}
+
+func prepareManualStore(stdin io.Reader, stdout io.Writer) int {
+	raw, err := io.ReadAll(io.LimitReader(stdin, 16385))
+	result := runner.ManualStorePrepareResult{Version: 1, Status: "refused", Code: "invalid-request"}
+	if err == nil && len(raw) > 1 && len(raw) <= 16384 && raw[len(raw)-1] == '\n' && bytes.Count(raw, []byte{'\n'}) == 1 {
+		result = runner.PrepareManualStore(raw[:len(raw)-1])
+	}
+	if json.NewEncoder(stdout).Encode(result) != nil || result.Status != "ok" {
 		return 1
 	}
 	return 0
@@ -89,7 +108,16 @@ func bootConfig(line []byte) (runner.Config, string, error) {
 	if err != nil {
 		return runner.Config{}, "", err
 	}
-	return runner.Config{ExecutorOwnership: ownership, Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, SigningKey: boot.SigningKey, SigningPublicKey: boot.SigningPublicKey}, boot.Token, nil
+	var envelope map[string]json.RawMessage
+	_ = json.Unmarshal(line, &envelope)
+	var admission *runner.ManualAdmissionBinding
+	if raw, present := envelope["executorAdmission"]; present {
+		admission, err = runner.ParseManualAdmissionBinding(raw, ownership, boot.Workspace)
+		if err != nil {
+			return runner.Config{}, "", fmt.Errorf("invalid manual admission binding")
+		}
+	}
+	return runner.Config{ExecutorAdmission: admission, ExecutorOwnership: ownership, Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, SigningKey: boot.SigningKey, SigningPublicKey: boot.SigningPublicKey}, boot.Token, nil
 }
 
 func serve(stdin io.Reader, stdout, stderr io.Writer) error {

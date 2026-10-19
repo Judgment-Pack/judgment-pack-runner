@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"database/sql"
@@ -16,6 +17,8 @@ import (
 )
 
 type Config struct {
+	// ExecutorAdmission is snapshotted strictly but remains inactive in Phase A.
+	ExecutorAdmission *ManualAdmissionBinding
 	// ExecutorOwnership opts this workspace into trusted external ownership.
 	// Open snapshots it before taking the lease; nil preserves legacy behavior.
 	ExecutorOwnership              *ExecutorOwnership
@@ -65,6 +68,9 @@ type Service struct {
 
 	// executor is fixed at Open and remains non-nil after Close.
 	executor *ExecutorLease
+	// authority is the immutable original inherited channel/session. It never
+	// becomes a nil fallback after Close or transport failure.
+	authority *manualAuthorityClient
 	// expectedKey is the public key of the signing key as Runner read it at
 	// start, fixed for as long as it runs: the key each run's record must be
 	// signed under. Nil without a signing key.
@@ -86,6 +92,18 @@ type Service struct {
 }
 
 func Open(cfg Config) (_ *Service, err error) {
+	if cfg.ExecutorAdmission != nil {
+		binding := *cfg.ExecutorAdmission
+		cfg.ExecutorAdmission = &binding
+		if binding.Validate(cfg.ExecutorOwnership, cfg.Workspace) != nil {
+			return nil, errManualProtocol
+		}
+		// Do not expose an enabled profile before registration and the actual
+		// operational starter have been integrated and proved together.
+		if !ManualAdmissionAvailable() {
+			return nil, errManualInactive
+		}
+	}
 	// Snapshot the binding before any side effects. Never derive pins from state.
 	var executor *ExecutorLease
 	if cfg.ExecutorOwnership != nil {
@@ -101,6 +119,24 @@ func Open(cfg Config) (_ *Service, err error) {
 		defer func() {
 			if err != nil {
 				executor.Close()
+			}
+		}()
+	}
+	// Sticky external demand remains binding when admission was omitted from a
+	// later boot. It is never inferred from a portable store or repaired here.
+	if err = checkManualDemand(cfg.ExecutorOwnership, cfg.ExecutorAdmission); err != nil {
+		return nil, err
+	}
+	var authority *manualAuthorityClient
+	if cfg.ExecutorAdmission != nil {
+		channel, e := OpenInheritedManualAuthority(*cfg.ExecutorAdmission)
+		if e != nil {
+			return nil, e
+		}
+		authority = channel.(*manualAuthorityClient)
+		defer func() {
+			if err != nil {
+				authority.Close()
 			}
 		}()
 	}
@@ -124,6 +160,16 @@ func Open(cfg Config) (_ *Service, err error) {
 	if cfg.Workspace == "" || cfg.Owner == "" || !filepath.IsAbs(cfg.Dir) || !filepath.IsAbs(cfg.Runtime) {
 		return nil, errors.New("absolute paths and workspace owner required")
 	}
+	if cfg.ExecutorAdmission == nil {
+		if _, e := os.Lstat(filepath.Join(cfg.Dir, manualPrepareMarker)); !os.IsNotExist(e) {
+			return nil, errManualProtocol
+		}
+	}
+	if cfg.ExecutorAdmission != nil {
+		if privateFile(filepath.Join(cfg.Dir, "runs.sqlite")) != nil {
+			return nil, errManualProtocol
+		}
+	}
 	if err = privateDir(cfg.Dir); err != nil {
 		return nil, err
 	}
@@ -131,7 +177,7 @@ func Open(cfg Config) (_ *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, executor: executor, expectedKey: expectedKey, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
+	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, executor: executor, authority: authority, expectedKey: expectedKey, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
 	defer func() {
 		if err != nil {
 			if s.db != nil {
@@ -172,6 +218,11 @@ func Open(cfg Config) (_ *Service, err error) {
 		return nil, err
 	}
 	s.db.SetMaxOpenConns(1)
+	if cfg.ExecutorAdmission != nil {
+		if err = s.validateManualStore(); err != nil {
+			return nil, err
+		}
+	}
 	_, err = s.db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
  CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS briefs (subject TEXT PRIMARY KEY, record TEXT NOT NULL);
@@ -203,8 +254,10 @@ func Open(cfg Config) (_ *Service, err error) {
 	// A store an earlier Runner kept, at schema "1", or a new one, begins its
 	// journal here and is raised to schema "2", which every earlier Runner
 	// refuses (docs/design/activity-journal.md, section 4).
-	if err = s.migrateStore(); err != nil {
-		return nil, err
+	if cfg.ExecutorAdmission == nil {
+		if err = s.migrateStore(); err != nil {
+			return nil, err
+		}
 	}
 	if err = s.loadRegisteredProfiles(); err != nil {
 		return nil, err
@@ -227,6 +280,9 @@ func Open(cfg Config) (_ *Service, err error) {
 	if err != nil {
 		return nil, err
 	}
+	if err = s.activateManualAuthority(); err != nil {
+		return nil, err
+	}
 	// Holding the process lock proves the old dispatcher is gone. Never replay an
 	// invocation that may have appended an operational audit before crashing.
 	if err = s.restart(); err != nil {
@@ -239,7 +295,7 @@ func Open(cfg Config) (_ *Service, err error) {
 	} else {
 		go s.worker(ctx)
 	}
-	if cfg.disableAutomation {
+	if cfg.disableAutomation || cfg.ExecutorAdmission != nil {
 		close(s.automationDone)
 	} else {
 		go s.automation(ctx)
@@ -250,6 +306,9 @@ func Open(cfg Config) (_ *Service, err error) {
 func (s *Service) Close() {
 	s.closeOnce.Do(func() {
 		s.cancel()
+		if s.authority != nil {
+			s.authority.Close()
+		}
 		<-s.done
 		<-s.automationDone
 		s.background.Wait()
@@ -295,11 +354,17 @@ func (s *Service) createJob(name, releaseID string) (Job, error) {
 	return s.createJobConfigured(name, releaseID, nil)
 }
 func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) (Job, error) {
+	if s.cfg.ExecutorAdmission != nil && c != nil {
+		return Job{}, manualUnsupported()
+	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	r, err := s.release(releaseID)
 	if err != nil {
 		return Job{}, err
+	}
+	if s.cfg.ExecutorAdmission != nil && !manualRelease(r) {
+		return Job{}, manualUnsupported()
 	}
 	if !releaseReady(r) {
 		return Job{}, &apiError{409, "release_not_ready", "Saved tests failed or could not complete. Correct the pack or cases and check a new release before creating a job."}
@@ -392,6 +457,21 @@ func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
 	return s.submitInternal(jobID, key, input, nil)
 }
 func (s *Service) submitInternal(jobID, key string, input Input, origin *TriggerOrigin) (Run, bool, error) {
+	return s.submitInternalIntent(jobID, key, input, origin, nil)
+}
+func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *TriggerOrigin, manual *manualIntentInput) (Run, bool, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		if origin != nil || input.Source != nil || input.Preparation != nil || manual == nil || manual.key != key || !bytes.Equal(input.Facts, []byte(manual.facts)) || !bytes.Equal(input.Evidence, []byte(manual.evidence)) {
+			return Run{}, false, manualUnsupported()
+		}
+		var err error
+		manual, err = s.inspectManualSubmission(jobID, manual)
+		if err != nil {
+			return Run{}, false, err
+		}
+	} else if manual != nil {
+		return Run{}, false, errManualInactive
+	}
 	caller := s.cfg.Owner
 	if origin != nil {
 		caller = "trigger:" + origin.TriggerID
@@ -461,6 +541,9 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 		return Run{}, false, err
 	}
 	hash := digest(b)
+	if manual != nil {
+		hash = digest([]byte(manual.request))
+	}
 	if v2 {
 		hash = requestHash
 	}
@@ -497,6 +580,12 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 	if err = json.Unmarshal(releaseBytes, &release); err != nil {
 		return Run{}, false, err
 	}
+	if manual != nil {
+		preimage, e := executionPayloadCanonical(release, maxExecutionRelease)
+		if e != nil || manual.resource == nil || manual.registration == nil || manual.resource.JobID != j.ID || manual.resource.JobRevision != decimalRevision(j.Revision) || manual.resource.ReleaseID != j.ReleaseID || manual.resource.ReleaseDigest != digest(preimage) || !manualRelease(release) {
+			return Run{}, false, errManualProtocol
+		}
+	}
 	if !mappingMatchesRelease(release, input) {
 		return Run{}, false, bad("mapping_mismatch", "Use this job’s reviewed input mapping. Create a new job to change its input source or mapping.")
 	}
@@ -507,7 +596,7 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 	if count >= queueLimit {
 		return Run{}, false, &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 	}
-	r := Run{Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller}
+	r := Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller}
 	_, err = tx.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, caller, key, hash, r.State, runText(r))
 	if err != nil {
 		return Run{}, false, err
@@ -572,6 +661,9 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if r.manual != nil && s.cfg.ExecutorAdmission == nil || r.manual == nil && s.cfg.ExecutorAdmission != nil {
+		return false, errManualInactive
+	}
 	if r.Trigger != nil && r.Trigger.ExpiresAt != "" {
 		deadline, e := time.Parse(time.RFC3339Nano, r.Trigger.ExpiresAt)
 		if e != nil || !time.Now().Before(deadline) {
@@ -611,7 +703,11 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	if err == nil {
 		var trail, signatures []byte
 		var binding *RunBinding
-		r.Result, trail, signatures, binding, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+		if s.cfg.ExecutorAdmission != nil {
+			r.Result, trail, signatures, binding, err = s.governedEvaluation(ctx, r, release)
+		} else {
+			r.Result, trail, signatures, binding, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+		}
 		// A sidecar that could not be read, with a signing key, fails the
 		// record's signing and not the run (evaluateWith).
 		unread := errors.Is(err, errSidecarUnread)

@@ -91,6 +91,7 @@ func releaseNamed(raw []byte) string {
 }
 func (s *Service) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/jobs/{job}/execution-binding", s.manualExecutionBindingHandler)
 	s.triggerRoutes(mux)
 	mux.HandleFunc("POST /v1/input-profiles", s.registerInputProfileHandler)
 	mux.HandleFunc("GET /v1/background-connections", func(w http.ResponseWriter, r *http.Request) {
@@ -269,13 +270,13 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
-		var input Input
-		if err := decodeInput(w, r, &input); err != nil {
+		input, manual, err := s.manualOwnerInput(w, r, key)
+		if err != nil {
 			s.refusedRun(r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
-		run, replayed, err := s.submit(r.PathValue("job"), key, input)
+		run, replayed, err := s.submitInternalIntent(r.PathValue("job"), key, input, nil, manual)
 		if err != nil {
 			s.refusedRun(r.PathValue("job"), err)
 			failure(w, err)
