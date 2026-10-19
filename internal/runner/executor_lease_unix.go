@@ -12,18 +12,6 @@ import (
 
 var errExecutorLeaseUnsafe = errors.New("executor lease identity, placement or private custody is invalid")
 
-func executorWorkspaceID(id string) bool {
-	if len(id) == 0 || len(id) > 128 {
-		return false
-	}
-	for _, c := range []byte(id) {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
-			return false
-		}
-	}
-	return true
-}
-
 func executorObjectIdentity(info os.FileInfo, device, inode uint64) bool {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	return ok && uint64(st.Dev) == device && uint64(st.Ino) == inode

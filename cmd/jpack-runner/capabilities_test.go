@@ -24,7 +24,7 @@ func TestCapabilitiesCommandDoesNotReadBootOrInitializeRunner(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", missing)
 	var stdout, stderr bytes.Buffer
 	status := runnerCommand([]string{"capabilities", "--format", "json"}, unreadableBoot{}, &stdout, &stderr)
-	want := "{\"version\":1,\"capabilities\":[\"jobs/1\",\"required-boot-capabilities/1\"],\"governanceAdmission\":false}\n"
+	want := "{\"version\":2,\"capabilities\":[\"jobs/1\",\"required-boot-capabilities/1\",\"executor-ownership/1\"],\"governanceAdmission\":false}\n"
 	if status != 0 || stdout.String() != want || stderr.Len() != 0 || stdout.Len() > 512 {
 		t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout.String(), stderr.String())
 	}

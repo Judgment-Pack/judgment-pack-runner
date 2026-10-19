@@ -97,6 +97,19 @@ or sent to the browser. Desk selects the workspace and stable installation owner
 Direct browser origins are refused by the control API. Desk's API uses its existing
 bearer and origin guards. The pilot has one local owner, not delegated machine roles.
 
+
+A trusted host can explicitly enroll a workspace for
+[external executor ownership](docs/design/executor-ownership.md). It supplies the
+strict `executorOwnership` binding and explicitly requires `executor-ownership/1`
+in boot after probing the same immutable Runner executable. Runner acquires the
+existing independent lease before opening state or starting workers and inherits
+it into every Runtime invocation. A Runtime that survives its Runner keeps the
+lease until exit, including for a release preview or saved check. Configured state
+must already exist; missing/corrupt enrollment refuses with no creation or reset.
+Unconfigured boots retain existing Jobs behavior. The closed capability response
+is version 2 and reports `governanceAdmission: false`: ownership grants no policy
+permission and does not make jobs governed.
+
 ## Upgrading a job
 
 Preview and check the new release, pause existing triggers, and finish or cancel

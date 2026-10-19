@@ -61,7 +61,7 @@ func (s *Service) checkReleaseProfiles(r Release) error {
 	return nil
 }
 func (s *Service) checkMappingCoverage(ctx context.Context, r Release, dir string) ([]string, error) {
-	b, e := invoke(ctx, s.runtime, dir, "mapping-coverage", "packs", "list", "--config", "jpack.json", "--format", "json")
+	b, e := s.invoke(ctx, s.runtime, dir, "mapping-coverage", "packs", "list", "--config", "jpack.json", "--format", "json")
 	if e != nil {
 		return nil, e
 	}

@@ -9,12 +9,13 @@ import (
 )
 
 const (
-	jobsCapability         = "jobs/1"
-	requiredBootCapability = "required-boot-capabilities/1"
+	jobsCapability              = "jobs/1"
+	requiredBootCapability      = "required-boot-capabilities/1"
+	executorOwnershipCapability = "executor-ownership/1"
 )
 
 // This is a private, closed versioned contract; see docs/design/runner-capabilities.md.
-// Inactive payload and executor-lease helpers do not implement admission.
+// Executor ownership is process exclusion and does not implement admission.
 func printCapabilities(args []string, stdout io.Writer) error {
 	if len(args) != 2 || args[0] != "--format" || args[1] != "json" {
 		return fmt.Errorf("usage: jpack-runner capabilities --format json")
@@ -23,7 +24,7 @@ func printCapabilities(args []string, stdout io.Writer) error {
 		Version             int      `json:"version"`
 		Capabilities        []string `json:"capabilities"`
 		GovernanceAdmission bool     `json:"governanceAdmission"`
-	}{1, []string{jobsCapability, requiredBootCapability}, false})
+	}{2, []string{jobsCapability, requiredBootCapability, executorOwnershipCapability}, false})
 }
 
 // checkBootCapabilities runs before runner.Open: even a rejected requirement
@@ -48,12 +49,18 @@ func checkBootCapabilities(line []byte) error {
 	for name := range boot {
 		// encoding/json accepts case-insensitive struct field names. Do not let
 		// a misspelled requirement disappear or replace a stronger requirement.
+		if name != "executorOwnership" && strings.EqualFold(name, "executorOwnership") {
+			return fmt.Errorf("invalid executor ownership binding")
+		}
 		if name != "requiredCapabilities" && strings.EqualFold(name, "requiredCapabilities") {
 			return fmt.Errorf("invalid required boot capabilities")
 		}
 	}
 	raw, required := boot["requiredCapabilities"]
 	if !required {
+		if _, present := boot["executorOwnership"]; present {
+			return fmt.Errorf("executor ownership requires its boot capability")
+		}
 		return nil
 	}
 	invalidRequirements := fmt.Errorf("invalid required boot capabilities")
@@ -75,9 +82,13 @@ func checkBootCapabilities(line []byte) error {
 			return invalidRequirements
 		}
 		seen[capability] = true
-		if capability != jobsCapability && capability != requiredBootCapability {
+		if capability != jobsCapability && capability != requiredBootCapability && capability != executorOwnershipCapability {
 			return fmt.Errorf("unsupported required boot capability")
 		}
+	}
+	_, owned := boot["executorOwnership"]
+	if owned != seen[executorOwnershipCapability] {
+		return fmt.Errorf("executor ownership and its boot capability must agree")
 	}
 	return nil
 }

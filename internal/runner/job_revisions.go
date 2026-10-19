@@ -212,7 +212,7 @@ func (s *Service) checkUpgradeVersion(ctx context.Context, base, candidate strin
 		return err
 	}
 	defer os.RemoveAll(dir)
-	out, err := invoke(ctx, s.runtime, dir, "version", "artifact", "version", "--base", base, "--candidate", candidate, "--format", "json")
+	out, err := s.invoke(ctx, s.runtime, dir, "version", "artifact", "version", "--base", base, "--candidate", candidate, "--format", "json")
 	var r struct{ OutputVersion, Command, Status, Base, Candidate, Comparison string }
 	if err != nil || json.Unmarshal(out, &r) != nil || r.OutputVersion != "2" || r.Command != "artifact version" || r.Status != "available" || r.Base != base || r.Candidate != candidate {
 		return &apiError{409, "version_check_unavailable", "Runtime could not check the artifact version. Use a Runtime with artifact version tooling and check a new release."}

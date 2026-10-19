@@ -85,7 +85,11 @@ func bootConfig(line []byte) (runner.Config, string, error) {
 	if json.Unmarshal(line, &boot) != nil || len(boot.Token) < 32 {
 		return runner.Config{}, "", fmt.Errorf("invalid boot configuration")
 	}
-	return runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, SigningKey: boot.SigningKey, SigningPublicKey: boot.SigningPublicKey}, boot.Token, nil
+	ownership, err := bootExecutorOwnership(line, boot.Workspace)
+	if err != nil {
+		return runner.Config{}, "", err
+	}
+	return runner.Config{ExecutorOwnership: ownership, Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, SigningKey: boot.SigningKey, SigningPublicKey: boot.SigningPublicKey}, boot.Token, nil
 }
 
 func serve(stdin io.Reader, stdout, stderr io.Writer) error {
