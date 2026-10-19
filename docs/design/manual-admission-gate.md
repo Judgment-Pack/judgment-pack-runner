@@ -26,17 +26,23 @@ queued/running work and pending acquisition before publishing Runner schema4.
 Legacy workspaces retain schema3. Its durable marker precedes SQLite publication;
 recovered or partial preparation cannot automatically advance Desk enable.
 
-Helper lock/marker/sync use the held state root. SQLite's DB/journal/WAL filename
-is rooted through a retained directory descriptor (`/proc/self/fd` on Linux,
-`/dev/fd` where supported), verified against the held database identity. Hosts
-without a working descriptor path refuse. Configured placement and DB inode are
-rechecked around connection opening and durable boundaries. A regression replaces
-the named state with a complete copy, inspects both stores after refusal, and
-separately proves SQLite targets the retained original directory. These checks
-do not promise atomicity against a hostile same-OS-user actor rearranging the
-entire trusted plane or SQLite VFS path resolution. Detected replacement holds;
-no normal start repairs a marker/schema mismatch. Desk accepts only an original
-fresh committed helper response, never recovered observation.
+Helper lock/marker/sync use the held state root. The dedicated helper process
+retains that directory as cwd until exit and selects a private, nondefault clone
+of SQLite's native VFS. Only `xFullPathname` changes: it accepts and preserves the
+exact relative main filename `runs.sqlite`. Native open/delete/access, locking,
+sync, journal and WAL/SHM callbacks retain relative paths under that cwd. Temp
+storage stays in memory; unrelated database filenames refuse. The normal default
+VFS is unchanged. Open and library callers never change cwd; the library adapter
+uses a held descriptor path on Linux and refuses hosts without that path.
+
+Configured placement and database inode are rechecked around connection opening
+and durable boundaries. Subprocess regressions replace the named state after
+adapter setup, observe actual journal/WAL/SHM in the retained original, and inspect
+both stores after preparation refuses. These checks do not promise atomicity
+against a hostile same-OS-user actor replacing database inodes between checks or
+rearranging the entire trusted plane. Detected replacement holds; no normal start
+repairs a marker/schema mismatch. Desk accepts only an original fresh committed
+helper response, never recovered observation.
 
 Governed startup validates the immutable boot and store demands, acquires actual
 external ownership, owns/closes the inherited authority descriptor, fixes actual

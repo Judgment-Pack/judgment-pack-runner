@@ -73,7 +73,8 @@ func prepareManualStore(stdin io.Reader, stdout io.Writer) int {
 	raw, err := io.ReadAll(io.LimitReader(stdin, 16385))
 	result := runner.ManualStorePrepareResult{Version: 1, Status: "refused", Code: "invalid-request"}
 	if err == nil && len(raw) > 1 && len(raw) <= 16384 && raw[len(raw)-1] == '\n' && bytes.Count(raw, []byte{'\n'}) == 1 {
-		result = runner.PrepareManualStore(raw[:len(raw)-1])
+		runner.RunManualStorePreparationProcess(raw[:len(raw)-1], stdout)
+		return 1 // the process-only adapter always exits
 	}
 	if json.NewEncoder(stdout).Encode(result) != nil || result.Status != "ok" {
 		return 1

@@ -23,7 +23,13 @@ func TestManualInheritedAuthorityDescriptorHelper(t *testing.T) {
 		return
 	}
 	if role == "runtime" {
-		info, err := os.NewFile(3, "inherited-lease").Stat()
+		leaseFD := uintptr(3)
+		if value := os.Getenv("JPACK_EXPECTED_LEASE_FD"); value != "" {
+			parsed, err := strconv.ParseUint(value, 10, 32)
+			executorMust(t, err)
+			leaseFD = uintptr(parsed)
+		}
+		info, err := os.NewFile(leaseFD, "inherited-lease").Stat()
 		if err != nil || !info.Mode().IsRegular() {
 			t.Fatal("Runtime did not inherit ownership file", err)
 		}
@@ -31,17 +37,21 @@ func TestManualInheritedAuthorityDescriptorHelper(t *testing.T) {
 		if err != nil || !os.SameFile(info, expected) {
 			t.Fatal("worker inherited a different ownership file", err)
 		}
-		descriptors, err := os.ReadDir("/dev/fd")
-		executorMust(t, err)
-		for _, entry := range descriptors {
-			fd, err := strconv.Atoi(entry.Name())
-			if err != nil || fd < 3 {
-				continue
+		var limit syscall.Rlimit
+		executorMust(t, syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit))
+		// This fresh worker has only explicitly inherited descriptors. Probe the
+		// complete finite OS fd range directly; /dev/fd directory enumeration is
+		// not portable on Darwin. Refuse an unbounded fixture rather than sample.
+		if limit.Cur == 0 || limit.Cur > 1<<20 {
+			t.Fatal("unsupported descriptor-probe bound", limit.Cur)
+		}
+		for fd := 3; uint64(fd) < limit.Cur; fd++ {
+			address, err := syscall.Getsockname(fd)
+			if err != nil && err != syscall.EBADF && err != syscall.ENOTSOCK {
+				t.Fatalf("descriptor probe failed for %d: %v", fd, err)
 			}
-			if address, err := syscall.Getsockname(fd); err == nil {
-				if _, ok := address.(*syscall.SockaddrUnix); ok {
-					t.Fatalf("Runtime inherited authority socket %d", fd)
-				}
+			if _, ok := address.(*syscall.SockaddrUnix); err == nil && ok {
+				t.Fatalf("Runtime inherited authority socket %d", fd)
 			}
 		}
 		return
@@ -139,5 +149,37 @@ func TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec(t *testing.T) {
 	executorMust(t, err)
 	if err = cmd.Wait(); err != nil {
 		t.Fatal("descriptor fixture", err, output.String())
+	}
+}
+
+// Prove the finite native descriptor observer distinguishes a deliberately
+// leaked authority socket from the positive lease-only worker above.
+func TestManualAuthorityDescriptorObserverDetectsSocket(t *testing.T) {
+	fixture := executorFixture(t)
+	lease, err := fixture.acquire()
+	executorMust(t, err)
+	defer lease.Close()
+	syscall.ForkLock.RLock()
+	sockets, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err == nil {
+		syscall.CloseOnExec(sockets[0])
+		syscall.CloseOnExec(sockets[1])
+	}
+	syscall.ForkLock.RUnlock()
+	executorMust(t, err)
+	inherited := os.NewFile(uintptr(sockets[0]), "deliberately-inherited-authority")
+	defer inherited.Close()
+	defer syscall.Close(sockets[1])
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestManualInheritedAuthorityDescriptorHelper$")
+	cmd.Env = append(os.Environ(), "JPACK_MANUAL_FD_TEST=runtime", "JPACK_EXPECTED_LEASE_FD=4", "JPACK_EXPECTED_OWNERSHIP="+fixture.leaf())
+	cmd.ExtraFiles = []*os.File{inherited}
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	_, err = lease.Start(cmd)
+	executorMust(t, err)
+	if err = cmd.Wait(); err == nil || !bytes.Contains(output.Bytes(), []byte("Runtime inherited authority socket 3")) {
+		t.Fatalf("observer missed deliberately inherited authority socket: %v %s", err, output.String())
 	}
 }

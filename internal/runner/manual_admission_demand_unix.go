@@ -184,10 +184,11 @@ func manualDatabaseTarget(lease *ExecutorLease) (string, *os.File, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	base := "/dev/fd"
-	if runtime.GOOS == "linux" {
-		base = "/proc/self/fd"
+	if runtime.GOOS != "linux" {
+		dir.Close()
+		return "", nil, errManualProtocol
 	}
+	base := "/proc/self/fd"
 	path := filepath.Join(base, strconv.FormatUint(uint64(dir.Fd()), 10), "runs.sqlite")
 	target, err := os.Stat(path)
 	held, heldErr := lease.state.Stat("runs.sqlite")

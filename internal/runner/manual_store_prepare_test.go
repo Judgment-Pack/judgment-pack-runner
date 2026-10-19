@@ -4,14 +4,17 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func sqlOpenManualTest(dir string) (*sql.DB, error) {
@@ -50,7 +53,7 @@ func manualLeaseDuplicate(t *testing.T, l *ExecutorLease) *os.File {
 func TestManualStorePreparationDurableAndNoDowngrade(t *testing.T) {
 	q, lease, cfg := manualPreparationFixture(t)
 	raw := encode(q)
-	out := prepareManualStore(raw, manualLeaseDuplicate(t, lease))
+	out := manualPrepareInChild(t, raw, manualLeaseDuplicate(t, lease))
 	if out.Status != "ok" || out.Delivery != "committed" || out.RequestDigest != digest(raw) {
 		t.Fatalf("prepare %+v", out)
 	}
@@ -58,7 +61,7 @@ func TestManualStorePreparationDurableAndNoDowngrade(t *testing.T) {
 		contender.Close()
 		t.Fatal("helper released original ownership")
 	}
-	again := prepareManualStore(raw, manualLeaseDuplicate(t, lease))
+	again := manualPrepareInChild(t, raw, manualLeaseDuplicate(t, lease))
 	if again.Status != "ok" || again.Delivery != "recovered" {
 		t.Fatalf("exact recovered observation %+v", again)
 	}
@@ -89,67 +92,74 @@ func TestManualStorePreparationDurableAndNoDowngrade(t *testing.T) {
 }
 
 func TestManualStorePreparationSubstitutedStateRefuses(t *testing.T) {
-	q, parent, _ := manualPreparationFixture(t)
-	o, err := q.Ownership.ownership()
-	executorMust(t, err)
-	adopted, err := adoptManualPreparationLease(o, q.Dir, manualLeaseDuplicate(t, parent))
-	executorMust(t, err)
-	defer adopted.Close()
-	parked := q.Dir + "-parked"
-	executorMust(t, os.Rename(q.Dir, parked))
-	executorMust(t, os.Mkdir(q.Dir, 0700))
-	executorMust(t, os.CopyFS(q.Dir, os.DirFS(parked)))
-	defer func() { os.RemoveAll(q.Dir); os.Rename(parked, q.Dir) }()
-	if out := prepareManualStoreHeld(q, encode(q), adopted); out.Status != "refused" || out.Code != "unsafe-custody" {
-		t.Fatalf("substituted state %+v", out)
-	}
-	for _, state := range []string{parked, q.Dir} {
-		if _, err = os.Stat(filepath.Join(state, manualPrepareMarker)); !os.IsNotExist(err) {
-			t.Fatal("replaced state published marker", state, err)
-		}
-		db, e := sqlOpenManualTest(state)
-		executorMust(t, e)
-		var schema string
-		executorMust(t, db.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema))
-		var demand, tables int
-		executorMust(t, db.QueryRow("SELECT count(*) FROM metadata WHERE key='manualExecutionDemand'").Scan(&demand))
-		executorMust(t, db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='manual_attempts'").Scan(&tables))
-		db.Close()
-		if schema != storeSchema || demand != 0 || tables != 0 {
-			t.Fatalf("substitution published usable state in %s: schema=%s demand=%d journal=%d", state, schema, demand, tables)
-		}
+	for _, phase := range []string{"before-adapter", "after-adapter"} {
+		t.Run(phase, func(t *testing.T) {
+			q, parent, _ := manualPreparationFixture(t)
+			parked := q.Dir + "-parked"
+			defer func() { os.RemoveAll(q.Dir); os.Rename(parked, q.Dir) }()
+			var out ManualStorePrepareResult
+			if phase == "before-adapter" {
+				o, err := q.Ownership.ownership()
+				executorMust(t, err)
+				adopted, err := adoptManualPreparationLease(o, q.Dir, manualLeaseDuplicate(t, parent))
+				executorMust(t, err)
+				defer adopted.Close()
+				executorMust(t, manualSubstituteState(q.Dir))
+				out = prepareManualStoreHeld(q, encode(q), adopted)
+			} else {
+				out = manualPrepareInChildMode(t, encode(q), manualLeaseDuplicate(t, parent), "substituted-prepare")
+			}
+			if out.Status != "refused" || out.Code != "unsafe-custody" {
+				t.Fatalf("substituted state %+v", out)
+			}
+			for _, state := range []string{parked, q.Dir} {
+				if _, err := os.Stat(filepath.Join(state, manualPrepareMarker)); !os.IsNotExist(err) {
+					t.Fatal("replaced state published marker", state, err)
+				}
+				db, err := sqlOpenManualTest(state)
+				executorMust(t, err)
+				var schema string
+				executorMust(t, db.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema))
+				var demand, tables int
+				executorMust(t, db.QueryRow("SELECT count(*) FROM metadata WHERE key='manualExecutionDemand'").Scan(&demand))
+				executorMust(t, db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='manual_attempts'").Scan(&tables))
+				db.Close()
+				if schema != storeSchema || demand != 0 || tables != 0 {
+					t.Fatalf("substitution published usable state in %s: schema=%s demand=%d journal=%d", state, schema, demand, tables)
+				}
+			}
+		})
 	}
 }
 
 func TestManualStoreSQLiteTargetUsesHeldDirectory(t *testing.T) {
 	q, parent, _ := manualPreparationFixture(t)
-	o, err := q.Ownership.ownership()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestManualStorePrepareSubprocessHelper$")
+	cmd.Env = append(os.Environ(), "JPACK_MANUAL_PREPARE_CHILD=target-probe")
+	cmd.Stdin = bytes.NewReader(append(encode(q), '\n'))
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	_, err := parent.Start(cmd)
 	executorMust(t, err)
-	lease, err := adoptManualPreparationLease(o, q.Dir, manualLeaseDuplicate(t, parent))
-	executorMust(t, err)
-	defer lease.Close()
-	target, dir, err := manualDatabaseTarget(lease)
-	executorMust(t, err)
-	defer dir.Close()
+	if err = cmd.Wait(); err != nil {
+		t.Fatalf("process retained target: %v %s", err, output.String())
+	}
+	if !bytes.Contains(output.Bytes(), []byte(`"shm":true`)) {
+		t.Fatal("actual native sidecar probe missing", output.String())
+	}
+	t.Logf("actual native relative VFS: %s", output.String())
 	parked := q.Dir + "-parked"
-	executorMust(t, os.Rename(q.Dir, parked))
-	executorMust(t, os.Mkdir(q.Dir, 0700))
-	executorMust(t, os.CopyFS(q.Dir, os.DirFS(parked)))
 	defer func() { os.RemoveAll(q.Dir); os.Rename(parked, q.Dir) }()
-	// This probes SQLite's actual target, independently of the normal helper's
-	// earlier placement refusal. A copied named directory cannot redirect it.
-	db, err := sql.Open("sqlite", target)
-	executorMust(t, err)
-	_, err = db.Exec("INSERT INTO metadata VALUES ('anchor-probe','original')")
-	executorMust(t, err)
-	executorMust(t, db.Close())
 	for _, state := range []string{parked, q.Dir} {
 		db, e := sqlOpenManualTest(state)
 		executorMust(t, e)
 		var n int
-		executorMust(t, db.QueryRow("SELECT count(*) FROM metadata WHERE key='anchor-probe'").Scan(&n))
+		executorMust(t, db.QueryRow("SELECT count(*) FROM metadata WHERE key IN ('anchor-probe-journal','anchor-probe-wal')").Scan(&n))
 		db.Close()
-		if state == parked && n != 1 || state == q.Dir && n != 0 {
+		if state == parked && n != 2 || state == q.Dir && n != 0 {
 			t.Fatal("SQLite descriptor target redirected", state, n)
 		}
 	}
@@ -186,7 +196,7 @@ func TestManualStorePreparationPendingAndUnsupported(t *testing.T) {
 				file = manualLeaseDuplicate(t, lease)
 			}
 			defer file.Close()
-			out := prepareManualStore(encode(q), file)
+			out := manualPrepareInChild(t, encode(q), file)
 			if out.Status != "refused" {
 				t.Fatalf("unsupported transition %+v", out)
 			}
@@ -199,6 +209,25 @@ func TestManualStorePreparationPendingAndUnsupported(t *testing.T) {
 				t.Fatal("refusal published schema4")
 			}
 		})
+	}
+}
+
+func TestManualStoreLibraryNeverChangesCWD(t *testing.T) {
+	q, lease, _ := manualPreparationFixture(t)
+	before, err := os.Stat(".")
+	executorMust(t, err)
+	out := prepareManualStore(encode(q), manualLeaseDuplicate(t, lease))
+	if runtime.GOOS == "linux" {
+		if out.Status != "ok" {
+			t.Fatal(out)
+		}
+	} else if out.Status != "refused" || out.Code != "unsafe-custody" {
+		t.Fatal("library must refuse unsupported anchored path", out)
+	}
+	after, err := os.Stat(".")
+	executorMust(t, err)
+	if !os.SameFile(before, after) {
+		t.Fatal("library changed caller cwd")
 	}
 }
 

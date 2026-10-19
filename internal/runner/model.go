@@ -63,7 +63,7 @@ type Job struct {
 	Owner                string `json:"owner"`
 }
 type Run struct {
-	manual        *manualIntentInput // private exact-byte storage; never exported as authority
+	manual        *manualIntentInput `json:"-"` // private exact-byte storage; never exported as authority
 	Trigger       *TriggerOrigin     `json:"trigger,omitempty"`
 	SchemaVersion string             `json:"schemaVersion"`
 	ID            string             `json:"id"`

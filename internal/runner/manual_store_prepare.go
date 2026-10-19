@@ -2,7 +2,9 @@ package runner
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -72,12 +74,35 @@ func prepareRefusal(code string) ManualStorePrepareResult {
 	return ManualStorePrepareResult{Version: 1, Status: "refused", Code: code}
 }
 
-// PrepareManualStore is only the explicit nonexecuting CLI. raw excludes LF.
+// PrepareManualStore is a nonexecuting library adapter. raw excludes LF.
+// It never changes cwd and refuses hosts without a held-descriptor SQLite path.
 // It takes ownership of fd3 only after the complete trusted request is valid.
 func PrepareManualStore(raw []byte) ManualStorePrepareResult {
 	return prepareManualStore(raw, nil)
 }
+
+// RunManualStorePreparationProcess is the dedicated nonexecuting CLI entry.
+// It ALWAYS exits the process after its single reply. Only this entry may use
+// a retained cwd/private SQLite VFS; it never returns to a service or library.
+func RunManualStorePreparationProcess(raw []byte, output io.Writer) {
+	result := prepareManualStoreUsing(raw, nil, manualProcessDatabaseTarget)
+	status := 0
+	if json.NewEncoder(output).Encode(result) != nil || result.Status != "ok" {
+		status = 1
+	}
+	os.Exit(status)
+}
+
+type manualStoreDatabaseTarget func(*ExecutorLease) (string, io.Closer, error)
+
+func manualLibraryDatabaseTarget(lease *ExecutorLease) (string, io.Closer, error) {
+	name, dir, err := manualDatabaseTarget(lease)
+	return name, dir, err
+}
 func prepareManualStore(raw []byte, inherited *os.File) ManualStorePrepareResult {
+	return prepareManualStoreUsing(raw, inherited, manualLibraryDatabaseTarget)
+}
+func prepareManualStoreUsing(raw []byte, inherited *os.File, target manualStoreDatabaseTarget) ManualStorePrepareResult {
 	var q ManualStorePrepareRequest
 	if len(raw) == 0 || len(raw)+1 > 16384 || manualDecode(raw, &q) != nil || q.Version != 1 || !manualHex(q.PrepareID) || !manualWorkspace(q.Workspace) || len(q.Owner) == 0 || len(q.Owner) > 256 || q.LeaseFD != 3 || !q.Demand.valid() || q.Demand.RunnerWorkspace != q.Workspace || q.Ownership.RunnerWorkspace != q.Workspace || q.Ownership.MachineWorkspace != q.Demand.MachineWorkspace || !filepath.IsAbs(q.Dir) || filepath.Clean(q.Dir) != q.Dir {
 		return prepareRefusal("invalid-request")
@@ -94,10 +119,13 @@ func prepareManualStore(raw []byte, inherited *os.File) ManualStorePrepareResult
 		return prepareRefusal("unsafe-custody")
 	}
 	defer lease.Close()
-	return prepareManualStoreHeld(q, raw, lease)
+	return prepareManualStoreHeldUsing(q, raw, lease, target)
 }
 
 func prepareManualStoreHeld(q ManualStorePrepareRequest, raw []byte, lease *ExecutorLease) ManualStorePrepareResult {
+	return prepareManualStoreHeldUsing(q, raw, lease, manualLibraryDatabaseTarget)
+}
+func prepareManualStoreHeldUsing(q ManualStorePrepareRequest, raw []byte, lease *ExecutorLease, target manualStoreDatabaseTarget) ManualStorePrepareResult {
 	o, err := q.Ownership.ownership()
 	if err != nil || verifyManualLease(lease) != nil {
 		return prepareRefusal("unsafe-custody")
@@ -120,7 +148,7 @@ func prepareManualStoreHeld(q ManualStorePrepareRequest, raw []byte, lease *Exec
 	if err != nil || verifyManualDatabasePath(lease, databaseIdentity) != nil {
 		return prepareRefusal("unsupported-store")
 	}
-	database, targetDirectory, err := manualDatabaseTarget(lease)
+	database, targetDirectory, err := target(lease)
 	if err != nil {
 		return prepareRefusal("unsafe-custody")
 	}
@@ -131,7 +159,7 @@ func prepareManualStoreHeld(q ManualStorePrepareRequest, raw []byte, lease *Exec
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if _, err = db.Exec("PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;"); err != nil {
+	if _, err = db.Exec("PRAGMA temp_store=MEMORY; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;"); err != nil {
 		return prepareRefusal("storage-failed")
 	}
 	tx, err := db.Begin()
@@ -139,7 +167,8 @@ func prepareManualStoreHeld(q ManualStorePrepareRequest, raw []byte, lease *Exec
 		return prepareRefusal("storage-failed")
 	}
 	defer tx.Rollback()
-	// SQLite's filename is rooted in a retained directory descriptor. Also
+	// SQLite uses either a retained descriptor path or the isolated process's
+	// retained cwd and private relative VFS. Also
 	// compare the configured placement and DB inode around connection opening
 	// and before every durable boundary. This is not adversarial same-OS-user
 	// atomicity; detected replacement refuses and cannot finalize Desk enable.

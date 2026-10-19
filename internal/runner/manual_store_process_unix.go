@@ -1,0 +1,103 @@
+//go:build linux || darwin || freebsd
+
+package runner
+
+import (
+	"io"
+	"os"
+	"syscall"
+	"unsafe"
+
+	"modernc.org/libc"
+	sqlite3 "modernc.org/sqlite/lib"
+)
+
+// This adapter is reachable only from the process-terminating helper entry and
+// explicit helper subprocess tests. Ordinary Open/PrepareManualStore never call
+// it. cwd stays anchored to the retained directory until this helper exits.
+// A private nondefault VFS preserves one exact relative main filename; its
+// native callbacks derive DB/journal/WAL/SHM paths relative to that fixed cwd.
+func manualProcessDatabaseTarget(lease *ExecutorLease) (string, io.Closer, error) {
+	if verifyManualLease(lease) != nil {
+		return "", nil, errManualProtocol
+	}
+	dir, err := lease.state.Open(".")
+	if err != nil {
+		return "", nil, err
+	}
+	if err = syscall.Fchdir(int(dir.Fd())); err != nil {
+		dir.Close()
+		return "", nil, err
+	}
+	held, err := dir.Stat()
+	current, e := os.Stat(".")
+	if err != nil || e != nil || !os.SameFile(held, current) {
+		dir.Close()
+		return "", nil, errManualProtocol
+	}
+	anchor, err := newManualProcessVFS(dir)
+	if err != nil {
+		dir.Close()
+		return "", nil, err
+	}
+	return "file:runs.sqlite?vfs=" + anchor.name, anchor, nil
+}
+
+type manualProcessVFS struct {
+	dir        *os.File
+	tls        *libc.TLS
+	name       string
+	cname, vfs uintptr
+}
+
+func newManualProcessVFS(dir *os.File) (*manualProcessVFS, error) {
+	a := &manualProcessVFS{dir: dir, tls: libc.NewTLS(), name: id("manual-root-")}
+	base := sqlite3.Xsqlite3_vfs_find(a.tls, 0)
+	if base == 0 {
+		a.tls.Close()
+		return nil, errManualProtocol
+	}
+	var err error
+	a.cname, err = libc.CString(a.name)
+	if err != nil {
+		a.tls.Close()
+		return nil, err
+	}
+	a.vfs = libc.Xmalloc(a.tls, libc.Tsize_t(unsafe.Sizeof(sqlite3.Tsqlite3_vfs{})))
+	if a.vfs == 0 {
+		libc.Xfree(a.tls, a.cname)
+		a.tls.Close()
+		return nil, errManualProtocol
+	}
+	clone := (*sqlite3.Tsqlite3_vfs)(unsafe.Pointer(a.vfs))
+	*clone = *(*sqlite3.Tsqlite3_vfs)(unsafe.Pointer(base))
+	clone.FpNext = 0
+	clone.FzName = a.cname
+	clone.FxFullPathname = *(*uintptr)(unsafe.Pointer(&struct {
+		f func(*libc.TLS, uintptr, uintptr, int32, uintptr) int32
+	}{manualProcessFullPathname}))
+	// Keep the actual native default intact. Only this DSN selects the clone.
+	if sqlite3.Xsqlite3_vfs_register(a.tls, a.vfs, 0) != sqlite3.SQLITE_OK {
+		libc.Xfree(a.tls, a.vfs)
+		libc.Xfree(a.tls, a.cname)
+		a.tls.Close()
+		return nil, errManualProtocol
+	}
+	return a, nil
+}
+func (a *manualProcessVFS) Close() error {
+	// The caller defers this before opening SQLite, so DB/sidecars close first.
+	sqlite3.Xsqlite3_vfs_unregister(a.tls, a.vfs)
+	libc.Xfree(a.tls, a.vfs)
+	libc.Xfree(a.tls, a.cname)
+	a.tls.Close()
+	return a.dir.Close()
+}
+func manualProcessFullPathname(_ *libc.TLS, _ uintptr, path uintptr, nOut int32, out uintptr) int32 {
+	const name = "runs.sqlite"
+	if path == 0 || out == 0 || nOut < int32(len(name)+1) || libc.GoString(path) != name {
+		return sqlite3.SQLITE_CANTOPEN
+	}
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(out)), len(name)+1), name+"\x00")
+	return sqlite3.SQLITE_OK
+}

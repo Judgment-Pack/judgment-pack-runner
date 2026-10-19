@@ -139,7 +139,7 @@ jobs:
           out="$(JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
             JPACK_OLD_RUNNER_TEST_BIN="$RUNNER_TEMP/jpack-runner-old" \
             go test -count=1 -v \
-            -run '^(TestManualGovernedRealRuntimeGate|TestManualGovernedActualRuntimeHasNoAuthorityFD|TestManualStorePrepareActualChildRetainsOriginalCustody|TestManualStorePreparationDurableAndNoDowngrade|TestManualStorePreparationSubstitutedStateRefuses|TestManualStoreSQLiteTargetUsesHeldDirectory|TestManualStorePreparationPendingAndUnsupported|TestManualExternalDemandCannotBeOmitted|TestManualQueuedRunListsKeepPrivatePreimages)$' \
+            -run '^(TestManualGovernedRealRuntimeGate|TestManualGovernedActualRuntimeHasNoAuthorityFD|TestManualStorePrepareActualChildRetainsOriginalCustody|TestManualStorePreparationDurableAndNoDowngrade|TestManualStorePreparationSubstitutedStateRefuses|TestManualStoreSQLiteTargetUsesHeldDirectory|TestManualStoreLibraryNeverChangesCWD|TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec|TestManualAuthorityDescriptorObserverDetectsSocket|TestManualStorePreparationPendingAndUnsupported|TestManualExternalDemandCannotBeOmitted|TestManualQueuedRunListsKeepPrivatePreimages)$' \
             ./internal/runner)" || { printf '%s\n' "$out"; exit 1; }
           printf '%s\n' "$out"
           for name in \
@@ -162,7 +162,12 @@ jobs:
             TestManualStorePrepareActualChildRetainsOriginalCustody/lose-reply \
             TestManualStorePreparationDurableAndNoDowngrade \
             TestManualStorePreparationSubstitutedStateRefuses \
+            TestManualStorePreparationSubstitutedStateRefuses/before-adapter \
+            TestManualStorePreparationSubstitutedStateRefuses/after-adapter \
             TestManualStoreSQLiteTargetUsesHeldDirectory \
+            TestManualStoreLibraryNeverChangesCWD \
+            TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec \
+            TestManualAuthorityDescriptorObserverDetectsSocket \
             TestManualStorePreparationPendingAndUnsupported \
             TestManualExternalDemandCannotBeOmitted \
             TestManualQueuedRunListsKeepPrivatePreimages; do

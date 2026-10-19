@@ -146,21 +146,34 @@ func TestVerificationCoverageInHelpAndGuide(t *testing.T) {
 		}
 	}
 	for name, check := range map[string]struct {
-		typeOf reflect.Type
-		want   []string
+		typeOf  reflect.Type
+		want    []string
+		private []string
 	}{
-		"verification bundle": {reflect.TypeOf(runner.VerificationBundle{}), []string{"version", "releaseDigest", "release", "run", "inputs", "chain"}},
-		"run":                 {reflect.TypeOf(runner.Run{}), []string{"trigger", "schemaVersion", "id", "jobId", "releaseId", "revision", "state", "input", "createdAt", "startedAt", "finishedAt", "requestedBy", "attempt", "result", "audit", "auditBytes", "auditSignatures", "problem"}},
+		"verification bundle": {reflect.TypeOf(runner.VerificationBundle{}), []string{"version", "releaseDigest", "release", "run", "inputs", "chain"}, nil},
+		"run":                 {reflect.TypeOf(runner.Run{}), []string{"trigger", "schemaVersion", "id", "jobId", "releaseId", "revision", "state", "input", "createdAt", "startedAt", "finishedAt", "requestedBy", "attempt", "result", "audit", "auditBytes", "auditSignatures", "problem"}, []string{"manual"}},
 	} {
 		var got []string
+		var private []string
 		for i := 0; i < check.typeOf.NumField(); i++ {
-			tag := strings.Split(check.typeOf.Field(i).Tag.Get("json"), ",")[0]
+			field := check.typeOf.Field(i)
+			tag := strings.Split(field.Tag.Get("json"), ",")[0]
+			if !field.IsExported() {
+				if tag != "-" {
+					t.Fatalf("%s private field %s lacks explicit JSON exclusion", name, field.Name)
+				}
+				private = append(private, field.Name)
+				continue
+			}
 			if tag != "-" {
 				got = append(got, tag)
 			}
 		}
 		if !reflect.DeepEqual(got, check.want) {
 			t.Fatalf("%s export members changed: got %v; update verification coverage and this list together", name, got)
+		}
+		if !reflect.DeepEqual(private, check.private) {
+			t.Fatalf("%s private storage members changed: %v", name, private)
 		}
 	}
 }
