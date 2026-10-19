@@ -8,8 +8,11 @@ or an inheriting Runtime remains alive. Unconfigured workspaces retain existing
 portable-store locking and recovery behavior.
 
 Ownership is cooperative process exclusion. It is not execution permission, a
-policy decision, governance admission or authorization of a particular job. Runner
-continues to report `governanceAdmission: false`; all jobs remain ungoverned.
+policy decision, governance admission or authorization of a particular job.
+Ownership alone leaves jobs ungoverned. The separate experimental
+[manual gate](manual-admission-gate.md) requires retained enrollment, matching
+boot and execution demands, and fresh anchored authority admission for the sole
+profile `local-admin-manual-pack/1`. A capability response grants no permission.
 
 ## Authority and provisioning
 
@@ -42,8 +45,11 @@ external enrollment as part of portable Runner state.
 
 ## Trusted boot and Service integration
 
-The private [capability response](runner-capabilities.md) is closed version 2 and
-adds `executor-ownership/1`. The trusted host probes an immutable executable
+The private [capability response](runner-capabilities.md) includes
+`executor-ownership/1`: supported admission hosts report closed version 3 with
+`governanceAdmission: true` scoped solely to `local-admin-manual-pack/1`; hosts
+without admission support retain ownership-only closed version 2 with
+`governanceAdmission: false`. The trusted host probes an immutable executable
 snapshot before sending any boot authority, then repeats the requirement in boot.
 The [shared boot fixture](executor-ownership-boot.json) defines the additional
 members, alongside the established boot configuration:
