@@ -16,6 +16,9 @@ func inputPath(p string) bool {
 	return p != "" && fs.ValidPath(p) && p != "." && !strings.Contains(p, "\\") && strings.HasSuffix(strings.ToLower(p), ".json")
 }
 func (s *Service) readAutomaticFile(name string) ([]byte, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return nil, manualUnsupported()
+	}
 	if s.cfg.InputRoot == "" || !inputPath(name) {
 		return nil, bad("invalid_input_path", "Choose a JSON file inside this job's project.")
 	}

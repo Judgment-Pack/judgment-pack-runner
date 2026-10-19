@@ -1,0 +1,1444 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private local-admin-manual-pack/1 authority wire, draft1",
+  "protocol": {
+    "version": 1,
+    "bootMember": "executorAdmission",
+    "descriptorSlot": 3,
+    "frameBytes": 65536,
+    "frameIncludesNewline": true,
+    "timeoutSeconds": 5,
+    "oneInFlight": true,
+    "requestDigest": "sha256 of judgment-pack-runner/canonical/1({method,body}); no version/sequence",
+    "authorityRevision": "bare SHA256 of exact checked precommit Policy ledger; no self-reference",
+    "manualIntentHeader": "X-Jpack-Manual-Intent"
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "positive": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$",
+      "description": "Canonical uint64 in 1..18446744073709551615; no wrap."
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[!-~]+$"
+    },
+    "signing": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "const": "off"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "publicKey"
+          ],
+          "properties": {
+            "mode": {
+              "const": "ed25519"
+            },
+            "publicKey": {
+              "$ref": "#/$defs/hex"
+            }
+          }
+        }
+      ]
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "jobRevision",
+        "releaseId",
+        "releaseProfile",
+        "releaseDigest"
+      ],
+      "properties": {
+        "jobId": {
+          "$ref": "#/$defs/id"
+        },
+        "jobRevision": {
+          "$ref": "#/$defs/positive"
+        },
+        "releaseId": {
+          "$ref": "#/$defs/id"
+        },
+        "releaseProfile": {
+          "const": "judgment-pack-runner/canonical/1"
+        },
+        "releaseDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/positive"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "digest",
+        "bytes"
+      ],
+      "properties": {
+        "profile": {
+          "const": "judgment-pack-runner/execution-payload/1"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "bytes": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "minLength": 4,
+          "maxLength": 5464
+        }
+      }
+    },
+    "delivery": {
+      "enum": [
+        "committed",
+        "recovered"
+      ]
+    },
+    "reason": {
+      "enum": [
+        "eligible",
+        "registered",
+        "reserved",
+        "start-committed",
+        "resource-unregistered",
+        "resource-changed",
+        "unsupported-profile",
+        "intent-unavailable",
+        "binding-conflict",
+        "operation-held",
+        "withdrawn",
+        "not-effective",
+        "expired",
+        "superseded",
+        "adoption-changes-requested",
+        "dependency-unavailable",
+        "authority-unavailable",
+        "clock-unavailable",
+        "capacity"
+      ]
+    },
+    "refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "authority-unavailable",
+            "invalid-request",
+            "unauthorized",
+            "stale-epoch",
+            "resource-unregistered",
+            "resource-changed",
+            "unsupported-profile",
+            "intent-unavailable",
+            "binding-conflict",
+            "operation-held",
+            "eligibility-blocked",
+            "capacity",
+            "clock-unavailable",
+            "history-unavailable"
+          ]
+        }
+      }
+    },
+    "boot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "fd",
+        "installationId",
+        "machineWorkspace",
+        "runnerWorkspace",
+        "executorId",
+        "challenge",
+        "profile"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "fd": {
+          "const": 3
+        },
+        "installationId": {
+          "$ref": "#/$defs/hex"
+        },
+        "machineWorkspace": {
+          "$ref": "#/$defs/hex"
+        },
+        "runnerWorkspace": {
+          "$ref": "#/$defs/workspace"
+        },
+        "executorId": {
+          "$ref": "#/$defs/hex"
+        },
+        "challenge": {
+          "$ref": "#/$defs/hex"
+        },
+        "profile": {
+          "const": "local-admin-manual-pack/1"
+        }
+      }
+    },
+    "executionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "workspace",
+        "jobId",
+        "jobRevision",
+        "releaseId",
+        "releaseProfile",
+        "releaseDigest",
+        "releaseBytes"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "workspace": {
+          "$ref": "#/$defs/workspace"
+        },
+        "jobId": {
+          "$ref": "#/$defs/id"
+        },
+        "jobRevision": {
+          "$ref": "#/$defs/positive"
+        },
+        "releaseId": {
+          "$ref": "#/$defs/id"
+        },
+        "releaseProfile": {
+          "const": "judgment-pack-runner/canonical/1"
+        },
+        "releaseDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "releaseBytes": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "minLength": 4,
+          "maxLength": 11184812
+        }
+      }
+    },
+    "activateRequestBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "challenge",
+        "signing"
+      ],
+      "properties": {
+        "challenge": {
+          "$ref": "#/$defs/hex"
+        },
+        "signing": {
+          "$ref": "#/$defs/signing"
+        }
+      }
+    },
+    "inspectRequestBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource"
+      ],
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/resource"
+        }
+      }
+    },
+    "reserveRequestBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intentId",
+        "rawRequestDigest",
+        "resource",
+        "registration",
+        "payload"
+      ],
+      "properties": {
+        "intentId": {
+          "$ref": "#/$defs/id"
+        },
+        "resource": {
+          "$ref": "#/$defs/resource"
+        },
+        "registration": {
+          "$ref": "#/$defs/registration"
+        },
+        "payload": {
+          "$ref": "#/$defs/payload"
+        },
+        "rawRequestDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "commitStartRequestBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intentId",
+        "rawRequestDigest",
+        "resource",
+        "registration",
+        "payload",
+        "operationId",
+        "attemptId",
+        "epoch"
+      ],
+      "properties": {
+        "intentId": {
+          "$ref": "#/$defs/id"
+        },
+        "resource": {
+          "$ref": "#/$defs/resource"
+        },
+        "registration": {
+          "$ref": "#/$defs/registration"
+        },
+        "payload": {
+          "$ref": "#/$defs/payload"
+        },
+        "operationId": {
+          "$ref": "#/$defs/id"
+        },
+        "attemptId": {
+          "$ref": "#/$defs/id"
+        },
+        "epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "rawRequestDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "historyRequestBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intentId"
+      ],
+      "properties": {
+        "intentId": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "activateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delivery",
+        "epoch",
+        "requestDigest"
+      ],
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/delivery"
+        },
+        "epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "requestDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "inspectResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delivery",
+        "registration",
+        "eligible",
+        "reason",
+        "at"
+      ],
+      "properties": {
+        "delivery": {
+          "const": "observed"
+        },
+        "registration": {
+          "$ref": "#/$defs/registration"
+        },
+        "eligible": {
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "at": {
+          "$ref": "#/$defs/time"
+        }
+      }
+    },
+    "reserveResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delivery",
+        "operationId",
+        "attemptId",
+        "epoch",
+        "requestDigest"
+      ],
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/delivery"
+        },
+        "operationId": {
+          "$ref": "#/$defs/id"
+        },
+        "attemptId": {
+          "$ref": "#/$defs/id"
+        },
+        "epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "requestDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "commitStartResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delivery",
+        "operationId",
+        "attemptId",
+        "epoch",
+        "requestDigest",
+        "decision",
+        "reason",
+        "at",
+        "authorityRevision"
+      ],
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/delivery"
+        },
+        "operationId": {
+          "$ref": "#/$defs/id"
+        },
+        "attemptId": {
+          "$ref": "#/$defs/id"
+        },
+        "epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "requestDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "decision": {
+          "enum": [
+            "start-committed",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "at": {
+          "$ref": "#/$defs/time"
+        },
+        "authorityRevision": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    },
+    "historyResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delivery",
+        "intentId",
+        "operationId",
+        "attemptId",
+        "epoch",
+        "state",
+        "requestDigest",
+        "reason",
+        "at"
+      ],
+      "properties": {
+        "delivery": {
+          "const": "observed"
+        },
+        "intentId": {
+          "$ref": "#/$defs/id"
+        },
+        "operationId": {
+          "$ref": "#/$defs/id"
+        },
+        "attemptId": {
+          "$ref": "#/$defs/id"
+        },
+        "epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "state": {
+          "enum": [
+            "reserved",
+            "start-committed",
+            "blocked"
+          ]
+        },
+        "requestDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "at": {
+          "$ref": "#/$defs/time"
+        }
+      }
+    },
+    "request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "activate"
+            },
+            "body": {
+              "$ref": "#/$defs/activateRequestBody"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "inspect"
+            },
+            "body": {
+              "$ref": "#/$defs/inspectRequestBody"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "reserve"
+            },
+            "body": {
+              "$ref": "#/$defs/reserveRequestBody"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "commitStart"
+            },
+            "body": {
+              "$ref": "#/$defs/commitStartRequestBody"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "history"
+            },
+            "body": {
+              "$ref": "#/$defs/historyRequestBody"
+            }
+          }
+        }
+      ]
+    },
+    "reply": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "activate"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "body": {
+              "$ref": "#/$defs/activateResult"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "activate"
+            },
+            "status": {
+              "const": "refused"
+            },
+            "body": {
+              "$ref": "#/$defs/refusal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "inspect"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "body": {
+              "$ref": "#/$defs/inspectResult"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "inspect"
+            },
+            "status": {
+              "const": "refused"
+            },
+            "body": {
+              "$ref": "#/$defs/refusal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "reserve"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "body": {
+              "$ref": "#/$defs/reserveResult"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "reserve"
+            },
+            "status": {
+              "const": "refused"
+            },
+            "body": {
+              "$ref": "#/$defs/refusal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "commitStart"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "body": {
+              "$ref": "#/$defs/commitStartResult"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "commitStart"
+            },
+            "status": {
+              "const": "refused"
+            },
+            "body": {
+              "$ref": "#/$defs/refusal"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "history"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "body": {
+              "$ref": "#/$defs/historyResult"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sequence",
+            "method",
+            "status",
+            "body"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "sequence": {
+              "$ref": "#/$defs/positive"
+            },
+            "method": {
+              "const": "history"
+            },
+            "status": {
+              "const": "refused"
+            },
+            "body": {
+              "$ref": "#/$defs/refusal"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "requestSchema": {
+    "$ref": "#/$defs/request"
+  },
+  "replySchema": {
+    "$ref": "#/$defs/reply"
+  },
+  "bootSchema": {
+    "$ref": "#/$defs/boot"
+  },
+  "executionBindingSchema": {
+    "$ref": "#/$defs/executionBinding"
+  },
+  "synthetic": {
+    "notExecutable": true,
+    "boot": {
+      "version": 1,
+      "fd": 3,
+      "installationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "machineWorkspace": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "runnerWorkspace": "runner-distinct",
+      "executorId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "challenge": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "profile": "local-admin-manual-pack/1"
+    },
+    "factsBytes": "eyAibnVtYmVyIjo5MDA3MTk5MjU0NzQwOTkzLjAwLCAiZmxhZyI6ZmFsc2UsICJ6ZXJvIjowLCAibnVsbCI6bnVsbCB9",
+    "descriptorBytes": "eyJldmlkZW5jZSI6eyJwcmVzZW5jZSI6Im9taXR0ZWQifSwiZmFjdHMiOnsiYnl0ZXMiOjY5LCJkaWdlc3QiOiJzaGEyNTY6OTQzMjA2YjhhODczMjA2MmIzNzU3NmQ3YTc4MjJhNzQzOWQ1ODdjOTgyNDQ0YWZmZWJjZDg5ZjJlZjU0MDIwMSIsImVuY29kaW5nIjoiZXhhY3QtYnl0ZXMifSwicGFja0RpZ2VzdCI6InNoYTI1NjozMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicHJvZmlsZSI6Imp1ZGdtZW50LXBhY2stcnVubmVyL2V4ZWN1dGlvbi1wYXlsb2FkLzEiLCJyZWxlYXNlRGlnZXN0Ijoic2hhMjU2OjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJydW50aW1lRGlnZXN0Ijoic2hhMjU2OjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQiLCJzaWduaW5nIjp7Im1vZGUiOiJvZmYifX0=",
+    "manualRequestBytes": "eyAiZmFjdHMiOiB7ICJudW1iZXIiOjkwMDcxOTkyNTQ3NDA5OTMuMDAsICJmbGFnIjpmYWxzZSwgInplcm8iOjAsICJudWxsIjpudWxsIH0gfQo=",
+    "rawRequestDigest": "sha256:4a12ee4e59976cfc19723ec266e6ca5c3d0d53b87162c8d907afa97d17fe2081"
+  },
+  "vectors": [
+    {
+      "name": "activate",
+      "request": {
+        "version": 1,
+        "sequence": "1",
+        "method": "activate",
+        "body": {
+          "challenge": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "signing": {
+            "mode": "off"
+          }
+        }
+      },
+      "requestDigest": "sha256:00610258f465bf41e58d9578e1af7516e94263d53d2d42ce11f03bdeb105f037",
+      "reply": {
+        "version": 1,
+        "sequence": "1",
+        "method": "activate",
+        "status": "ok",
+        "body": {
+          "delivery": "committed",
+          "epoch": "1",
+          "requestDigest": "sha256:00610258f465bf41e58d9578e1af7516e94263d53d2d42ce11f03bdeb105f037"
+        }
+      },
+      "requestLine": "{\"body\":{\"challenge\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"signing\":{\"mode\":\"off\"}},\"method\":\"activate\",\"sequence\":\"1\",\"version\":1}\n",
+      "replyLine": "{\"body\":{\"delivery\":\"committed\",\"epoch\":\"1\",\"requestDigest\":\"sha256:00610258f465bf41e58d9578e1af7516e94263d53d2d42ce11f03bdeb105f037\"},\"method\":\"activate\",\"sequence\":\"1\",\"status\":\"ok\",\"version\":1}\n"
+    },
+    {
+      "name": "inspect",
+      "request": {
+        "version": 1,
+        "sequence": "2",
+        "method": "inspect",
+        "body": {
+          "resource": {
+            "jobId": "job_synthetic",
+            "jobRevision": "1",
+            "releaseId": "release_synthetic",
+            "releaseProfile": "judgment-pack-runner/canonical/1",
+            "releaseDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        }
+      },
+      "requestDigest": "sha256:82c165ecf790f60f3d92fed62e4838150c5ab0442ed9f1f486649d55e2f180a2",
+      "reply": {
+        "version": 1,
+        "sequence": "2",
+        "method": "inspect",
+        "status": "ok",
+        "body": {
+          "delivery": "observed",
+          "registration": {
+            "revision": "1",
+            "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "eligible": true,
+          "reason": "eligible",
+          "at": "2026-10-19T12:00:00Z"
+        }
+      },
+      "requestLine": "{\"body\":{\"resource\":{\"jobId\":\"job_synthetic\",\"jobRevision\":\"1\",\"releaseDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"releaseId\":\"release_synthetic\",\"releaseProfile\":\"judgment-pack-runner/canonical/1\"}},\"method\":\"inspect\",\"sequence\":\"2\",\"version\":1}\n",
+      "replyLine": "{\"body\":{\"at\":\"2026-10-19T12:00:00Z\",\"delivery\":\"observed\",\"eligible\":true,\"reason\":\"eligible\",\"registration\":{\"digest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"revision\":\"1\"}},\"method\":\"inspect\",\"sequence\":\"2\",\"status\":\"ok\",\"version\":1}\n"
+    },
+    {
+      "name": "reserve",
+      "request": {
+        "version": 1,
+        "sequence": "3",
+        "method": "reserve",
+        "body": {
+          "intentId": "intent_synthetic",
+          "resource": {
+            "jobId": "job_synthetic",
+            "jobRevision": "1",
+            "releaseId": "release_synthetic",
+            "releaseProfile": "judgment-pack-runner/canonical/1",
+            "releaseDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "registration": {
+            "revision": "1",
+            "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "payload": {
+            "profile": "judgment-pack-runner/execution-payload/1",
+            "digest": "sha256:06c95db2fd80f303f8f8d9ee9130ae4d67e4dea29b243c2257a6437a1016d5c5",
+            "bytes": "eyJldmlkZW5jZSI6eyJwcmVzZW5jZSI6Im9taXR0ZWQifSwiZmFjdHMiOnsiYnl0ZXMiOjY5LCJkaWdlc3QiOiJzaGEyNTY6OTQzMjA2YjhhODczMjA2MmIzNzU3NmQ3YTc4MjJhNzQzOWQ1ODdjOTgyNDQ0YWZmZWJjZDg5ZjJlZjU0MDIwMSIsImVuY29kaW5nIjoiZXhhY3QtYnl0ZXMifSwicGFja0RpZ2VzdCI6InNoYTI1NjozMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicHJvZmlsZSI6Imp1ZGdtZW50LXBhY2stcnVubmVyL2V4ZWN1dGlvbi1wYXlsb2FkLzEiLCJyZWxlYXNlRGlnZXN0Ijoic2hhMjU2OjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJydW50aW1lRGlnZXN0Ijoic2hhMjU2OjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQiLCJzaWduaW5nIjp7Im1vZGUiOiJvZmYifX0="
+          },
+          "rawRequestDigest": "sha256:4a12ee4e59976cfc19723ec266e6ca5c3d0d53b87162c8d907afa97d17fe2081"
+        }
+      },
+      "requestDigest": "sha256:70b54c56531b357f05da93bd6f531f6c55200d33180f4e4a0c363ff1be684681",
+      "reply": {
+        "version": 1,
+        "sequence": "3",
+        "method": "reserve",
+        "status": "ok",
+        "body": {
+          "delivery": "committed",
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "requestDigest": "sha256:70b54c56531b357f05da93bd6f531f6c55200d33180f4e4a0c363ff1be684681"
+        }
+      },
+      "requestLine": "{\"body\":{\"intentId\":\"intent_synthetic\",\"payload\":{\"bytes\":\"eyJldmlkZW5jZSI6eyJwcmVzZW5jZSI6Im9taXR0ZWQifSwiZmFjdHMiOnsiYnl0ZXMiOjY5LCJkaWdlc3QiOiJzaGEyNTY6OTQzMjA2YjhhODczMjA2MmIzNzU3NmQ3YTc4MjJhNzQzOWQ1ODdjOTgyNDQ0YWZmZWJjZDg5ZjJlZjU0MDIwMSIsImVuY29kaW5nIjoiZXhhY3QtYnl0ZXMifSwicGFja0RpZ2VzdCI6InNoYTI1NjozMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicHJvZmlsZSI6Imp1ZGdtZW50LXBhY2stcnVubmVyL2V4ZWN1dGlvbi1wYXlsb2FkLzEiLCJyZWxlYXNlRGlnZXN0Ijoic2hhMjU2OjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJydW50aW1lRGlnZXN0Ijoic2hhMjU2OjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQiLCJzaWduaW5nIjp7Im1vZGUiOiJvZmYifX0=\",\"digest\":\"sha256:06c95db2fd80f303f8f8d9ee9130ae4d67e4dea29b243c2257a6437a1016d5c5\",\"profile\":\"judgment-pack-runner/execution-payload/1\"},\"rawRequestDigest\":\"sha256:4a12ee4e59976cfc19723ec266e6ca5c3d0d53b87162c8d907afa97d17fe2081\",\"registration\":{\"digest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"revision\":\"1\"},\"resource\":{\"jobId\":\"job_synthetic\",\"jobRevision\":\"1\",\"releaseDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"releaseId\":\"release_synthetic\",\"releaseProfile\":\"judgment-pack-runner/canonical/1\"}},\"method\":\"reserve\",\"sequence\":\"3\",\"version\":1}\n",
+      "replyLine": "{\"body\":{\"attemptId\":\"attempt_synthetic\",\"delivery\":\"committed\",\"epoch\":\"1\",\"operationId\":\"operation_synthetic\",\"requestDigest\":\"sha256:70b54c56531b357f05da93bd6f531f6c55200d33180f4e4a0c363ff1be684681\"},\"method\":\"reserve\",\"sequence\":\"3\",\"status\":\"ok\",\"version\":1}\n"
+    },
+    {
+      "name": "commitStart",
+      "request": {
+        "version": 1,
+        "sequence": "4",
+        "method": "commitStart",
+        "body": {
+          "intentId": "intent_synthetic",
+          "resource": {
+            "jobId": "job_synthetic",
+            "jobRevision": "1",
+            "releaseId": "release_synthetic",
+            "releaseProfile": "judgment-pack-runner/canonical/1",
+            "releaseDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "registration": {
+            "revision": "1",
+            "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "payload": {
+            "profile": "judgment-pack-runner/execution-payload/1",
+            "digest": "sha256:06c95db2fd80f303f8f8d9ee9130ae4d67e4dea29b243c2257a6437a1016d5c5",
+            "bytes": "eyJldmlkZW5jZSI6eyJwcmVzZW5jZSI6Im9taXR0ZWQifSwiZmFjdHMiOnsiYnl0ZXMiOjY5LCJkaWdlc3QiOiJzaGEyNTY6OTQzMjA2YjhhODczMjA2MmIzNzU3NmQ3YTc4MjJhNzQzOWQ1ODdjOTgyNDQ0YWZmZWJjZDg5ZjJlZjU0MDIwMSIsImVuY29kaW5nIjoiZXhhY3QtYnl0ZXMifSwicGFja0RpZ2VzdCI6InNoYTI1NjozMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicHJvZmlsZSI6Imp1ZGdtZW50LXBhY2stcnVubmVyL2V4ZWN1dGlvbi1wYXlsb2FkLzEiLCJyZWxlYXNlRGlnZXN0Ijoic2hhMjU2OjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJydW50aW1lRGlnZXN0Ijoic2hhMjU2OjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQiLCJzaWduaW5nIjp7Im1vZGUiOiJvZmYifX0="
+          },
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "rawRequestDigest": "sha256:4a12ee4e59976cfc19723ec266e6ca5c3d0d53b87162c8d907afa97d17fe2081"
+        }
+      },
+      "requestDigest": "sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035",
+      "reply": {
+        "version": 1,
+        "sequence": "4",
+        "method": "commitStart",
+        "status": "ok",
+        "body": {
+          "delivery": "committed",
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "requestDigest": "sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035",
+          "decision": "start-committed",
+          "reason": "start-committed",
+          "at": "2026-10-19T12:00:00Z",
+          "authorityRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      },
+      "requestLine": "{\"body\":{\"attemptId\":\"attempt_synthetic\",\"epoch\":\"1\",\"intentId\":\"intent_synthetic\",\"operationId\":\"operation_synthetic\",\"payload\":{\"bytes\":\"eyJldmlkZW5jZSI6eyJwcmVzZW5jZSI6Im9taXR0ZWQifSwiZmFjdHMiOnsiYnl0ZXMiOjY5LCJkaWdlc3QiOiJzaGEyNTY6OTQzMjA2YjhhODczMjA2MmIzNzU3NmQ3YTc4MjJhNzQzOWQ1ODdjOTgyNDQ0YWZmZWJjZDg5ZjJlZjU0MDIwMSIsImVuY29kaW5nIjoiZXhhY3QtYnl0ZXMifSwicGFja0RpZ2VzdCI6InNoYTI1NjozMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicHJvZmlsZSI6Imp1ZGdtZW50LXBhY2stcnVubmVyL2V4ZWN1dGlvbi1wYXlsb2FkLzEiLCJyZWxlYXNlRGlnZXN0Ijoic2hhMjU2OjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJydW50aW1lRGlnZXN0Ijoic2hhMjU2OjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQiLCJzaWduaW5nIjp7Im1vZGUiOiJvZmYifX0=\",\"digest\":\"sha256:06c95db2fd80f303f8f8d9ee9130ae4d67e4dea29b243c2257a6437a1016d5c5\",\"profile\":\"judgment-pack-runner/execution-payload/1\"},\"rawRequestDigest\":\"sha256:4a12ee4e59976cfc19723ec266e6ca5c3d0d53b87162c8d907afa97d17fe2081\",\"registration\":{\"digest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"revision\":\"1\"},\"resource\":{\"jobId\":\"job_synthetic\",\"jobRevision\":\"1\",\"releaseDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"releaseId\":\"release_synthetic\",\"releaseProfile\":\"judgment-pack-runner/canonical/1\"}},\"method\":\"commitStart\",\"sequence\":\"4\",\"version\":1}\n",
+      "replyLine": "{\"body\":{\"at\":\"2026-10-19T12:00:00Z\",\"attemptId\":\"attempt_synthetic\",\"authorityRevision\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"decision\":\"start-committed\",\"delivery\":\"committed\",\"epoch\":\"1\",\"operationId\":\"operation_synthetic\",\"reason\":\"start-committed\",\"requestDigest\":\"sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035\"},\"method\":\"commitStart\",\"sequence\":\"4\",\"status\":\"ok\",\"version\":1}\n"
+    },
+    {
+      "name": "history",
+      "request": {
+        "version": 1,
+        "sequence": "5",
+        "method": "history",
+        "body": {
+          "intentId": "intent_synthetic"
+        }
+      },
+      "requestDigest": "sha256:c03ae3795c263314bb3e599e70bcf00b307e02aa835c9e47509ce9a40f54f2b6",
+      "reply": {
+        "version": 1,
+        "sequence": "5",
+        "method": "history",
+        "status": "ok",
+        "body": {
+          "delivery": "observed",
+          "intentId": "intent_synthetic",
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "requestDigest": "sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035",
+          "state": "start-committed",
+          "reason": "start-committed",
+          "at": "2026-10-19T12:00:00Z"
+        }
+      },
+      "requestLine": "{\"body\":{\"intentId\":\"intent_synthetic\"},\"method\":\"history\",\"sequence\":\"5\",\"version\":1}\n",
+      "replyLine": "{\"body\":{\"at\":\"2026-10-19T12:00:00Z\",\"attemptId\":\"attempt_synthetic\",\"delivery\":\"observed\",\"epoch\":\"1\",\"intentId\":\"intent_synthetic\",\"operationId\":\"operation_synthetic\",\"reason\":\"start-committed\",\"requestDigest\":\"sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035\",\"state\":\"start-committed\"},\"method\":\"history\",\"sequence\":\"5\",\"status\":\"ok\",\"version\":1}\n"
+    },
+    {
+      "name": "commitStart-recovered",
+      "reply": {
+        "version": 1,
+        "sequence": "4",
+        "method": "commitStart",
+        "status": "ok",
+        "body": {
+          "delivery": "recovered",
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "requestDigest": "sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035",
+          "decision": "start-committed",
+          "reason": "start-committed",
+          "at": "2026-10-19T12:00:00Z",
+          "authorityRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      }
+    },
+    {
+      "name": "commitStart-blocked",
+      "reply": {
+        "version": 1,
+        "sequence": "4",
+        "method": "commitStart",
+        "status": "ok",
+        "body": {
+          "delivery": "committed",
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "requestDigest": "sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035",
+          "decision": "blocked",
+          "reason": "withdrawn",
+          "at": "2026-10-19T12:00:00Z",
+          "authorityRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      }
+    },
+    {
+      "name": "reserve-refused",
+      "reply": {
+        "version": 1,
+        "sequence": "3",
+        "method": "reserve",
+        "status": "refused",
+        "body": {
+          "code": "eligibility-blocked"
+        }
+      }
+    }
+  ],
+  "invalidVectors": [
+    {
+      "name": "duplicate-sequence",
+      "line": "{\"version\":1,\"sequence\":\"1\",\"sequence\":\"2\",\"method\":\"history\",\"body\":{\"intentId\":\"intent_synthetic\"}}\n"
+    },
+    {
+      "name": "case-alias",
+      "line": "{\"version\":1,\"Sequence\":\"1\",\"method\":\"history\",\"body\":{\"intentId\":\"intent_synthetic\"}}\n"
+    },
+    {
+      "name": "null-body",
+      "line": "{\"version\":1,\"sequence\":\"1\",\"method\":\"history\",\"body\":null}\n"
+    },
+    {
+      "name": "number-sequence",
+      "line": "{\"version\":1,\"sequence\":1,\"method\":\"history\",\"body\":{\"intentId\":\"intent_synthetic\"}}\n"
+    },
+    {
+      "name": "leading-zero-sequence",
+      "line": "{\"version\":1,\"sequence\":\"01\",\"method\":\"history\",\"body\":{\"intentId\":\"intent_synthetic\"}}\n"
+    },
+    {
+      "name": "unknown-member",
+      "line": "{\"version\":1,\"sequence\":\"1\",\"method\":\"history\",\"body\":{\"intentId\":\"intent_synthetic\",\"allow\":true}}\n"
+    },
+    {
+      "name": "unknown-method",
+      "line": "{\"version\":1,\"sequence\":\"1\",\"method\":\"allow\",\"body\":{}}\n"
+    },
+    {
+      "name": "unmatched-sequence",
+      "reply": {
+        "version": 1,
+        "sequence": "6",
+        "method": "commitStart",
+        "status": "ok",
+        "body": {
+          "delivery": "committed",
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "requestDigest": "sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035",
+          "decision": "start-committed",
+          "reason": "start-committed",
+          "at": "2026-10-19T12:00:00Z",
+          "authorityRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      },
+      "sentSequence": "4"
+    },
+    {
+      "name": "bad-result-decision",
+      "reply": {
+        "version": 1,
+        "sequence": "4",
+        "method": "commitStart",
+        "status": "ok",
+        "body": {
+          "delivery": "committed",
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "requestDigest": "sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035",
+          "decision": "allow",
+          "reason": "start-committed",
+          "at": "2026-10-19T12:00:00Z",
+          "authorityRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      }
+    },
+    {
+      "name": "eligible-reason-contradiction",
+      "reply": {
+        "version": 1,
+        "sequence": "2",
+        "method": "inspect",
+        "status": "ok",
+        "body": {
+          "delivery": "observed",
+          "registration": {
+            "revision": "1",
+            "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "eligible": false,
+          "reason": "eligible",
+          "at": "2026-10-19T12:00:00Z"
+        }
+      },
+      "semantic": true
+    },
+    {
+      "name": "start-decision-reason-contradiction",
+      "reply": {
+        "version": 1,
+        "sequence": "4",
+        "method": "commitStart",
+        "status": "ok",
+        "body": {
+          "delivery": "committed",
+          "operationId": "operation_synthetic",
+          "attemptId": "attempt_synthetic",
+          "epoch": "1",
+          "requestDigest": "sha256:f05453a4a165166ef82ce9c23c61e9986da25a6170c86ad849b83cef929f1035",
+          "decision": "start-committed",
+          "reason": "withdrawn",
+          "at": "2026-10-19T12:00:00Z",
+          "authorityRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      },
+      "semantic": true
+    },
+    {
+      "name": "uint64-sequence-overflow",
+      "line": "{\"version\":1,\"sequence\":\"18446744073709551616\",\"method\":\"history\",\"body\":{\"intentId\":\"intent_synthetic\"}}\n"
+    },
+    {
+      "name": "noncanonical-base64",
+      "line": "{\"body\":{\"intentId\":\"intent_synthetic\",\"payload\":{\"bytes\":\"eyJldmlkZW5jZSI6eyJwcmVzZW5jZSI6Im9taXR0ZWQifSwiZmFjdHMiOnsiYnl0ZXMiOjY5LCJkaWdlc3QiOiJzaGEyNTY6OTQzMjA2YjhhODczMjA2MmIzNzU3NmQ3YTc4MjJhNzQzOWQ1ODdjOTgyNDQ0YWZmZWJjZDg5ZjJlZjU0MDIwMSIsImVuY29kaW5nIjoiZXhhY3QtYnl0ZXMifSwicGFja0RpZ2VzdCI6InNoYTI1NjozMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicHJvZmlsZSI6Imp1ZGdtZW50LXBhY2stcnVubmVyL2V4ZWN1dGlvbi1wYXlsb2FkLzEiLCJyZWxlYXNlRGlnZXN0Ijoic2hhMjU2OjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJydW50aW1lRGlnZXN0Ijoic2hhMjU2OjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQiLCJzaWduaW5nIjp7Im1vZGUiOiJvZmYifX0\",\"digest\":\"sha256:06c95db2fd80f303f8f8d9ee9130ae4d67e4dea29b243c2257a6437a1016d5c5\",\"profile\":\"judgment-pack-runner/execution-payload/1\"},\"rawRequestDigest\":\"sha256:4a12ee4e59976cfc19723ec266e6ca5c3d0d53b87162c8d907afa97d17fe2081\",\"registration\":{\"digest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"revision\":\"1\"},\"resource\":{\"jobId\":\"job_synthetic\",\"jobRevision\":\"1\",\"releaseDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"releaseId\":\"release_synthetic\",\"releaseProfile\":\"judgment-pack-runner/canonical/1\"}},\"method\":\"reserve\",\"sequence\":\"3\",\"version\":1}\n"
+    },
+    {
+      "name": "inspect-before-activation",
+      "request": {
+        "version": 1,
+        "sequence": "2",
+        "method": "inspect",
+        "body": {
+          "resource": {
+            "jobId": "job_synthetic",
+            "jobRevision": "1",
+            "releaseId": "release_synthetic",
+            "releaseProfile": "judgment-pack-runner/canonical/1",
+            "releaseDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        }
+      },
+      "channelPhase": "inactive",
+      "semantic": true
+    },
+    {
+      "name": "activation-replayed",
+      "request": {
+        "version": 1,
+        "sequence": "1",
+        "method": "activate",
+        "body": {
+          "challenge": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "signing": {
+            "mode": "off"
+          }
+        }
+      },
+      "channelPhase": "active",
+      "semantic": true
+    },
+    {
+      "name": "activation-at-sequence-two",
+      "request": {
+        "version": 1,
+        "sequence": "2",
+        "method": "activate",
+        "body": {
+          "challenge": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "signing": {
+            "mode": "off"
+          }
+        }
+      },
+      "channelPhase": "inactive",
+      "semantic": true
+    },
+    {
+      "name": "mismatched-original-body-digest",
+      "request": {
+        "version": 1,
+        "sequence": "3",
+        "method": "reserve",
+        "body": {
+          "intentId": "intent_synthetic",
+          "resource": {
+            "jobId": "job_synthetic",
+            "jobRevision": "1",
+            "releaseId": "release_synthetic",
+            "releaseProfile": "judgment-pack-runner/canonical/1",
+            "releaseDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "registration": {
+            "revision": "1",
+            "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "payload": {
+            "profile": "judgment-pack-runner/execution-payload/1",
+            "digest": "sha256:06c95db2fd80f303f8f8d9ee9130ae4d67e4dea29b243c2257a6437a1016d5c5",
+            "bytes": "eyJldmlkZW5jZSI6eyJwcmVzZW5jZSI6Im9taXR0ZWQifSwiZmFjdHMiOnsiYnl0ZXMiOjY5LCJkaWdlc3QiOiJzaGEyNTY6OTQzMjA2YjhhODczMjA2MmIzNzU3NmQ3YTc4MjJhNzQzOWQ1ODdjOTgyNDQ0YWZmZWJjZDg5ZjJlZjU0MDIwMSIsImVuY29kaW5nIjoiZXhhY3QtYnl0ZXMifSwicGFja0RpZ2VzdCI6InNoYTI1NjozMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicHJvZmlsZSI6Imp1ZGdtZW50LXBhY2stcnVubmVyL2V4ZWN1dGlvbi1wYXlsb2FkLzEiLCJyZWxlYXNlRGlnZXN0Ijoic2hhMjU2OjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJydW50aW1lRGlnZXN0Ijoic2hhMjU2OjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQiLCJzaWduaW5nIjp7Im1vZGUiOiJvZmYifX0="
+          },
+          "rawRequestDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "semantic": true,
+      "expectedRefusal": "binding-conflict"
+    }
+  ]
+}

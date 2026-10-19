@@ -1,12 +1,89 @@
 package runner
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestManualQueuedRunListsKeepPrivatePreimages(t *testing.T) {
+	s := manualServiceFixture(t)
+	job := manualSavedJob(t, s)
+	manualGateAuthority(t, s, nil)
+	const token = "owner-list-secret"
+	const key = "original-private-list-key"
+	const intentID = "intent_private_list"
+	const facts = `{ "number":9007199254740993.00, "private":"fact-secret" }`
+	const evidence = `{ "private-proof":"present" }`
+	raw := `{ "facts": ` + facts + `, "evidence": ` + evidence + ` }`
+	request := httptest.NewRequest(http.MethodPost, "/v1/jobs/"+job.ID+"/runs", strings.NewReader(raw))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Idempotency-Key", key)
+	request.Header.Set(ManualIntentHeader, intentID)
+	accepted := httptest.NewRecorder()
+	s.Handler(token).ServeHTTP(accepted, request)
+	if accepted.Code != http.StatusAccepted {
+		t.Fatalf("real manual queue: %d %s", accepted.Code, accepted.Body.String())
+	}
+	var run Run
+	if err := json.Unmarshal(accepted.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	var before string
+	if err := s.db.QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(before, `"manualAdmission"`) {
+		t.Fatal("fixture did not retain private admission metadata")
+	}
+	for _, path := range []string{"/v1/runs", "/v1/jobs/" + job.ID + "/runs"} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			response := httptest.NewRecorder()
+			s.Handler(token).ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("list: %d %s", response.Code, response.Body.String())
+			}
+			var page struct {
+				Items []map[string]json.RawMessage `json:"items"`
+				Next  int64                        `json:"next"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+				t.Fatal(err)
+			}
+			if len(page.Items) != 1 || page.Next != 0 {
+				t.Fatal("manual queue list page", response.Body.String())
+			}
+			expected := map[string]any{"schemaVersion": run.SchemaVersion, "id": run.ID, "jobId": job.ID, "releaseId": job.ReleaseID, "revision": job.Revision, "state": "queued", "createdAt": run.CreatedAt, "requestedBy": s.cfg.Owner, "attempt": 0, "jobName": job.Name}
+			item := page.Items[0]
+			if len(item) != len(expected) {
+				t.Fatalf("unexpected public summary fields: %s", encode(item))
+			}
+			for name, want := range expected {
+				if !bytes.Equal(item[name], encode(want)) {
+					t.Fatalf("public summary %s: %s != %s", name, item[name], encode(want))
+				}
+			}
+		})
+	}
+	var after string
+	if err := s.db.QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatal("listing changed private durable record")
+	}
+	held, err := s.run(run.ID)
+	if err != nil || held.manual == nil || held.manual.request != raw || held.manual.intentID != intentID || held.manual.key != key || held.manual.resource == nil || held.manual.registration == nil || !bytes.Equal(held.Input.Facts, []byte(facts)) || !bytes.Equal(held.Input.Evidence, []byte(evidence)) {
+		t.Fatal("listing lost exact private durable preimages", err)
+	}
+}
 
 func TestFilteredListsAcrossPages(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")

@@ -91,6 +91,9 @@ func (s *Service) automationTick(at time.Time) error {
 	return nil
 }
 func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
+	if s.cfg.ExecutorAdmission != nil {
+		return manualUnsupported()
+	}
 	if t.NextAt == "" {
 		return nil
 	}
@@ -162,6 +165,9 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 	return tx.Commit()
 }
 func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
+	if s.cfg.ExecutorAdmission != nil {
+		return manualUnsupported()
+	}
 	raw, e := s.readAutomaticFile(t.Config.WatchPath)
 	if e != nil {
 		if t.Problem != e.Error() {
@@ -237,6 +243,9 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	return tx.Commit()
 }
 func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
+	if s.cfg.ExecutorAdmission != nil {
+		return manualUnsupported()
+	}
 	// Reconcile admission first: a crash after run creation must not become a
 	// second evaluation or an expiry, even if source receipts have since aged.
 	var runID string

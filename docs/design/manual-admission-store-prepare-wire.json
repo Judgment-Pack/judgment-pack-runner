@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private manual-store preparation helper v1",
+  "command": [
+    "jpack-runner",
+    "prepare-manual-store"
+  ],
+  "maxFrameBytes": 16384,
+  "$defs": {
+    "ownership": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "root": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096
+        },
+        "machineWorkspace": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "runnerWorkspace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~]+$"
+        },
+        "rootDevice": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "rootInode": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
+        "fileDevice": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "fileInode": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        }
+      },
+      "required": [
+        "version",
+        "root",
+        "machineWorkspace",
+        "runnerWorkspace",
+        "rootDevice",
+        "rootInode",
+        "fileDevice",
+        "fileInode"
+      ],
+      "additionalProperties": false
+    },
+    "demand": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "installationId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "machineWorkspace": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "runnerWorkspace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~]+$"
+        },
+        "executorId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "profile": {
+          "const": "local-admin-manual-pack/1"
+        }
+      },
+      "required": [
+        "version",
+        "installationId",
+        "machineWorkspace",
+        "runnerWorkspace",
+        "executorId",
+        "profile"
+      ],
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "prepareId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "dir": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096
+        },
+        "workspace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~]+$"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "leaseFd": {
+          "const": 3
+        },
+        "executorOwnership": {
+          "$ref": "#/$defs/ownership"
+        },
+        "executionDemand": {
+          "$ref": "#/$defs/demand"
+        }
+      },
+      "required": [
+        "version",
+        "prepareId",
+        "dir",
+        "workspace",
+        "owner",
+        "leaseFd",
+        "executorOwnership",
+        "executionDemand"
+      ],
+      "additionalProperties": false
+    },
+    "ok": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "status": {
+          "const": "ok"
+        },
+        "prepareId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "requestDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "delivery": {
+          "enum": [
+            "committed",
+            "recovered"
+          ]
+        },
+        "storeSchema": {
+          "const": "4"
+        }
+      },
+      "required": [
+        "version",
+        "status",
+        "prepareId",
+        "requestDigest",
+        "delivery",
+        "storeSchema"
+      ],
+      "additionalProperties": false
+    },
+    "refused": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "status": {
+          "const": "refused"
+        },
+        "code": {
+          "enum": [
+            "invalid-request",
+            "unsafe-custody",
+            "busy",
+            "unsupported-store",
+            "pending-transition",
+            "unsupported-profile",
+            "storage-failed"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "status",
+        "code"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "vectors": {
+    "request": {
+      "version": 1,
+      "prepareId": "1111111111111111111111111111111111111111111111111111111111111111",
+      "dir": "/tmp/jps-synthetic-runner",
+      "workspace": "runner-synthetic",
+      "owner": "local-admin",
+      "leaseFd": 3,
+      "executorOwnership": {
+        "version": 1,
+        "root": "/tmp/jps-synthetic-machine/executors/2222222222222222222222222222222222222222222222222222222222222222",
+        "machineWorkspace": "2222222222222222222222222222222222222222222222222222222222222222",
+        "runnerWorkspace": "runner-synthetic",
+        "rootDevice": "2049",
+        "rootInode": "9007199254740993",
+        "fileDevice": "2049",
+        "fileInode": "9007199254740994"
+      },
+      "executionDemand": {
+        "version": 1,
+        "installationId": "3333333333333333333333333333333333333333333333333333333333333333",
+        "machineWorkspace": "2222222222222222222222222222222222222222222222222222222222222222",
+        "runnerWorkspace": "runner-synthetic",
+        "executorId": "4444444444444444444444444444444444444444444444444444444444444444",
+        "profile": "local-admin-manual-pack/1"
+      }
+    },
+    "requestLine": "{\"version\":1,\"prepareId\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"dir\":\"/tmp/jps-synthetic-runner\",\"workspace\":\"runner-synthetic\",\"owner\":\"local-admin\",\"leaseFd\":3,\"executorOwnership\":{\"version\":1,\"root\":\"/tmp/jps-synthetic-machine/executors/2222222222222222222222222222222222222222222222222222222222222222\",\"machineWorkspace\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"runnerWorkspace\":\"runner-synthetic\",\"rootDevice\":\"2049\",\"rootInode\":\"9007199254740993\",\"fileDevice\":\"2049\",\"fileInode\":\"9007199254740994\"},\"executionDemand\":{\"version\":1,\"installationId\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"machineWorkspace\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"runnerWorkspace\":\"runner-synthetic\",\"executorId\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"profile\":\"local-admin-manual-pack/1\"}}\n",
+    "requestDigest": "sha256:34a658531e86680c890bcfbb939e7a77a37309090ca8d55e29e476b43a69479a",
+    "committed": {
+      "version": 1,
+      "status": "ok",
+      "prepareId": "1111111111111111111111111111111111111111111111111111111111111111",
+      "requestDigest": "sha256:34a658531e86680c890bcfbb939e7a77a37309090ca8d55e29e476b43a69479a",
+      "delivery": "committed",
+      "storeSchema": "4"
+    },
+    "recovered": {
+      "version": 1,
+      "status": "ok",
+      "prepareId": "1111111111111111111111111111111111111111111111111111111111111111",
+      "requestDigest": "sha256:34a658531e86680c890bcfbb939e7a77a37309090ca8d55e29e476b43a69479a",
+      "delivery": "recovered",
+      "storeSchema": "4"
+    },
+    "refused": {
+      "version": 1,
+      "status": "refused",
+      "code": "pending-transition"
+    }
+  },
+  "semanticInvalid": [
+    {
+      "name": "uint64-overflow",
+      "path": "executorOwnership.rootInode",
+      "value": "18446744073709551616"
+    },
+    {
+      "name": "workspace-mismatch",
+      "path": "executionDemand.runnerWorkspace",
+      "value": "other"
+    },
+    {
+      "name": "wrong-fd",
+      "path": "leaseFd",
+      "value": 4
+    },
+    {
+      "name": "wrong-profile",
+      "path": "executionDemand.profile",
+      "value": "legacy"
+    },
+    {
+      "name": "noncanonical-identity",
+      "path": "executorOwnership.fileDevice",
+      "value": "01"
+    }
+  ],
+  "rules": [
+    "uint64 values must not overflow despite the bounded schema regex",
+    "all repeated workspace identities must agree",
+    "absolute clean real private paths; ownership root and state may not overlap",
+    "fixed inherited fd3 shares Desk continuously held exclusive flock; never LOCK_UN",
+    "only exact untouched schema3 with no old marker or unsupported pending work may become schema4",
+    "private marker and parent fsync precede schema4 publication",
+    "exact existing schema4 plus matching marker may report recovered observation; cannot advance host activation",
+    "schema3 with prior marker, partial or mismatched state refuses without repair",
+    "requestDigest hashes exact request JSON UTF8 bytes excluding the sole terminating LF",
+    "closed duplicate/case/null/unknown/type rules and EOF after the one line apply"
+  ]
+}

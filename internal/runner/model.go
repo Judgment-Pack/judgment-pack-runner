@@ -63,21 +63,22 @@ type Job struct {
 	Owner                string `json:"owner"`
 }
 type Run struct {
-	Trigger       *TriggerOrigin  `json:"trigger,omitempty"`
-	SchemaVersion string          `json:"schemaVersion"`
-	ID            string          `json:"id"`
-	JobID         string          `json:"jobId"`
-	ReleaseID     string          `json:"releaseId"`
-	Revision      int             `json:"revision"`
-	State         string          `json:"state"`
-	Input         Input           `json:"input"`
-	CreatedAt     string          `json:"createdAt"`
-	StartedAt     string          `json:"startedAt,omitempty"`
-	FinishedAt    string          `json:"finishedAt,omitempty"`
-	RequestedBy   string          `json:"requestedBy"`
-	Attempt       int             `json:"attempt"`
-	Result        json.RawMessage `json:"result,omitempty"`
-	Audit         json.RawMessage `json:"audit,omitempty"`
+	manual        *manualIntentInput `json:"-"` // private exact-byte storage; never exported as authority
+	Trigger       *TriggerOrigin     `json:"trigger,omitempty"`
+	SchemaVersion string             `json:"schemaVersion"`
+	ID            string             `json:"id"`
+	JobID         string             `json:"jobId"`
+	ReleaseID     string             `json:"releaseId"`
+	Revision      int                `json:"revision"`
+	State         string             `json:"state"`
+	Input         Input              `json:"input"`
+	CreatedAt     string             `json:"createdAt"`
+	StartedAt     string             `json:"startedAt,omitempty"`
+	FinishedAt    string             `json:"finishedAt,omitempty"`
+	RequestedBy   string             `json:"requestedBy"`
+	Attempt       int                `json:"attempt"`
+	Result        json.RawMessage    `json:"result,omitempty"`
+	Audit         json.RawMessage    `json:"audit,omitempty"`
 	// AuditBytes is the audit record exactly as the Runtime wrote it, without
 	// the newline that ends its line: what a digest of the record is taken over.
 	// Audit is the same record parsed, which Runner encodes again, with other
@@ -145,10 +146,33 @@ type storedRun struct {
 func served(r Run) storedRun {
 	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing, Binding: r.Binding}
 }
-func runText(r Run) string { return string(encode(served(r))) }
+func runText(r Run) string {
+	if r.manual == nil {
+		return string(encode(served(r)))
+	}
+	return string(encode(struct {
+		storedRun
+		Manual *manualIntentStored `json:"manualAdmission"`
+	}{served(r), r.manual.stored()}))
+}
 func decodeRun(b []byte) (Run, error) {
-	var held storedRun
-	e := json.Unmarshal(b, &held)
+	var wire struct {
+		storedRun
+		Manual json.RawMessage `json:"manualAdmission"`
+	}
+	e := json.Unmarshal(b, &wire)
+	held := wire.storedRun
+	if e == nil && wire.Manual != nil {
+		var stored manualIntentStored
+		if manualStoredDecode(wire.Manual, &stored) != nil {
+			return Run{}, errManualProtocol
+		}
+		held.Run.manual, e = stored.restore(held.Run.Input)
+		if e != nil {
+			return Run{}, e
+		}
+		held.Run.Input = held.Run.manual.input()
+	}
 	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing, held.Run.Binding = held.InterruptedAt, held.Reason, held.Signing, held.Binding
 	return held.Run, e
 }

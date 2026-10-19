@@ -1848,6 +1848,44 @@
           }
         }
       }
+    },
+    "/jobs/{job}/execution-binding": {
+      "get": {
+        "operationId": "getJobExecutionBinding",
+        "description": "Owner-only exact manual single-Pack execution-binding export. Refuses any trigger, mapping, dialect, source/preparation or unavailable immutable release material. Admission remains inactive.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact immutable execution binding",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualExecutionBinding"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Binding unavailable or profile unsupported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5595,6 +5633,51 @@
           "reason"
         ],
         "additionalProperties": false
+      },
+      "ManualExecutionBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "workspace",
+          "jobId",
+          "jobRevision",
+          "releaseId",
+          "releaseProfile",
+          "releaseDigest",
+          "releaseBytes"
+        ],
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "workspace": {
+            "type": "string"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "jobRevision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,19}$"
+          },
+          "releaseId": {
+            "type": "string"
+          },
+          "releaseProfile": {
+            "const": "judgment-pack-runner/canonical/1"
+          },
+          "releaseDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "releaseBytes": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "maxLength": 11184812
+          }
+        },
+        "description": "Private experimental exact canonical typed Release preimage. Read-only binding material grants no registration or execution permission."
       }
     }
   }

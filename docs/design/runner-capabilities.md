@@ -1,12 +1,12 @@
 # Runner pre-start capabilities
 
-Status: private experimental host/companion contract, version 2, 2026-10-18.
-This implements the capability-negotiation foundation of Desk's Policy execution
-admission design. It does not implement governed activation, resource registration,
-per-attempt admission, withdrawal enforcement or Runtime dispatch authorization.
-Explicit trusted-host enrollment can enable external executor ownership. Execution
-payloads remain an inactive foundation; ownership grants no governance permission.
-All jobs remain ungoverned.
+Status: private experimental host/companion contract, version 3, 2026-10-19.
+The reviewed candidate supports optional `local-admin-manual-pack/1` host admission
+on supported platforms, with explicit retained enrollment, exact registration and
+per-attempt authority commitment at the actual operational starter. This is not
+adopted portable Policy conformance. Ownership itself grants no permission.
+Unconfigured legacy workspaces retain their behavior. See
+[manual admission gate](manual-admission-gate.md) for scope and recovery limits.
 
 ## Probe before boot
 
@@ -20,26 +20,33 @@ It exits successfully after writing this single UTF-8 JSON object and a newline
 to stdout, with no stderr output:
 
 ```json
-{"version":2,"capabilities":["jobs/1","required-boot-capabilities/1","executor-ownership/1"],"governanceAdmission":false}
+{"version":3,"capabilities":["jobs/1","required-boot-capabilities/1","executor-ownership/1","policy-manual-pack-run/1"],"governanceAdmission":true,"governanceProfiles":["local-admin-manual-pack/1"]}
 ```
 
-Version 2 is a closed shape: exactly these three case-sensitive members, integer
-`version: 2`, this ordered array of supported capability strings, and boolean
-`governanceAdmission: false`. No duplicate members are permitted. There are no
+Version 3 is a closed shape: exactly these four case-sensitive members, integer
+`version: 3`, this ordered capability array, `governanceAdmission: true`, and the
+single named governance profile. No duplicate members are permitted. There are no
 installation paths, identifiers, configuration values, credentials or secrets in
 the response. The response is less than 512 bytes. A shape or semantic change
 requires an explicitly reviewed contract version; consumers must not interpret
-unknown versions as version 2. The earlier version 1 response was also closed;
-adding executor ownership deliberately changes the response version.
+unknown versions as a known shape. Earlier version 2 remains the closed
+three-member ownership-only response below; hosts without supported admission
+retain it. Earlier version 1 was also closed. Adding admission deliberately
+changes the response version rather than widening version 2.
+
+```json
+{"version":2,"capabilities":["jobs/1","required-boot-capabilities/1","executor-ownership/1"],"governanceAdmission":false}
+```
 
 `jobs/1` names the existing companion protocol. `required-boot-capabilities/1`
 means Runner strictly checks the optional boot requirement below before opening
 its service. `executor-ownership/1` means a supplied trusted ownership binding is
 required before the service opens and is inherited by every Service Runtime
-invocation ([binding and lifetime](executor-ownership.md)). Governance admission is explicitly unsupported: a payload descriptor,
-lease helper, version string or successful probe does not establish permission to
-execute. No governed execution capability is advertised. Requiring an unknown
-capability, including `governance-admission/1`, refuses startup.
+invocation ([binding and lifetime](executor-ownership.md)).
+`policy-manual-pack-run/1` names only the closed manual profile: a payload
+descriptor, lease helper, version string or successful probe does not establish
+permission to execute. Requiring an unknown capability, including the distinct
+unsupported `governance-admission/1`, refuses startup.
 
 The command does not read stdin or installation/project configuration, inspect a
 Runtime or workspace, open a store, bind a listener, start workers or make provider
@@ -131,6 +138,23 @@ retains existing local Jobs behavior.
 Ownership binding and requirement syntax are checked before `Open`; `Open` then
 acquires and verifies the existing external lease before any portable-directory
 creation, store access, Runtime pinning, recovery or worker/provider startup.
+
+## Manual admission and requirement agreement
+
+The closed `executorAdmission` binding in the
+[manual wire contract](manual-admission-wire-shape.md) requires
+`policy-manual-pack-run/1` if and only if the binding is supplied, and also
+requires matching executor ownership. Installation, both workspace identities,
+executor, challenge, profile and inherited Unix stream descriptor are trusted
+host custody, never browser or restored-store assertions. All fixed external,
+prepared schema4 and boot demands must agree. Unsupported platforms refuse.
+
+After actual external ownership and fixed operational signing, Runner activates
+the dedicated channel before recovery/workers. Every operational start requires
+current reserve/start commitment and the original session's locally journaled
+one-use launch. Enabled workspaces reject automatic triggers, acquisitions,
+workflow operations and upgrades; there is no mixed legacy-resource escape.
+Legacy workspaces do not acquire governance from a probe response alone.
 
 ## Verification
 

@@ -104,6 +104,9 @@ func (s *Service) validateGatewayMapping(r Release) error {
 var automaticHTTP = &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("Gateway redirect refused") }}
 
 func (s *Service) acquireAutomatic(parent context.Context, input Input) (Input, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return Input{}, manualUnsupported()
+	}
 	if input.Source == nil {
 		return input, bad("automatic_mapping_required", "Source inputs are required.")
 	}
@@ -142,6 +145,9 @@ func (s *Service) acquireAutomatic(parent context.Context, input Input) (Input, 
 // acquirePlannedOperation performs one fresh call. Its caller checkpoints the
 // returned response before another request, and never retries an uncertain call.
 func (s *Service) acquirePlannedOperation(parent context.Context, next PlannedSource) (SourceValue, error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return SourceValue{}, manualUnsupported()
+	}
 	if next.Kind != "operation" {
 		return SourceValue{}, bad("automatic_source_unavailable", "A fresh operation source is required.")
 	}
@@ -200,6 +206,9 @@ func automaticCall(ctx context.Context, target string, body []byte, limit int64)
 	return raw, nil
 }
 func (s *Service) startBackground(ctx context.Context) {
+	if s.cfg.ExecutorAdmission != nil {
+		return
+	}
 	for worker := 0; worker < 4; worker++ {
 		s.background.Add(1)
 		go func() {
@@ -228,6 +237,9 @@ func (s *Service) startBackground(ctx context.Context) {
 	}
 }
 func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID string) error {
+	if s.cfg.ExecutorAdmission != nil {
+		return manualUnsupported()
+	}
 	s.automationMu.Lock()
 	if s.unhealthy.Load() {
 		s.automationMu.Unlock()

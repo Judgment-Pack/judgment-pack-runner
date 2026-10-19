@@ -61,6 +61,18 @@ jobs:
       - name: Build Runtime
         working-directory: .ci-runtime
         run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.33.0-dev.09206e7" -o "$RUNNER_TEMP/jpack" ./cmd/jpack
+      # Test-only old companion: its current-store refusal is part of the
+      # explicit manual-store preparation contract, not a release dependency.
+      - name: Check out ownership-era Runner
+        uses: actions/checkout@v4
+        with:
+          repository: Judgment-Pack/judgment-pack-runner
+          ref: 1cc6b29885b344716a970cd21fefeaca0a4edaeb
+          path: .ci-runner-old
+          persist-credentials: false
+      - name: Build ownership-era Runner
+        working-directory: .ci-runner-old
+        run: go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/jpack-runner-old" ./cmd/jpack-runner
       # A Runtime that signs and does not know the expected key, as every
       # release from v0.26.0 to v0.29.x: Runner must name the key a replaced
       # seed signed under (TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed,
@@ -92,12 +104,58 @@ jobs:
           go build -trimpath -o "$RUNNER_TEMP/gateway" .
           cd ../adapters
           go build -trimpath -o "$RUNNER_TEMP/adapter-mcp" ./cmd/adapter-mcp
+      - name: Manual admission helper and real Runtime gate tests cannot skip
+        run: |
+          out="$(JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
+            JPACK_OLD_RUNNER_TEST_BIN="$RUNNER_TEMP/jpack-runner-old" \
+            go test -count=1 -v \
+            -run '^(TestManualGovernedRealRuntimeGate|TestManualGovernedActualRuntimeHasNoAuthorityFD|TestManualStorePrepareActualChildRetainsOriginalCustody|TestManualStorePreparationDurableAndNoDowngrade|TestManualStorePreparationSubstitutedStateRefuses|TestManualStoreSQLiteTargetUsesHeldDirectory|TestManualStoreLibraryNeverChangesCWD|TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec|TestManualAuthorityDescriptorObserverDetectsSocket|TestManualStorePreparationPendingAndUnsupported|TestManualExternalDemandCannotBeOmitted|TestManualQueuedRunListsKeepPrivatePreimages)$' \
+            ./internal/runner)" || { printf '%s\n' "$out"; exit 1; }
+          printf '%s\n' "$out"
+          for name in \
+            TestManualGovernedRealRuntimeGate \
+            TestManualGovernedRealRuntimeGate/success \
+            TestManualGovernedRealRuntimeGate/blocked \
+            TestManualGovernedRealRuntimeGate/lost-reply \
+            TestManualGovernedRealRuntimeGate/changed-facts \
+            TestManualGovernedRealRuntimeGate/changed-config \
+            TestManualGovernedRealRuntimeGate/changed-lock \
+            TestManualGovernedRealRuntimeGate/changed-signing \
+            TestManualGovernedRealRuntimeGate/changed-epoch \
+            TestManualGovernedRealRuntimeGate/changed-demand \
+            TestManualGovernedRealRuntimeGate/journal-failure \
+            TestManualGovernedRealRuntimeGate/start-journal-failure \
+            TestManualGovernedRealRuntimeGate/recovered-reserve \
+            TestManualStorePrepareActualChildRetainsOriginalCustody \
+            TestManualStorePrepareActualChildRetainsOriginalCustody/committed \
+            TestManualStorePrepareActualChildRetainsOriginalCustody/refused \
+            TestManualStorePrepareActualChildRetainsOriginalCustody/lose-reply \
+            TestManualStorePreparationDurableAndNoDowngrade \
+            TestManualStorePreparationSubstitutedStateRefuses \
+            TestManualStorePreparationSubstitutedStateRefuses/before-adapter \
+            TestManualStorePreparationSubstitutedStateRefuses/after-adapter \
+            TestManualStoreSQLiteTargetUsesHeldDirectory \
+            TestManualStoreLibraryNeverChangesCWD \
+            TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec \
+            TestManualAuthorityDescriptorObserverDetectsSocket \
+            TestManualStorePreparationPendingAndUnsupported \
+            TestManualExternalDemandCannotBeOmitted \
+            TestManualQueuedRunListsKeepPrivatePreimages; do
+            printf '%s\n' "$out" | grep -q -- "^[[:space:]]*--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
+          done
+          # This observer identifies the actual Runtime through Linux /proc.
+          # Every other named helper/gate test is mandatory on both hosts.
+          if [ "$RUNNER_OS" = Linux ]; then
+            name=TestManualGovernedActualRuntimeHasNoAuthorityFD
+            printf '%s\n' "$out" | grep -q -- "^[[:space:]]*--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
+          fi
       - name: Unit, conformance and cross-process recovery tests
         run: |
           JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
           JPACK_EARLIER_TEST_BIN="$RUNNER_TEMP/jpack-earlier" \
           JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
           JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
+          JPACK_OLD_RUNNER_TEST_BIN="$RUNNER_TEMP/jpack-runner-old" \
           go test -race ./...
       # A skipped test passes `go test`; these must run (#35, #54, #55).
       - name: Chain, signature, binding and ownership tests run under the pinned Runtimes
