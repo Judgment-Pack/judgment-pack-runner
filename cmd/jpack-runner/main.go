@@ -20,35 +20,54 @@ import (
 )
 
 func main() {
-	err := error(nil)
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Println("jpack-runner", buildinfo.Version())
-	} else if len(os.Args) > 1 && os.Args[1] == "relocate-workspace" {
-		if len(os.Args) == 3 && os.Args[2] == "--capabilities" {
-			fmt.Println(`{"version":1}`)
-		} else if len(os.Args) != 2 {
+	os.Exit(runnerCommand(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+// runnerCommand resolves commands before reading boot authority. Arguments that
+// do not name a command must never fall through to companion startup.
+func runnerCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	var err error
+	switch {
+	case len(args) == 0:
+		err = serve(stdin, stdout, stderr)
+	case args[0] == "capabilities":
+		err = printCapabilities(args[1:], stdout)
+	case args[0] == "version":
+		if len(args) != 1 {
+			err = fmt.Errorf("version takes no arguments")
+		} else {
+			_, err = fmt.Fprintln(stdout, "jpack-runner", buildinfo.Version())
+		}
+	case args[0] == "relocate-workspace":
+		if len(args) == 2 && args[1] == "--capabilities" {
+			_, err = fmt.Fprintln(stdout, `{"version":1}`)
+		} else if len(args) != 1 {
 			err = fmt.Errorf("relocate-workspace takes one reviewed JSON request on stdin")
 		} else {
-			err = relocateWorkspace(os.Stdin, os.Stdout)
+			err = relocateWorkspace(stdin, stdout)
 		}
-	} else if len(os.Args) > 1 && os.Args[1] == "verify-run" {
-		err = verifyRun(os.Args[2:], os.Stdout, os.Stderr)
-	} else if len(os.Args) > 1 && os.Args[1] == "verify-preparation" {
+	case args[0] == "verify-run":
+		err = verifyRun(args[1:], stdout, stderr)
+	case args[0] == "verify-preparation":
 		// Its exit status is the report's (spec/dialect.md §11), and it says
 		// why on standard error itself.
-		os.Exit(verifyPreparation(os.Args[2:], os.Stdout, os.Stderr))
-	} else {
-		err = serve()
+		return verifyPreparation(args[1:], stdout, stderr)
+	default:
+		err = fmt.Errorf("unknown runner command")
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "runner:", err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, "runner:", err)
+		return 1
 	}
+	return 0
 }
 
 // bootConfig reads the boot line: the service's configuration and the
 // bearer.
 func bootConfig(line []byte) (runner.Config, string, error) {
+	if err := checkBootCapabilities(line); err != nil {
+		return runner.Config{}, "", err
+	}
 	var boot struct {
 		Dir                string                     `json:"dir"`
 		Runtime            string                     `json:"runtime"`
@@ -69,8 +88,8 @@ func bootConfig(line []byte) (runner.Config, string, error) {
 	return runner.Config{Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, SigningKey: boot.SigningKey, SigningPublicKey: boot.SigningPublicKey}, boot.Token, nil
 }
 
-func serve() error {
-	input := bufio.NewReaderSize(os.Stdin, 128<<10)
+func serve(stdin io.Reader, stdout, stderr io.Writer) error {
+	input := bufio.NewReaderSize(stdin, 128<<10)
 	line, err := input.ReadSlice('\n')
 	if err != nil || len(line) > 128<<10 {
 		return fmt.Errorf("bounded boot configuration required")
@@ -87,7 +106,7 @@ func serve() error {
 	// Each registered profile set aside at open is named, with its reason,
 	// on standard error; standard output carries the protocol alone.
 	for _, p := range service.SetAside() {
-		fmt.Fprintln(os.Stderr, "runner:", p)
+		fmt.Fprintln(stderr, "runner:", p)
 	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -97,7 +116,7 @@ func serve() error {
 	// with a 30-second subprocess deadline. Allow the bounded sequence to finish.
 	server := &http.Server{Handler: service.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 135 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	defer server.Close()
-	if err = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": "http://" + listener.Addr().String(), "protocol": "jobs/1"}); err != nil {
+	if err = json.NewEncoder(stdout).Encode(map[string]string{"url": "http://" + listener.Addr().String(), "protocol": "jobs/1"}); err != nil {
 		return err
 	}
 	closed := make(chan struct{})
