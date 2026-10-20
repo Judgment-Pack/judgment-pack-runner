@@ -1,5 +1,11 @@
 name: CI
 
+# The check list is dev.json, run by scripts/dev/check.sh (the development kit's vendored runner);
+# the longer steps are scripts under scripts/checks/ with the comments they had here. Two jobs, both
+# required by branch protection under their names: `Runner (<os>)` runs every step but the release
+# ones on Linux and macOS, and `Release contents` runs the release steps with the exact toolchain
+# release.yml names.
+
 on:
   pull_request:
   push:
@@ -11,7 +17,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  check:
     name: Runner (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -21,170 +27,17 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      # First, so that a manifest that does not parse fails before the long steps start.
+      - name: The manifest parses and its first step runs
+        run: scripts/dev/check.sh --manifest dev.json --only local-paths
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
           cache: true
-      - name: Check formatting
-        run: |
-          go fmt ./...
-          git diff --exit-code
-      - name: Vet
-        run: go vet ./...
-      # Real-Runtime tests must run in CI, not silently skip behind an unset
-      # JPACK_TEST_BIN. Pin the independently versioned evaluator contract.
-      # A commit is pinned and not a tag, since a commit cannot come to name
-      # other code. The name after it is the release the commit was taken
-      # from when the pin was set: whoever moves one moves the other.
-      # v0.26.0 is the first Runtime release that chains and signs its trail,
-      # so TestTheRuntimesVerifierReadsTheChainOfRuns,
-      # TestASignedRunKeepsItsSignature and
-      # TestVerifyRunChecksARunTheRuntimeSigned run here and do not skip (#35).
-      # v0.30.0 is the first that refuses to sign with a seed whose public
-      # key is not JPACK_SIGNING_PUBLIC_KEY, which
-      # TestASeedReplacedAfterStartSignsNothing needs (#54). v0.31.0 is the
-      # first that takes a caller's binding (`--binding`, runtime ADR-0050),
-      # which the binding tests need (#55). A pin moved to a Runtime without
-      # `jpack audit` or `--binding` would skip them again, and the step after
-      # the tests fails if any of them does not pass.
-      - name: Check out tested Runtime
-        uses: actions/checkout@v4
-        with:
-          repository: Judgment-Pack/judgment-pack-runtime
-          ref: 09206e743cdf410d7b5ee970f1c9d09ca7c015ca # merged citation session identifier of any string (runtime #291)
-          path: .ci-runtime
-          persist-credentials: false
-      # The build names the pin's release, as the release build does, so a
-      # test can tell what the Runtime under test answers by its release
-      # (TestTheRuntimesVerifierReadsTheChainOfRuns). Whoever moves the pin
-      # moves the version with it.
-      - name: Build Runtime
-        working-directory: .ci-runtime
-        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.33.0-dev.09206e7" -o "$RUNNER_TEMP/jpack" ./cmd/jpack
-      # Test-only old companion: its current-store refusal is part of the
-      # explicit manual-store preparation contract, not a release dependency.
-      - name: Check out ownership-era Runner
-        uses: actions/checkout@v4
-        with:
-          repository: Judgment-Pack/judgment-pack-runner
-          ref: 1cc6b29885b344716a970cd21fefeaca0a4edaeb
-          path: .ci-runner-old
-          persist-credentials: false
-      - name: Build ownership-era Runner
-        working-directory: .ci-runner-old
-        run: go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/jpack-runner-old" ./cmd/jpack-runner
-      # A Runtime that signs and does not know the expected key, as every
-      # release from v0.26.0 to v0.29.x: Runner must name the key a replaced
-      # seed signed under (TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed,
-      # #54). It takes no binding either, as every release before v0.31.0:
-      # Runner must give it none, and verify-run report its record unbound
-      # (TestARuntimeWithoutTheBindingIsGivenNone,
-      # TestVerifyRunReportsARecordTheRuntimeDidNotBind, #55). Pinned by
-      # commit as the tested Runtime is.
-      - name: Check out an earlier signing Runtime
-        uses: actions/checkout@v4
-        with:
-          repository: Judgment-Pack/judgment-pack-runtime
-          ref: 7a2fcfe20cedba5f164246fc544c4920971d2c56 # v0.27.1
-          path: .ci-runtime-earlier
-          persist-credentials: false
-      - name: Build the earlier Runtime
-        working-directory: .ci-runtime-earlier
-        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.27.1" -o "$RUNNER_TEMP/jpack-earlier" ./cmd/jpack
-      - name: Check out durable Gateway contract
-        uses: actions/checkout@v4
-        with:
-          repository: Judgment-Pack/judgment-pack-gateway
-          ref: 5b49e1e094b55fdd1deb9f613815c2beebd411f1 # v0.9.1
-          path: .ci-gateway
-          persist-credentials: false
-      - name: Build Gateway and MCP adapter
-        run: |
-          cd .ci-gateway/go
-          go build -trimpath -o "$RUNNER_TEMP/gateway" .
-          cd ../adapters
-          go build -trimpath -o "$RUNNER_TEMP/adapter-mcp" ./cmd/adapter-mcp
-      - name: Manual admission helper and real Runtime gate tests cannot skip
-        run: |
-          out="$(JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
-            JPACK_OLD_RUNNER_TEST_BIN="$RUNNER_TEMP/jpack-runner-old" \
-            go test -count=1 -v \
-            -run '^(TestManualGovernedRealRuntimeGate|TestManualGovernedActualRuntimeHasNoAuthorityFD|TestManualStorePrepareActualChildRetainsOriginalCustody|TestManualStorePreparationDurableAndNoDowngrade|TestManualStorePreparationSubstitutedStateRefuses|TestManualStoreSQLiteTargetUsesHeldDirectory|TestManualStoreLibraryNeverChangesCWD|TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec|TestManualAuthorityDescriptorObserverDetectsSocket|TestManualStorePreparationPendingAndUnsupported|TestManualExternalDemandCannotBeOmitted|TestManualQueuedRunListsKeepPrivatePreimages)$' \
-            ./internal/runner)" || { printf '%s\n' "$out"; exit 1; }
-          printf '%s\n' "$out"
-          for name in \
-            TestManualGovernedRealRuntimeGate \
-            TestManualGovernedRealRuntimeGate/success \
-            TestManualGovernedRealRuntimeGate/blocked \
-            TestManualGovernedRealRuntimeGate/lost-reply \
-            TestManualGovernedRealRuntimeGate/changed-facts \
-            TestManualGovernedRealRuntimeGate/changed-config \
-            TestManualGovernedRealRuntimeGate/changed-lock \
-            TestManualGovernedRealRuntimeGate/changed-signing \
-            TestManualGovernedRealRuntimeGate/changed-epoch \
-            TestManualGovernedRealRuntimeGate/changed-demand \
-            TestManualGovernedRealRuntimeGate/journal-failure \
-            TestManualGovernedRealRuntimeGate/start-journal-failure \
-            TestManualGovernedRealRuntimeGate/recovered-reserve \
-            TestManualStorePrepareActualChildRetainsOriginalCustody \
-            TestManualStorePrepareActualChildRetainsOriginalCustody/committed \
-            TestManualStorePrepareActualChildRetainsOriginalCustody/refused \
-            TestManualStorePrepareActualChildRetainsOriginalCustody/lose-reply \
-            TestManualStorePreparationDurableAndNoDowngrade \
-            TestManualStorePreparationSubstitutedStateRefuses \
-            TestManualStorePreparationSubstitutedStateRefuses/before-adapter \
-            TestManualStorePreparationSubstitutedStateRefuses/after-adapter \
-            TestManualStoreSQLiteTargetUsesHeldDirectory \
-            TestManualStoreLibraryNeverChangesCWD \
-            TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec \
-            TestManualAuthorityDescriptorObserverDetectsSocket \
-            TestManualStorePreparationPendingAndUnsupported \
-            TestManualExternalDemandCannotBeOmitted \
-            TestManualQueuedRunListsKeepPrivatePreimages; do
-            printf '%s\n' "$out" | grep -q -- "^[[:space:]]*--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
-          done
-          # This observer identifies the actual Runtime through Linux /proc.
-          # Every other named helper/gate test is mandatory on both hosts.
-          if [ "$RUNNER_OS" = Linux ]; then
-            name=TestManualGovernedActualRuntimeHasNoAuthorityFD
-            printf '%s\n' "$out" | grep -q -- "^[[:space:]]*--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
-          fi
-      - name: Unit, conformance and cross-process recovery tests
-        run: |
-          JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
-          JPACK_EARLIER_TEST_BIN="$RUNNER_TEMP/jpack-earlier" \
-          JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
-          JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
-          JPACK_OLD_RUNNER_TEST_BIN="$RUNNER_TEMP/jpack-runner-old" \
-          go test -race ./...
-      # A skipped test passes `go test`; these must run (#35, #54, #55).
-      - name: Chain, signature, binding and ownership tests run under the pinned Runtimes
-        run: |
-          out="$(JPACK_TEST_BIN="$RUNNER_TEMP/jpack" \
-            JPACK_EARLIER_TEST_BIN="$RUNNER_TEMP/jpack-earlier" \
-            JPACK_GATEWAY_TEST_BIN="$RUNNER_TEMP/gateway" \
-            JPACK_MCP_ADAPTER_TEST_BIN="$RUNNER_TEMP/adapter-mcp" \
-            go test -count=1 -v \
-            -run '^(TestTheRuntimesVerifierReadsTheChainOfRuns|TestASignedRunKeepsItsSignature|TestVerifyRunChecksARunTheRuntimeSigned|TestASeedReplacedAfterStartSignsNothing|TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed|TestAnOperationalEvaluationBindsItsPreparation|TestABindingTheRuntimeRefusesFailsTheRun|TestARecordWithoutTheBindingPassedFailsTheRun|TestARuntimeWithoutTheBindingIsGivenNone|TestVerifyRunHoldsTheRecordsBindingToThePreparation|TestVerifyRunReportsARecordTheRuntimeDidNotBind|TestARuntimeThatDoesNotSayItsReleaseEvaluatesNothing|TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart|TestARunWhoseReceiptSessionIsNoTokenIsEvaluatedExportedAndVerified|TestExecutorOwnedServiceRealRuntimeJobsAndChecks|TestExecutorOwnedRealRuntimeSurvivesOwnerDeath)$' \
-            ./internal/runner ./cmd/jpack-runner)" || { printf '%s\n' "$out"; exit 1; }
-          printf '%s\n' "$out"
-          for name in TestTheRuntimesVerifierReadsTheChainOfRuns TestASignedRunKeepsItsSignature TestVerifyRunChecksARunTheRuntimeSigned TestASeedReplacedAfterStartSignsNothing TestAnEarlierRuntimeSigningWithAReplacedSeedIsNamed TestAnOperationalEvaluationBindsItsPreparation TestABindingTheRuntimeRefusesFailsTheRun TestARecordWithoutTheBindingPassedFailsTheRun TestARuntimeWithoutTheBindingIsGivenNone TestVerifyRunHoldsTheRecordsBindingToThePreparation TestVerifyRunReportsARecordTheRuntimeDidNotBind TestARuntimeThatDoesNotSayItsReleaseEvaluatesNothing TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart/2 TestNamedDialectRealRuntimeReleaseRunOfflineAndRestart/3 TestARunWhoseReceiptSessionIsNoTokenIsEvaluatedExportedAndVerified TestExecutorOwnedServiceRealRuntimeJobsAndChecks; do
-            printf '%s\n' "$out" | grep -q -- "^[[:space:]]*--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
-          done
-          # The exact real-Runtime lifetime observer uses Linux /proc and an
-          # isolated subreaper. The cross-platform Service test above is required
-          # on both CI hosts; Linux must also prove both owner-stop boundaries.
-          if [ "$RUNNER_OS" = Linux ]; then
-            for name in TestExecutorOwnedRealRuntimeSurvivesOwnerDeath TestExecutorOwnedRealRuntimeSurvivesOwnerDeath/close TestExecutorOwnedRealRuntimeSurvivesOwnerDeath/kill; do
-              printf '%s\n' "$out" | grep -q -- "^[[:space:]]*--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
-            done
-          fi
-      - name: Check API document
-        run: python3 -m json.tool openapi.json > /dev/null
-      - name: Build Runner
-        run: |
-          go build -trimpath -o "$RUNNER_TEMP/jpack-runner" ./cmd/jpack-runner
-          go build -trimpath -o "$RUNNER_TEMP/jpack-source-worker" ./cmd/jpack-source-worker
+      # The pinned Runtimes, the ownership-era Runner and the Gateway are checked out and built by
+      # the build-pinned step (scripts/checks/build-pinned.sh).
+      - name: Checks
+        run: scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs
 
   # What a repository release carries (docs/releasing.md), checked on every
   # commit so a tag is never the first to find a gap. The toolchain is the exact
@@ -199,21 +52,5 @@ jobs:
         with:
           go-version: '1.26.5'
           cache: true
-      - name: Check the toolchain is the one the release workflow names
-        run: |
-          named="$(sed -n "s/^ *go-version: *['\"]\{0,1\}\([0-9][0-9.]*\)['\"]\{0,1\} *\$/\1/p" .github/workflows/release.yml)"
-          [ -n "$named" ] && [ "go$named" = "$(go env GOVERSION)" ] || { echo "release.yml names Go ${named:-nothing}; this job runs $(go env GOVERSION)"; exit 1; }
-      - name: Check third-party notices against linked modules
-        run: python3 tools/third_party_notices.py --check
-      # What the release workflow checks of its archives, run against sound
-      # archives and against archives spoiled one way at a time: real programs,
-      # built by this toolchain and archived.
-      - name: Check the archive check refuses each fault it names
-        run: python3 tools/test_release_archives.py
-      # Names in a file compared with directories: an early warning only. The
-      # release workflow checks the archives themselves.
-      - name: Check every program is named in the release build
-        run: |
-          want="$(ls cmd | sort)"
-          have="$(sed -n 's/^    binary: //p' .goreleaser.yml | sort)"
-          [ "$want" = "$have" ] || { echo "cmd and .goreleaser.yml name different programs:"; diff <(echo "$want") <(echo "$have"); exit 1; }
+      - name: The release steps of dev.json
+        run: scripts/dev/check.sh --all --only release-toolchain,third-party-notices,release-archives,release-programs

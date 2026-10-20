@@ -2,3 +2,6 @@
 *.sqlite*
 /dist/
 __pycache__/
+
+# The pinned Runtimes, Gateway and old Runner the tests run against (scripts/checks/build-pinned.sh).
+/.ci/

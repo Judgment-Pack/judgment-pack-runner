@@ -511,6 +511,15 @@ release it reports, so a Runtime built from source must name its release, as CI'
 `go build -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=<release>"`.
 The fixture is a synthetic Apache-2.0 Runtime specification example, not business policy.
 
+`scripts/dev/check.sh` runs every check CI runs, in order, and prints one summary block of passes,
+failures and skips; `--only NAME` re-runs one check. The checks are listed in
+[`dev.json`](dev.json), the manifest of the Judgment Pack development kit (v0.1.0), whose runner is
+vendored here unchanged; the longer ones are scripts under `scripts/checks/`. The real-Runtime
+steps build the pinned Runtimes and Gateway into `.ci/` first and need network access for that.
+`AGENTS.md` and `CLAUDE.md` carry the same instructions for agent sessions, shared rules first and
+this repository's own after them; CI checks that the two are identical (`scripts/sync-agent-docs.sh`
+writes `CLAUDE.md` from `AGENTS.md`).
+
 ## License and contributions
 
 This repository is public and licensed under [Apache-2.0](LICENSE). Report bugs or
