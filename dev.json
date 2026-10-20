@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "toolchains": {"go": {}, "python": {}},
+  "checks": [
+    {"name": "local-paths", "run": "scripts/checks/local-paths.sh", "toolchain": "shell"},
+    {"name": "agent-docs", "run": "scripts/sync-agent-docs.sh --check .", "toolchain": "shell", "summary": "^sync-agent-docs:"},
+    {"name": "diff-check", "run": "git diff --check \"$(git hash-object -t tree /dev/null)\"", "toolchain": "shell"},
+    {"name": "go-fmt", "run": "unformatted=$(gofmt -l $(go list -f '{{.Dir}}' ./...)); if [ -n \"$unformatted\" ]; then echo 'not gofmt-formatted:'; echo \"$unformatted\"; exit 1; fi", "toolchain": "go", "timeout": 600},
+    {"name": "go-vet", "run": "go vet ./...", "toolchain": "go", "timeout": 3000},
+    {"name": "build-pinned", "run": "scripts/checks/build-pinned.sh", "toolchain": "go", "timeout": 3000},
+    {"name": "manual-gate", "run": "scripts/checks/manual-gate.sh", "toolchain": "go", "summary": "^(ok|FAIL|---) ", "timeout": 3000},
+    {"name": "unit-tests", "run": "scripts/checks/unit-tests.sh", "toolchain": "go", "summary": "^(ok|FAIL|---) ", "timeout": 3000},
+    {"name": "chain-tests", "run": "scripts/checks/chain-tests.sh", "toolchain": "go", "summary": "^(ok|FAIL) ", "timeout": 3000},
+    {"name": "openapi", "run": "python3 -m json.tool openapi.json > /dev/null", "toolchain": "python"},
+    {"name": "build", "run": "go build -trimpath -o /dev/null ./cmd/jpack-runner && go build -trimpath -o /dev/null ./cmd/jpack-source-worker", "toolchain": "go", "timeout": 3000},
+    {"name": "release-toolchain", "run": "scripts/checks/release-toolchain.sh", "toolchain": "go", "timeout": 600},
+    {"name": "third-party-notices", "run": "python3 tools/third_party_notices.py --check", "toolchain": "go", "timeout": 3000},
+    {"name": "release-archives", "run": "python3 tools/test_release_archives.py", "toolchain": "go", "summary": "^(Ran |OK|FAILED)", "timeout": 3000},
+    {"name": "release-programs", "run": "scripts/checks/release-programs.sh", "toolchain": "shell"}
+  ]
+}
