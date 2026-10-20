@@ -190,8 +190,8 @@ synchronize these observations; process IDs and elapsed time never determine
 eligibility. A separate race test exercises concurrent `Close` and `Start`.
 
 ```sh
-GOCACHE=/tmp/jps-policy-coverage-go-cache go test ./internal/runner -run '^TestExecutorLease' -count=1
-GOCACHE=/tmp/jps-policy-coverage-go-cache go test -race ./internal/runner -run '^TestExecutorLease' -count=1
+GOCACHE=<scratch> go test ./internal/runner -run '^TestExecutorLease' -count=1
+GOCACHE=<scratch> go test -race ./internal/runner -run '^TestExecutorLease' -count=1
 ```
 
 Running these tests on Linux demonstrates the tested Linux behavior. Compile
@@ -219,7 +219,7 @@ owner death cannot trigger a premature stdout failure at the protected boundary.
 The integration requires `JPACK_TEST_BIN` and does not substitute a mock process.
 
 ```sh
-GOCACHE=/tmp/jps-policy-coverage-go-cache JPACK_TEST_BIN=/absolute/path/to/jpack \
+GOCACHE=<scratch> JPACK_TEST_BIN=/absolute/path/to/jpack \
   go test -race ./cmd/jpack-runner ./internal/runner -run '^TestExecutorOwn' -count=1
 ```
 

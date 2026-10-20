@@ -4,8 +4,6 @@
 # written in a design note before this check existed. A new file is checked.
 set -e
 if git grep -nE '(^|[^A-Za-z0-9_])/(home|tmp)/[A-Za-z0-9_.-]+' -- . ':!*.png' ':!*.jpg' \
-  ':!docs/design/executor-ownership.md' \
-  ':!docs/design/manual-admission-store-prepare-shape.md' \
   ':!docs/design/manual-admission-store-prepare-wire.json' \
   ':!internal/runner/cloud_test.go'; then
   echo 'a machine-local path is in tracked text'; exit 1
