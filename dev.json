@@ -17,5 +17,9 @@
     {"name": "third-party-notices", "run": "python3 tools/third_party_notices.py --check", "toolchain": "go", "timeout": 3000},
     {"name": "release-archives", "run": "python3 tools/test_release_archives.py", "toolchain": "go", "summary": "^(Ran |OK|FAILED)", "timeout": 3000},
     {"name": "release-programs", "run": "scripts/checks/release-programs.sh", "toolchain": "shell"}
-  ]
+  ],
+  "handover": {
+    "boundary_paths": ["internal/runner", "internal/derivation"],
+    "shared_paths": ["vectors", "docs/adr"]
+  }
 }
