@@ -2,7 +2,7 @@
 
 ## Support status
 
-This is a **research preview**: a single-owner, local jobs pilot. It is pre-1.0 and provides no
+This is a **single-owner, local Jobs runner**. It is pre-1.0 and provides no
 security, compatibility, or support service-level guarantee. It must not be used as the sole control
 for consequential production decisions. A retained run records what the pinned runtime answered for
 the inputs it was given. It is not a statement that those inputs were true, and it approves no
