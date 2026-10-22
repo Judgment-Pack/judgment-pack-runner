@@ -9,7 +9,7 @@ facts and evidence availability, run the pinned evaluator, and retain the result
 and audit history. It also stores on-demand job and run briefs. All job artifacts
 remain on the local filesystem, with SQLite holding the queue and records.
 
-**Research preview — single-owner local Jobs pilot.** Runner supports durable local
+**A single-owner local Jobs runner.** Runner supports durable local
 schedules, stable JSON file changes, authenticated events, Google Cloud Scheduler
 delivery and unattended Gateway operation mappings. AWS/Azure adapters, external
 actions, graph execution, shared-user permissions and AI agent loops are not implemented. Closing a browser does not stop work;
