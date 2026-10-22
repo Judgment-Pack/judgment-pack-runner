@@ -329,6 +329,9 @@ func verifyPreparation(b VerificationBundle, profiles []InputProfile, judged *[]
 	if !sameJSON(encode(prepared.Preparation), encode(r.Input.Preparation)) {
 		return prepared, errors.New("retained lineage does not match recomputation")
 	}
+	if !sameJSON(r.Input.Facts, prepared.Facts) || !sameJSON(r.Input.Evidence, prepared.Evidence) {
+		return prepared, errors.New("retained facts or evidence do not match verified derivation")
+	}
 	if r.State == "completed" && !auditRecordsInputs(r.Audit, release, prepared, prepared.Preparation.Cites) {
 		return prepared, errors.New("retained audit inputs or citations do not match verified inputs")
 	}

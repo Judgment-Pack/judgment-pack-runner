@@ -6,6 +6,7 @@ package runner
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"regexp"
 	"strings"
@@ -226,6 +227,11 @@ func checkWorkflowBindings(bindings []workflowBinding) error {
 // outcomes, artifact pins, bindings and generated influence requires freezing
 // and is deliberately not claimed here. Unknown dialect versions stay unread.
 func readWorkflow(raw []byte) (workflowDocument, []byte, error) {
+	return readWorkflowVersion(raw, 1)
+}
+
+// The private v2 writer selects its version explicitly; the v1 reader remains unchanged.
+func readWorkflowVersion(raw []byte, expected int) (workflowDocument, []byte, error) {
 	var d workflowDocument
 	v, canonical, err := workflowValue(raw, 262144, 64)
 	if err != nil {
@@ -235,7 +241,7 @@ func readWorkflow(raw []byte) (workflowDocument, []byte, error) {
 	if !ok {
 		return d, nil, errWorkflowForm
 	}
-	if version, exists := o["workflowVersion"]; exists && version != json.Number("1") {
+	if version, exists := o["workflowVersion"]; exists && version != json.Number(fmt.Sprint(expected)) {
 		return d, nil, errWorkflowVersion
 	}
 	stages, ok := o["stages"].([]any)

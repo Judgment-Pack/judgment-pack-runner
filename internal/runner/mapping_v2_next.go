@@ -101,13 +101,8 @@ func preflightPreparation(m InputMapping, profiles []InputProfile, admission boo
 			if (profile.Calculator != nil) != (source.Calculation != nil) {
 				return withCode(codeMismatch, fmt.Errorf("source %s: a calculator's profile and a calculation binding go together", source.Name))
 			}
-			// An MCP operation's request is a tool call its profile allows.
-			// A request to a source of another shape is held to the
-			// template rules alone (adapterShapes).
-			if source.Kind == "operation" && profile.Shape == "mcp" {
-				if err := mcpToolCall(source, profile); err != nil {
-					return withCode(codeMismatch, err)
-				}
+			if err := profileRequestForm(source, profile, m); err != nil {
+				return err
 			}
 		}
 		gen := class == "generated"
@@ -120,6 +115,66 @@ func preflightPreparation(m InputMapping, profiles []InputProfile, admission boo
 				return researchFail(codeAdmission, "source %s: %v", source.Name, err)
 			}
 			return fmt.Errorf("source %s: %w", source.Name, err)
+		}
+	}
+	return nil
+}
+
+// The same profile-specific request contract holds before acquisition and
+// when a saved release is frozen into a workflow, including an unused stage.
+func profileRequestForm(source MappingSource, profile InputProfile, m InputMapping) error {
+	if source.Kind != "operation" {
+		return nil
+	}
+	if profile.Shape == "mcp" {
+		if err := mcpToolCall(source, profile); err != nil {
+			return withCode(codeMismatch, err)
+		}
+	}
+	if profile.Adapter.Name == "adapter-http" {
+		return withCode(codeMismatch, adapterHTTPQuery(source, m))
+	}
+	return nil
+}
+
+// Dialect §4.1 constrains adapter-http's query, not arbitrary requests to
+// other HTTP-shaped adapters. The surrounding dialect validation has already
+// checked template syntax; here the profile determines its allowed types.
+func adapterHTTPQuery(source MappingSource, m InputMapping) error {
+	v, err := readInputJSON(source.Arguments)
+	if err != nil {
+		return err
+	}
+	request, ok := v.(map[string]any)
+	if !ok {
+		return errors.New("operation arguments must be an object")
+	}
+	v, present := request["query"]
+	if !present {
+		return nil
+	}
+	query, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Errorf("source %s: adapter-http query must be an object of string templates", source.Name)
+	}
+	if _, parameter := query["$param"]; parameter {
+		return fmt.Errorf("source %s: adapter-http query must not be a template form", source.Name)
+	}
+	if _, text := query["$text"]; text {
+		return fmt.Errorf("source %s: adapter-http query must not be a template form", source.Name)
+	}
+	scope := map[string]string{}
+	if m.Case != nil {
+		for name, parameter := range m.Case.Parameters {
+			scope[name] = parameter.Type
+		}
+	}
+	for name, parameter := range source.Parameters {
+		scope[name] = parameter.Type
+	}
+	for name, value := range query {
+		if !stringTemplate(value, scope) {
+			return fmt.Errorf("source %s: adapter-http query member %s must be a string template", source.Name, name)
 		}
 	}
 	return nil

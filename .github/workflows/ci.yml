@@ -39,6 +39,69 @@ jobs:
       - name: Checks
         run: scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs
 
+  workflow-admission-experiment:
+    name: Proposed workflow admission recordings
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check out independently authored experimental reader
+        uses: actions/checkout@v4
+        with:
+          repository: Judgment-Pack/judgment-pack-spec
+          ref: abd9da216e2897969a3b9ff850ec98de27a5de78 # reviewed Draft RFC 0022 reader; not adopted conformance
+          path: .ci-workflow-spec
+          persist-credentials: false
+      - name: Install reader dependencies
+        run: python -m pip install --disable-pip-version-check -r .ci-workflow-spec/requirements-dev.txt
+      - uses: actions/checkout@v4
+        with:
+          repository: Judgment-Pack/judgment-pack-runtime
+          ref: 785ea58927255b775a774e29952c560591429cd3 # v0.34.0
+          path: .ci-workflow-runtime
+          persist-credentials: false
+      - name: Build pinned Runtime
+        working-directory: .ci-workflow-runtime
+        run: go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.34.0" -o "$RUNNER_TEMP/workflow-jpack" ./cmd/jpack
+      # These are internal experiments for proposed RFC 0022. Signed synthetic
+      # endpoints exercise real preparation/evaluation; they are not live models
+      # or installed Gateway adapters. Exported profiles contain public keys only.
+      - name: Record operation and research journeys and admission regressions
+        env:
+          JPACK_TEST_BIN: ${{ runner.temp }}/workflow-jpack
+          JPACK_WORKFLOW_V2_RECORDING_DIR: ${{ runner.temp }}/workflow-recordings
+        run: |
+          set -o pipefail
+          go test -race -count=1 -v ./internal/runner -run '^TestWorkflowV2' | tee "$RUNNER_TEMP/workflow-tests.log"
+          for name in TestWorkflowV2OperationRecording TestWorkflowV2ResearchRecording; do
+            grep -q -- "^--- PASS: $name " "$RUNNER_TEMP/workflow-tests.log" || { echo "$name did not run and pass"; exit 1; }
+          done
+          git rev-parse HEAD > "$RUNNER_TEMP/workflow-recordings/runner-commit.txt"
+          sha256sum "$JPACK_TEST_BIN" > "$RUNNER_TEMP/workflow-recordings/runtime-binary.sha256"
+          printf '%s\n' '785ea58927255b775a774e29952c560591429cd3' > "$RUNNER_TEMP/workflow-recordings/runtime-commit.txt"
+      - name: Compare retained candidates with pinned independent reader
+        run: |
+          python tools/check_workflow_recordings.py \
+            --spec .ci-workflow-spec \
+            --recordings "$RUNNER_TEMP/workflow-recordings" \
+            --output "$RUNNER_TEMP/workflow-comparison.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proposed-workflow-recordings
+          path: |
+            ${{ runner.temp }}/workflow-recordings
+            ${{ runner.temp }}/workflow-tests.log
+            ${{ runner.temp }}/workflow-comparison.json
+          if-no-files-found: error
+
   # What a repository release carries (docs/releasing.md), checked on every
   # commit so a tag is never the first to find a gap. The toolchain is the exact
   # one release.yml names: the notices include the toolchain's own licence.

@@ -129,10 +129,14 @@ func workflowCompanyPeopleRecording(t *testing.T) (workflowInventory, []InputPro
 			name, parameter = "people", "organisationId"
 			root = []byte(`{"organisationId":"a"}`)
 		}
-		m := InputMapping{Version: 3, Case: &CaseMapping{Parameters: map[string]Parameter{parameter: {Pointer: "/" + parameter, Type: "string"}}, Facts: []FactMapping{}, Evidence: []EvidenceMapping{}}, Sources: []MappingSource{{Name: name, Kind: "operation", Profile: profile.ID, ProfileDigest: profileHash(profile), MaxAge: 300, Arguments: encode(map[string]any{parameter: map[string]any{"$param": parameter}}), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/" + name, Source: "/" + name}}, Evidence: []EvidenceMapping{}}}}}, Unmapped: []string{"/request/appropriateness", "/request/completeness", "/request/embargoedInformationToUnauthorizedRecipients", "/request/type"}, UnmappedEvidence: []string{"intake-form", "sponsor-endorsement", "sensitive-data-approvals"}, Admits: &Admission{Facts: map[string][]string{"/" + name: {"generated"}}}}
+		request := map[string]any{parameter: map[string]any{"$param": parameter}}
+		if index == 0 {
+			request = map[string]any{"query": map[string]any{"q": map[string]any{"$param": parameter}}}
+		}
+		m := InputMapping{Version: 3, Case: &CaseMapping{Parameters: map[string]Parameter{parameter: {Pointer: "/" + parameter, Type: "string"}}, Facts: []FactMapping{}, Evidence: []EvidenceMapping{}}, Sources: []MappingSource{{Name: name, Kind: "operation", Profile: profile.ID, ProfileDigest: profileHash(profile), MaxAge: 300, Arguments: encode(request), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/" + name, Source: "/" + name}}, Evidence: []EvidenceMapping{}}}}}, Unmapped: []string{"/request/appropriateness", "/request/completeness", "/request/embargoedInformationToUnauthorizedRecipients", "/request/type"}, UnmappedEvidence: []string{"intake-form", "sponsor-endorsement", "sensitive-data-approvals"}, Admits: &Admission{Facts: map[string][]string{"/" + name: {"generated"}}}}
 		published := encode(unboundOf(m, name, "research-test", name, "http", "adapter-http"))
 		binding := bindingOf(t, published, map[string]InputProfile{name: profile})
-		arguments := []byte(`{"query":"synthetic companies"}`)
+		arguments := []byte(`{"query":{"q":"synthetic companies"}}`)
 		if index == 1 {
 			arguments = []byte(`{"organisationId":"a"}`)
 		}
