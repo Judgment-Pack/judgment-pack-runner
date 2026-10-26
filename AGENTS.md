@@ -70,6 +70,17 @@ summary block, and anything you stopped on or chose not to do.
   from pinned Runtime, Gateway and old-Runner commits (it needs network access to fetch them). A
   pin and the release name beside it are moved together. The two test steps fail if a named test
   does not run and pass, so a skip is a failure there.
+- A pull request's `Runner` jobs run `scripts/dev/check.sh --all --changed origin/<base>` (less
+  the four release steps): only the steps `jpdev.json` maps the changed paths to, and the whole
+  list when a changed path matches no rule (the workflows, `.gitattributes`, `.gitignore`, a file
+  in a new place) or when `jpdev.json`, `dev.json` or the runner changed. A push to `main` runs the
+  whole list, and only that run is what a release is held to; `Release contents` always runs its
+  four steps. Run the same selection locally with `scripts/dev/check.sh --changed origin/main` (or
+  `jpdev check --changed`). The test steps need `build-pinned` first, so every rule that selects
+  `manual-gate`, `unit-tests` or `chain-tests` selects `build-pinned` too. The Go tests read
+  `openapi.json`, `vectors/`, `docs/MAPPING-V2.md`, `docs/design/*.json` and test data across
+  packages, so those paths select the test steps. A new step, a new input of a step or a test that
+  reads a new file is mapped in `jpdev.json`; when unsure, map it broader.
 - Runner is a single-owner local Jobs pilot; do not add shared-user permissions, external actions
   or agent loops. Do not put real credentials, customer evidence or private operational records in
   examples or fixtures.

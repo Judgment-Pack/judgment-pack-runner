@@ -4,7 +4,9 @@ name: CI
 # the longer steps are scripts under scripts/checks/ with the comments they had here. Two jobs, both
 # required by branch protection under their names: `Runner (<os>)` runs every step but the release
 # ones on Linux and macOS, and `Release contents` runs the release steps with the exact toolchain
-# release.yml names.
+# release.yml names. On a pull request the `Runner` jobs run only the steps jpdev.json maps the
+# changed paths to (`check.sh --changed`); on a push to main, and when release.yml calls this
+# workflow at a tag, they run the whole list. `Release contents` runs its four steps every time.
 
 on:
   pull_request:
@@ -26,7 +28,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
+      # The whole history, so that --changed finds the merge base with the base branch.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # First, so that a manifest that does not parse fails before the long steps start.
       - name: The manifest parses and its first step runs
         run: scripts/dev/check.sh --manifest dev.json --only local-paths
@@ -36,8 +41,20 @@ jobs:
           cache: true
       # The pinned Runtimes, the ownership-era Runner and the Gateway are checked out and built by
       # the build-pinned step (scripts/checks/build-pinned.sh).
+      # A pull request runs the steps jpdev.json maps its changed paths to, and the whole list when
+      # a path is unmapped or the mapping, dev.json or the runner changed. A push to main runs the
+      # whole list, and only that run is what a release is held to. The release steps are skipped
+      # here either way: `Release contents` runs them.
       - name: Checks
-        run: scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip release-toolchain,third-party-notices,release-archives,release-programs
+          else
+            scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs
+          fi
 
   # What a repository release carries (docs/releasing.md), checked on every
   # commit so a tag is never the first to find a gap. The toolchain is the exact
