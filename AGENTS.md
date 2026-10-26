@@ -81,6 +81,11 @@ summary block, and anything you stopped on or chose not to do.
   `openapi.json`, `vectors/`, `docs/MAPPING-V2.md`, `docs/design/*.json` and test data across
   packages, so those paths select the test steps. A new step, a new input of a step or a test that
   reads a new file is mapped in `jpdev.json`; when unsure, map it broader.
+- A release takes main's CI evidence at the tagged commit instead of running CI again
+  (`scripts/dev/release_evidence.py`, configured by `.github/ci-evidence.json`; docs/releasing.md,
+  "CI at the tag"), so a change to a CI job's name, a matrix leg, the check list or the Go
+  toolchain, or a new step script that pins a companion or names must-run tests, changes that file
+  in the same pull request; `tools/test_ci_evidence.py` fails until it does.
 - Runner is a single-owner local Jobs pilot; do not add shared-user permissions, external actions
   or agent loops. Do not put real credentials, customer evidence or private operational records in
   examples or fixtures.

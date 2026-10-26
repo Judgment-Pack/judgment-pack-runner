@@ -3,16 +3,19 @@ name: CI
 # The check list is dev.json, run by scripts/dev/check.sh (the development kit's vendored runner);
 # the longer steps are scripts under scripts/checks/ with the comments they had here. Two jobs, both
 # required by branch protection under their names: `Runner (<os>)` runs every step but the release
-# ones on Linux and macOS, and `Release contents` runs the release steps with the exact toolchain
-# release.yml names. On a pull request the `Runner` jobs run only the steps jpdev.json maps the
-# changed paths to (`check.sh --changed`); on a push to main, and when release.yml calls this
-# workflow at a tag, they run the whole list. `Release contents` runs its four steps every time.
+# ones on Linux and macOS, and `Release contents` runs the release steps. Both set up the exact
+# toolchain release.yml names. On a pull request the `Runner` jobs run only the steps jpdev.json
+# maps the changed paths to (`check.sh --changed`); on a push to main they run the whole list.
+# `Release contents` runs its four steps every time. A push to main also records each job's
+# evidence (scripts/dev/release_evidence.py capture), which the release takes at that commit
+# instead of running this workflow again (docs/releasing.md, "CI at the tag").
 
 on:
   pull_request:
   push:
     branches: [main]
-  # The release workflow calls this one at a tag (release.yml).
+  # Kept; the release no longer calls this workflow. A refusal at the tag is answered by re-running
+  # main's run at the commit (docs/releasing.md), which keeps the evidence a push-to-main run's.
   workflow_call:
 
 permissions:
@@ -35,26 +38,42 @@ jobs:
       # First, so that a manifest that does not parse fails before the long steps start.
       - name: The manifest parses and its first step runs
         run: scripts/dev/check.sh --manifest dev.json --only local-paths
+      # The exact toolchain release.yml links the archives with, so that the integration tests a
+      # release takes as its proof ran under it (.github/ci-evidence.json pins it).
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.5'
           cache: true
       # The pinned Runtimes, the ownership-era Runner and the Gateway are checked out and built by
       # the build-pinned step (scripts/checks/build-pinned.sh).
       # A pull request runs the steps jpdev.json maps its changed paths to, and the whole list when
       # a path is unmapped or the mapping, dev.json or the runner changed. A push to main runs the
       # whole list, and only that run is what a release is held to. The release steps are skipped
-      # here either way: `Release contents` runs them.
+      # here either way: `Release contents` runs them. The summary is kept for the evidence.
       - name: Checks
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
         run: |
+          set -o pipefail
           if [ "$EVENT" = pull_request ]; then
-            scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip release-toolchain,third-party-notices,release-archives,release-programs
+            scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip release-toolchain,third-party-notices,release-archives,release-programs | tee "${{ runner.temp }}/checks.log"
           else
-            scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs
+            scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs | tee "${{ runner.temp }}/checks.log"
           fi
+      # The commit, its input identities, this runner's image and tools, and every check's result:
+      # the evidence the release takes (.github/ci-evidence.json). Only a push to main records it.
+      - name: Record exact CI inputs and coverage
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: python3 scripts/dev/release_evidence.py capture --workflow ci --job runner-${{ matrix.os }} --check-log "${{ runner.temp }}/checks.log" --output "${{ runner.temp }}/evidence.json"
+      - name: Upload immutable CI evidence
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-evidence-ci-runner-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence.json
+          if-no-files-found: error
+          retention-days: 7
 
   # What a repository release carries (docs/releasing.md), checked on every
   # commit so a tag is never the first to find a gap. The toolchain is the exact
@@ -70,4 +89,17 @@ jobs:
           go-version: '1.26.5'
           cache: true
       - name: The release steps of dev.json
-        run: scripts/dev/check.sh --all --only release-toolchain,third-party-notices,release-archives,release-programs
+        run: |
+          set -o pipefail
+          scripts/dev/check.sh --all --only release-toolchain,third-party-notices,release-archives,release-programs | tee "${{ runner.temp }}/checks.log"
+      - name: Record exact CI inputs and coverage
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: python3 scripts/dev/release_evidence.py capture --workflow ci --job release-contents --check-log "${{ runner.temp }}/checks.log" --output "${{ runner.temp }}/evidence.json"
+      - name: Upload immutable CI evidence
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-evidence-ci-release-contents-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence.json
+          if-no-files-found: error
+          retention-days: 7
