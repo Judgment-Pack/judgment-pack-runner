@@ -7,7 +7,8 @@ name: Release
 # which is Runner's own record and is unaffected.
 #
 # A person decides there is a release and writes its notes
-# (docs/releases/<tag>.md). The workflow holds the tagged commit to CI, builds
+# (docs/releases/<tag>.md). The workflow holds the tagged commit to the CI
+# evidence main produced for it (docs/releasing.md, "CI at the tag"), builds
 # from it, runs three of the four archives on their own platforms, and
 # publishes no release until a maintainer approves the `production`
 # environment.
@@ -101,15 +102,48 @@ jobs:
             || { echo "The production environment could not be read; create it with a required reviewer (docs/releasing.md)" >&2; exit 1; }
           [ "${reviewers}" -ge 1 ] || { echo "The production environment requires no reviewer" >&2; exit 1; }
 
-  # The tagged commit's own ci.yml, called, so release.yml carries no second
-  # copy of the checks or of the Runtime and Gateway pins. A check main has
-  # gained since that commit is not run.
+  # The CI evidence main already produced at this exact commit, or a refusal
+  # (docs/releasing.md, "CI at the tag"): both Runner jobs and Release contents,
+  # every check passed, against the pins the commit holds, with the toolchain
+  # below. ci.yml is not called again, and a refusal stops the release: the
+  # fresh route is the operator's. Every other job's checks stay as they were.
   verify:
     name: CI at the tag
     needs: admit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
-    uses: ./.github/workflows/ci.yml
+      # Reading the CI runs, their jobs and their evidence artifacts.
+      actions: read
+    steps:
+      - name: Check out the commit the run was started for
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      # The Linux jobs' evidence must name this runner's image and tools, and
+      # the Go toolchain the package job links with (.github/ci-evidence.json).
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.5
+          cache: false
+
+      - name: Reuse main's exact-commit CI evidence, or refuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/dev/release_evidence.py verify --output "${{ runner.temp }}/release-evidence.json"
+
+      # The decision record, reuse or refusal, is also in the log of the step above.
+      - name: Keep the decision record
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-evidence.json
+          if-no-files-found: error
 
   package:
     name: Package

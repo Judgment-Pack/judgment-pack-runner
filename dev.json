@@ -13,6 +13,7 @@
     {"name": "chain-tests", "run": "scripts/checks/chain-tests.sh", "toolchain": "go", "summary": "^(ok|FAIL) ", "timeout": 3000},
     {"name": "openapi", "run": "python3 -m json.tool openapi.json > /dev/null", "toolchain": "python"},
     {"name": "build", "run": "go build -trimpath -o /dev/null ./cmd/jpack-runner && go build -trimpath -o /dev/null ./cmd/jpack-source-worker", "toolchain": "go", "timeout": 3000},
+    {"name": "ci-evidence", "run": "python3 tools/test_ci_evidence.py", "toolchain": "python", "summary": "^(Ran |OK|FAILED)"},
     {"name": "release-toolchain", "run": "scripts/checks/release-toolchain.sh", "toolchain": "go", "timeout": 600},
     {"name": "third-party-notices", "run": "python3 tools/third_party_notices.py --check", "toolchain": "go", "timeout": 3000},
     {"name": "release-archives", "run": "python3 tools/test_release_archives.py", "toolchain": "go", "summary": "^(Ran |OK|FAILED)", "timeout": 3000},
