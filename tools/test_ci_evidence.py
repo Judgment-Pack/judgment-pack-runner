@@ -191,8 +191,9 @@ class Checks(unittest.TestCase):
             script = re.fullmatch(r'(scripts/checks/[A-Za-z0-9_-]+\.sh)', row['run'])
             if script and re.search(r'^fetch_pin |did not run and pass', read(script.group(1)), re.M):
                 named.append((row['name'], script.group(1)))
-        self.assertTrue(any(name == 'build-pinned' for name, _ in named))
-        self.assertTrue(any(name == 'chain-tests' for name, _ in named))
+        # Named too: a script that lost its must-run assertions would drop out of the derivation.
+        self.assertTrue({'build-pinned', 'manual-gate', 'unit-tests', 'chain-tests'} <= {name for name, _ in named},
+                        named)
         runner = [spec for spec in settings['workflows']['ci']['jobs'].values() if spec['job_id'] == 'check']
         self.assertEqual(len(runner), 2)
         for name, script in named:
@@ -232,6 +233,9 @@ class Toolchain(unittest.TestCase):
                 self.assertEqual(RUNNER_OS[label.split('-')[0]], platform['RUNNER_OS'])
                 self.assertEqual(profile['pins']['go'], 'go version go%s %s/%s' % (
                     version, GOOS[platform['RUNNER_OS']], GOARCH[platform['RUNNER_ARCH']]))
+                # A leg the release job cannot compare with its own runner is held to its image family.
+                if profile['compare'] == 'pins':
+                    self.assertRegex(platform.get('ImageOS', ''), r'^[a-z]+[0-9]+$')
 
     def test_a_leg_compared_with_the_release_runner_runs_where_the_release_job_does(self):
         settings = config()

@@ -229,14 +229,22 @@ The release reuses that evidence only when all of this holds, and refuses otherw
   and Gateway at the commits `scripts/checks/build-pinned.sh` pins. `manual-gate`,
   `chain-tests` and `unit-tests` fail when one of the tests they name did not run and pass, so a
   `PASS` of each, on both Runner legs, is the proof that those tests ran against the pinned
-  builds and did not skip. The evidence carries the object ids of those four scripts, of
-  `go.mod` and `go.sum`, of `scripts/checks/release-toolchain.sh`, `scripts/dev/check.sh`, both
+  builds and did not skip. Two of them, with two subtests, are required on Linux only, because
+  they observe the Runtime through Linux `/proc`, and may skip on macOS by design:
+  `TestManualGovernedActualRuntimeHasNoAuthorityFD` (`manual-gate`) and
+  `TestExecutorOwnedRealRuntimeSurvivesOwnerDeath` with `/close` and `/kill` (`chain-tests`).
+  The evidence carries the object ids of those four scripts, of `go.mod` and `go.sum`, of
+  `scripts/checks/release-toolchain.sh`, `scripts/dev/check.sh`, the `Release contents` scripts
+  (`scripts/checks/release-programs.sh`, `tools/third_party_notices.py`,
+  `tools/release_archives.py`, `tools/test_release_archives.py`) and `.goreleaser.yml`, both
   workflows, `dev.json`, the configuration and the gate, and the release derives the same ids
   from its own checkout.
 - **The release toolchain.** All three jobs set up Go 1.26.5, the toolchain `package` links the
   archives with. The two Linux jobs' image, OS release, Go, Python, git and bash must equal what
   this job's runner resolves with the same Go set up; the macOS job must have run Go 1.26.5 on
-  macOS ARM64 (its image version is recorded in the decision record and not compared).
+  macOS ARM64 with the image family `macos26` (`ImageOS`). A newer image of that family is
+  accepted for the 48 hours the evidence lasts: its version is recorded in the decision record
+  and not compared.
 - **The tag.** The tag is annotated, names the commit, and is the same tag object when the
   gate starts and after it has read everything.
 
@@ -276,6 +284,9 @@ once:
    `gh run rerun <release run id> --failed --repo Judgment-Pack/judgment-pack-runner`.
 3. If the gate refuses again, or the evidence cannot be made at that commit (a failure that is
    the code's, inputs that stay incompatible), fix the cause on `main` and release a new
+   version. One exception: `runtime-identity` naming the Linux image version while GitHub is
+   rolling a new hosted image out (main's jobs and this job landed on different versions) is
+   not the code's. Wait for the rollout to finish and take the route again; it needs no new
    version.
 
 `run-unfinished` usually means the tag was pushed while main CI at the commit was still
@@ -286,6 +297,20 @@ The gate is first exercised live on the first push to `main` after it lands (the
 capture) and at the next release (the gate itself). The tests that ship with the kit run it
 over handwritten API answers; `tools/test_ci_evidence.py` holds the configuration to `ci.yml`,
 `release.yml` and `dev.json`, and the vendored gate to the kit's.
+
+### Moving a pin
+
+- **The Go toolchain.** Every `go-version` in `ci.yml` (`Runner` and `Release contents`) and
+  `release.yml` (`Package` and `CI at the tag`), and the two `go` pins in
+  `.github/ci-evidence.json`, move together in one pull request; `tools/test_ci_evidence.py`
+  and `release-toolchain` fail until they name one version. CI stays on that exact patch, not
+  on the newest patch the hosted runners hold.
+- **The macOS image family.** When GitHub points `macos-latest` at another macOS, the first
+  push to `main` after it fails at `Runner (macos-latest)`'s capture step with
+  `runner-platform` ("ImageOS is <new>, not macos26"), and a release refuses with
+  `runtime-identity`. Pull request CI stays green: it records no evidence. Move
+  `profiles.macos.platform.ImageOS` to the value the refusal names, in one pull request; its
+  run on `main` records the new evidence.
 
 ## Verifying a download
 
