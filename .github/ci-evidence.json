@@ -49,10 +49,22 @@
       },
       "compare": "release-runner",
       "tools": {
-        "go": ["go", "version"],
-        "python": ["python3", "--version"],
-        "git": ["git", "--version"],
-        "bash": ["bash", "--version"]
+        "go": [
+          "go",
+          "version"
+        ],
+        "python": [
+          "python3",
+          "--version"
+        ],
+        "git": [
+          "git",
+          "--version"
+        ],
+        "bash": [
+          "bash",
+          "--version"
+        ]
       },
       "pins": {
         "go": "go version go1.26.5 linux/amd64"
@@ -72,7 +84,10 @@
       },
       "compare": "pins",
       "tools": {
-        "go": ["go", "version"]
+        "go": [
+          "go",
+          "version"
+        ]
       },
       "pins": {
         "go": "go version go1.26.5 darwin/arm64"
@@ -87,30 +102,72 @@
       ],
       "path": ".github/workflows/ci.yml",
       "name": "CI",
-      "events": ["push"],
+      "events": [
+        "push"
+      ],
       "jobs": {
         "runner-ubuntu-latest": {
           "name": "Runner (ubuntu-latest)",
           "job_id": "check",
-          "labels": ["ubuntu-latest"],
+          "labels": [
+            "ubuntu-latest"
+          ],
           "profile": "linux",
-          "checks": ["local-paths", "agent-docs", "diff-check", "go-fmt", "go-vet", "build-pinned", "manual-gate", "unit-tests", "chain-tests", "openapi", "build", "ci-evidence"]
+          "checks": [
+            "local-paths",
+            "agent-docs",
+            "diff-check",
+            "go-fmt",
+            "go-vet",
+            "build-pinned",
+            "manual-gate",
+            "unit-tests",
+            "chain-tests",
+            "openapi",
+            "build",
+            "ci-evidence"
+          ]
         },
         "runner-macos-latest": {
           "name": "Runner (macos-latest)",
           "job_id": "check",
-          "labels": ["macos-latest"],
+          "labels": [
+            "macos-latest"
+          ],
           "profile": "macos",
-          "checks": ["local-paths", "agent-docs", "diff-check", "go-fmt", "go-vet", "build-pinned", "manual-gate", "unit-tests", "chain-tests", "openapi", "build", "ci-evidence"]
+          "checks": [
+            "local-paths",
+            "agent-docs",
+            "diff-check",
+            "go-fmt",
+            "go-vet",
+            "build-pinned",
+            "manual-gate",
+            "unit-tests",
+            "chain-tests",
+            "openapi",
+            "build",
+            "ci-evidence"
+          ]
         },
         "release-contents": {
           "name": "Release contents",
           "job_id": "release-contents",
-          "labels": ["ubuntu-latest"],
+          "labels": [
+            "ubuntu-latest"
+          ],
           "profile": "linux",
-          "checks": ["release-toolchain", "third-party-notices", "release-archives", "release-programs"]
+          "checks": [
+            "release-toolchain",
+            "third-party-notices",
+            "release-archives",
+            "release-programs"
+          ]
         }
       }
     }
+  },
+  "tag": {
+    "prerelease": true
   }
 }
