@@ -10,6 +10,8 @@ import (
 // PlannedSource is an instruction to acquire, not permission to evaluate.
 // The endpoint is read-only: the caller fetches and submits receipts for checking.
 type PlannedSource struct {
+	RetainedColumn     bool           `json:"retainedColumn,omitempty"`
+	ConversionLimits   map[string]int `json:"conversionLimits,omitempty"`
 	retainResponse     bool
 	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`
 	Name               string              `json:"name"`
@@ -37,6 +39,17 @@ func nextInput(input Input, profiles []InputProfile, at time.Time) (InputPlan, e
 	var needed *acquisitionNeeded
 	if errors.As(err, &needed) {
 		needed.PlannedSource.ConversionContract = inputConversion(input)
+		needed.RetainedColumn = needed.retainResponse && inputConversion(input) != nil
+		if needed.RetainedColumn {
+			for _, p := range profiles {
+				if p.ID == needed.Profile {
+					needed.ConversionLimits, err = conversionCapabilityLimits(p.ConversionContracts, "producer-carrier", true)
+					if err != nil {
+						return InputPlan{}, err
+					}
+				}
+			}
+		}
 		return InputPlan{Next: &needed.PlannedSource}, nil
 	}
 	if err != nil {

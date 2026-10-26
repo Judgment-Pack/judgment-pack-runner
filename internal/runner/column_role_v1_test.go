@@ -219,6 +219,8 @@ func TestColumnRoleScopedCanonDoesNotRelaxClaims(t *testing.T) {
 func TestColumnRoleSelectedSourceExpiryClearsCustody(t *testing.T) {
 	s, req, barrier, _ := workerFixture(t)
 	req.ConversionContract = selectedContract()
+	req.ConversionLimits = nil
+	req.RetainedColumn = false
 	req.Deadline = time.Now().Add(200 * time.Millisecond).UTC().Format(time.RFC3339Nano)
 	ready, retain := make(chan struct{}), make(chan struct{})
 	s.beforeRetain = func() { close(ready); <-retain }
@@ -358,8 +360,8 @@ func TestColumnRoleOwnerReportAndRequestAdmission(t *testing.T) {
 	producer := ConversionCapabilities("producer-carrier")[0]
 	producer.ProducerGrammar = columnProducerGrammar
 	producer.Limits["carrierBytes"] = 3145727
-	if requireConversionCapability([]ConversionCapability{producer}, "producer-carrier", true) == nil {
-		t.Fatal("incomplete independently trusted producer capacity admitted")
+	if requireConversionCapability([]ConversionCapability{producer}, "producer-carrier", true) != nil {
+		t.Fatal("valid lower producer capacity refused")
 	}
 	producer.Limits["carrierBytes"] = 3145728
 	if validateConversionCapabilities([]ConversionCapability{producer, producer}) == nil {
@@ -399,8 +401,8 @@ func TestColumnRoleOwnerReportAndRequestAdmission(t *testing.T) {
 	if e := os.WriteFile(reportPath, encode(map[string]any{"capabilities": map[string]any{"conversionContracts": []ConversionCapability{doc}}}), 0600); e != nil {
 		t.Fatal(e)
 	}
-	if runtimeConversionAdmission(context.Background(), bin, dir, selectedContract()) == nil {
-		t.Fatal("undersized Runtime frame capacity admitted")
+	if runtimeConversionAdmission(context.Background(), bin, dir, selectedContract()) != nil {
+		t.Fatal("valid lower Runtime frame capacity refused")
 	}
 	if runtimeConversionAdmission(context.Background(), filepath.Join(dir, "absent"), dir, nil) != nil {
 		t.Fatal("ordinary input required selected Runtime report")

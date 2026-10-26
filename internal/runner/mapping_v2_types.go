@@ -45,6 +45,9 @@ type InputProfile struct {
 	// verifierProfiles), which profileHash names for it. An installation's
 	// profile has none, and is digested as Runner admitted it.
 	canonDigest string
+	// profilesDocumentBytes is measured only by the actual profiles-file readers.
+	// It is neither serialized nor authority and preserves whitespace charging.
+	profilesDocumentBytes int
 }
 
 // ResearchDeclaration is a profile's research member (spec/dialect.md

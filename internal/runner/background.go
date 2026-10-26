@@ -151,6 +151,12 @@ func (s *Service) acquirePlannedOperation(parent context.Context, next PlannedSo
 	if e := next.ConversionContract.validate("preparation", "producer-carrier"); e != nil {
 		return SourceValue{}, e
 	}
+	if next.RetainedColumn != (next.retainResponse && next.ConversionContract != nil) {
+		return SourceValue{}, conversionFailure(codeMalformed)
+	}
+	if e := validateProducerLimits(next.RetainedColumn, next.ConversionContract, next.ConversionLimits); e != nil {
+		return SourceValue{}, e
+	}
 	if next.Kind != "operation" {
 		return SourceValue{}, bad("automatic_source_unavailable", "A fresh operation source is required.")
 	}
@@ -164,7 +170,7 @@ func (s *Service) acquirePlannedOperation(parent context.Context, next PlannedSo
 		return SourceValue{}, bad("gateway_connection_required", "The Gateway connection is no longer available.")
 	}
 	session := id("job.")
-	raw, e := automaticCall(parent, gateway+"/acquire", encode(map[string]any{"session": session, "source": next.Source, "arguments": next.Arguments}), int64(artifactLimit(next.ConversionContract, 1<<20, columnResponseLimit)))
+	raw, e := automaticCall(parent, gateway+"/acquire", encode(map[string]any{"session": session, "source": next.Source, "arguments": next.Arguments}), int64(min(artifactLimit(next.ConversionContract, 1<<20, columnResponseLimit), producerResponseLimit(next.ConversionContract, next.ConversionLimits))))
 	// Housekeeping is bounded and never retries the acquisition itself.
 	cleanup, stop := context.WithTimeout(context.WithoutCancel(parent), 3*time.Second)
 	_, _ = automaticCall(cleanup, gateway+"/seal", encode(map[string]string{"session": session}), 64<<10)
@@ -186,6 +192,13 @@ func (s *Service) acquirePlannedOperation(parent context.Context, next PlannedSo
 		return value, bad("gateway_receipt_mismatch", "The Gateway response does not belong to this acquisition.")
 	}
 	if next.ConversionContract != nil && next.retainResponse {
+		envelope, err := exactMembers(raw)
+		if err != nil {
+			return SourceValue{}, err
+		}
+		if _, err = readColumnCarrierLimits(envelope["result"], next.ConversionLimits, next.ConversionContract); err != nil {
+			return SourceValue{}, err
+		}
 		return SourceValue{RetainedResponseJSON: string(raw)}, nil
 	}
 	return SourceValue{Response: raw}, nil

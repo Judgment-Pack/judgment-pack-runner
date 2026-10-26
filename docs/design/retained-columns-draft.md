@@ -223,3 +223,26 @@ the same bounded header encoding, checked before larger files are opened. The AP
 it separately. They never infer selection from retained bodies. Offline readers
 revalidate source/preparation/release identities and complete size limits against
 their own installed manifest. Existing invocations retain ordinary admission.
+
+
+Lower positive owner reports are valid. Runner takes the minimum of its Base
+ceiling and the approved profile's reported maximum, then measures the complete
+profiles, signed response, carrier and decoded original snapshot separately.
+Online planning and offline preparation use the same trusted profile, including
+its existing identity, signature and original-inventory checks. Planned and
+durable source requests retain all six effective producer ceilings; a changed
+installation cannot rebind an in-flight request. These downward caller ceilings
+grant no authority and never enlarge Base. A durable `retainedColumn` discriminator is derived only from the trusted
+profile and mapping read; producer requests without these ceilings are refused
+before dispatch. Ordinary selected mixed-source acquisitions retain their prior
+behavior. Resumed intent must match both the discriminator and ceilings, so a
+producer request cannot be downgraded into an ordinary request. Runtime document reports are likewise
+minimized and checked against the pack, published and bound mappings, and every
+retained frame before validation/evaluation effects. The independent binding
+document remains capped at 64 KiB.
+
+Runner receives the signed Gateway response; it cannot observe producer grant
+creation or adapter stdout. The retained grant/stdout ceilings are obligations
+of those actual owners, not evidence supplied by offline verification or a
+Gateway fixture. Producer-owner negotiation and proof remain separate required
+integration evidence.

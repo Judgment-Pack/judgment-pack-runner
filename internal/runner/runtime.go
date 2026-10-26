@@ -197,7 +197,11 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	if s.cfg.ExecutorAdmission != nil && inputConversion(req.Input) != nil {
 		return Release{}, manualUnsupported()
 	}
-	if e := runtimeConversionAdmission(ctx, s.runtime, s.cfg.Dir, inputConversion(req.Input), s.startRuntime); e != nil {
+	limits, admissionErr := runtimeConversionLimits(ctx, s.runtime, s.cfg.Dir, inputConversion(req.Input), s.startRuntime)
+	if admissionErr != nil {
+		return Release{}, admissionErr
+	}
+	if e := runtimeConversionInput(limits, req.Input, req.Pack); e != nil {
 		return Release{}, e
 	}
 	if len(req.Pack) == 0 || len(req.Pack) > 1<<20 {
@@ -211,6 +215,9 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		return Release{}, err
 	}
 	req.Input = normalized
+	if e := runtimeConversionInput(limits, req.Input, req.Pack); e != nil {
+		return Release{}, e
+	}
 	select {
 	case s.previewGate <- struct{}{}:
 		defer func() { <-s.previewGate }()
@@ -353,7 +360,11 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 }
 
 func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs, invoke runtimeInvoker, starters ...func(*exec.Cmd) error) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
-	if e := runtimeConversionAdmission(ctx, bin, filepath.Dir(dir), inputConversion(input), starters...); e != nil {
+	limits, admissionErr := runtimeConversionLimits(ctx, bin, filepath.Dir(dir), inputConversion(input), starters...)
+	if admissionErr != nil {
+		return nil, nil, nil, nil, admissionErr
+	}
+	if e := runtimeConversionInput(limits, input, r.Pack); e != nil {
 		return nil, nil, nil, nil, e
 	}
 	// The directory is exclusively created per invocation and never reused.

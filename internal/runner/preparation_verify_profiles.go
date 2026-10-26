@@ -50,6 +50,7 @@ func verifierProfiles(document any, raw []byte) ([]InputProfile, error) {
 			return nil, fmt.Errorf("profile %d: %w", i, err)
 		}
 		p.canonDigest = digest(canon)
+		p.profilesDocumentBytes = len(raw)
 		profiles = append(profiles, p)
 	}
 	return profiles, nil

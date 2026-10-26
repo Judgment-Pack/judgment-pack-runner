@@ -269,7 +269,7 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 			return s.stopPreparation(o, "needs-attention", "The durable Gateway connection is no longer installed.")
 		}
 		operation := id("")
-		p.Tasks = append(p.Tasks, SourceTask{Name: next.Name, ID: operation, State: "waiting", StartedAt: now(), Gateway: gateway, OperationsURL: operationsURL, Profile: next.Profile, Request: encode(sourceRequest{ID: operation, Gateway: gateway, Source: next.Source, Arguments: next.Arguments, Deadline: p.Deadline, ConversionContract: next.ConversionContract})})
+		p.Tasks = append(p.Tasks, SourceTask{Name: next.Name, ID: operation, State: "waiting", StartedAt: now(), Gateway: gateway, OperationsURL: operationsURL, Profile: next.Profile, Request: encode(sourceRequest{ID: operation, Gateway: gateway, Source: next.Source, Arguments: next.Arguments, Deadline: p.Deadline, ConversionContract: next.ConversionContract, ConversionLimits: next.ConversionLimits, RetainedColumn: next.RetainedColumn})})
 		task = &p.Tasks[len(p.Tasks)-1]
 		if e = s.savePreparation(o); e != nil {
 			return e
@@ -287,7 +287,8 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 	if !installed {
 		return s.stopPreparation(o, "needs-attention", "The acquisition connection changed. Restore it to reconcile this operation.")
 	}
-	if !taskConversionMatches(task.Request, inputConversion(*p.Input)) {
+	var frozenLimits sourceRequest
+	if strictJSON(task.Request, &frozenLimits) != nil || frozenLimits.RetainedColumn != next.RetainedColumn || !bytes.Equal(encode(frozenLimits.ConversionLimits), encode(next.ConversionLimits)) || !taskConversionMatches(task.Request, inputConversion(*p.Input)) {
 		return s.stopPreparation(o, "needs-attention", "The retained conversion selection changed; the operation was not rebound.")
 	}
 	var result struct {
@@ -338,7 +339,7 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 	response := result.Response
 	value := SourceValue{Response: response}
 	if inputConversion(*p.Input) != nil {
-		if len(result.Response) > 0 || result.RetainedResponseJSON == "" || len(result.RetainedResponseJSON) > columnResponseLimit {
+		if len(result.Response) > 0 || result.RetainedResponseJSON == "" || len(result.RetainedResponseJSON) > producerResponseLimit(inputConversion(*p.Input), next.ConversionLimits) {
 			return s.stopPreparation(o, "needs-attention", "The retained source response has an invalid custody variant or exceeds its selected limit.")
 		}
 		response = []byte(result.RetainedResponseJSON)

@@ -401,5 +401,8 @@ func ParseInputProfiles(raw []byte) ([]InputProfile, error) {
 	if e := strictJSON(raw, &p); e != nil {
 		return nil, e
 	}
+	for i := range p {
+		p[i].profilesDocumentBytes = len(raw)
+	}
 	return p, validateProfiles(p)
 }

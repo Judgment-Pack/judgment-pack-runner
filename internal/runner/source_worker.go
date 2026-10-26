@@ -26,6 +26,8 @@ import (
 
 type SourceWorkerConfig struct{ Dir, Gateway, GatewayTokenFile string }
 type sourceRequest struct {
+	RetainedColumn     bool                `json:"retainedColumn,omitempty"`
+	ConversionLimits   map[string]int      `json:"conversionLimits,omitempty"`
 	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`
 	ID                 string              `json:"id"`
 	Gateway            string              `json:"gateway"`
@@ -269,7 +271,7 @@ func (s *SourceWorker) status(id string) (sourceStatus, error) {
 			if len(status.Response) > 0 || status.State == "completed" && status.RetainedResponseJSON == "" {
 				return status, conversionFailure(codeMalformed)
 			}
-			if len(status.RetainedResponseJSON) > columnResponseLimit || len(encode(status))+1 > columnReplyLimit {
+			if len(status.RetainedResponseJSON) > producerResponseLimit(frozen.ConversionContract, frozen.ConversionLimits) || len(encode(status))+1 > columnReplyLimit {
 				return status, codedProblem(codeOverBound, "retained source status exceeds selected limit")
 			}
 		} else if status.RetainedResponseJSON != "" {
@@ -302,6 +304,9 @@ func (s *SourceWorker) status(id string) (sourceStatus, error) {
 	return status, e
 }
 func (s *SourceWorker) submit(req sourceRequest) (sourceStatus, int, error) {
+	if e := validateProducerLimits(req.RetainedColumn, req.ConversionContract, req.ConversionLimits); e != nil {
+		return sourceStatus{}, 422, e
+	}
 	if e := req.ConversionContract.validate("preparation", "producer-carrier"); e != nil {
 		return sourceStatus{}, 422, e
 	}
@@ -370,7 +375,7 @@ func (s *SourceWorker) submit(req sourceRequest) (sourceStatus, int, error) {
 func (s *SourceWorker) acquire(ctx context.Context, stop context.CancelFunc, req sourceRequest) {
 	defer s.workers.Done()
 	defer stop()
-	raw, e := s.call(ctx, "/acquire", encode(map[string]any{"session": "async." + req.ID, "source": req.Source, "arguments": req.Arguments}), int64(responseLimit(req.ConversionContract)))
+	raw, e := s.call(ctx, "/acquire", encode(map[string]any{"session": "async." + req.ID, "source": req.Source, "arguments": req.Arguments}), int64(producerResponseLimit(req.ConversionContract, req.ConversionLimits)))
 	status := sourceStatus{ID: req.ID, State: "completed", Deadline: req.Deadline}
 	if e != nil || ctx.Err() != nil {
 		status.State = "needs-attention"
@@ -391,7 +396,20 @@ func (s *SourceWorker) acquire(ctx context.Context, stop context.CancelFunc, req
 			status.Reason = "The Gateway response does not belong to this operation's first acquisition. It was not repeated."
 		} else {
 			if req.ConversionContract != nil {
-				status.RetainedResponseJSON = string(raw)
+				if req.RetainedColumn {
+					envelope, err := exactMembers(raw)
+					if err == nil {
+						_, err = readColumnCarrierLimits(envelope["result"], req.ConversionLimits, req.ConversionContract)
+					}
+					if err != nil {
+						status.State = "needs-attention"
+						status.Reason = "The source response exceeds its negotiated bounds or is malformed."
+					} else {
+						status.RetainedResponseJSON = string(raw)
+					}
+				} else {
+					status.RetainedResponseJSON = string(raw)
+				}
 			} else {
 				status.Response = raw
 			}

@@ -361,6 +361,15 @@ func (r *sourceRequest) UnmarshalJSON(raw []byte) error {
 		if strings.EqualFold(k, "conversionContract") && (k != "conversionContract" || bytes.Equal(bytes.TrimSpace(v), []byte("null"))) {
 			return conversionFailure(codeMalformed)
 		}
+		if strings.EqualFold(k, "retainedColumn") && (k != "retainedColumn" || !bytes.Equal(v, []byte("true")) && !bytes.Equal(v, []byte("false"))) {
+			return conversionFailure(codeMalformed)
+		}
+		if strings.EqualFold(k, "conversionLimits") && (k != "conversionLimits" || bytes.Equal(bytes.TrimSpace(v), []byte("null"))) {
+			return conversionFailure(codeMalformed)
+		}
+	}
+	if e := validateProducerLimits(held.RetainedColumn, held.ConversionContract, held.ConversionLimits); e != nil {
+		return e
 	}
 	*r = sourceRequest(held)
 	return nil

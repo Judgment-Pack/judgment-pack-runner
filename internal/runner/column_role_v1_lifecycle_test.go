@@ -26,6 +26,10 @@ func TestColumnRoleRealRuntimeFirstSaveSignedExports(t *testing.T) {
 		t.Fatal("selected Runtime test binary must expose an explicit version supporting preparation bindings")
 	}
 	producer := selectedProducer(t)
+	producer.profile.ConversionContracts[0].Limits["responseBytes"] = 2621440
+	producer.profile.ConversionContracts[0].Limits["carrierBytes"] = 1572864
+	producer.profile.ConversionContracts[0].Limits["originalSnapshotBytes"] = 262144
+	producer.input.Source.Mapping.Sources[0].ProfileDigest = profileHash(producer.profile)
 	producer.input.Source.Mapping.Case.Facts = []FactMapping{{Target: "/caseNumber", Source: "/retained", Conversion: json.RawMessage(`{"contractVersion":"1","column":"X","kind":"number"}`)}}
 	producer.input.Source.Mapping.Sources[0].Read.Copy.Evidence[0].Requirement = "intake-form"
 	producer.input.Source.Mapping.Admits.Facts["/caseNumber"] = []string{"asserted"}
@@ -169,7 +173,7 @@ func TestColumnRoleRealRuntimeFirstSaveSignedExports(t *testing.T) {
 		t.Fatal("resumed operation allowed conversion rebind")
 	}
 	var heldRequest sourceRequest
-	if strictJSON(task.Request, &heldRequest) != nil {
+	if strictJSON(task.Request, &heldRequest) != nil || !heldRequest.RetainedColumn || heldRequest.ConversionLimits["responseBytes"] != 2621440 || heldRequest.ConversionLimits["carrierBytes"] != 1572864 || heldRequest.ConversionLimits["originalSnapshotBytes"] != 262144 {
 		t.Fatal("durable operation request")
 	}
 	heldRequest.ConversionContract = changed

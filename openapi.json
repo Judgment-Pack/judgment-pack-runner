@@ -4803,9 +4803,39 @@
           },
           "arguments": {
             "type": "object"
+          },
+          "conversionContract": {
+            "$ref": "#/components/schemas/ConversionContract"
+          },
+          "conversionLimits": {
+            "$ref": "#/components/schemas/ProducerConversionLimits"
+          },
+          "retainedColumn": {
+            "type": "boolean",
+            "description": "Derived by Runner from the approved producer profile and mapping read. True requires all effective producer ceilings; it grants no producer authority."
           }
         },
-        "description": "The next source to acquire. For a research source, the caller runs the recipe (arguments) through the profiles the source is bound to and supplies the research record it assembles from the responses it retains: Runner asks no model and reads no page."
+        "description": "The next source to acquire. For a research source, the caller runs the recipe (arguments) through the profiles the source is bound to and supplies the research record it assembles from the responses it retains: Runner asks no model and reads no page.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "retainedColumn": {
+                  "const": true
+                }
+              },
+              "required": [
+                "retainedColumn"
+              ]
+            },
+            "then": {
+              "required": [
+                "conversionContract",
+                "conversionLimits"
+              ]
+            }
+          }
+        ]
       },
       "InputPlan": {
         "oneOf": [
@@ -7100,6 +7130,51 @@
           "version",
           "case"
         ]
+      },
+      "ProducerConversionLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "originalSnapshotBytes",
+          "carrierBytes",
+          "grantBytes",
+          "adapterStdoutBytes",
+          "responseBytes",
+          "profilesBytes"
+        ],
+        "properties": {
+          "originalSnapshotBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 524288
+          },
+          "carrierBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3145728
+          },
+          "grantBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3145728
+          },
+          "adapterStdoutBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3145728
+          },
+          "responseBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5242880
+          },
+          "profilesBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 81920
+          }
+        },
+        "description": "Downward-only caller ceilings derived from the approved producer profile. They grant no producer or installation authority. Retained with durable acquisition intent; resumed intent must match."
       }
     }
   }

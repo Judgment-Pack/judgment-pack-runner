@@ -64,8 +64,12 @@ func preflightColumnSources(m InputMapping, profiles []InputProfile) error {
 			if e = m.selectedConversion.validate("producer-carrier"); e != nil {
 				return e
 			}
-			if e = requireConversionCapability(p.ConversionContracts, "producer-carrier", true); e != nil {
-				return e
+			limits, err := conversionCapabilityLimits(p.ConversionContracts, "producer-carrier", true)
+			if err != nil {
+				return err
+			}
+			if err = conversionArtifactBound(limits, "profilesBytes", conversionProfilesBytes(profiles)); err != nil {
+				return err
 			}
 		}
 		if e = columnProducerProfile(p); e != nil {

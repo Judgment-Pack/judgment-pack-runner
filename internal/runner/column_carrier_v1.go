@@ -26,11 +26,17 @@ type retainedColumnCarrier struct {
 }
 
 func readColumnCarrier(raw []byte, selection ...*ConversionContract) (retainedColumnCarrier, error) {
+	return readColumnCarrierLimits(raw, nil, selection...)
+}
+func readColumnCarrierLimits(raw []byte, limits map[string]int, selection ...*ConversionContract) (retainedColumnCarrier, error) {
 	var c retainedColumnCarrier
 	badCarrier := func() (retainedColumnCarrier, error) {
 		return c, withCode(codeMalformed, errors.New("invalid retained-column generated carrier"))
 	}
 	if e := selectedConversion(selection).validate("producer-carrier"); e != nil {
+		return c, e
+	}
+	if e := conversionArtifactBound(limits, "carrierBytes", len(raw)); e != nil {
 		return c, e
 	}
 	if len(raw) > artifactLimit(selectedConversion(selection), MaxBody, columnCarrierLimit) {
@@ -51,6 +57,9 @@ func readColumnCarrier(raw []byte, selection ...*ConversionContract) (retainedCo
 	var version, snapshot, pin string
 	if json.Unmarshal(m["contractVersion"], &version) != nil || version != "1" || json.Unmarshal(m["originalSnapshotJson"], &snapshot) != nil || json.Unmarshal(m["originalSnapshotSha256"], &pin) != nil || !validDigest(pin) || pin != digest([]byte(snapshot)) {
 		return badCarrier()
+	}
+	if e := conversionArtifactBound(limits, "originalSnapshotBytes", len(snapshot)); e != nil {
+		return c, e
 	}
 	if len(snapshot) > 524288 {
 		return c, withCode(codeOverBound, errors.New("original reviewed snapshot exceeds producer bound"))
@@ -174,6 +183,21 @@ type retainedAcquisitionResult struct{ Canonical, Raw json.RawMessage }
 func verifyRetainedAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int, selection ...*ConversionContract) (retainedAcquisitionResult, *Citation, error) {
 	if e := selectedConversion(selection).validate("producer-carrier"); e != nil {
 		return retainedAcquisitionResult{}, nil, e
+	}
+	if selectedConversion(selection) != nil {
+		limits, err := conversionCapabilityLimits(p.ConversionContracts, "producer-carrier", true)
+		if err != nil {
+			return retainedAcquisitionResult{}, nil, err
+		}
+		if err = conversionArtifactBound(limits, "responseBytes", len(raw)); err != nil {
+			return retainedAcquisitionResult{}, nil, err
+		}
+		envelope, err := exactMembers(raw)
+		if err == nil {
+			if _, err = readColumnCarrierLimits(envelope["result"], limits, selection...); err != nil {
+				return retainedAcquisitionResult{}, nil, err
+			}
+		}
 	}
 	if len(raw) > responseLimit(selectedConversion(selection)) {
 		return retainedAcquisitionResult{}, nil, withCode(codeOverBound, errors.New("complete retained-column response exceeds base limit"))

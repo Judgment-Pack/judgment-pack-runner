@@ -142,22 +142,61 @@ func validateConversionCapabilities(cs []ConversionCapability) error {
 	}
 	return nil
 }
-func requireConversionCapability(cs []ConversionCapability, role string, producer bool) error {
+
+// Effective limits never enlarge this installation's profile. A lower positive
+// report is supported; owners must measure their actual complete artifacts.
+func conversionCapabilityLimits(cs []ConversionCapability, role string, producer bool) (map[string]int, error) {
 	if e := validateConversionCapabilities(cs); e != nil {
-		return e
+		return nil, e
 	}
 	for _, c := range cs {
 		if c.Role != role || producer && c.ProducerGrammar != columnProducerGrammar {
 			continue
 		}
-		for k, n := range conversionRoleLimits(role) {
-			if c.Limits[k] < n {
-				return conversionFailure("capability-unsupported")
-			}
+		limits := conversionRoleLimits(role)
+		for k, n := range limits {
+			limits[k] = min(n, c.Limits[k])
+		}
+		return limits, nil
+	}
+	return nil, conversionFailure("capability-unsupported")
+}
+func requireConversionCapability(cs []ConversionCapability, role string, producer bool) error {
+	_, e := conversionCapabilityLimits(cs, role, producer)
+	return e
+}
+func conversionArtifactBound(limits map[string]int, key string, size int) error {
+	if n, ok := limits[key]; ok && size > n {
+		return codedProblem(codeOverBound, "complete retained-column "+key+" exceeds negotiated limit")
+	}
+	return nil
+}
+
+// These are downward-only caller ceilings, derived from an approved profile by
+// Runner. Persisting them does not mint producer or installation authority.
+func validateProducerLimits(retainedColumn bool, c *ConversionContract, limits map[string]int) error {
+	if !retainedColumn {
+		if limits != nil {
+			return conversionFailure(codeMalformed)
 		}
 		return nil
 	}
-	return conversionFailure("capability-unsupported")
+	if c == nil || len(limits) != len(conversionRoleLimits("producer-carrier")) {
+		return conversionFailure(codeMalformed)
+	}
+	for k, n := range conversionRoleLimits("producer-carrier") {
+		if limits[k] <= 0 || limits[k] > n {
+			return conversionFailure(codeMalformed)
+		}
+	}
+	return nil
+}
+func producerResponseLimit(c *ConversionContract, limits map[string]int) int {
+	n := responseLimit(c)
+	if v := limits["responseBytes"]; v > 0 {
+		n = min(n, v)
+	}
+	return n
 }
 
 // ConversionCapabilities is the experimental installed package's declaration.
@@ -178,11 +217,15 @@ func ConversionCapabilities(roles ...string) []ConversionCapability {
 	return out
 }
 func runtimeConversionAdmission(ctx context.Context, bin, dir string, c *ConversionContract, starters ...func(*exec.Cmd) error) error {
+	_, e := runtimeConversionLimits(ctx, bin, dir, c, starters...)
+	return e
+}
+func runtimeConversionLimits(ctx context.Context, bin, dir string, c *ConversionContract, starters ...func(*exec.Cmd) error) (map[string]int, error) {
 	if c == nil {
-		return nil
+		return nil, nil
 	}
 	if e := c.validate("document-validation"); e != nil {
-		return e
+		return nil, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -198,29 +241,109 @@ func runtimeConversionAdmission(ctx context.Context, bin, dir string, c *Convers
 		start = starters[0]
 	}
 	if e := start(cmd); e != nil {
-		return e
+		return nil, e
 	}
 	if e := cmd.Wait(); e != nil {
-		return conversionFailure("capability-unsupported")
+		return nil, conversionFailure("capability-unsupported")
 	}
 	var root map[string]json.RawMessage
 	if strictJSON(out.Bytes(), &root) != nil {
-		return conversionFailure(codeMalformed)
+		return nil, conversionFailure(codeMalformed)
 	}
 	var capabilities map[string]json.RawMessage
 	if strictJSON(root["capabilities"], &capabilities) != nil {
-		return conversionFailure("capability-unsupported")
+		return nil, conversionFailure("capability-unsupported")
 	}
 	var cs []ConversionCapability
 	if _, exists := capabilities["conversionContracts"]; !exists {
-		return conversionFailure("capability-unsupported")
+		return nil, conversionFailure("capability-unsupported")
 	}
 	if err := strictJSON(capabilities["conversionContracts"], &cs); err != nil {
 		_, code := verificationOutcome(err)
 		if code != "capability-unsupported" {
 			code = codeMalformed
 		}
-		return conversionFailure(code)
+		return nil, conversionFailure(code)
 	}
-	return requireConversionCapability(cs, "document-validation", false)
+	return conversionCapabilityLimits(cs, "document-validation", false)
+}
+
+// Check each document and frame that the selected Runtime will consume before
+// creating an evaluation directory or invoking validation/evaluation.
+func runtimeConversionInput(limits map[string]int, input Input, pack string) error {
+	if limits == nil {
+		return nil
+	}
+	if e := conversionArtifactBound(limits, "documentBytes", len(pack)); e != nil {
+		return e
+	}
+	c := input.Source
+	if c == nil {
+		return nil
+	}
+	for _, raw := range [][]byte{encode(c.Mapping)} {
+		if e := conversionArtifactBound(limits, "documentBytes", len(raw)); e != nil {
+			return e
+		}
+	}
+	if c.Import != nil {
+		if e := conversionArtifactBound(limits, "documentBytes", len(c.Import.Dialect)); e != nil {
+			return e
+		}
+	}
+
+	checkFrame := func(raw []byte, pointer string) error {
+		frame, ok := rawPointer(raw, pointer)
+		if !ok {
+			return nil
+		} // shared preparation owns missing/malformed reads
+		return conversionArtifactBound(limits, "frameBytes", len(frame))
+	}
+	caseRaw, caseErr := columnCaseBytes(c)
+	if caseErr != nil {
+		return caseErr
+	}
+	if c.Mapping.Case != nil {
+		for _, f := range c.Mapping.Case.Facts {
+			if len(f.Conversion) > 0 {
+				if e := checkFrame(caseRaw, f.Source); e != nil {
+					return e
+				}
+			}
+		}
+		for _, f := range c.Mapping.Case.Evidence {
+			if len(f.Availability) > 0 {
+				if e := checkFrame(caseRaw, f.Source); e != nil {
+					return e
+				}
+			}
+		}
+	}
+	for _, source := range c.Mapping.Sources {
+		if source.Read.Copy == nil || !hasColumnCopy(*source.Read.Copy) {
+			continue
+		}
+		v := c.Sources[source.Name]
+		raw := v.Response
+		if v.RetainedResponseJSON != "" {
+			raw = []byte(v.RetainedResponseJSON)
+		}
+		envelope, e := exactMembers(raw)
+		if e == nil {
+			if e = checkFrame(envelope["result"], "/retained"); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
+// The serialized list is the artifact for native host profiles. Offline file
+// readers additionally retain the measured received list, including whitespace.
+func conversionProfilesBytes(profiles []InputProfile) int {
+	n := len(encode(profiles))
+	for _, p := range profiles {
+		n = max(n, p.profilesDocumentBytes)
+	}
+	return n
 }
