@@ -3,7 +3,6 @@ package runner
 import (
 	"bytes"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +24,7 @@ func failure(w http.ResponseWriter, err error) {
 	var e *apiError
 	if errors.As(err, &e) {
 		status, code, message = e.Status, e.Code, e.Message
-	} else if errors.Is(err, sql.ErrNoRows) {
+	} else if absent(err) {
 		status, code, message = 404, "not_found", "This job, release or run was not found."
 	}
 	write(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "retryable": status == 429 || status == 503}})
@@ -117,7 +116,7 @@ func (s *Service) Handler(token string) http.Handler {
 			return
 		}
 		run, err := s.run(r.PathValue("run"))
-		if errors.Is(err, sql.ErrNoRows) {
+		if absent(err) {
 			// A run the store no longer holds keeps its entry in the chain,
 			// which still names it: say so, rather than that it never existed.
 			if sequence, chained, e := s.runEntrySequence(r.PathValue("run")); e != nil {

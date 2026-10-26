@@ -287,7 +287,7 @@ func appendEntry(s *Service, run string, record []byte) error {
 		return e
 	}
 	defer tx.Rollback()
-	if e = appendRunEntry(tx, run, record); e != nil {
+	if e = appendRunEntry(&sqliteTx{sqliteReads{tx}, tx}, run, record); e != nil {
 		return e
 	}
 	return tx.Commit()
@@ -345,7 +345,7 @@ func TestTheChainIsServedWhole(t *testing.T) {
 	}
 	for i := range 2345 {
 		run, record := syntheticRun(i)
-		if e = appendRunEntry(tx, run, record); e != nil {
+		if e = appendRunEntry(&sqliteTx{sqliteReads{tx}, tx}, run, record); e != nil {
 			t.Fatal(e)
 		}
 	}
