@@ -37,6 +37,7 @@ func (m InputMapping) marshalArtifact() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(struct {
+		Profile          string          `json:"profile,omitempty"`
 		FormatVersion    string          `json:"formatVersion"`
 		ID               string          `json:"id"`
 		Version          string          `json:"version"`
@@ -45,7 +46,7 @@ func (m InputMapping) marshalArtifact() ([]byte, error) {
 		Admits           *Admission      `json:"admits,omitempty"`
 		Unmapped         []string        `json:"unmapped,omitempty"`
 		UnmappedEvidence []string        `json:"unmappedEvidence,omitempty"`
-	}{m.FormatVersion, m.ArtifactID, m.ArtifactVersion, m.Case, m.Sources, m.Admits, m.Unmapped, m.UnmappedEvidence})
+	}{m.Profile, m.FormatVersion, m.ArtifactID, m.ArtifactVersion, m.Case, m.Sources, m.Admits, m.Unmapped, m.UnmappedEvidence})
 }
 func (m *InputMapping) UnmarshalJSON(raw []byte) error {
 	// DisallowUnknownFields still applies inside this custom decoder.
@@ -59,6 +60,14 @@ func (m *InputMapping) UnmarshalJSON(raw []byte) error {
 	members, err := exactMembers(raw)
 	if err != nil {
 		return err
+	}
+	for key := range members {
+		if strings.EqualFold(key, "profile") && key != "profile" {
+			return errors.New("retained-column profile member must be case-sensitive")
+		}
+	}
+	if code := columnProfileBytes(raw); code != "" && code != "profile-unsupported" {
+		return withCode(code, errors.New("unknown or malformed retained-column profile"))
 	}
 	if _, named := members["formatVersion"]; !named {
 		var legacy plain

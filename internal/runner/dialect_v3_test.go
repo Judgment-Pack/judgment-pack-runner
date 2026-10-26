@@ -459,7 +459,7 @@ func TestTheImportStepRefusesByName(t *testing.T) {
 	recorded := f.profile
 	recorded.Adapter.Name = "another-adapter"
 	twoSources := f.published
-	twoSources.Sources = append(append([]MappingSource(nil), f.published.Sources...), MappingSource{Name: "file", Kind: "selected-file", Provider: "local-file", Read: SourceRead{Copy: &CopyMapping{[]FactMapping{{"/file", "/file"}}, []EvidenceMapping{}}}})
+	twoSources.Sources = append(append([]MappingSource(nil), f.published.Sources...), MappingSource{Name: "file", Kind: "selected-file", Provider: "local-file", Read: SourceRead{Copy: &CopyMapping{[]FactMapping{{Target: "/file", Source: "/file"}}, []EvidenceMapping{}}}})
 	partial := f.published
 	partial.Sources = append([]MappingSource(nil), f.published.Sources...)
 	partial.Sources[0].Record = nil
@@ -510,7 +510,7 @@ func TestTheImportStepRefusesByName(t *testing.T) {
 // v3KindSource is a version-3 source of kind, with the members the
 // specification gives that kind (spec/dialect.md §4.3), pinned to p.
 func v3KindSource(kind string, p InputProfile) MappingSource {
-	s := MappingSource{Name: "asked", Kind: kind, Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Read: SourceRead{Copy: &CopyMapping{[]FactMapping{{"/asked", "/answer"}}, []EvidenceMapping{}}}}
+	s := MappingSource{Name: "asked", Kind: kind, Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Read: SourceRead{Copy: &CopyMapping{[]FactMapping{{Target: "/asked", Source: "/answer"}}, []EvidenceMapping{}}}}
 	switch kind {
 	case "http":
 		s.Method, s.Path, s.Query, s.Headers = json.RawMessage(`"GET"`), json.RawMessage(`"/vendors"`), json.RawMessage(`{"id":{"$param":"vendorId"}}`), json.RawMessage(`["accept"]`)
@@ -581,7 +581,7 @@ func TestTheVersion3KindOperationIsPrepared(t *testing.T) {
 // prepared as version 2 prepares them.
 func TestTheVersion3KindSelectedFileIsPrepared(t *testing.T) {
 	local := fileInput(string(encode(sample())), InputMapping{Version: 1, Provider: "local-file"})
-	copy := CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}}}
+	copy := CopyMapping{Facts: []FactMapping{{Target: "/request", Source: "/facts/request"}}, Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}}}
 	at := time.Now().UTC().Truncate(time.Second)
 	for _, version := range []int{2, 3} {
 		input := Input{Source: &SourceInput{Mapping: InputMapping{Version: version, Sources: []MappingSource{{Name: "file", Kind: "selected-file", Provider: "local-file", Read: SourceRead{Copy: &copy}}}}, Sources: map[string]SourceValue{"file": {Snapshot: local.Source.Snapshot}}}}
@@ -648,7 +648,7 @@ func driveFixture(t *testing.T) (Input, InputProfile, ed25519.PrivateKey, time.T
 		Case: &CaseMapping{Parameters: map[string]Parameter{"fileId": {Pointer: "/fileId", Type: "string"}, "grant": {Pointer: "/grant", Type: "string"}}, Facts: []FactMapping{}, Evidence: []EvidenceMapping{}},
 		Sources: []MappingSource{{Name: "file", Kind: "selected-file", Provider: "google-drive", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300,
 			Arguments: json.RawMessage(`{"fileId":{"$param":"fileId"},"grant":{"$param":"grant"}}`),
-			Read:      SourceRead{Copy: &CopyMapping{[]FactMapping{{"/approved", "/approved"}}, []EvidenceMapping{}}},
+			Read:      SourceRead{Copy: &CopyMapping{[]FactMapping{{Target: "/approved", Source: "/approved"}}, []EvidenceMapping{}}},
 		}},
 	}
 	return Input{Source: &SourceInput{Mapping: mapping, Case: args, Sources: map[string]SourceValue{"file": {Snapshot: encode(snap)}}}}, p, key, at

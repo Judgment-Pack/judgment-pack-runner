@@ -272,7 +272,7 @@ func (r *workflowReader) preparations() error {
 			// Recompute with the same offline ordering to retain lineage and whether
 			// evidence was absent, which the public report deliberately normalizes.
 			var source SourceInput
-			source.Case = fixture.Case
+			setColumnCase(&source, fixture.Case)
 			if strictJSON(fixture.Sources, &source.Sources) != nil {
 				return workflowRefusal(codeMalformed)
 			}

@@ -14,7 +14,7 @@ func TestALocalFileMayDeclareSourceParameters(t *testing.T) {
 	input, p, key, at := calculatorFixture(t)
 	local := MappingSource{Name: "lookup", Kind: "selected-file", Provider: "local-file",
 		Parameters: map[string]Parameter{"converted": {From: "fx", Pointer: "/invoice/converted", Type: "string"}},
-		Read:       SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/vendor/id", "/id"}}, Evidence: []EvidenceMapping{}}}}
+		Read:       SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/vendor/id", Source: "/id"}}, Evidence: []EvidenceMapping{}}}}
 	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, local)
 	snapshot := fileInput(`{"id":7}`, InputMapping{Version: 1, Provider: "local-file"}).Source.Snapshot
 

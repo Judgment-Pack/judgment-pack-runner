@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:judgment-pack:runner:draft:retained-column-producer-transport:1",
+  "title": "Runner Draft retained-column transport projections",
+  "description": "Structural projections only. These definitions confer no acquisition, signature or original-history authority. The complete trusted profile, mapping and signed envelope are independently verified by Runner.",
+  "$defs": {
+    "producerAnnotation": {
+      "type": "object",
+      "required": ["contractVersion", "grammar"],
+      "properties": {
+        "contractVersion": {"const": "1"},
+        "grammar": {"const": "desk-reviewed-input/1"}
+      },
+      "additionalProperties": false
+    },
+    "retainedPreparationSource": {
+      "type": "object",
+      "required": ["retainedResponseJson"],
+      "properties": {
+        "retainedResponseJson": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}

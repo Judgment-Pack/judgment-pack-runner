@@ -87,7 +87,13 @@ func validateAutomatic(c *AutomaticInput, r Release, hasRoot bool) error {
 		return bad("invalid_automatic_input", "Choose either a case file or constant case parameters.")
 	}
 	if len(c.Case) > 0 {
-		if _, e := proofCanon(c.Case); e != nil {
+		var caseErr error
+		if inputConversion(r.Sample) != nil && r.InputMapping != nil && hasColumnCase(*r.InputMapping) {
+			_, caseErr = columnCaseBytes(&SourceInput{Case: c.Case, ConversionContract: inputConversion(r.Sample)})
+		} else {
+			_, caseErr = proofCanon(c.Case)
+		}
+		if caseErr != nil {
 			return bad("invalid_automatic_input", "Case parameters must use exact supported JSON values.")
 		}
 		var v map[string]any
@@ -145,7 +151,7 @@ func (s *Service) automaticInputContext(ctx context.Context, c *AutomaticInput, 
 	if _, e := s.normalizeInput(input); e != nil {
 		return input, e
 	}
-	if len(encode(input)) > MaxBody {
+	if len(encode(input)) > combinedLimit(input) {
 		return input, bad("invalid_automatic_input", "Combined inputs exceed the request limit.")
 	}
 	return input, nil
@@ -203,8 +209,31 @@ func (s *Service) automaticInputSeed(c *AutomaticInput, r Release, snapshots map
 			}
 		}
 	}
+	if input.Source != nil {
+		if input.Source.ConversionContract != nil && !sameConversion(input.Source.ConversionContract, inputConversion(r.Sample)) {
+			return input, bad("mapping_mismatch", "Automatic conversion selection differs from the reviewed release.")
+		}
+		if c.Kind != "constant" {
+			input.Source.ConversionContract = inputConversion(r.Sample)
+		}
+	}
 	if !mappingMatchesRelease(r, input) {
 		return input, bad("mapping_mismatch", "Automatic inputs do not match this job's release.")
+	}
+	// A durable preparation saves this seed before its first preparation pass.
+	// Preserve exact Draft case custody before that first serialization.
+	if input.Source != nil && input.Source.Mapping.Profile == "base" && hasColumnCase(input.Source.Mapping) {
+		raw, err := columnCaseBytes(input.Source)
+		if err != nil {
+			return input, err
+		}
+		if len(raw) == 0 {
+			raw = json.RawMessage(`{}`)
+		}
+		if err := columnInputBounds(input.Source); err != nil {
+			return input, err
+		}
+		retainColumnCase(input.Source, raw)
 	}
 	return input, nil
 }

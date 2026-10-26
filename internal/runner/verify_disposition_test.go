@@ -32,7 +32,7 @@ import (
 func completedExport(t *testing.T, classes string) (VerificationBundle, []InputProfile, string) {
 	t.Helper()
 	cfg := testConfig(t)
-	copy := CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}
+	copy := CopyMapping{Facts: []FactMapping{{Target: "/request", Source: "/facts/request"}}, Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}}}
 	// The case carries a member named like "facts" but for case. It is data, not
 	// a field of the export, and the export still verifies.
 	data := encode(sample())
@@ -61,7 +61,7 @@ func completedExport(t *testing.T, classes string) (VerificationBundle, []InputP
 			fixture.Source.Mapping.Case.Facts = copy.Facts
 			fixture.Source.Mapping.Case.Evidence = copy.Evidence[:1]
 			fixture.Source.Case = json.RawMessage(`{"id":7,"evidence":{"intake-form":"present"}}`)
-			read = CopyMapping{Facts: []FactMapping{{"/vendor/name", "/name"}}, Evidence: []EvidenceMapping{}}
+			read = CopyMapping{Facts: []FactMapping{{Target: "/vendor/name", Source: "/name"}}, Evidence: []EvidenceMapping{}}
 			second(p, "name", "/vendor/name", CopyMapping{Facts: []FactMapping{}, Evidence: copy.Evidence[1:]})
 		case "influenced":
 			p.Class = "generated"
@@ -71,7 +71,7 @@ func completedExport(t *testing.T, classes string) (VerificationBundle, []InputP
 			fixture.Source.Mapping.Sources[0].ProfileDigest = profileHash(p)
 			both := []string{"record", "generated"}
 			fixture.Source.Mapping.Admits = &Admission{Facts: map[string][]string{"/screen/kind": {"generated"}, "/request": both}, Evidence: map[string][]string{"intake-form": both, "sponsor-endorsement": both}}
-			read = CopyMapping{Facts: []FactMapping{{"/screen/kind", "/kind"}}, Evidence: []EvidenceMapping{}}
+			read = CopyMapping{Facts: []FactMapping{{Target: "/screen/kind", Source: "/kind"}}, Evidence: []EvidenceMapping{}}
 			result = []byte(`{"kind":"data-access"}`)
 			second(record, "kind", "/screen/kind", copy)
 			fixture.Source.Sources["detail"] = SourceValue{Response: signResponse(t, record, key, []byte(`{"tool":"lookup","arguments":{"kind":"data-access"}}`), encode(sample()), at, 1)}

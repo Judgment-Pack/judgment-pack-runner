@@ -20,7 +20,7 @@ func fileMapping() InputMapping {
 func trialFile() Input { return fileInput(string(encode(sample())), fileMapping()) }
 
 func TestSourceMappingPreservesValuesAndOmission(t *testing.T) {
-	mapping := InputMapping{Version: 1, Provider: "local-file", Facts: []FactMapping{{"/data/no", "/no"}, {"/data/zero", "/zero"}, {"/data/nil", "/nil"}, {"/data/precise", "/precise"}, {"/data/decimal", "/decimal"}, {"/data/missing", "/missing"}, {"/data/slash", "/a~1b/0"}}, Evidence: []EvidenceMapping{{"receipt", "/evidence/receipt"}, {"missing", "/evidence/missing"}}}
+	mapping := InputMapping{Version: 1, Provider: "local-file", Facts: []FactMapping{{Target: "/data/no", Source: "/no"}, {Target: "/data/zero", Source: "/zero"}, {Target: "/data/nil", Source: "/nil"}, {Target: "/data/precise", Source: "/precise"}, {Target: "/data/decimal", Source: "/decimal"}, {Target: "/data/missing", Source: "/missing"}, {Target: "/data/slash", Source: "/a~1b/0"}}, Evidence: []EvidenceMapping{{Requirement: "receipt", Source: "/evidence/receipt"}, {Requirement: "missing", Source: "/evidence/missing"}}}
 	got, err := normalizeInput(fileInput(`{"no":false,"zero":0,"nil":null,"precise":9007199254740993,"decimal":1.234567890123456789,"a/b":["first"],"evidence":{"receipt":"unknown"}}`, mapping))
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestSourceInputRejectsAmbiguityAndUnsafeMappings(t *testing.T) {
 	if _, err := normalizeInput(fileInput(`{"x":"\ud83d\ude00","escaped":"\\ud800"}`, fileMapping())); err != nil {
 		t.Fatal("valid surrogate/escaped backslash refused", err)
 	}
-	for _, facts := range [][]FactMapping{{{"/a", "/x"}, {"/a/b", "/y"}}, {{"/a", "/x"}, {"/a", "/y"}}, {{"/__proto__/x", "/x"}}, {{"/a", "/bad~2"}}, {{"", "/a"}}} {
+	for _, facts := range [][]FactMapping{{{Target: "/a", Source: "/x"}, {Target: "/a/b", Source: "/y"}}, {{Target: "/a", Source: "/x"}, {Target: "/a", Source: "/y"}}, {{Target: "/__proto__/x", Source: "/x"}}, {{Target: "/a", Source: "/bad~2"}}, {{Target: "", Source: "/a"}}} {
 		m := fileMapping()
 		m.Facts = facts
 		if _, err := normalizeInput(fileInput(`{}`, m)); err == nil {
@@ -60,7 +60,7 @@ func TestSourceInputRejectsAmbiguityAndUnsafeMappings(t *testing.T) {
 		}
 	}
 	m := fileMapping()
-	m.Evidence = []EvidenceMapping{{"receipt", "/receipt"}}
+	m.Evidence = []EvidenceMapping{{Requirement: "receipt", Source: "/receipt"}}
 	for _, value := range []string{`true`, `null`, `"yes"`, `1`} {
 		if _, err := normalizeInput(fileInput(`{"receipt":`+value+`}`, m)); err == nil {
 			t.Fatal("coerced evidence", value)

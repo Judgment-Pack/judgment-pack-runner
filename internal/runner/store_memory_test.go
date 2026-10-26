@@ -215,6 +215,9 @@ func (r memoryReads) release(id string) (Release, error) {
 	if err := json.Unmarshal(b, &rel); err != nil {
 		return rel, storeFailure(faultUnreadable, "release", err)
 	}
+	if e := validateStoredRelease(rel); e != nil {
+		return rel, storeFailure(faultUnreadable, "release", e)
+	}
 	return rel, nil
 }
 
@@ -262,6 +265,9 @@ func (t *memoryTx) activeRuns() (int, error) {
 }
 
 func (t *memoryTx) createRun(r Run, caller, key, requestDigest string) error {
+	if e := validateStoredRun(r); e != nil {
+		return e
+	}
 	for _, held := range t.s.runs {
 		if held.id == r.ID || held.job == r.JobID && held.caller == caller && held.idem == key {
 			return storeFailure(faultTaken, "run", errors.New("a run is held under that id or request key"))
@@ -273,6 +279,9 @@ func (t *memoryTx) createRun(r Run, caller, key, requestDigest string) error {
 }
 
 func (t *memoryTx) putRun(r Run, expected string) (string, error) {
+	if e := validateStoredRun(r); e != nil {
+		return "", e
+	}
 	for i := range t.s.runs {
 		held := &t.s.runs[i]
 		if held.id != r.ID {
@@ -329,6 +338,9 @@ func (t *memoryTx) createEntry(sequence int64, run string, line []byte) error {
 }
 
 func (t *memoryTx) createRelease(r Release) error {
+	if e := validateStoredRelease(r); e != nil {
+		return e
+	}
 	if _, ok := t.s.releases[r.ID]; ok {
 		return storeFailure(faultTaken, "release", errors.New("a release is held under that id"))
 	}

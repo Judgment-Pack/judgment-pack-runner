@@ -203,6 +203,9 @@ func readTargets(r SourceRead) ([]FactMapping, []EvidenceMapping, error) {
 		}
 	}
 	if r.Copy != nil {
+		if err := validateColumnCopy(*r.Copy); err != nil {
+			return nil, nil, err
+		}
 		return r.Copy.Facts, r.Copy.Evidence, nil
 	}
 	if err := derivation.Validate(r.Rule); err != nil {
@@ -227,11 +230,11 @@ func readTargets(r SourceRead) ([]FactMapping, []EvidenceMapping, error) {
 		f := []FactMapping{}
 		ev := []EvidenceMapping{}
 		for _, x := range cl.Claim.Facts {
-			f = append(f, FactMapping{x.Pointer, x.From})
+			f = append(f, FactMapping{Target: x.Pointer, Source: x.From})
 			facts[x.Pointer] = x.From
 		}
 		for k := range cl.Claim.Evidence {
-			ev = append(ev, EvidenceMapping{k, ""})
+			ev = append(ev, EvidenceMapping{Requirement: k, Source: ""})
 			evidence[k] = true
 		}
 		if err := (InputMapping{Version: 1, Provider: "local-file", Facts: f, Evidence: ev}).validate(); err != nil {
@@ -241,10 +244,10 @@ func readTargets(r SourceRead) ([]FactMapping, []EvidenceMapping, error) {
 	f := []FactMapping{}
 	ev := []EvidenceMapping{}
 	for _, k := range sortedKeys(facts) {
-		f = append(f, FactMapping{k, facts[k]})
+		f = append(f, FactMapping{Target: k, Source: facts[k]})
 	}
 	for _, k := range sortedKeys(evidence) {
-		ev = append(ev, EvidenceMapping{k, ""})
+		ev = append(ev, EvidenceMapping{Requirement: k, Source: ""})
 	}
 	return f, ev, nil
 }
@@ -316,6 +319,9 @@ func validateDialect(m InputMapping, open bool) error { return validateDialectMo
 // VerifyPreparation refuses the kind after. A local file's source parameters
 // are held to the rules of every source's (§3, §4) on every path.
 func validateDialectMode(m InputMapping, open, offline bool) error {
+	if e := validateColumnMapping(m); e != nil {
+		return e
+	}
 	if e := m.validateArtifactIdentity(); e != nil {
 		return e
 	}
@@ -326,7 +332,7 @@ func validateDialectMode(m InputMapping, open, offline bool) error {
 	fail := func(s string) error { return inputProblem(prefix + s) }
 	// failOn is fail with e's sentence, keeping e and the code it names.
 	failOn := func(e error) error { return inputProblemOf(prefix+e.Error(), e) }
-	if len(encode(m)) > 128<<10 {
+	if len(encode(m)) > artifactLimit(m.selectedConversion, 128<<10, columnDocumentLimit) {
 		return codedProblem(codeOverBound, prefix+"mapping exceeds 128 KiB")
 	}
 	if _, e := proofCanon(encode(m)); e != nil {
@@ -490,7 +496,7 @@ func validateDialectMode(m InputMapping, open, offline bool) error {
 		allEvidence = append(allEvidence, ev...)
 		prior[s.Name] = true
 	}
-	if e := (InputMapping{Version: 1, Provider: "local-file", Facts: allFacts, Evidence: allEvidence}).validate(); e != nil {
+	if e := (InputMapping{Version: 1, Provider: "local-file", Facts: ordinaryFactTargets(allFacts), Evidence: ordinaryEvidenceTargets(allEvidence)}).validate(); e != nil {
 		return e
 	}
 	targets := map[string]bool{}

@@ -269,7 +269,7 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 			return s.stopPreparation(o, "needs-attention", "The durable Gateway connection is no longer installed.")
 		}
 		operation := id("")
-		p.Tasks = append(p.Tasks, SourceTask{Name: next.Name, ID: operation, State: "waiting", StartedAt: now(), Gateway: gateway, OperationsURL: operationsURL, Profile: next.Profile, Request: encode(map[string]any{"gateway": gateway, "id": operation, "source": next.Source, "arguments": next.Arguments, "deadline": p.Deadline})})
+		p.Tasks = append(p.Tasks, SourceTask{Name: next.Name, ID: operation, State: "waiting", StartedAt: now(), Gateway: gateway, OperationsURL: operationsURL, Profile: next.Profile, Request: encode(sourceRequest{ID: operation, Gateway: gateway, Source: next.Source, Arguments: next.Arguments, Deadline: p.Deadline, ConversionContract: next.ConversionContract})})
 		task = &p.Tasks[len(p.Tasks)-1]
 		if e = s.savePreparation(o); e != nil {
 			return e
@@ -287,14 +287,18 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 	if !installed {
 		return s.stopPreparation(o, "needs-attention", "The acquisition connection changed. Restore it to reconcile this operation.")
 	}
-	var result struct {
-		ID       string          `json:"id"`
-		State    string          `json:"state"`
-		Deadline string          `json:"deadline"`
-		Response json.RawMessage `json:"response,omitempty"`
-		Reason   string          `json:"reason,omitempty"`
+	if !taskConversionMatches(task.Request, inputConversion(*p.Input)) {
+		return s.stopPreparation(o, "needs-attention", "The retained conversion selection changed; the operation was not rebound.")
 	}
-	raw, code, e := operationCall(ctx, task.OperationsURL+"/operations", task.Request, tokenFile)
+	var result struct {
+		RetainedResponseJSON string          `json:"retainedResponseJson,omitempty"`
+		ID                   string          `json:"id"`
+		State                string          `json:"state"`
+		Deadline             string          `json:"deadline"`
+		Response             json.RawMessage `json:"response,omitempty"`
+		Reason               string          `json:"reason,omitempty"`
+	}
+	raw, code, e := operationCall(ctx, task.OperationsURL+"/operations", task.Request, tokenFile, inputConversion(*p.Input))
 	task.Checks++
 	if e != nil || code == 429 || code >= 500 {
 		if ctx.Err() != nil {
@@ -331,14 +335,28 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 			Index   int    `json:"callIndex"`
 		} `json:"receipt"`
 	}
-	if json.Unmarshal(result.Response, &binding) != nil || binding.Receipt.Session != "async."+task.ID || binding.Receipt.Index != 0 {
+	response := result.Response
+	value := SourceValue{Response: response}
+	if inputConversion(*p.Input) != nil {
+		if len(result.Response) > 0 || result.RetainedResponseJSON == "" || len(result.RetainedResponseJSON) > columnResponseLimit {
+			return s.stopPreparation(o, "needs-attention", "The retained source response has an invalid custody variant or exceeds its selected limit.")
+		}
+		response = []byte(result.RetainedResponseJSON)
+		value = SourceValue{Response: response}
+		if next.retainResponse {
+			value = SourceValue{RetainedResponseJSON: result.RetainedResponseJSON}
+		}
+	} else if result.RetainedResponseJSON != "" {
+		return s.stopPreparation(o, "needs-attention", "Unexpected selected response custody.")
+	}
+	if json.Unmarshal(response, &binding) != nil || binding.Receipt.Session != "async."+task.ID || binding.Receipt.Index != 0 {
 		return s.stopPreparation(o, "needs-attention", "The source receipt does not belong to this operation.")
 	}
 	if p.Input.Source.Sources == nil {
 		p.Input.Source.Sources = map[string]SourceValue{}
 	}
-	p.Input.Source.Sources[next.Name] = SourceValue{Response: result.Response}
-	if len(encode(*p.Input)) > MaxBody {
+	p.Input.Source.Sources[next.Name] = value
+	if len(encode(*p.Input)) > combinedLimit(*p.Input) {
 		return s.stopPreparation(o, "needs-attention", "Acquired inputs exceed the combined input limit.")
 	}
 	if _, e = s.nextInput(*p.Input, time.Now()); e != nil {
@@ -355,7 +373,7 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 
 // Requests only exchange control-plane state. They never hold a worker for
 // the duration of an acquisition. Retries always carry identical intent.
-func operationCall(parent context.Context, target string, body []byte, tokenFile string) ([]byte, int, error) {
+func operationCall(parent context.Context, target string, body []byte, tokenFile string, selection ...*ConversionContract) ([]byte, int, error) {
 	ctx, stop := context.WithTimeout(parent, 3*time.Second)
 	defer stop()
 	req, e := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
@@ -373,8 +391,9 @@ func operationCall(parent context.Context, target string, body []byte, tokenFile
 		return nil, 0, e
 	}
 	defer res.Body.Close()
-	raw, e := io.ReadAll(io.LimitReader(res.Body, MaxBody+1))
-	if e == nil && len(raw) > MaxBody {
+	limit := artifactLimit(selectedConversion(selection), MaxBody, columnReplyLimit)
+	raw, e := io.ReadAll(io.LimitReader(res.Body, int64(limit)+1))
+	if e == nil && len(raw) > limit {
 		e = errors.New("operation response too large")
 	}
 	return raw, res.StatusCode, e

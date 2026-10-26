@@ -164,7 +164,7 @@ func TestCalculatorAnswerIsHeldToItsBinding(t *testing.T) {
 func TestCalculationThatCouldNotComputeIsUnknownUnderItsOwnReason(t *testing.T) {
 	input, p, key, at := calculatorFixture(t)
 	// A source that needs the converted amount is skipped when there is none.
-	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "ledger", Kind: "operation", Profile: "vendors", ProfileDigest: "", MaxAge: 300, Parameters: map[string]Parameter{"converted": {From: "fx", Pointer: "/invoice/converted", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"converted":{"$param":"converted"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/ledger", "/ledger"}}, Evidence: []EvidenceMapping{}}}})
+	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "ledger", Kind: "operation", Profile: "vendors", ProfileDigest: "", MaxAge: 300, Parameters: map[string]Parameter{"converted": {From: "fx", Pointer: "/invoice/converted", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"converted":{"$param":"converted"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/ledger", Source: "/ledger"}}, Evidence: []EvidenceMapping{}}}})
 	vendors, _ := testProfile(t)
 	input.Source.Mapping.Sources[1].ProfileDigest = profileHash(vendors)
 	profiles := []InputProfile{p, vendors}
@@ -221,7 +221,7 @@ func TestACalculatedSourceSkippedBehindAnotherCarriesNoCalculation(t *testing.T)
 	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "tax", Kind: "operation", Profile: tax.ID, ProfileDigest: profileHash(tax), MaxAge: 300,
 		Parameters:  map[string]Parameter{"converted": {From: "fx", Pointer: "/invoice/converted", Type: "string"}},
 		Arguments:   json.RawMessage(`{"tool":"tax","arguments":{"amount":{"$param":"converted"}}}`),
-		Read:        SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/invoice/tax", "/tax"}}, Evidence: []EvidenceMapping{}}},
+		Read:        SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/invoice/tax", Source: "/tax"}}, Evidence: []EvidenceMapping{}}},
 		Calculation: &CalculationBinding{Inputs: map[string]string{"amount": "converted"}, Tables: map[string]int{}}})
 	profiles := []InputProfile{p, tax}
 	computed := cloneInput(input)
@@ -360,7 +360,7 @@ func TestCalculatorProfileAndBindingGoTogetherBeforeAnyAcquisition(t *testing.T)
 		})
 	}
 	t.Run("a binding on a selected file", func(t *testing.T) {
-		m := InputMapping{Version: 2, Sources: []MappingSource{{Name: "file", Kind: "selected-file", Provider: "local-file", Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/x", "/x"}}, Evidence: []EvidenceMapping{}}}, Calculation: &CalculationBinding{Inputs: map[string]string{}, Tables: map[string]int{}}}}}
+		m := InputMapping{Version: 2, Sources: []MappingSource{{Name: "file", Kind: "selected-file", Provider: "local-file", Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/x", Source: "/x"}}, Evidence: []EvidenceMapping{}}}, Calculation: &CalculationBinding{Inputs: map[string]string{}, Tables: map[string]int{}}}}}
 		if e := m.validate(); e == nil || !strings.Contains(e.Error(), "only an operation") {
 			t.Fatal(e)
 		}
@@ -415,7 +415,7 @@ func TestCalculatedRunIsEvaluatedAndVerifiedOffline(t *testing.T) {
 	cfg.InputProfiles = []InputProfile{p}
 	// The real pack reads one object and two evidence requirements; the
 	// calculator answers with them beside its calculation member.
-	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}}
+	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/request", Source: "/facts/request"}}, Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}}}}
 	input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
 	result := map[string]any{"calculation": calculation(at)}
 	_ = json.Unmarshal(encode(sample()), &result)
@@ -473,8 +473,8 @@ func calculatedSignedExport(t *testing.T, status string, change ...func(*Input))
 	input, profile, key, at := calculatorFixture(t)
 	cfg.InputProfiles = []InputProfile{profile}
 	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{
-		Facts:    []FactMapping{{"/request", "/facts/request"}},
-		Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}},
+		Facts:    []FactMapping{{Target: "/request", Source: "/facts/request"}},
+		Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}},
 	}}
 	input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
 	calc := calculation(at)
@@ -633,7 +633,7 @@ func TestAPreparationKeepsItsNumbersAsWritten(t *testing.T) {
 			t.Fatalf("%s was taken as an integer parameter: %v", literal, err)
 		}
 		copied := cloneInput(input)
-		copied.Source.Mapping.Case.Facts = []FactMapping{{"/count", "/count"}}
+		copied.Source.Mapping.Case.Facts = []FactMapping{{Target: "/count", Source: "/count"}}
 		copied.Source.Case = json.RawMessage(`{"amount":"1200.00","currency":"EUR","count":` + literal + `}`)
 		if _, err := normalizeV2(copied, []InputProfile{p}, at); err == nil || !strings.Contains(err.Error(), literal) {
 			t.Fatalf("%s was copied into a claim: %v", literal, err)

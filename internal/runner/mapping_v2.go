@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/derivation"
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/retainedcolumns"
 )
 
 func (s *Service) normalizeInput(i Input) (Input, error) {
@@ -43,6 +44,9 @@ func writeTarget(root map[string]any, pointer string, value any) {
 	at[parts[len(parts)-1]] = value
 }
 func copyClaim(c CopyMapping, artifact any) (derivedClaim, error) {
+	if hasColumnCopy(c) {
+		return derivedClaim{}, withCode(codeReadFailed, errors.New("retained columns require original case bytes and asserted source context"))
+	}
 	facts := map[string]any{}
 	evidence := map[string]string{}
 	basis := []string{}
@@ -183,6 +187,15 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	if offline {
 		admitProfiles = verifierProfileKeys
 	}
+	if e := inputConversion(i).validate("document-validation", "preview", "preparation"); e != nil {
+		return i, e
+	}
+	if i.Preparation != nil && !sameConversion(i.Preparation.ConversionContract, inputConversion(i)) {
+		return i, conversionFailure("capability-unsupported")
+	}
+	if inputConversion(i) != nil && len(encode(profiles)) > columnProfilesLimit {
+		return i, codedProblem(codeOverBound, "profiles exceed selected limit")
+	}
 	profileKeys, e := admitProfiles(profiles)
 	if e != nil {
 		return i, e
@@ -204,8 +217,20 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	if len(c.Snapshot) > 0 {
 		return i, inputProblem("v2 uses named sources, not the v1 snapshot")
 	}
-	if len(encode(c)) > MaxBody {
+	if err := columnInputBounds(c); err != nil {
+		return i, err
+	}
+	if !hasColumnMapping(m) && len(encode(c)) > MaxBody {
 		return i, inputProblem("v2 input exceeds aggregate limit")
+	}
+	if err := preflightColumnSources(m, profiles); err != nil {
+		return i, inputProblemOf(err.Error(), err)
+	}
+	// This carrier is only admitted on an explicitly bound Draft producer read.
+	for _, source := range m.Sources {
+		if c.Sources[source.Name].RetainedResponseJSON != "" && (source.Read.Copy == nil || !hasColumnCopy(*source.Read.Copy)) {
+			return i, sourceFailure(source.Name, withCode(codeMalformed, errors.New("retainedResponseJson is only admitted for a Draft producer read")))
+		}
 	}
 	if err := preflightPreparation(m, profiles, !offline); err != nil {
 		return i, inputProblemOf(err.Error(), err)
@@ -266,10 +291,21 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	if c.MappingDigest != "" && c.MappingDigest != hash {
 		return i, inputProblem("mapping digest changed")
 	}
-	if len(c.Case) == 0 {
-		c.Case = json.RawMessage(`{}`)
+	if hasColumnCase(m) && m.Profile != "base" {
+		return i, codedProblem(codeMalformed, "retained case conversions require an explicit Draft base profile")
 	}
-	caseValue, e := readInputJSON(c.Case)
+	if c.RetainedCaseJSON != "" && (!hasColumnCase(m) || m.Profile != "base") {
+		return i, codedProblem(codeMalformed, "retainedCaseJson requires an explicit Draft Base case conversion")
+	}
+	caseRaw, e := columnCaseBytes(c)
+	if e != nil {
+		return i, inputProblemOf(e.Error(), e)
+	}
+	if len(caseRaw) == 0 {
+		caseRaw = json.RawMessage(`{}`)
+		c.Case = caseRaw
+	}
+	caseValue, e := readInputJSON(caseRaw)
 	if e != nil {
 		return i, inputProblem("invalid case JSON")
 	}
@@ -280,7 +316,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	evidence := map[string]string{}
 	caseParams := map[string]any{"runAt": at.UTC().Format("2006-01-02T15:04:05Z")}
 	caseTypes := map[string]string{"runAt": "timestamp"}
-	prep := &Preparation{Version: m.Version, VerifiedAt: at.UTC().Format("2006-01-02T15:04:05Z"), MappingDigest: hash, Verification: "verified acquisitions; session sealing and input truth are not established", Cites: []Citation{}, Lineage: []TargetLineage{}, Outcomes: []SourceOutcome{}}
+	prep := &Preparation{ConversionContract: c.ConversionContract, Version: m.Version, VerifiedAt: at.UTC().Format("2006-01-02T15:04:05Z"), MappingDigest: hash, Verification: "verified acquisitions; session sealing and input truth are not established", Cites: []Citation{}, Lineage: []TargetLineage{}, Outcomes: []SourceOutcome{}}
 	claims := map[string]derivedClaim{}
 	generated := map[string]bool{}
 	used := map[string]bool{}
@@ -316,7 +352,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	// reconciliation reads (spec/dialect.md §6.4).
 	records := map[string]any{}
 	var admissionFailure error
-	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, receipts *[]Citation, calc *CalculationLineage) error {
+	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, receipts *[]Citation, calc *CalculationLineage, transformations map[string]*retainedcolumns.Transformation) error {
 		ft, et, err := readTargets(read)
 		if err != nil {
 			return err
@@ -342,7 +378,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			if present {
 				writeTarget(facts, f.Target, v)
 			}
-			prep.Lineage = append(prep.Lineage, TargetLineage{f.Target, "fact", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Target), deps, cite, receipts, calc})
+			prep.Lineage = append(prep.Lineage, TargetLineage{Target: f.Target, Kind: "fact", Source: name, Class: class, GeneratedInfluence: gen, Present: present, Status: claim.Status, Reason: claim.Reason, ReadDigest: rd, Basis: claim.Basis, Candidates: candidateFrom(read, f.Target), Dependencies: deps, Receipt: cite, Receipts: receipts, Calculation: calc, ColumnTransformation: transformations["fact:"+f.Target]})
 		}
 		for _, f := range et {
 			if !admitted(m, "evidence", f.Requirement, class, gen) {
@@ -358,7 +394,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			if present {
 				evidence[f.Requirement] = v
 			}
-			prep.Lineage = append(prep.Lineage, TargetLineage{f.Requirement, "evidence", name, class, gen, present, claim.Status, claim.Reason, rd, claim.Basis, candidateFrom(read, f.Requirement), deps, cite, receipts, calc})
+			prep.Lineage = append(prep.Lineage, TargetLineage{Target: f.Requirement, Kind: "evidence", Source: name, Class: class, GeneratedInfluence: gen, Present: present, Status: claim.Status, Reason: claim.Reason, ReadDigest: rd, Basis: claim.Basis, Candidates: candidateFrom(read, f.Requirement), Dependencies: deps, Receipt: cite, Receipts: receipts, Calculation: calc, ColumnTransformation: transformations["evidence:"+f.Requirement]})
 		}
 		return nil
 	}
@@ -374,14 +410,23 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			caseTypes[n] = p.Type
 		}
 		read := SourceRead{Copy: &CopyMapping{m.Case.Facts, m.Case.Evidence}}
-		claim, err := applyRead(read, caseValue, caseParams)
+		claim, transformations, err := applyColumnCase(read, caseRaw, caseValue, caseParams, c.ConversionContract)
 		if err != nil {
 			return i, sourceFailure("case", err)
 		}
-		if err = merge("case", "asserted", false, read, claim, nil, nil, nil, nil); err != nil {
+		if err = merge("case", "asserted", false, read, claim, nil, nil, nil, nil, transformations); err != nil {
 			return i, sourceFailure("case", err)
 		}
 		prep.Outcomes = append(prep.Outcomes, SourceOutcome{Name: "case", Status: claim.Status, Reason: claim.Reason, Parameters: encode(caseParams), Claim: encode(claim)})
+		if hasColumnCase(m) {
+			retainColumnCase(c, caseRaw)
+			if err := columnInputBounds(c); err != nil {
+				return i, err
+			}
+			// A planned acquisition may checkpoint the original request pointer. Retain
+			// exact case custody before that effect, without a second serialized copy.
+			retainColumnCase(i.Source, caseRaw)
+		}
 	}
 	for _, source := range m.Sources {
 		fail := func(err error) (Input, error) { return i, sourceFailure(source.Name, err) }
@@ -441,6 +486,8 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		var cite *Citation
 		var receipts *[]Citation
 		var calc *CalculationLineage
+		var transformations map[string]*retainedcolumns.Transformation
+		var carrier *retainedColumnCarrier
 		if unavailable {
 			if present && research {
 				return fail(researchFail(codeUnexpected, "a skipped dependent source must not supply a response"))
@@ -502,7 +549,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			}
 			if !present {
 				if planning {
-					return i, &acquisitionNeeded{PlannedSource{Name: source.Name, Kind: source.Kind, Provider: source.Provider, Profile: source.Profile, Source: profile.Source, Arguments: args}}
+					return i, &acquisitionNeeded{PlannedSource{retainResponse: source.Read.Copy != nil && hasColumnCopy(*source.Read.Copy), Name: source.Name, Kind: source.Kind, Provider: source.Provider, Profile: source.Profile, Source: profile.Source, Arguments: args}}
 				}
 				return fail(withCode(codeMissing, errors.New("required source response is missing")))
 			}
@@ -538,11 +585,39 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 				if len(value.Snapshot) > 0 {
 					return fail(errors.New("operations must supply a response only"))
 				}
-				result, citation, err := verifyAcquisition(value.Response, args, profile, profileKeys[profile.ID], at, source.MaxAge)
-				if err != nil {
-					return fail(err)
+				var result json.RawMessage
+				if source.Read.Copy != nil && hasColumnCopy(*source.Read.Copy) {
+					raw, err := columnRetainedResponse(value, c.ConversionContract)
+					if err != nil {
+						return fail(err)
+					}
+					verified, citation, err := verifyRetainedAcquisition(raw, args, profile, profileKeys[profile.ID], at, source.MaxAge, c.ConversionContract)
+					if err != nil {
+						return fail(err)
+					}
+					parsed, err := readColumnCarrier(verified.Raw, c.ConversionContract)
+					if err != nil {
+						return fail(err)
+					}
+					if err = validateColumnProducerRelation(parsed); err != nil {
+						return fail(err)
+					}
+					carrier = &parsed
+					cite = citation
+					result = verified.Canonical
+					value = SourceValue{RetainedResponseJSON: string(raw)}
+					c.Sources[source.Name] = value
+					// The sole retained text and its JSON escaping are real artifact bytes.
+					if err := columnInputBounds(c); err != nil {
+						return fail(err)
+					}
+				} else {
+					var err error
+					result, cite, err = verifyAcquisition(value.Response, args, profile, profileKeys[profile.ID], at, source.MaxAge)
+					if err != nil {
+						return fail(err)
+					}
 				}
-				cite = citation
 				artifact, e = readInputJSON(result)
 				if e != nil {
 					return fail(e)
@@ -568,6 +643,15 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			}
 			if calc != nil && calc.Status != calculationComputed {
 				claim, e = calculationUnknown(source.Read, calc.Status)
+			} else if carrier != nil {
+				claim, transformations, e = applyColumnCopy(source.Read, artifact, func(_ string, leaf json.RawMessage, availability bool) (*retainedcolumns.Transformation, error) {
+					plan, err := columnPlan(leaf, availability)
+					if err != nil {
+						return nil, err
+					}
+					t, err := retainedcolumns.Derive(plan, carrier.Frame)
+					return t, columnError(err)
+				}, c.ConversionContract)
 			} else {
 				claim, e = deriveRead(source.Read, artifact, params)
 			}
@@ -575,7 +659,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 				return fail(e)
 			}
 		}
-		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite, receipts, calc); e != nil {
+		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite, receipts, calc, transformations); e != nil {
 			return fail(e)
 		}
 		// A verified source that was not skipped had its acquisition's times
@@ -606,6 +690,9 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	// record's own last (spec/dialect.md §9.1).
 	if len(recipes) == 0 {
 		sort.SliceStable(prep.Cites, func(a, b int) bool { return prep.Cites[a].CallIndex < prep.Cites[b].CallIndex })
+	}
+	if hasColumnMapping(m) && len(encode(prep)) > preparationLimit(Input{Source: c}) {
+		return i, codedProblem(codeOverBound, "retained-column preparation exceeds base limit")
 	}
 	c.MappingDigest = hash
 	mapped := Input{Facts: encode(facts), Source: c, Preparation: prep}

@@ -63,7 +63,7 @@ const (
 
 // refusalCodes are the codes §11 gives a refusal; every other code is a
 // finding's.
-var refusalCodes = map[string]bool{codeOverBound: true, codeMalformed: true, "version-unread": true, codeKindUnread: true}
+var refusalCodes = map[string]bool{"capability-unsupported": true, "profile-unsupported": true, codeOverBound: true, codeMalformed: true, "version-unread": true, codeKindUnread: true}
 
 // verifiedKinds are the source kinds the verifier reads: those the vectors
 // hold (spec/dialect.md §4, §14). A dialect that names another kind Runner
@@ -136,12 +136,13 @@ func verificationOutcome(err error) (result, code string) {
 // read. Binding is nil when no binding document is given, and Sources when no
 // acquisitions are, which is the empty object.
 type PreparationFixture struct {
-	Dialect     []byte
-	Binding     []byte
-	Case        []byte
-	Sources     []byte
-	Profiles    []byte
-	Preparation []byte
+	ConversionContract *ConversionContract
+	Dialect            []byte
+	Binding            []byte
+	Case               []byte
+	Sources            []byte
+	Profiles           []byte
+	Preparation        []byte
 }
 
 // PreparationPin holds an expected preparation's bytes to the digest supplied
@@ -150,8 +151,11 @@ type PreparationFixture struct {
 // name is not the one its publisher pinned, and is not read. A preparation
 // over its bound is not digested: the reading refuses it, input-over-bound,
 // without reading it whole.
-func PreparationPin(preparation []byte, pin string) error {
-	if len(preparation) > maxPreparationDocument {
+func PreparationPin(preparation []byte, pin string, selection ...*ConversionContract) error {
+	if e := selectedConversion(selection).validate("preparation-verification"); e != nil {
+		return e
+	}
+	if len(preparation) > artifactLimit(selectedConversion(selection), maxPreparationDocument, columnPreparationLimit) {
 		return nil
 	}
 	if got := digest(preparation); got != pin {
@@ -237,6 +241,16 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 		return PreparationReport{Result: result, Code: code, Reason: err.Error()}
 	}
 
+	if e := f.ConversionContract.validate("document-validation", "preview", "preparation", "preparation-verification"); e != nil {
+		return failed(e)
+	}
+	prepLimit := artifactLimit(f.ConversionContract, maxPreparationDocument, columnPreparationLimit)
+	docLimit := artifactLimit(f.ConversionContract, maxPublishedDialect, columnDocumentLimit)
+	allLimit := artifactLimit(f.ConversionContract, MaxBody, columnCombinedLimit)
+	profilesLimit := artifactLimit(f.ConversionContract, maxProfilesDocument, columnProfilesLimit)
+	if code := columnProfileBytes(f.Dialect); code != "" {
+		return stop(code, "retained-column profile is unsupported or malformed")
+	}
 	sources := f.Sources
 	if sources == nil {
 		sources = []byte(`{}`)
@@ -245,13 +259,13 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// §12's bounds on bytes, on every document before any is read (§11's
 	// first phase).
 	switch {
-	case len(f.Preparation) > maxPreparationDocument:
+	case len(f.Preparation) > prepLimit:
 		return stop(codeOverBound, fmt.Sprintf("the preparation is over %d bytes", maxPreparationDocument))
-	case len(f.Dialect) > maxPublishedDialect:
+	case len(f.Dialect) > docLimit:
 		return stop(codeOverBound, fmt.Sprintf("the dialect is over %d bytes", maxPublishedDialect))
-	case len(f.Dialect)+len(f.Case)+len(sources) > MaxBody:
+	case len(f.Dialect)+len(f.Case)+len(sources) > allLimit:
 		return stop(codeOverBound, fmt.Sprintf("the dialect, the case and the acquisitions are together over %d bytes", MaxBody))
-	case len(f.Profiles) > maxProfilesDocument:
+	case len(f.Profiles) > profilesLimit:
 		return stop(codeOverBound, fmt.Sprintf("the profiles are over %d bytes", maxProfilesDocument))
 	case f.Binding != nil && len(f.Binding) > maxBindingDocument:
 		return stop(codeOverBound, fmt.Sprintf("the binding document is over %d bytes", maxBindingDocument))
@@ -306,11 +320,18 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	if err != nil {
 		return stop(codeMalformed, "the profiles: "+err.Error())
 	}
-	source := &SourceInput{Case: f.Case}
+	source := &SourceInput{Case: f.Case, ConversionContract: f.ConversionContract}
 	if err = strictJSON(sources, &source.Sources); err != nil || source.Sources == nil || !exactAcquisitionMembers(sources) {
 		return stop(codeMalformed, fmt.Sprintf("the acquisitions are not one object of acquisitions by source: %v", err))
 	}
 	given, _ := read["the preparation"].(map[string]any)
+	var selectedPreparation Preparation
+	if strictJSON(f.Preparation, &selectedPreparation) != nil || !sameConversion(selectedPreparation.ConversionContract, f.ConversionContract) {
+		return stop(codeMalformed, "preparation conversion selection differs")
+	}
+	if err := columnReferenceForms(given); err != nil {
+		return stop(codeMalformed, err.Error())
+	}
 	verifiedAt, _ := given["verifiedAt"].(string)
 	at, ok := receiptInstant(verifiedAt)
 	if !ok {
@@ -320,6 +341,7 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	if err = strictJSON(f.Dialect, &dialect); err != nil {
 		return stop(codeMalformed, "the dialect is not a dialect document: "+err.Error())
 	}
+	dialect.selectedConversion = f.ConversionContract
 	if err = exactDialectForm(f.Dialect, dialect); err != nil {
 		return stop(codeMalformed, "the dialect has invalid members")
 	}
@@ -400,14 +422,15 @@ const PreparationVerifierVersion = 1
 func PreparationVerifierCapabilities(release string) []byte {
 	shapes := sortedKeys(adapterShapes)
 	capabilities := map[string]any{
-		"command":         "verify-preparation",
-		"version":         PreparationVerifierVersion,
-		"runner":          release,
-		"dialectVersions": []int{2, 3},
-		"formatVersions":  []string{"2.0.0", "3.0.0"},
-		"sourceKinds":     sortedKeys(verifiedKinds),
-		"shapes":          shapes,
-		"instant":         freshnessAgainst,
+		"conversionContracts": ConversionCapabilities("preparation-verification"),
+		"command":             "verify-preparation",
+		"version":             PreparationVerifierVersion,
+		"runner":              release,
+		"dialectVersions":     []int{2, 3},
+		"formatVersions":      []string{"2.0.0", "3.0.0"},
+		"sourceKinds":         sortedKeys(verifiedKinds),
+		"shapes":              shapes,
+		"instant":             freshnessAgainst,
 		"report": map[string]any{
 			"form":       "spec/dialect.md §11",
 			"version":    1,

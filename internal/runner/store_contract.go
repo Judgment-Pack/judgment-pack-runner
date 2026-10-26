@@ -222,3 +222,43 @@ func openStore(kind string, o storeOpening) (runStore, error) {
 	}
 	return open(o)
 }
+
+// validateStoredInput rechecks the installed selection at each persistence
+// boundary. Stores keep the existing transaction and CAS contract unchanged.
+func validateStoredInput(i Input) error {
+	c := inputConversion(i)
+	if e := c.validate("document-validation", "preview", "preparation"); e != nil {
+		return e
+	}
+	if i.Preparation != nil && !sameConversion(c, i.Preparation.ConversionContract) {
+		return conversionFailure("capability-unsupported")
+	}
+	if c == nil {
+		return nil
+	}
+	if i.Source == nil || !hasColumnMapping(i.Source.Mapping) || i.Source.Mapping.Profile != "base" {
+		return conversionFailure("capability-unsupported")
+	}
+	if i.Preparation != nil && (!sameConversion(c, i.Preparation.ConversionContract) || len(encode(i.Preparation)) > columnPreparationLimit) {
+		return codedProblem(codeOverBound, "stored preparation exceeds selected limit or differs in selection")
+	}
+	return columnInputBounds(i.Source)
+}
+func validateStoredRelease(r Release) error {
+	if e := validateStoredInput(r.Sample); e != nil {
+		return storeFailure(faultRefused, "release", e)
+	}
+	if inputConversion(r.Sample) != nil && len(encode(r)) > columnStoredLimit {
+		return storeFailure(faultRefused, "release", codedProblem(codeOverBound, "retained release exceeds selected storage limit"))
+	}
+	return nil
+}
+func validateStoredRun(r Run) error {
+	if e := validateStoredInput(r.Input); e != nil {
+		return storeFailure(faultRefused, "run", e)
+	}
+	if inputConversion(r.Input) != nil && (len(runText(r)) > columnStoredLimit || len(r.AuditBytes) > columnRecordLimit) {
+		return storeFailure(faultRefused, "run", codedProblem(codeOverBound, "retained run or audit record exceeds selected storage limit"))
+	}
+	return nil
+}

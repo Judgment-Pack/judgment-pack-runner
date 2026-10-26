@@ -62,6 +62,7 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, verifyPreparationUsage)
 		flags.PrintDefaults()
 	}
+	conversionText := flags.String("conversion-contract", "", "optional: exact installed retained-column selector in canonical base64url")
 	dialect := flags.String("dialect", "", "the dialect document: bound, or, with --binding, published with unbound sources, which the binding document binds as Runner's import step does (spec/dialect.md §4.4)")
 	unbound := flags.String("unbound", "", "the published dialect, with unbound sources, which --binding binds: --dialect with --binding, named so")
 	binding := flags.String("binding", "", "the binding document of a dialect with unbound sources")
@@ -109,7 +110,15 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 	if given["unbound"] {
 		dialectPath = *unbound
 	}
-	fixture := runner.PreparationFixture{}
+	selection, err := runner.ParseConversionSelector(*conversionText, "document-validation", "preview", "preparation", "preparation-verification")
+	if err != nil {
+		return couldNot("%v", err)
+	}
+	fixture := runner.PreparationFixture{ConversionContract: selection}
+	inputCap := int64(preparationInputCap)
+	if selection != nil {
+		inputCap = 16<<20 + 1
+	}
 	for _, file := range []struct {
 		path  string
 		into  *[]byte
@@ -125,7 +134,7 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 		if !file.given {
 			continue
 		}
-		b, err := readAtMost(file.path, preparationInputCap)
+		b, err := readAtMost(file.path, inputCap)
 		if err != nil {
 			return couldNot("%v", err)
 		}
@@ -133,7 +142,7 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 	}
 	// The pin, before anything is read: a precondition, as a file the
 	// command can open is, and no reading of §11's (runner.PreparationPin).
-	if err := runner.PreparationPin(fixture.Preparation, *preparationDigest); err != nil {
+	if err := runner.PreparationPin(fixture.Preparation, *preparationDigest, selection); err != nil {
 		return couldNot("%v", err)
 	}
 	report := runner.VerifyPreparation(fixture)

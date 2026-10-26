@@ -367,8 +367,8 @@ func (p researchPlan) published(t *testing.T) InputMapping {
 		admits[target] = []string{"generated"}
 	}
 	m := InputMapping{Version: 3,
-		Case: &CaseMapping{Parameters: p.parameters, Facts: []FactMapping{{"/request", "/request"}},
-			Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}},
+		Case: &CaseMapping{Parameters: p.parameters, Facts: []FactMapping{{Target: "/request", Source: "/request"}},
+			Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}}},
 		Admits:           &Admission{Facts: admits},
 		UnmappedEvidence: []string{"sensitive-data-approvals"},
 	}

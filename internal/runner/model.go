@@ -174,6 +174,9 @@ func decodeRun(b []byte) (Run, error) {
 		held.Run.Input = held.Run.manual.input()
 	}
 	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing, held.Run.Binding = held.InterruptedAt, held.Reason, held.Signing, held.Binding
+	if e == nil {
+		e = validateStoredRun(held.Run)
+	}
 	return held.Run, e
 }
 

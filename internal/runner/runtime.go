@@ -194,6 +194,12 @@ func invokeStarting(ctx context.Context, bin, dir, label string, env []string, s
 	return b, nil
 }
 func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, error) {
+	if s.cfg.ExecutorAdmission != nil && inputConversion(req.Input) != nil {
+		return Release{}, manualUnsupported()
+	}
+	if e := runtimeConversionAdmission(ctx, s.runtime, s.cfg.Dir, inputConversion(req.Input), s.startRuntime); e != nil {
+		return Release{}, e
+	}
 	if len(req.Pack) == 0 || len(req.Pack) > 1<<20 {
 		return Release{}, bad("invalid_pack", "Choose a pack smaller than 1 MiB.")
 	}
@@ -308,7 +314,7 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 	if s.expectedKey != nil {
 		signing = signingInputs{path: s.cfg.SigningKey, publicKey: hex.EncodeToString(s.expectedKey)}
 	}
-	return evaluateWithInvoker(ctx, bin, r, input, dir, rehearsal, signing, s.invokeWith)
+	return evaluateWithInvoker(ctx, bin, r, input, dir, rehearsal, signing, s.invokeWith, s.startRuntime)
 }
 
 // signingInputs is what an operational evaluation's Runtime is given to sign
@@ -346,7 +352,10 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 	return evaluateWithInvoker(ctx, bin, r, input, dir, rehearsal, signing, invokeWith)
 }
 
-func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs, invoke runtimeInvoker) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
+func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs, invoke runtimeInvoker, starters ...func(*exec.Cmd) error) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
+	if e := runtimeConversionAdmission(ctx, bin, filepath.Dir(dir), inputConversion(input), starters...); e != nil {
+		return nil, nil, nil, nil, e
+	}
 	// The directory is exclusively created per invocation and never reused.
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, nil, nil, nil, err
@@ -415,7 +424,7 @@ func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input
 	if rehearsal {
 		return out, nil, nil, nil, nil
 	}
-	audit, err := readLimit(filepath.Join(dir, "audit", "evaluations.jsonl"), maxOutput)
+	audit, err := readLimit(filepath.Join(dir, "audit", "evaluations.jsonl"), int64(artifactLimit(inputConversion(input), maxOutput, columnRecordLimit+1)))
 	if err != nil {
 		return nil, nil, nil, nil, errors.New("operational audit record could not be read")
 	}

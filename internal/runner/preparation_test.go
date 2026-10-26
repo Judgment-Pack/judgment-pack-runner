@@ -258,7 +258,7 @@ func TestDurablePreparationCheckAgainReusesIdentity(t *testing.T) {
 func TestDurablePreparationCompletedSourcesSurviveRestart(t *testing.T) {
 	s, cfg, o, f := preparationFixture(t)
 	r, _ := s.release(o.ReleaseID)
-	r.InputMapping.Sources = append(r.InputMapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: f.p.ID, ProfileDigest: profileHash(f.p), MaxAge: 300, Arguments: []byte(`{"tool":"lookup","arguments":{}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/detail", "/detail"}}, Evidence: []EvidenceMapping{}}}})
+	r.InputMapping.Sources = append(r.InputMapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: f.p.ID, ProfileDigest: profileHash(f.p), MaxAge: 300, Arguments: []byte(`{"tool":"lookup","arguments":{}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/detail", Source: "/detail"}}, Evidence: []EvidenceMapping{}}}})
 	s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID)
 	f.mu.Lock()
 	f.ready = true

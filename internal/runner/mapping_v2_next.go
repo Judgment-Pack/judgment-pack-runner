@@ -10,12 +10,14 @@ import (
 // PlannedSource is an instruction to acquire, not permission to evaluate.
 // The endpoint is read-only: the caller fetches and submits receipts for checking.
 type PlannedSource struct {
-	Name      string          `json:"name"`
-	Kind      string          `json:"kind"`
-	Provider  string          `json:"provider,omitempty"`
-	Profile   string          `json:"profile,omitempty"`
-	Source    string          `json:"source,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	retainResponse     bool
+	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`
+	Name               string              `json:"name"`
+	Kind               string              `json:"kind"`
+	Provider           string              `json:"provider,omitempty"`
+	Profile            string              `json:"profile,omitempty"`
+	Source             string              `json:"source,omitempty"`
+	Arguments          json.RawMessage     `json:"arguments,omitempty"`
 }
 type InputPlan struct {
 	Next         *PlannedSource `json:"next,omitempty"`
@@ -34,6 +36,7 @@ func nextInput(input Input, profiles []InputProfile, at time.Time) (InputPlan, e
 	mapped, err := normalizeV2Mode(input, profiles, at, true)
 	var needed *acquisitionNeeded
 	if errors.As(err, &needed) {
+		needed.PlannedSource.ConversionContract = inputConversion(input)
 		return InputPlan{Next: &needed.PlannedSource}, nil
 	}
 	if err != nil {
