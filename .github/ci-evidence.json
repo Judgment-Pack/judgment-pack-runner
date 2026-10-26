@@ -1,0 +1,107 @@
+{
+  "$comment": [
+    "The release evidence gate's configuration, read at the release commit by scripts/dev/release_evidence.py",
+    "(docs/releasing.md, 'CI at the tag'). tools/test_ci_evidence.py holds it to ci.yml, release.yml and dev.json.",
+    "inputs: the module pins; the script that pins the Runtime, earlier Runtime, old Runner and Gateway commits",
+    "the integration tests run against; the scripts that fail when a named real-companion test does not run and",
+    "pass; the toolchain check and the workflow naming the release toolchain; the runner whose summary is read."
+  ],
+  "schema": 2,
+  "repository": "Judgment-Pack/judgment-pack-runner",
+  "branch": "main",
+  "max_age_hours": 48,
+  "inputs": [
+    "go.mod",
+    "go.sum",
+    "scripts/checks/build-pinned.sh",
+    "scripts/checks/manual-gate.sh",
+    "scripts/checks/chain-tests.sh",
+    "scripts/checks/unit-tests.sh",
+    "scripts/checks/release-toolchain.sh",
+    "scripts/dev/check.sh",
+    ".github/workflows/release.yml"
+  ],
+  "fresh_at_release": [
+    "tag syntax, tag names the commit, commit on main",
+    "release notes",
+    "production environment reviewer",
+    "third-party notices with the release toolchain, packaging, checksums",
+    "contents of every archive",
+    "native archive smoke tests (linux/amd64, linux/arm64, darwin/arm64)",
+    "tag still names the commit, no existing release, attestation, draft",
+    "draft identity, notes and asset digests, publication, published asset digests"
+  ],
+  "profiles": {
+    "linux": {
+      "$comment": [
+        "Both Linux legs, compared with the release job's own runner: the same hosted image and tools, and the",
+        "Go toolchain release.yml links the archives with, set up there the same way."
+      ],
+      "platform": {
+        "RUNNER_OS": "Linux",
+        "RUNNER_ARCH": "X64"
+      },
+      "compare": "release-runner",
+      "tools": {
+        "go": ["go", "version"],
+        "python": ["python3", "--version"],
+        "git": ["git", "--version"],
+        "bash": ["bash", "--version"]
+      },
+      "pins": {
+        "go": "go version go1.26.5 linux/amd64"
+      }
+    },
+    "macos": {
+      "$comment": [
+        "The macOS leg, which the release job cannot resolve on its own runner: the platform and the exact Go",
+        "toolchain are pinned; the image version is recorded and not compared."
+      ],
+      "platform": {
+        "RUNNER_OS": "macOS",
+        "RUNNER_ARCH": "ARM64"
+      },
+      "compare": "pins",
+      "tools": {
+        "go": ["go", "version"]
+      },
+      "pins": {
+        "go": "go version go1.26.5 darwin/arm64"
+      }
+    }
+  },
+  "workflows": {
+    "ci": {
+      "$comment": [
+        "Every job of ci.yml is required on a push to main; none is skipped there. The four release steps are",
+        "left out of the Runner legs by ci.yml and run in Release contents, so each leg lists what it runs."
+      ],
+      "path": ".github/workflows/ci.yml",
+      "name": "CI",
+      "events": ["push"],
+      "jobs": {
+        "runner-ubuntu-latest": {
+          "name": "Runner (ubuntu-latest)",
+          "job_id": "check",
+          "labels": ["ubuntu-latest"],
+          "profile": "linux",
+          "checks": ["local-paths", "agent-docs", "diff-check", "go-fmt", "go-vet", "build-pinned", "manual-gate", "unit-tests", "chain-tests", "openapi", "build", "ci-evidence"]
+        },
+        "runner-macos-latest": {
+          "name": "Runner (macos-latest)",
+          "job_id": "check",
+          "labels": ["macos-latest"],
+          "profile": "macos",
+          "checks": ["local-paths", "agent-docs", "diff-check", "go-fmt", "go-vet", "build-pinned", "manual-gate", "unit-tests", "chain-tests", "openapi", "build", "ci-evidence"]
+        },
+        "release-contents": {
+          "name": "Release contents",
+          "job_id": "release-contents",
+          "labels": ["ubuntu-latest"],
+          "profile": "linux",
+          "checks": ["release-toolchain", "third-party-notices", "release-archives", "release-programs"]
+        }
+      }
+    }
+  }
+}

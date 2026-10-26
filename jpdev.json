@@ -7,7 +7,7 @@
     },
     {
       "paths": ["go.mod", "go.sum"],
-      "checks": ["local-paths", "agent-docs", "diff-check", "release-toolchain", "release-archives"]
+      "checks": ["local-paths", "agent-docs", "diff-check", "release-toolchain", "release-archives", "ci-evidence"]
     },
     {
       "paths": ["cmd/**", "internal/**", "tools/preparation-vectors/**"],
@@ -27,7 +27,7 @@
     },
     {
       "paths": ["scripts/checks/build-pinned.sh", "scripts/checks/manual-gate.sh", "scripts/checks/unit-tests.sh", "scripts/checks/chain-tests.sh"],
-      "checks": ["local-paths", "agent-docs", "diff-check", "build-pinned", "manual-gate", "unit-tests", "chain-tests"]
+      "checks": ["local-paths", "agent-docs", "diff-check", "build-pinned", "manual-gate", "unit-tests", "chain-tests", "ci-evidence"]
     },
     {
       "paths": ["THIRD_PARTY_NOTICES", "tools/third_party_notices.py"],
@@ -43,7 +43,11 @@
     },
     {
       "paths": ["scripts/checks/release-toolchain.sh"],
-      "checks": ["local-paths", "agent-docs", "diff-check", "release-toolchain"]
+      "checks": ["local-paths", "agent-docs", "diff-check", "release-toolchain", "ci-evidence"]
+    },
+    {
+      "paths": [".github/ci-evidence.json", "scripts/dev/release_evidence.py", "tools/test_ci_evidence.py"],
+      "checks": ["local-paths", "agent-docs", "diff-check", "ci-evidence"]
     },
     {
       "paths": ["*.md", "docs/**", "LICENSE", "deploy/**", "scripts/checks/local-paths.sh", "scripts/sync-agent-docs.sh", "scripts/dev/handover_check.sh"],
