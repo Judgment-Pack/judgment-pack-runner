@@ -110,11 +110,10 @@ signed tag with an unsigned one. Signing is the maintainer's practice; the workf
 not check it. A tag is never moved or reused; a fix is a new version.
 
 `Admit the tag` takes `vX.Y.Z` or `vX.Y.Z-<prerelease>`, as SemVer 2.0.0 writes them, and
-refuses build metadata (`+...`). `CI at the tag` then takes `vX.Y.Z` only, as an annotated
-tag (`git tag -s` makes one): the evidence gate refuses a prerelease tag (`tag-syntax`) and
-a lightweight tag (`tag-annotated`). The workflow still publishes a tag with a hyphen
-(`v0.1.0-rc.1`) as a prerelease, never marked latest, but no such tag passes the gate
-until the kit's gate takes prereleases.
+requires an annotated tag (`git tag -s` makes one). The evidence gate accepts the same grammar:
+`.github/ci-evidence.json` sets `tag.prerelease: true` (kit v0.11.0), so a prerelease such as
+`v0.1.0-rc.1` passes the gate like a release and is published as a prerelease, never marked
+latest. A lightweight tag is refused (`tag-annotated`).
 
 ## What the workflow does
 
@@ -290,7 +289,7 @@ once:
    version.
 
 `run-unfinished` usually means the tag was pushed while main CI at the commit was still
-running: wait for it to complete, then step 2. A prerelease or lightweight tag cannot pass;
+running: wait for it to complete, then step 2. A lightweight tag cannot pass;
 see [Tag](#tag).
 
 The gate is first exercised live on the first push to `main` after it lands (the evidence

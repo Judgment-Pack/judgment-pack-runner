@@ -31,6 +31,7 @@ RELEASE = '.github/workflows/release.yml'
 # from. A re-vendor row adds the release it moves to.
 KIT_GATE = {
     'v0.10.0': 'd44af3df07f64036013ba9967a54cf799cec678068f0937395d6a2eef370e0e8',
+    'v0.11.0': 'f272b7a43272bac31bb9b0c37a583d9c40d376972b04c812e576bd82c1ef18e3',
 }
 RUNNER_OS = {'ubuntu': 'Linux', 'macos': 'macOS'}
 GOOS = {'Linux': 'linux', 'macOS': 'darwin'}
