@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"sync"
@@ -63,9 +62,12 @@ type Service struct {
 	automationDone         chan struct{}
 	cfg                    Config
 	db                     *sql.DB
-	lock                   *os.File
 	runtime, runtimeDigest string
 
+	// store keeps the queue, releases, inputs and run records
+	// (store_contract.go). db is the sqlite kind's database handle, for the
+	// state the contract does not cover yet (store_sqlite.go).
+	store runStore
 	// executor is fixed at Open and remains non-nil after Close.
 	executor *ExecutorLease
 	// authority is the immutable original inherited channel/session. It never
@@ -166,7 +168,7 @@ func Open(cfg Config) (_ *Service, err error) {
 		}
 	}
 	if cfg.ExecutorAdmission != nil {
-		if privateFile(filepath.Join(cfg.Dir, "runs.sqlite")) != nil {
+		if sqlitePreparedStore(cfg.Dir) != nil {
 			return nil, errManualProtocol
 		}
 	}
@@ -180,84 +182,40 @@ func Open(cfg Config) (_ *Service, err error) {
 	s := &Service{cloudProblems: map[string]string{}, automationDone: make(chan struct{}), cfg: cfg, executor: executor, authority: authority, expectedKey: expectedKey, wake: make(chan struct{}, 1), done: make(chan struct{}), previewGate: make(chan struct{}, 1)}
 	defer func() {
 		if err != nil {
-			if s.db != nil {
-				s.db.Close()
-			}
-			if s.lock != nil {
-				s.lock.Close()
+			if s.store != nil {
+				s.store.close()
 			}
 			if s.attempts != nil {
 				s.attempts.Close()
 			}
 		}
 	}()
-	s.lock, err = instanceLock(filepath.Join(cfg.Dir, "runner.lock"))
+	// The boot line's directory reaches the store only through the store
+	// kind's constructor, which takes the store's lock, then runs afterLock,
+	// then opens the database, and applies the schema after opened.
+	s.store, err = openStore(defaultStoreKind, storeOpening{
+		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot,
+		migrate: cfg.ExecutorAdmission == nil,
+		afterLock: func() error {
+			for _, n := range []string{"releases", "attempts", "runtimes"} {
+				if err := privateDir(filepath.Join(cfg.Dir, n)); err != nil {
+					return err
+				}
+			}
+			var err error
+			s.attempts, err = openHeldRoot(filepath.Join(cfg.Dir, "attempts"))
+			return err
+		},
+		opened: func(db *sql.DB) error {
+			s.db = db
+			if cfg.ExecutorAdmission != nil {
+				return s.validateManualStore()
+			}
+			return nil
+		},
+	})
 	if err != nil {
 		return nil, err
-	}
-	for _, n := range []string{"releases", "attempts", "runtimes"} {
-		if err = privateDir(filepath.Join(cfg.Dir, n)); err != nil {
-			return nil, err
-		}
-	}
-	if s.attempts, err = openHeldRoot(filepath.Join(cfg.Dir, "attempts")); err != nil {
-		return nil, err
-	}
-	dbpath := filepath.Join(cfg.Dir, "runs.sqlite")
-	f, e := os.OpenFile(dbpath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
-	if e == nil {
-		f.Close()
-	} else if !os.IsExist(e) {
-		return nil, e
-	}
-	if err = privateFile(dbpath); err != nil {
-		return nil, err
-	}
-	s.db, err = sql.Open("sqlite", dbpath)
-	if err != nil {
-		return nil, err
-	}
-	s.db.SetMaxOpenConns(1)
-	if cfg.ExecutorAdmission != nil {
-		if err = s.validateManualStore(); err != nil {
-			return nil, err
-		}
-	}
-	_, err = s.db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
- CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS briefs (subject TEXT PRIMARY KEY, record TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS releases (id TEXT PRIMARY KEY, record TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, release_id TEXT UNIQUE NOT NULL, record TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS runs (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, job_id TEXT NOT NULL, caller TEXT NOT NULL, idem TEXT NOT NULL, request_digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL, UNIQUE(job_id,caller,idem));
- CREATE INDEX IF NOT EXISTS runs_state ON runs(state,seq);`)
-	if err != nil {
-		return nil, err
-	}
-	if _, err = s.db.Exec(triggerSchema); err != nil {
-		return nil, err
-	}
-	if _, err = s.db.Exec(runChainSchema); err != nil {
-		return nil, err
-	}
-	for _, k := range []struct{ key, value string }{{"workspace", cfg.Workspace}, {"owner", cfg.Owner}, {"inputRoot", cfg.InputRoot}} {
-		if _, err = s.db.Exec("INSERT OR IGNORE INTO metadata VALUES (?,?)", k.key, k.value); err != nil {
-			return nil, err
-		}
-		var held string
-		if err = s.db.QueryRow("SELECT value FROM metadata WHERE key=?", k.key).Scan(&held); err != nil {
-			return nil, err
-		}
-		if held != k.value {
-			return nil, errors.New("runner store belongs to another owner, workspace or schema")
-		}
-	}
-	// A store an earlier Runner kept, at schema "1", or a new one, begins its
-	// journal here and is raised to schema "2", which every earlier Runner
-	// refuses (docs/design/activity-journal.md, section 4).
-	if cfg.ExecutorAdmission == nil {
-		if err = s.migrateStore(); err != nil {
-			return nil, err
-		}
 	}
 	if err = s.loadRegisteredProfiles(); err != nil {
 		return nil, err
@@ -313,43 +271,18 @@ func (s *Service) Close() {
 		<-s.automationDone
 		s.background.Wait()
 		s.recordStop()
-		s.db.Close()
 		if s.attempts != nil {
 			s.attempts.Close()
 		}
-		s.lock.Close()
+		s.store.close()
 		if s.executor != nil {
 			s.executor.Close()
 		}
 	})
 }
-func (s *Service) release(id string) (Release, error) {
-	var r Release
-	var b []byte
-	e := s.db.QueryRow("SELECT record FROM releases WHERE id=?", id).Scan(&b)
-	if e == nil {
-		e = json.Unmarshal(b, &r)
-	}
-	return r, e
-}
-func (s *Service) job(id string) (Job, error) {
-	var j Job
-	var b []byte
-	e := s.db.QueryRow("SELECT record FROM jobs WHERE id=?", id).Scan(&b)
-	if e == nil {
-		e = json.Unmarshal(b, &j)
-	}
-	return j, e
-}
-func (s *Service) run(id string) (Run, error) {
-	var r Run
-	var b []byte
-	e := s.db.QueryRow("SELECT record FROM runs WHERE id=?", id).Scan(&b)
-	if e == nil {
-		r, e = decodeRun(b)
-	}
-	return r, e
-}
+func (s *Service) release(id string) (Release, error) { return s.store.release(id) }
+func (s *Service) job(id string) (Job, error)         { return s.store.job(id) }
+func (s *Service) run(id string) (Run, error)         { return s.store.run(id) }
 func (s *Service) createJob(name, releaseID string) (Job, error) {
 	return s.createJobConfigured(name, releaseID, nil)
 }
@@ -504,16 +437,15 @@ func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *T
 		}
 		requestHash = digest(raw)
 		// Identical retries return their original acceptance, even after freshness expires.
-		var held, before string
-		e = s.db.QueryRow("SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, caller, key).Scan(&held, &before)
+		held, e := s.store.requestedRun(jobID, caller, key)
 		if e == nil {
-			if held != requestHash {
+			if held.digest != requestHash {
 				return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
 			}
-			r, e := decodeRun([]byte(before))
+			r, e := held.run()
 			return r, true, e
 		}
-		if !errors.Is(e, sql.ErrNoRows) {
+		if !absent(e) {
 			return Run{}, false, e
 		}
 		job, e := s.job(jobID)
@@ -547,68 +479,61 @@ func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *T
 	if v2 {
 		hash = requestHash
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return Run{}, false, err
-	}
-	defer tx.Rollback()
-	var held, before string
-	err = tx.QueryRow("SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, caller, key).Scan(&held, &before)
-	if err == nil {
-		if held != hash {
-			return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
+	var r Run
+	var replayed bool
+	var replayErr error
+	err = s.store.update(func(tx runTx) error {
+		held, err := tx.requestedRun(jobID, caller, key)
+		if err == nil {
+			if held.digest != hash {
+				return &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
+			}
+			r, replayErr = held.run()
+			replayed = true
+			return errKeepNothing
 		}
-		r, err := decodeRun([]byte(before))
-		return r, true, err
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return Run{}, false, err
-	}
-	var jb []byte
-	if err = tx.QueryRow("SELECT record FROM jobs WHERE id=?", jobID).Scan(&jb); err != nil {
-		return Run{}, false, err
-	}
-	var j Job
-	if err = json.Unmarshal(jb, &j); err != nil {
-		return Run{}, false, err
-	}
-	var releaseBytes []byte
-	if err = tx.QueryRow("SELECT record FROM releases WHERE id=?", j.ReleaseID).Scan(&releaseBytes); err != nil {
-		return Run{}, false, err
-	}
-	var release Release
-	if err = json.Unmarshal(releaseBytes, &release); err != nil {
-		return Run{}, false, err
-	}
-	if manual != nil {
-		preimage, e := executionPayloadCanonical(release, maxExecutionRelease)
-		if e != nil || manual.resource == nil || manual.registration == nil || manual.resource.JobID != j.ID || manual.resource.JobRevision != decimalRevision(j.Revision) || manual.resource.ReleaseID != j.ReleaseID || manual.resource.ReleaseDigest != digest(preimage) || !manualRelease(release) {
-			return Run{}, false, errManualProtocol
+		if !absent(err) {
+			return err
 		}
+		j, err := tx.job(jobID)
+		if err != nil {
+			return err
+		}
+		release, err := tx.release(j.ReleaseID)
+		if err != nil {
+			return err
+		}
+		if manual != nil {
+			preimage, e := executionPayloadCanonical(release, maxExecutionRelease)
+			if e != nil || manual.resource == nil || manual.registration == nil || manual.resource.JobID != j.ID || manual.resource.JobRevision != decimalRevision(j.Revision) || manual.resource.ReleaseID != j.ReleaseID || manual.resource.ReleaseDigest != digest(preimage) || !manualRelease(release) {
+				return errManualProtocol
+			}
+		}
+		if !mappingMatchesRelease(release, input) {
+			return bad("mapping_mismatch", "Use this job’s reviewed input mapping. Create a new job to change its input source or mapping.")
+		}
+		count, err := tx.activeRuns()
+		if err != nil {
+			return err
+		}
+		if count >= queueLimit {
+			return &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
+		}
+		r = Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller}
+		if err = tx.createRun(r, caller, key, hash); err != nil {
+			return err
+		}
+		by := s.installation()
+		if origin != nil {
+			by = triggerActor(origin.TriggerID, origin.TriggerRevision)
+		}
+		_, err = tx.appendJournal(runChange(r, "", by, EventDetail{}))
+		return err
+	})
+	if replayed {
+		return r, true, replayErr
 	}
-	if !mappingMatchesRelease(release, input) {
-		return Run{}, false, bad("mapping_mismatch", "Use this job’s reviewed input mapping. Create a new job to change its input source or mapping.")
-	}
-	var count int
-	if err = tx.QueryRow("SELECT count(*) FROM runs WHERE state IN ('queued','running')").Scan(&count); err != nil {
-		return Run{}, false, err
-	}
-	if count >= queueLimit {
-		return Run{}, false, &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
-	}
-	r := Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller}
-	_, err = tx.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, caller, key, hash, r.State, runText(r))
 	if err != nil {
-		return Run{}, false, err
-	}
-	by := s.installation()
-	if origin != nil {
-		by = triggerActor(origin.TriggerID, origin.TriggerRevision)
-	}
-	if _, err = appendEvent(tx, runChange(r, "", by, EventDetail{})); err != nil {
-		return Run{}, false, err
-	}
-	if err = tx.Commit(); err != nil {
 		return Run{}, false, err
 	}
 	select {
@@ -649,15 +574,10 @@ func (s *Service) worker(ctx context.Context) {
 // end, and says whether there was one. An error is a storage error, which
 // stops the dispatcher.
 func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
-	var b []byte
-	err := s.db.QueryRow("SELECT record FROM runs WHERE state='queued' ORDER BY seq LIMIT 1").Scan(&b)
-	if errors.Is(err, sql.ErrNoRows) {
+	r, err := s.store.oldestQueued()
+	if absent(err) {
 		return false, nil
 	}
-	if err != nil {
-		return false, err
-	}
-	r, err := decodeRun(b)
 	if err != nil {
 		return false, err
 	}

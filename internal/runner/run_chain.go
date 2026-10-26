@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -143,15 +142,13 @@ var errEntryUnreadable = errors.New("the run's entry in the installation's chain
 // continues the last row's trail and sequence and links to that row's line, or
 // starts a chain at sequence 1, linked to the SHA-256 of nothing, under a new
 // identity.
-func appendRunEntry(tx *sql.Tx, run string, auditBytes []byte) error {
+func appendRunEntry(tx runTx, run string, auditBytes []byte) error {
 	if !oneLine(auditBytes) {
 		return errNoAuditBytes
 	}
 	next := ChainEntry{EntryVersion: ChainEntryVersion, Kind: chainEntryKind, Run: run, AuditDigest: digest(auditBytes)}
-	var last int64
-	var line []byte
-	switch err := tx.QueryRow("SELECT sequence,line FROM run_chain ORDER BY sequence DESC LIMIT 1").Scan(&last, &line); {
-	case errors.Is(err, sql.ErrNoRows):
+	switch last, line, err := tx.lastEntry(); {
+	case absent(err):
 		next.Trail, next.Sequence, next.Previous = newChainTrail(), 1, digest(nil)
 	case err != nil:
 		return err
@@ -162,12 +159,11 @@ func appendRunEntry(tx *sql.Tx, run string, auditBytes []byte) error {
 		}
 		next.Trail, next.Sequence, next.Previous = held.Trail, last+1, digest(line)
 	}
-	line = encode(next)
+	line := encode(next)
 	if _, err := ParseChainEntry(line); err != nil {
 		return errEntryUnreadable
 	}
-	_, err := tx.Exec("INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)", next.Sequence, run, line)
-	return err
+	return tx.createEntry(next.Sequence, run, line)
 }
 
 // finishRun records a run's end. Every completed run is given its entry in the
@@ -177,35 +173,33 @@ func appendRunEntry(tx *sql.Tx, run string, auditBytes []byte) error {
 // failed, is not recorded: the error is returned, and the dispatcher stops.
 // The run's entry in the journal of job activity (events.go) is written in the
 // same transaction too, and names the chain entry's sequence.
-func (s *Service) finishRun(r Run) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var detail EventDetail
-	if r.State == "completed" {
-		if err = appendRunEntry(tx, r.ID, r.AuditBytes); err != nil {
-			return err
+func (s *Service) finishRun(r Run) error { return finishRunIn(s.store, r) }
+
+// finishRunIn is finishRun in st.
+func finishRunIn(st runStore, r Run) error {
+	return st.update(func(tx runTx) error {
+		var detail EventDetail
+		if r.State == "completed" {
+			if err := appendRunEntry(tx, r.ID, r.AuditBytes); err != nil {
+				return err
+			}
+			sequence, err := tx.entrySequence(r.ID)
+			if err != nil {
+				return err
+			}
+			detail.ChainSequence = sequence
 		}
-		if err = tx.QueryRow("SELECT sequence FROM run_chain WHERE run=?", r.ID).Scan(&detail.ChainSequence); err != nil {
-			return err
+		if r.State == "interrupted" && r.InterruptedAt != "" {
+			detail.Interruption = &EventInterruption{Seen: true, At: r.InterruptedAt}
 		}
-	}
-	if r.State == "interrupted" && r.InterruptedAt != "" {
-		detail.Interruption = &EventInterruption{Seen: true, At: r.InterruptedAt}
-	}
-	if err = recordRun(tx, r, runnerActor, detail); err != nil {
-		return err
-	}
-	return tx.Commit()
+		return recordRun(tx, r, anyState, runnerActor, detail)
+	})
 }
 
 // runEntry is a run's entry line, or nil when the chain holds none for it.
 func (s *Service) runEntry(run string) ([]byte, error) {
-	var line []byte
-	err := s.db.QueryRow("SELECT line FROM run_chain WHERE run=?", run).Scan(&line)
-	if errors.Is(err, sql.ErrNoRows) {
+	line, err := s.store.entryLine(run)
+	if absent(err) {
 		return nil, nil
 	}
 	return line, err
@@ -213,9 +207,8 @@ func (s *Service) runEntry(run string) ([]byte, error) {
 
 // runEntrySequence is the sequence of a run's entry, and whether there is one.
 func (s *Service) runEntrySequence(run string) (int64, bool, error) {
-	var sequence int64
-	err := s.db.QueryRow("SELECT sequence FROM run_chain WHERE run=?", run).Scan(&sequence)
-	if errors.Is(err, sql.ErrNoRows) {
+	sequence, err := s.store.entrySequence(run)
+	if absent(err) {
 		return 0, false, nil
 	}
 	return sequence, err == nil, err
@@ -225,21 +218,7 @@ func (s *Service) runEntrySequence(run string) (int64, bool, error) {
 // sequence of the last. Rows are only ever appended, so pages read in turn are
 // a prefix of the chain as it stood at some moment during the reading.
 func (s *Service) chainPage(after int64, limit int) ([][]byte, int64, error) {
-	rows, err := s.db.Query("SELECT sequence,line FROM run_chain WHERE sequence>? ORDER BY sequence LIMIT ?", after, limit)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	var lines [][]byte
-	last := after
-	for rows.Next() {
-		var line []byte
-		if err = rows.Scan(&last, &line); err != nil {
-			return nil, 0, err
-		}
-		lines = append(lines, line)
-	}
-	return lines, last, rows.Err()
+	return s.store.chainPage(after, limit)
 }
 
 // checkpointOf is the checkpoint of an entry's line.

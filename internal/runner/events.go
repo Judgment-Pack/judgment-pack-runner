@@ -322,33 +322,31 @@ func triggerBefore(tx *sql.Tx, id string, revision int) (string, error) {
 }
 
 // recordRun writes a run's record inside tx, and the entry of its change of
-// state, if its state changed.
-func recordRun(tx *sql.Tx, r Run, by EventActor, detail EventDetail) error {
-	var from string
-	if err := tx.QueryRow("SELECT state FROM runs WHERE id=?", r.ID).Scan(&from); err != nil {
-		return err
-	}
-	if _, err := tx.Exec("UPDATE runs SET state=?,record=? WHERE id=?", r.State, runText(r), r.ID); err != nil {
+// state, if its state changed. With expected other than anyState, the store
+// must hold the run in that state, or nothing is written (faultConflict).
+func recordRun(tx runTx, r Run, expected string, by EventActor, detail EventDetail) error {
+	from, err := tx.putRun(r, expected)
+	if err != nil {
 		return err
 	}
 	if from == r.State {
 		return nil
 	}
-	_, err := appendEvent(tx, runChange(r, from, by, detail))
+	_, err = tx.appendJournal(runChange(r, from, by, detail))
 	return err
 }
 
-// changeRun records a run's change of state and its entry in one transaction.
-func (s *Service) changeRun(r Run) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = recordRun(tx, r, runnerActor, EventDetail{}); err != nil {
-		return err
-	}
-	return tx.Commit()
+// changeRun records a queued run's change of state, the dispatcher's claim
+// of it or its end in the queue, and its entry in one transaction.
+func (s *Service) changeRun(r Run) error { return changeQueuedRun(s.store, r) }
+
+// changeQueuedRun is changeRun in st. The store must still hold the run
+// queued: a run is claimed, or ended in the queue, once, and a second writer
+// that read it queued meets faultConflict.
+func changeQueuedRun(st runStore, r Run) error {
+	return st.update(func(tx runTx) error {
+		return recordRun(tx, r, "queued", runnerActor, EventDetail{})
+	})
 }
 
 // recordOccurrence writes an occurrence's record inside tx, and the entry of
@@ -389,89 +387,42 @@ func (s *Service) changeOccurrence(o Occurrence, guard string, by EventActor) er
 	return tx.Commit()
 }
 
-// migrateStore begins the journal of a store that has none, a new store or
-// one an earlier Runner kept, in one transaction: it writes journal.began,
-// with what the store held then and nothing back-filled, adds the column that
-// names the revision a trigger's key was issued at, and raises the store's
-// schema to storeSchema.
-func (s *Service) migrateStore() error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var schema string
-	switch err = tx.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema); {
-	case errors.Is(err, sql.ErrNoRows):
-	case err != nil:
-		return err
-	}
-	switch schema {
-	case storeSchema:
-		return nil
-	case "", "1", "2":
-	default:
-		return errors.New("runner store belongs to another owner, workspace or schema")
-	}
-	if schema != "2" {
-		// SQLite's schema changes are transactional: a migration that fails
-		// leaves no table, column or entry behind.
-		if _, err = tx.Exec(eventsSchema); err != nil {
-			return err
-		}
-		var held EventHeld
-		for table, count := range map[string]*int{"jobs": &held.Jobs, "triggers": &held.Triggers, "occurrences": &held.Occurrences, "runs": &held.Runs} {
-			if err = tx.QueryRow("SELECT count(*) FROM " + table).Scan(count); err != nil {
-				return err
-			}
-		}
-		if _, err = tx.Exec("ALTER TABLE triggers ADD COLUMN key_revision INTEGER"); err != nil {
-			return err
-		}
-		if _, err = appendEvent(tx, change{kind: "journal.began", by: runnerActor, detail: EventDetail{Held: &held}}); err != nil {
-			return err
-		}
-	}
-	if _, err = tx.Exec(jobRevisionSchema); err != nil {
-		return err
-	}
-	if _, err = tx.Exec("INSERT OR REPLACE INTO metadata VALUES ('schema',?)", storeSchema); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // restart records this process's start, and in the same transaction marks
 // what the last process left running, which Runner did not see stop: a run in
 // evaluation is interrupted, and a legacy preparation failed. Neither is
 // repeated. Each entry gives the window its stop lies in.
 func (s *Service) restart() error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	at := now()
-	started, err := appendEvent(tx, change{kind: "runner.started", at: at, by: runnerActor, detail: EventDetail{Version: buildinfo.Version(), RuntimeDigest: s.runtimeDigest}})
-	if err != nil {
-		return err
-	}
-	var runs []Run
-	if err = eachRecord(tx, "SELECT record FROM runs WHERE state='running' ORDER BY seq", func(b []byte) error {
-		r, e := decodeRun(b)
-		runs = append(runs, r)
-		return e
-	}); err != nil {
-		return err
-	}
-	for _, r := range runs {
-		r.State = "interrupted"
-		r.FinishedAt = at
-		r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
-		if err = recordRun(tx, r, runnerActor, EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}}); err != nil {
+	return s.store.update(func(contract runTx) error {
+		at := now()
+		started, err := contract.appendJournal(change{kind: "runner.started", at: at, by: runnerActor, detail: EventDetail{Version: buildinfo.Version(), RuntimeDigest: s.runtimeDigest}})
+		if err != nil {
 			return err
 		}
-	}
+		runs, err := contract.runningRuns()
+		if err != nil {
+			return err
+		}
+		for _, r := range runs {
+			r.State = "interrupted"
+			r.FinishedAt = at
+			r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
+			if err = recordRun(contract, r, anyState, runnerActor, EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}}); err != nil {
+				return err
+			}
+		}
+		// Occurrences are kept outside the contract, by the sqlite kind, and
+		// recovered in the same transaction.
+		tx, err := sqliteTxOf(contract)
+		if err != nil {
+			return err
+		}
+		return restartOccurrences(tx, started)
+	})
+}
+
+// restartOccurrences marks, inside tx, each legacy preparation the last
+// process left preparing failed, with the window its stop lies in.
+func restartOccurrences(tx *sql.Tx, started int64) (err error) {
 	var occurrences []Occurrence
 	if err = eachRecord(tx, "SELECT record FROM occurrences WHERE state='preparing' ORDER BY seq", func(b []byte) error {
 		var o Occurrence
@@ -493,7 +444,7 @@ func (s *Service) restart() error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // eachRecord reads the record column of a query's rows, closing them before
@@ -519,30 +470,21 @@ func eachRecord(tx *sql.Tx, query string, each func([]byte) error) error {
 // recordStop records an orderly stop, after the dispatcher, automation and
 // background work have stopped. A process that is killed writes none.
 func (s *Service) recordStop() {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return
-	}
-	defer tx.Rollback()
-	if _, err = appendEvent(tx, change{kind: "runner.stopped", by: runnerActor}); err == nil {
-		tx.Commit()
-	}
+	s.store.update(func(tx runTx) error {
+		_, err := tx.appendJournal(change{kind: "runner.stopped", by: runnerActor})
+		return err
+	})
 }
 
 // saveRelease stores a release that a preview made, with its entry.
 func (s *Service) saveRelease(r Release) error {
-	tx, err := s.db.Begin()
-	if err != nil {
+	return s.store.update(func(tx runTx) error {
+		if err := tx.createRelease(r); err != nil {
+			return err
+		}
+		_, err := tx.appendJournal(change{kind: "release.previewed", by: s.installation(), concerns: EventConcerns{Release: r.ID}, detail: EventDetail{PackID: r.PackID, PackVersion: r.PackVersion, PackDigest: r.PackDigest, RuntimeDigest: r.RuntimeDigest, Tests: r.Tests}})
 		return err
-	}
-	defer tx.Rollback()
-	if _, err = tx.Exec("INSERT INTO releases(id,record) VALUES (?,?)", r.ID, string(encode(r))); err != nil {
-		return err
-	}
-	if _, err = appendEvent(tx, change{kind: "release.previewed", by: s.installation(), concerns: EventConcerns{Release: r.ID}, detail: EventDetail{PackID: r.PackID, PackVersion: r.PackVersion, PackDigest: r.PackDigest, RuntimeDigest: r.RuntimeDigest, Tests: r.Tests}}); err != nil {
-		return err
-	}
-	return tx.Commit()
+	})
 }
 
 // refused journals a refused request to start work: one answered 400, 401,
