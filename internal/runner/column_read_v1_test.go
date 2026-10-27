@@ -157,11 +157,18 @@ func TestColumnBaseLimitsAndUnsupportedProfile(t *testing.T) {
 		t.Fatalf("different offline profile refusal: %+v", r)
 	}
 	i.Source.Mapping.Profile = "base"
-	i.Source.Case = json.RawMessage(`{"pad":"` + strings.Repeat("a", MaxBody) + `"}`)
+	// Keep the case within its independent custody limit. The complete
+	// dialect/case/acquisitions must exceed the aggregate instead of failing
+	// while the fixture helper materializes an individually oversized case.
+	i.Source.Case = json.RawMessage(`{"pad":"` + strings.Repeat("a", MaxBody-len(`{"pad":""}`)) + `"}`)
+	f = columnFixture(i)
+	if len(f.Case) != MaxBody || len(f.Dialect)+len(f.Case)+len(f.Sources) <= MaxBody {
+		t.Fatal("aggregate fixture does not isolate the complete-artifact limit")
+	}
 	if _, e := nextInput(i, nil, time.Unix(0, 0)); e == nil || !strings.Contains(e.Error(), "complete dialect, case and acquisitions") {
 		t.Fatalf("complete-artifact bound bypassed: %v", e)
 	}
-	if r := VerifyPreparation(columnFixture(i)); r.Code != codeOverBound {
+	if r := VerifyPreparation(f); r.Code != codeOverBound || !strings.Contains(r.Reason, "together over") {
 		t.Fatalf("offline complete-artifact bound bypassed: %+v", r)
 	}
 }
