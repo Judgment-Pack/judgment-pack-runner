@@ -76,6 +76,9 @@ func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey,
 	ids := map[string]bool{}
 	keys := map[string]ed25519.PublicKey{}
 	for _, p := range profiles {
+		if e := validateConversionCapabilities(p.ConversionContracts); e != nil {
+			return nil, e
+		}
 		// §12's bounds on an endpoint scope come first, before every limit
 		// Runner sets on an installation's profile, so that a scope over
 		// them is input-over-bound on every path.
@@ -99,6 +102,11 @@ func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey,
 		if c := p.Calculator; c != nil && (p.Class != "record" || p.Shape != "mcp" || c.Name == "" || len(c.Name) > 256 || c.Version == "" || len(c.Version) > 256) {
 			return nil, errors.New("a calculator profile is a record MCP profile naming its calculator and version")
 		}
+		if p.RetainedColumnProducer != nil {
+			if e := columnProducerProfile(p); e != nil {
+				return nil, e
+			}
+		}
 		if e := researchDeclarationForm(p); e != nil {
 			return nil, e
 		}
@@ -121,6 +129,9 @@ func validateProfileKeys(profiles []InputProfile) (map[string]ed25519.PublicKey,
 }
 func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) {
 	for _, p := range profiles {
+		if e := validateConversionCapabilities(p.ConversionContracts); e != nil {
+			return InputProfile{}, e
+		}
 		if p.ID == s.Profile {
 			if profileHash(p) != s.ProfileDigest {
 				return p, withCode(codeMismatch, errors.New("trusted input profile changed; review a new release"))
@@ -154,7 +165,7 @@ func profileFor(s MappingSource, profiles []InputProfile) (InputProfile, error) 
 // acquisitionTimes gives, with no rule between the two (runner #98).
 // Its sessionId is a string of any content (§5.2 does not hold it to the
 // gateway's token form), read and cited as given (runner #99).
-func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int) (json.RawMessage, *Citation, error) {
+func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int, selection ...*ConversionContract) (json.RawMessage, *Citation, error) {
 	fail := func(s string) (json.RawMessage, *Citation, error) {
 		return nil, nil, withCode(codeInvalid, errors.New(s))
 	}
@@ -171,6 +182,9 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 		return malformed("malformed acquisition response")
 	}
 	result, e := proofCanon(response.Result)
+	if selectedConversion(selection) != nil {
+		result, e = scopedJSON(response.Result, columnCarrierLimit)
+	}
 	if len(response.Result) == 0 {
 		return malformed("result is outside the gateway canonical domain")
 	}
@@ -386,6 +400,9 @@ func ParseInputProfiles(raw []byte) ([]InputProfile, error) {
 	var p []InputProfile
 	if e := strictJSON(raw, &p); e != nil {
 		return nil, e
+	}
+	for i := range p {
+		p[i].profilesDocumentBytes = len(raw)
 	}
 	return p, validateProfiles(p)
 }

@@ -3,12 +3,36 @@
 set -e
 root=$(git rev-parse --show-toplevel)
 bin=$root/.ci/bin
-JPACK_TEST_BIN="$bin/jpack" \
-JPACK_EARLIER_TEST_BIN="$bin/jpack-earlier" \
-JPACK_GATEWAY_TEST_BIN="$bin/gateway" \
-JPACK_MCP_ADAPTER_TEST_BIN="$bin/adapter-mcp" \
-JPACK_OLD_RUNNER_TEST_BIN="$bin/jpack-runner-old" \
-go test -race ./...
+# Keep cumulative per-package work below Go's default timeout in each invocation.
+# The retained artifact-boundary work and ordinary workflow work have independent
+# budgets; the other ordinary tests are divided by name. These selections are
+# disjoint and exhaustive, including future names, examples and fuzz seed corpus.
+# Every invocation keeps race instrumentation and the default package timeout.
+retained='^(TestColumn|TestRC2)'
+run_unit() {
+  JPACK_TEST_BIN="$bin/jpack" \
+  JPACK_RETAINED_TEST_BIN="$bin/jpack-retained" \
+  JPACK_EARLIER_TEST_BIN="$bin/jpack-earlier" \
+  JPACK_GATEWAY_TEST_BIN="$bin/gateway" \
+  JPACK_MCP_ADAPTER_TEST_BIN="$bin/adapter-mcp" \
+  JPACK_OLD_RUNNER_TEST_BIN="$bin/jpack-runner-old" \
+  go test -race "$@" ./...
+}
+# The offline release/run cases each traverse four 40 MiB artifacts. Give them
+# separate budgets; the exact complement retains record cases and future children.
+# Large export/wire fixtures also run apart from the remaining ColumnRole work.
+offline='^TestColumnRoleOfflineIndependentArtifactLimits$'
+large_roles='^TestColumnRole(OfflineIndependentArtifactLimits|StoredAndExportBoundaries|LiteralSeparatorWireCustody)$'
+run_unit -run "$offline/^release$"
+run_unit -run "$offline/^run$"
+run_unit -run "$offline" -skip "$offline/^(release|run)$"
+run_unit -run '^TestColumnRoleStoredAndExportBoundaries$'
+run_unit -run '^TestColumnRoleLiteralSeparatorWireCustody$'
+run_unit -run '^TestColumnRole' -skip "$large_roles"
+run_unit -run "$retained" -skip '^TestColumnRole'
+run_unit -run '^TestWorkflow'
+run_unit -run '^Test[A-M]' -skip "$retained"
+run_unit -skip '^(TestColumn|TestRC2|TestWorkflow|Test[A-M])'
 # The store contract's conformance suite runs against every kind
 # (docs/design/store-interface.md): a kind whose cases do not run and pass
 # fails this step, as a skipped test would otherwise pass.

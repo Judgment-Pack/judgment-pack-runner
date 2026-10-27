@@ -1886,6 +1886,409 @@
           }
         }
       }
+    },
+    "/retained-column/1/inputs/next": {
+      "post": {
+        "operationId": "retainedColumnPlanNextInputSource",
+        "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. Verify and derive a mapping v2 prefix. Returns the next instantiated acquisition request, or complete prepared input. Accepts source-only partial input; checks every trusted profile and class admission before returning any request. Performs no network calls, evaluation or persistence.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Input"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Next source or complete preparation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputPlan"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Rejected input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          }
+        ]
+      }
+    },
+    "/retained-column/1/inputs/preview": {
+      "post": {
+        "operationId": "retainedColumnPreviewInputMapping",
+        "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. Project a retained v1 file or verify/derive a v2 ordered mapping, without network acquisition, persistence or evaluation. Invalid proof and derivation errors refuse preparation; valid rule unknowns remain policy data.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Input"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mapped inputs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Rejected input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          }
+        ]
+      }
+    },
+    "/retained-column/1/previews": {
+      "post": {
+        "operationId": "retainedColumnPreviewRelease",
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          }
+        ],
+        "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. "
+      }
+    },
+    "/retained-column/1/jobs/{job}/runs": {
+      "get": {
+        "operationId": "retainedColumnListRuns",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Cursor from the previous response. Omit for the newest page."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Literal case-insensitive substring search; ASCII case folding. Applied before pagination.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "interrupted"
+              ]
+            }
+          },
+          {
+            "name": "review",
+            "in": "query",
+            "description": "Only failed/interrupted runs or completed runs with unresolved decisions or requested handoff.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          }
+        ],
+        "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. "
+      },
+      "post": {
+        "operationId": "retainedColumnSubmitRun",
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Input"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+$"
+            },
+            "description": "An identical retry under the same key returns the run first accepted, also after a profile its mapping names was set aside. A retry whose input is an import that names a set-aside profile is refused as 422 input_profile_set_aside: the import is bound before the retry is looked up."
+          },
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          }
+        ],
+        "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. "
+      }
+    },
+    "/retained-column/1/runs/{run}/verification": {
+      "get": {
+        "operationId": "retainedColumnExportInputVerification",
+        "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. Offline input lineage bundle. Trust the profiles and release digest independently. Does not establish sealed-session completeness or policy truth. Version 2, 3, 4 or 5 may be asked for, at most once (none asked is 2), and the run is served at the highest version up to the one asked whose material it holds, answered 200 either way, so read version from the body: version 3 adds the audit record's original bytes, version 4 also the run's entry in the installation's chain of runs, and version 5 also the record's signature sidecar. A run the store no longer holds, whose entry the chain still names, is answered with 410 run_not_held, naming the entry's sequence. A run of a job with no input mapping, or a v1 file mapping, has no lineage: it is served from version 3 on, by the same steps, with inputs: not-mapped and no preparation, and is refused with 422 not_verified_mapping when it holds no audit record's bytes or version 2 (or none) is asked.",
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "description": "The export version asked for, at most once, in a well-formed query. Without it, or with 2: version 2, unchanged. With 3: version 3 when the run holds its audit record's bytes, and version 2 for a run that holds none (recorded before Runner kept them, or without an audit record). With 4: version 4 when the run also has an entry in the installation's chain of runs, and otherwise what 3 serves: a run recorded before Runner chained its runs has no entry and is unchained. With 5: version 5 when the run also keeps the signature sidecar of its audit record, and otherwise what 4 serves: a run recorded without a signing key, by a Runtime that cannot sign, or before Runner kept the sidecar, is unsigned. Anything else, or a malformed query, is refused with invalid_version. A run without lineage (no input mapping, or a v1 file mapping) has no version-2 export: with none or 2 it is refused with 422 not_verified_mapping, and with 3, 4 or 5 it is served as above, from version 3.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                2,
+                3,
+                4,
+                5
+              ],
+              "default": 2
+            }
+          },
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/VerificationBundle"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VerificationBundleV3"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VerificationBundleV4"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VerificationBundleV5"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not_verified_mapping: the run's job has no input mapping, or a v1 file mapping, so its export has no lineage, and the run holds no audit record's bytes (it failed, was interrupted, expired or has not finished, or was recorded before Runner kept them) or version 2, or none, was asked. Message: \"This run does not use mapping v2, and an export without lineage carries the audit record's bytes: ask for version 3, 4 or 5 of a completed run that holds them.\"",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2417,6 +2820,12 @@
           },
           {
             "$ref": "#/components/schemas/InputMappingV3"
+          },
+          {
+            "$ref": "#/components/schemas/NamedInputMappingV2"
+          },
+          {
+            "$ref": "#/components/schemas/NamedInputMappingV3"
           }
         ]
       },
@@ -2451,6 +2860,14 @@
           },
           "import": {
             "$ref": "#/components/schemas/DialectImport"
+          },
+          "conversionContract": {
+            "$ref": "#/components/schemas/ConversionContract"
+          },
+          "retainedCaseJson": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Sole exact case JSON text on the retained-column path, mutually exclusive with case. Stored text is not canonicalized."
           }
         },
         "anyOf": [
@@ -2463,6 +2880,16 @@
             "required": [
               "import"
             ]
+          }
+        ],
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "case",
+                "retainedCaseJson"
+              ]
+            }
           }
         ]
       },
@@ -2624,6 +3051,9 @@
                 "source": {
                   "type": "string",
                   "description": "JSON Pointer in the input object, or empty for the root."
+                },
+                "conversion": {
+                  "$ref": "#/components/schemas/RetainedColumnConversion"
                 }
               }
             }
@@ -2646,6 +3076,9 @@
                 },
                 "source": {
                   "type": "string"
+                },
+                "availability": {
+                  "$ref": "#/components/schemas/RetainedColumnAvailability"
                 }
               }
             }
@@ -2713,6 +3146,9 @@
                 "source": {
                   "type": "string",
                   "description": "JSON Pointer in the input object, or empty for the root."
+                },
+                "conversion": {
+                  "$ref": "#/components/schemas/RetainedColumnConversion"
                 }
               }
             }
@@ -2735,6 +3171,9 @@
                 },
                 "source": {
                   "type": "string"
+                },
+                "availability": {
+                  "$ref": "#/components/schemas/RetainedColumnAvailability"
                 }
               }
             }
@@ -3577,6 +4016,13 @@
               "null"
             ],
             "maxItems": 0
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "base"
+            ],
+            "description": "Explicit Base is required for retained-column conversions. Absent, ordinary legacy behavior and limits apply."
           }
         },
         "required": [
@@ -3712,6 +4158,36 @@
               }
             },
             "description": "What the channel serves of a research source's capabilities, distinct, in the order answer, search, page, and the model that answers, exactly when it serves answer (spec/dialect.md section 5.1): the form a gateway's web-search status row gives as research. The installation's declaration, pinned by the profile's digest; not an observation of the model. Runner refuses to start with one of another form."
+          },
+          "conversionContracts": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/ConversionCapability"
+            },
+            "description": "Trusted registered-profile metadata bound by the existing profile digest and approval. Absent entries grant no selected producer support."
+          },
+          "retainedColumnProducer": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "contractVersion",
+              "grammar"
+            ],
+            "properties": {
+              "contractVersion": {
+                "type": "string",
+                "enum": [
+                  "1"
+                ]
+              },
+              "grammar": {
+                "type": "string",
+                "enum": [
+                  "desk-reviewed-input/1"
+                ]
+              }
+            }
           }
         },
         "required": [
@@ -3770,6 +4246,11 @@
               ]
             },
             "description": "An acquisition, {result, receipt, salts}. A research source's result is its research record, exactly fields and responses (each retained response exactly profile, request, result, receipt and salts), and its receipt and salts are present exactly when the record came back through a gateway source; every other source's are required."
+          },
+          "retainedResponseJson": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Sole exact original signed response JSON text; excludes snapshot and response. It grants no signature, source or producer authority."
           }
         },
         "required": [],
@@ -3793,6 +4274,50 @@
               "required": [
                 "snapshot"
               ]
+            }
+          },
+          {
+            "required": [
+              "retainedResponseJson"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "snapshot"
+                  ]
+                },
+                {
+                  "required": [
+                    "response"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "retainedResponseJson"
+              ]
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "response"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "snapshot"
+                    ]
+                  }
+                ]
+              }
             }
           }
         ]
@@ -3912,6 +4437,9 @@
               "$ref": "#/components/schemas/Citation"
             },
             "description": "For an acquired research source: every citation it adds to the preparation's cites, in order, each retained response's and then the record's own when it has one; written even when empty. receipt is then the record's own citation, absent when it has none."
+          },
+          "columnTransformation": {
+            "$ref": "#/components/schemas/RetainedColumnTransformation"
           }
         },
         "required": [
@@ -3998,6 +4526,9 @@
             "items": {
               "$ref": "#/components/schemas/SourceOutcome"
             }
+          },
+          "conversionContract": {
+            "$ref": "#/components/schemas/ConversionContract"
           }
         },
         "required": [
@@ -4272,9 +4803,39 @@
           },
           "arguments": {
             "type": "object"
+          },
+          "conversionContract": {
+            "$ref": "#/components/schemas/ConversionContract"
+          },
+          "conversionLimits": {
+            "$ref": "#/components/schemas/ProducerConversionLimits"
+          },
+          "retainedColumn": {
+            "type": "boolean",
+            "description": "Derived by Runner from the approved producer profile and mapping read. True requires all effective producer ceilings; it grants no producer authority."
           }
         },
-        "description": "The next source to acquire. For a research source, the caller runs the recipe (arguments) through the profiles the source is bound to and supplies the research record it assembles from the responses it retains: Runner asks no model and reads no page."
+        "description": "The next source to acquire. For a research source, the caller runs the recipe (arguments) through the profiles the source is bound to and supplies the research record it assembles from the responses it retains: Runner asks no model and reads no page.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "retainedColumn": {
+                  "const": true
+                }
+              },
+              "required": [
+                "retainedColumn"
+              ]
+            },
+            "then": {
+              "required": [
+                "conversionContract",
+                "conversionLimits"
+              ]
+            }
+          }
+        ]
       },
       "InputPlan": {
         "oneOf": [
@@ -5460,6 +6021,13 @@
             },
             "maxItems": 128,
             "uniqueItems": true
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "base"
+            ],
+            "description": "Explicit Base is required for retained-column conversions. Absent, ordinary legacy behavior and limits apply."
           }
         },
         "required": [
@@ -5581,7 +6149,14 @@
         "description": "The import step. Runner binds the published dialect with the binding document under this installation's input profiles, refusing by name a dialect that is not of version 3, has no unbound source or is written otherwise than Runner keeps it; a binding for another dialect, that leaves an unbound source unbound, binds a source the dialect does not have or one already bound, or names a member other than a profile's id and digest; and a profile this installation does not hold by that id and digest, of another shape than the source's, or whose adapter is not the source's record. A research source is bound by exactly its AI profile, its digest and its web profiles, the web profiles exactly the web capabilities it asks for (input-malformed otherwise; three web assignments are input-over-bound), each profile of class generated, declaring the capability it is bound for and the source's model (profile-mismatch otherwise). The bound dialect is the published one with each unbound operation's platform, operation, shape and record replaced by the profile, and each unbound research source's three assignment members added, every other member as written. Runner keeps it as the input's mapping and keeps both documents here, as given, beside the run: the operator's record of what was bound, which no preparation holds. Every later preparation of the input, a dispatcher's and verify-run's included, binds them again under the profiles it is given and requires the mapping to be the bound dialect.",
         "properties": {
           "dialect": {
-            "$ref": "#/components/schemas/InputMappingV3"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InputMappingV3"
+              },
+              {
+                "$ref": "#/components/schemas/NamedInputMappingV3"
+              }
+            ]
           },
           "binding": {
             "$ref": "#/components/schemas/BindingDocument"
@@ -5678,6 +6253,928 @@
           }
         },
         "description": "Private experimental exact canonical typed Release preimage. Read-only binding material grants no registration or execution permission."
+      },
+      "ConversionSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "revision",
+          "schemaSha256",
+          "corpusSha256"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "schemaSha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "corpusSha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "ConversionContract": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contract",
+          "spec",
+          "profile",
+          "roles"
+        ],
+        "properties": {
+          "contract": {
+            "type": "string",
+            "enum": [
+              "retained-column/1"
+            ]
+          },
+          "spec": {
+            "$ref": "#/components/schemas/ConversionSpec"
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "base"
+            ]
+          },
+          "roles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "document-validation",
+                "preview",
+                "preparation",
+                "preparation-verification",
+                "producer-carrier"
+              ]
+            }
+          }
+        },
+        "description": "Experimental immutable Draft selection. Roles follow the listed order. The complete tuple must equal the installed reviewed package manifest; a caller cannot install a revision, maxima or producer authority. Extended Runner is unsupported."
+      },
+      "ConversionCapability": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "contract",
+              "spec",
+              "profile",
+              "role",
+              "limits"
+            ],
+            "properties": {
+              "contract": {
+                "type": "string",
+                "enum": [
+                  "retained-column/1"
+                ]
+              },
+              "spec": {
+                "$ref": "#/components/schemas/ConversionSpec"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "base"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "document-validation"
+                ]
+              },
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "documentBytes",
+                  "frameBytes"
+                ],
+                "properties": {
+                  "documentBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "frameBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "contract",
+              "spec",
+              "profile",
+              "role",
+              "limits"
+            ],
+            "properties": {
+              "contract": {
+                "type": "string",
+                "enum": [
+                  "retained-column/1"
+                ]
+              },
+              "spec": {
+                "$ref": "#/components/schemas/ConversionSpec"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "base"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "preview"
+                ]
+              },
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "documentBytes",
+                  "combinedBytes",
+                  "frameBytes",
+                  "profilesBytes",
+                  "requestBodyBytes",
+                  "inputReplyBytes"
+                ],
+                "properties": {
+                  "documentBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "combinedBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "frameBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "profilesBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "requestBodyBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "inputReplyBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "contract",
+              "spec",
+              "profile",
+              "role",
+              "limits"
+            ],
+            "properties": {
+              "contract": {
+                "type": "string",
+                "enum": [
+                  "retained-column/1"
+                ]
+              },
+              "spec": {
+                "$ref": "#/components/schemas/ConversionSpec"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "base"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "preparation"
+                ]
+              },
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "documentBytes",
+                  "combinedBytes",
+                  "frameBytes",
+                  "preparationBytes",
+                  "recordBytes",
+                  "profilesBytes",
+                  "requestBodyBytes",
+                  "inputReplyBytes",
+                  "releaseStoredBytes",
+                  "runStoredBytes",
+                  "exportBaseBytes",
+                  "exportWireBytes"
+                ],
+                "properties": {
+                  "documentBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "combinedBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "frameBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "preparationBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "recordBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "profilesBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "requestBodyBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "inputReplyBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "releaseStoredBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "runStoredBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "exportBaseBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "exportWireBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "producerGrammar": {
+                "type": "string",
+                "enum": [
+                  "desk-reviewed-input/1"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "contract",
+              "spec",
+              "profile",
+              "role",
+              "limits"
+            ],
+            "properties": {
+              "contract": {
+                "type": "string",
+                "enum": [
+                  "retained-column/1"
+                ]
+              },
+              "spec": {
+                "$ref": "#/components/schemas/ConversionSpec"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "base"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "preparation-verification"
+                ]
+              },
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "documentBytes",
+                  "combinedBytes",
+                  "frameBytes",
+                  "preparationBytes",
+                  "recordBytes",
+                  "profilesBytes",
+                  "requestBodyBytes",
+                  "inputReplyBytes",
+                  "releaseStoredBytes",
+                  "runStoredBytes",
+                  "exportBaseBytes",
+                  "exportWireBytes"
+                ],
+                "properties": {
+                  "documentBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "combinedBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "frameBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "preparationBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "recordBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "profilesBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "requestBodyBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "inputReplyBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "releaseStoredBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "runStoredBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "exportBaseBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "exportWireBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "producerGrammar": {
+                "type": "string",
+                "enum": [
+                  "desk-reviewed-input/1"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "contract",
+              "spec",
+              "profile",
+              "role",
+              "limits"
+            ],
+            "properties": {
+              "contract": {
+                "type": "string",
+                "enum": [
+                  "retained-column/1"
+                ]
+              },
+              "spec": {
+                "$ref": "#/components/schemas/ConversionSpec"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "base"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "producer-carrier"
+                ]
+              },
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "originalSnapshotBytes",
+                  "carrierBytes",
+                  "grantBytes",
+                  "adapterStdoutBytes",
+                  "responseBytes",
+                  "profilesBytes"
+                ],
+                "properties": {
+                  "originalSnapshotBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "carrierBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "grantBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "adapterStdoutBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "responseBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "profilesBytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "producerGrammar": {
+                "type": "string",
+                "enum": [
+                  "desk-reviewed-input/1"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Trusted installation metadata, independent of the source selector. Every integer uses a positive non-exponent JSON token. Producer grammar must match the approved source/adapter pin."
+      },
+      "RetainedColumnAvailability": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "const": "1"
+          },
+          "column": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "required": [
+          "contractVersion",
+          "column"
+        ],
+        "additionalProperties": false
+      },
+      "RetainedColumnTransformation": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "const": "1"
+          },
+          "column": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "input": {
+            "$ref": "#/components/schemas/RetainedColumnInput"
+          },
+          "result": {
+            "$ref": "#/components/schemas/RetainedColumnResult"
+          },
+          "researchIdentity": {
+            "$ref": "#/components/schemas/RetainedColumnResearchIdentity"
+          }
+        },
+        "required": [
+          "contractVersion",
+          "column",
+          "input",
+          "result"
+        ],
+        "additionalProperties": false
+      },
+      "RetainedColumnConversion": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "contractVersion": {
+                "const": "1"
+              },
+              "column": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "kind": {
+                "enum": [
+                  "text",
+                  "decimal",
+                  "number",
+                  "research-value"
+                ]
+              }
+            },
+            "required": [
+              "contractVersion",
+              "column",
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contractVersion": {
+                "const": "1"
+              },
+              "column": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "kind": {
+                "const": "boolean"
+              },
+              "trueValue": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "falseValue": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "contractVersion",
+              "column",
+              "kind",
+              "trueValue",
+              "falseValue"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "RetainedColumnInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "missing"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "present"
+              },
+              "ref": {
+                "$ref": "#/components/schemas/RetainedColumnInputReference"
+              }
+            },
+            "required": [
+              "state",
+              "ref"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "RetainedColumnInputReference": {
+        "type": "object",
+        "properties": {
+          "frameSha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "location": {
+            "enum": [
+              "values",
+              "research-value"
+            ]
+          }
+        },
+        "required": [
+          "frameSha256",
+          "location"
+        ],
+        "additionalProperties": false
+      },
+      "RetainedColumnResearchIdentity": {
+        "type": "object",
+        "properties": {
+          "recipeRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "fieldSha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "recipeRevision",
+          "fieldSha256"
+        ],
+        "additionalProperties": false
+      },
+      "RetainedColumnResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "value"
+              },
+              "json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "json"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "omitted"
+              },
+              "reason": {
+                "enum": [
+                  "missing",
+                  "blank",
+                  "legacy-null",
+                  "unavailable"
+                ]
+              }
+            },
+            "required": [
+              "state",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "NamedInputMappingV2": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "case": {
+            "$ref": "#/components/schemas/CaseMapping"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MappingSource"
+            },
+            "maxItems": 16
+          },
+          "admits": {
+            "$ref": "#/components/schemas/Admission"
+          },
+          "unmapped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "unmappedEvidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "base"
+            ],
+            "description": "Explicit Base is required for retained-column conversions. Absent, ordinary legacy behavior and limits apply."
+          },
+          "formatVersion": {
+            "const": "2.0.0"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "formatVersion",
+          "id",
+          "version",
+          "case"
+        ]
+      },
+      "NamedInputMappingV3": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "case": {
+            "$ref": "#/components/schemas/CaseMapping"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MappingSource"
+            },
+            "maxItems": 16
+          },
+          "admits": {
+            "$ref": "#/components/schemas/Admission"
+          },
+          "unmapped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "unmappedEvidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "base"
+            ],
+            "description": "Explicit Base is required for retained-column conversions. Absent, ordinary legacy behavior and limits apply."
+          },
+          "formatVersion": {
+            "const": "3.0.0"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "formatVersion",
+          "id",
+          "version",
+          "case"
+        ]
+      },
+      "ProducerConversionLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "originalSnapshotBytes",
+          "carrierBytes",
+          "grantBytes",
+          "adapterStdoutBytes",
+          "responseBytes",
+          "profilesBytes"
+        ],
+        "properties": {
+          "originalSnapshotBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 524288
+          },
+          "carrierBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3145728
+          },
+          "grantBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3145728
+          },
+          "adapterStdoutBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3145728
+          },
+          "responseBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5242880
+          },
+          "profilesBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 81920
+          }
+        },
+        "description": "Downward-only caller ceilings derived from the approved producer profile. They grant no producer or installation authority. Retained with durable acquisition intent; resumed intent must match."
       }
     }
   }

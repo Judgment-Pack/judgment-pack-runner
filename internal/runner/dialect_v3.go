@@ -57,13 +57,14 @@ func (m InputMapping) MarshalJSON() ([]byte, error) {
 		return json.Marshal(plain(m))
 	}
 	return json.Marshal(struct {
+		Profile          string          `json:"profile,omitempty"`
 		Case             *CaseMapping    `json:"case,omitempty"`
 		Sources          []MappingSource `json:"sources,omitempty"`
 		Admits           *Admission      `json:"admits,omitempty"`
 		Unmapped         []string        `json:"unmapped,omitempty"`
 		UnmappedEvidence []string        `json:"unmappedEvidence,omitempty"`
 		Version          int             `json:"version"`
-	}{m.Case, m.Sources, m.Admits, m.Unmapped, m.UnmappedEvidence, m.Version})
+	}{m.Profile, m.Case, m.Sources, m.Admits, m.Unmapped, m.UnmappedEvidence, m.Version})
 }
 
 // DialectImport is the import step's request member, source.import: the
@@ -286,11 +287,15 @@ func importedSource(src *SourceInput, profiles []InputProfile) (*SourceInput, er
 	if src == nil {
 		return nil, nil
 	}
+	if e := src.ConversionContract.validate("preparation"); e != nil {
+		return nil, e
+	}
 	c := *src
+	c.Mapping.selectedConversion = c.ConversionContract
 	if c.Import == nil {
 		return &c, nil
 	}
-	bound, e := bindDialect(*c.Import, profiles)
+	bound, e := bindDialect(*c.Import, profiles, c.ConversionContract)
 	if e != nil {
 		return nil, e
 	}
@@ -321,7 +326,7 @@ func importedSource(src *SourceInput, profiles []InputProfile) (*SourceInput, er
 // adapter is not the source's record. A research source is bound to its
 // AI profile and its web profiles (bindResearch). The bound dialect is then
 // held to the form every dialect is.
-func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, error) {
+func bindDialect(imp DialectImport, profiles []InputProfile, selection ...*ConversionContract) (InputMapping, error) {
 	fail := func(format string, a ...any) (InputMapping, error) {
 		return InputMapping{}, inputProblem("Mapping v3: " + fmt.Sprintf(format, a...))
 	}
@@ -336,7 +341,10 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 	if absent(imp.Dialect) || absent(imp.Binding) {
 		return fail("an import names the published dialect and its binding document")
 	}
-	if len(imp.Dialect) > maxPublishedDialect || len(imp.Binding) > maxBindingDocument {
+	if e := selectedConversion(selection).validate("preparation"); e != nil {
+		return InputMapping{}, e
+	}
+	if len(imp.Dialect) > artifactLimit(selectedConversion(selection), maxPublishedDialect, columnDocumentLimit) || len(imp.Binding) > maxBindingDocument {
 		return fail("a published dialect is at most 128 KiB, and a binding document at most 64 KiB")
 	}
 
@@ -345,6 +353,7 @@ func bindDialect(imp DialectImport, profiles []InputProfile) (InputMapping, erro
 	if e := strictJSON(imp.Dialect, &m); e != nil {
 		return fail("the published dialect is not a dialect document: %v", e)
 	}
+	m.selectedConversion = selectedConversion(selection)
 	if m.Version != 3 {
 		return fail("the published dialect is of version %d: only a dialect of version 3 has unbound sources to bind, and one of version 2 is given as the mapping", m.Version)
 	}

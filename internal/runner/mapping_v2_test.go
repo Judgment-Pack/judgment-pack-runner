@@ -139,7 +139,7 @@ func TestV2VerifiedProjectionAndAdversarialMutations(t *testing.T) {
 }
 func TestV2WrongSubjectCannotFeedChainedRequest(t *testing.T) {
 	input, p, key, at := v2Fixture(t)
-	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Parameters: map[string]Parameter{"description": {From: "vendor", Pointer: "/vendor/description", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"description":{"$param":"description"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/detail", "/detail"}}, Evidence: []EvidenceMapping{}}}})
+	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Parameters: map[string]Parameter{"description": {From: "vendor", Pointer: "/vendor/description", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"description":{"$param":"description"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/detail", Source: "/detail"}}, Evidence: []EvidenceMapping{}}}})
 	input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), []byte(`{"id":8,"description":"wrong vendor raw data"}`), at, 0)}
 	got, e := normalizeV2(input, []InputProfile{p}, at)
 	if e != nil {
@@ -169,7 +169,7 @@ func TestV2GeneratedAdmissionAndPropagation(t *testing.T) {
 	second.PublicKey = p.PublicKey
 	second.ID = "second"
 	second.Source = "second/live"
-	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: second.ID, ProfileDigest: profileHash(second), MaxAge: 300, Parameters: map[string]Parameter{"description": {From: "vendor", Pointer: "/vendor/description", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"description":{"$param":"description"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/detail", "/detail"}}, Evidence: []EvidenceMapping{}}}})
+	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: second.ID, ProfileDigest: profileHash(second), MaxAge: 300, Parameters: map[string]Parameter{"description": {From: "vendor", Pointer: "/vendor/description", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"description":{"$param":"description"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/detail", Source: "/detail"}}, Evidence: []EvidenceMapping{}}}})
 	input.Source.Sources["detail"] = SourceValue{Response: signResponse(t, second, key, []byte(`{"tool":"lookup","arguments":{"description":"a verified vendor"}}`), []byte(`{"detail":"record chosen by model output"}`), at, 1)}
 	if _, e = normalizeV2(input, []InputProfile{p, second}, at); e == nil {
 		t.Fatal("generated influence laundered through record")
@@ -203,7 +203,7 @@ func TestV2StrictRulesTemplatesAndNumericDomain(t *testing.T) {
 		"unknown-rule-field": func(i *Input) {
 			i.Source.Mapping.Sources[0].Read.Rule = append([]byte(`{"extra":1,`), vendorRule()[1:]...)
 		},
-		"overlap":          func(i *Input) { i.Source.Mapping.Case.Facts = []FactMapping{{"/vendor", "/id"}} },
+		"overlap":          func(i *Input) { i.Source.Mapping.Case.Facts = []FactMapping{{Target: "/vendor", Source: "/id"}} },
 		"reserved-param":   func(i *Input) { i.Source.Mapping.Case.Parameters["runAt"] = Parameter{Pointer: "/id", Type: "integer"} },
 		"fractional-param": func(i *Input) { i.Source.Case = []byte(`{"id":7.0}`) },
 	} {
@@ -215,7 +215,7 @@ func TestV2StrictRulesTemplatesAndNumericDomain(t *testing.T) {
 			}
 		})
 	}
-	local := fileInput(`{"amount":1.25,"zero":0,"no":false,"nil":null}`, InputMapping{Version: 1, Provider: "local-file", Facts: []FactMapping{{"/amount", "/amount"}}, Evidence: []EvidenceMapping{}})
+	local := fileInput(`{"amount":1.25,"zero":0,"no":false,"nil":null}`, InputMapping{Version: 1, Provider: "local-file", Facts: []FactMapping{{Target: "/amount", Source: "/amount"}}, Evidence: []EvidenceMapping{}})
 	if _, e := normalizeInput(local); e != nil {
 		t.Fatal("v1 decimal compatibility", e)
 	}
@@ -224,7 +224,7 @@ func TestV2StrictRulesTemplatesAndNumericDomain(t *testing.T) {
 	if _, e := normalizeV2(v2, nil, at); e == nil {
 		t.Fatal("silently accepted fractional v2 claim")
 	}
-	v2.Source.Mapping.Sources[0].Read.Copy.Facts = []FactMapping{{"/zero", "/zero"}, {"/no", "/no"}, {"/nil", "/nil"}, {"/missing", "/missing"}}
+	v2.Source.Mapping.Sources[0].Read.Copy.Facts = []FactMapping{{Target: "/zero", Source: "/zero"}, {Target: "/no", Source: "/no"}, {Target: "/nil", Source: "/nil"}, {Target: "/missing", Source: "/missing"}}
 	got, e := normalizeV2(v2, nil, at)
 	if e != nil || string(got.Facts) != `{"nil":null,"no":false,"zero":0}` {
 		t.Fatal(string(got.Facts), e)
@@ -243,7 +243,7 @@ func mappingLifecycle(t *testing.T, family int) {
 	cfg.InputProfiles = []InputProfile{p}
 	// The exact real pack consumes one projected object and two evidence requirements.
 	input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
-	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}}
+	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/request", Source: "/facts/request"}}, Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}}}}
 	input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), encode(sample()), at, 0)}
 	var publishedDigest string
 	if family != 0 {
@@ -365,7 +365,7 @@ func TestV2DriveVerifiesSelectedBytesAndRequest(t *testing.T) {
 		Case: &CaseMapping{Parameters: map[string]Parameter{"fileId": {Pointer: "/fileId", Type: "string"}, "grant": {Pointer: "/grant", Type: "string"}}, Facts: []FactMapping{}, Evidence: []EvidenceMapping{}},
 		Sources: []MappingSource{{Name: "file", Kind: "selected-file", Provider: "google-drive", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300,
 			Arguments: json.RawMessage(`{"fileId":{"$param":"fileId"},"grant":{"$param":"grant"}}`),
-			Read:      SourceRead{Copy: &CopyMapping{[]FactMapping{{"/approved", "/approved"}}, []EvidenceMapping{}}},
+			Read:      SourceRead{Copy: &CopyMapping{[]FactMapping{{Target: "/approved", Source: "/approved"}}, []EvidenceMapping{}}},
 		}},
 	}
 	input := Input{Source: &SourceInput{Mapping: mapping, Case: args, Sources: map[string]SourceValue{"file": {Snapshot: encode(snap)}}}}
@@ -445,7 +445,7 @@ func TestV2RealRuntimeWithoutExternalCitations(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			copy := CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}
+			copy := CopyMapping{Facts: []FactMapping{{Target: "/request", Source: "/facts/request"}}, Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}}}
 			input := Input{Source: &SourceInput{Mapping: InputMapping{Version: 2, UnmappedEvidence: []string{"sensitive-data-approvals"}}}}
 			if kind == "case" {
 				input.Source.Case = encode(sample())

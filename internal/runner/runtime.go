@@ -194,6 +194,16 @@ func invokeStarting(ctx context.Context, bin, dir, label string, env []string, s
 	return b, nil
 }
 func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, error) {
+	if s.cfg.ExecutorAdmission != nil && inputConversion(req.Input) != nil {
+		return Release{}, manualUnsupported()
+	}
+	limits, admissionErr := runtimeConversionLimits(ctx, s.runtime, s.cfg.Dir, inputConversion(req.Input), s.startRuntime)
+	if admissionErr != nil {
+		return Release{}, admissionErr
+	}
+	if e := runtimeConversionInput(limits, req.Input, req.Pack); e != nil {
+		return Release{}, e
+	}
 	if len(req.Pack) == 0 || len(req.Pack) > 1<<20 {
 		return Release{}, bad("invalid_pack", "Choose a pack smaller than 1 MiB.")
 	}
@@ -205,6 +215,9 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		return Release{}, err
 	}
 	req.Input = normalized
+	if e := runtimeConversionInput(limits, req.Input, req.Pack); e != nil {
+		return Release{}, e
+	}
 	select {
 	case s.previewGate <- struct{}{}:
 		defer func() { <-s.previewGate }()
@@ -217,8 +230,12 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		Title       string `json:"title"`
 		SpecVersion string `json:"specVersion"`
 	}
-	if json.Unmarshal([]byte(req.Pack), &doc) != nil || doc.SpecVersion != "0.2.0-draft" {
-		return Release{}, bad("invalid_pack", "This runner supports the Runtime's experimental 0.2.0-draft evaluator contract.")
+	if json.Unmarshal([]byte(req.Pack), &doc) != nil || !supportedEvaluatorSpec(doc.SpecVersion, inputConversion(req.Input)) {
+		message := "This runner supports the Runtime's experimental 0.2.0-draft evaluator contract."
+		if inputConversion(req.Input) != nil {
+			message = "This retained-column selection supports the Runtime's experimental 0.2.0-draft and Core 0.3.0 Base evaluator contracts."
+		}
+		return Release{}, bad("invalid_pack", message)
 	}
 	r := Release{SchemaVersion: "1", ID: id("release_"), Pack: req.Pack, PackDigest: digest([]byte(req.Pack)), PackID: doc.ID, PackVersion: doc.Version, Title: doc.Title, RuntimeDigest: s.runtimeDigest, CreatedAt: now(), Sample: req.Input, Tests: "not-run"}
 	if req.Input.Source != nil {
@@ -308,7 +325,7 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 	if s.expectedKey != nil {
 		signing = signingInputs{path: s.cfg.SigningKey, publicKey: hex.EncodeToString(s.expectedKey)}
 	}
-	return evaluateWithInvoker(ctx, bin, r, input, dir, rehearsal, signing, s.invokeWith)
+	return evaluateWithInvoker(ctx, bin, r, input, dir, rehearsal, signing, s.invokeWith, s.startRuntime)
 }
 
 // signingInputs is what an operational evaluation's Runtime is given to sign
@@ -346,7 +363,43 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 	return evaluateWithInvoker(ctx, bin, r, input, dir, rehearsal, signing, invokeWith)
 }
 
-func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs, invoke runtimeInvoker) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
+// A selected leaf adds the existing Core0.3 Base evaluator; it does not change
+// ordinary pack admission or replace historical selected Core0.2 releases.
+func supportedEvaluatorSpec(version string, selection *ConversionContract) bool {
+	if version == "0.2.0-draft" {
+		return true
+	}
+	return version == "0.3.0" && selection != nil && selection.validate("document-validation", "preview", "preparation") == nil
+}
+func expectedEvaluatorSpec(r Release) string {
+	if inputConversion(r.Sample) == nil {
+		return "0.2.0-draft"
+	}
+	var pack struct {
+		SpecVersion string `json:"specVersion"`
+	}
+	if json.Unmarshal([]byte(r.Pack), &pack) != nil || !supportedEvaluatorSpec(pack.SpecVersion, inputConversion(r.Sample)) {
+		return ""
+	}
+	return pack.SpecVersion
+}
+
+func evaluatorSpecMatches(r Release, spec string) bool {
+	expected := expectedEvaluatorSpec(r)
+	return expected != "" && spec == expected
+}
+
+func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs, invoke runtimeInvoker, starters ...func(*exec.Cmd) error) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
+	limits, admissionErr := runtimeConversionLimits(ctx, bin, filepath.Dir(dir), inputConversion(input), starters...)
+	if admissionErr != nil {
+		return nil, nil, nil, nil, admissionErr
+	}
+	if e := runtimeConversionInput(limits, input, r.Pack); e != nil {
+		return nil, nil, nil, nil, e
+	}
+	if expectedEvaluatorSpec(r) == "" {
+		return nil, nil, nil, nil, errors.New("unsupported retained release evaluator contract")
+	}
 	// The directory is exclusively created per invocation and never reused.
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, nil, nil, nil, err
@@ -409,13 +462,13 @@ func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input
 		Rehearsal     bool            `json:"rehearsal"`
 		Disposition   json.RawMessage `json:"disposition"`
 	}
-	if json.Unmarshal(out, &result) != nil || result.OutputVersion != "2" || result.Status != "evaluated" || result.PackID != r.PackID || result.PackVersion != r.PackVersion || result.Spec != "0.2.0-draft" || result.Rehearsal != rehearsal || len(result.Disposition) == 0 {
+	if json.Unmarshal(out, &result) != nil || result.OutputVersion != "2" || result.Status != "evaluated" || result.PackID != r.PackID || result.PackVersion != r.PackVersion || !evaluatorSpecMatches(r, result.Spec) || result.Rehearsal != rehearsal || len(result.Disposition) == 0 {
 		return nil, nil, nil, nil, errors.New("unsupported or mismatched Runtime response")
 	}
 	if rehearsal {
 		return out, nil, nil, nil, nil
 	}
-	audit, err := readLimit(filepath.Join(dir, "audit", "evaluations.jsonl"), maxOutput)
+	audit, err := readLimit(filepath.Join(dir, "audit", "evaluations.jsonl"), int64(artifactLimit(inputConversion(input), maxOutput, columnRecordLimit+1)))
 	if err != nil {
 		return nil, nil, nil, nil, errors.New("operational audit record could not be read")
 	}

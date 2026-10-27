@@ -50,6 +50,7 @@ func verifierProfiles(document any, raw []byte) ([]InputProfile, error) {
 			return nil, fmt.Errorf("profile %d: %w", i, err)
 		}
 		p.canonDigest = digest(canon)
+		p.profilesDocumentBytes = len(raw)
 		profiles = append(profiles, p)
 	}
 	return profiles, nil
@@ -69,7 +70,7 @@ func verifierProfiles(document any, raw []byte) ([]InputProfile, error) {
 // each, are counted before any form (preparationCountBounds).
 func profileForm(value any, ids map[string]bool) error {
 	p, ok := value.(map[string]any)
-	if !ok || !closedMembers(p, []string{"id", "publicKey", "class", "source", "authority", "shape", "adapter", "endpoint"}, []string{"endpointScope", "tools", "calculator", "research"}) {
+	if !ok || !closedMembers(p, []string{"id", "publicKey", "class", "source", "authority", "shape", "adapter", "endpoint"}, []string{"endpointScope", "tools", "calculator", "research", "retainedColumnProducer", "conversionContracts"}) {
 		return errors.New("a profile is an object of exactly id, publicKey, class, source, authority, shape, adapter and endpoint, and optionally endpointScope, tools, calculator and research")
 	}
 	str := func(v any) bool { _, ok := v.(string); return ok }
@@ -143,6 +144,19 @@ func profileForm(value any, ids map[string]bool) error {
 		}
 		if text, _ := model.(string); named && text == "" {
 			return errors.New("its research model is not a non-empty string")
+		}
+	}
+	if producer, present := p["retainedColumnProducer"]; present {
+		obj, _ := producer.(map[string]any)
+		if !closedMembers(obj, []string{"contractVersion", "grammar"}, nil) {
+			return errors.New("retainedColumnProducer requires exactly contractVersion and grammar")
+		}
+		var profile InputProfile
+		if e := strictJSON(encode(p), &profile); e != nil {
+			return e
+		}
+		if e := columnProducerProfile(profile); e != nil {
+			return e
 		}
 	}
 	if scope, present := p["endpointScope"]; present {

@@ -13,7 +13,9 @@ func workflowRunExtends(previous, current Run) bool {
 		return false
 	}
 	a, b := previous.Input.Source, current.Input.Source
-	if !sameJSON(a.Case, b.Case) || !sameJSON(encode(a.Mapping), encode(b.Mapping)) || !sameJSON(encode(a.Import), encode(b.Import)) {
+	ac, ae := columnCaseBytes(a)
+	bc, be := columnCaseBytes(b)
+	if ae != nil || be != nil || !sameJSON(ac, bc) || !sameJSON(encode(a.Mapping), encode(b.Mapping)) || !sameJSON(encode(a.Import), encode(b.Import)) {
 		return false
 	}
 	for name, value := range a.Sources {

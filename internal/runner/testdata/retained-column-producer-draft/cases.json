@@ -1,0 +1,22 @@
+{
+  "scope": "Structural projection vectors only; arbitrary retained text is not a valid acquisition and cannot produce preparation.",
+  "cases": [
+    {"name":"annotation-array","definition":"producerAnnotation","value":[],"valid":false},
+    {"name":"source-array","definition":"retainedPreparationSource","value":[],"valid":false},
+    {"name":"no-response-form","definition":"retainedPreparationSource","value":{},"valid":false},
+    {"name":"numeric-text","definition":"retainedPreparationSource","value":{"retainedResponseJson":42},"valid":false},
+    {"name":"closed-producer-annotation","definition":"producerAnnotation","value":{"contractVersion":"1","grammar":"desk-reviewed-input/1"},"valid":true},
+    {"name":"missing-version","definition":"producerAnnotation","value":{"grammar":"desk-reviewed-input/1"},"valid":false},
+    {"name":"missing-grammar","definition":"producerAnnotation","value":{"contractVersion":"1"},"valid":false},
+    {"name":"old-contract","definition":"producerAnnotation","value":{"contractVersion":"0","grammar":"desk-reviewed-input/1"},"valid":false},
+    {"name":"unknown-grammar","definition":"producerAnnotation","value":{"contractVersion":"1","grammar":"desk-reviewed-input/2"},"valid":false},
+    {"name":"caller-authority","definition":"producerAnnotation","value":{"contractVersion":"1","grammar":"desk-reviewed-input/1","trusted":true},"valid":false},
+    {"name":"received-text-projection","definition":"retainedPreparationSource","value":{"retainedResponseJson":"{ }"},"valid":true},
+    {"name":"both-response-forms","definition":"retainedPreparationSource","value":{"response":{},"retainedResponseJson":"{ }"},"valid":false},
+    {"name":"missing-exact-text","definition":"retainedPreparationSource","value":{"response":{}},"valid":false},
+    {"name":"empty-exact-text","definition":"retainedPreparationSource","value":{"retainedResponseJson":""},"valid":false},
+    {"name":"null-exact-text","definition":"retainedPreparationSource","value":{"retainedResponseJson":null},"valid":false},
+    {"name":"unrelated-snapshot","definition":"retainedPreparationSource","value":{"retainedResponseJson":"{ }","snapshot":{}},"valid":false},
+    {"name":"wrong-case","definition":"retainedPreparationSource","value":{"response":{},"RetainedResponseJson":"{ }"},"valid":false}
+  ]
+}

@@ -787,7 +787,7 @@ func TestARecordDeliveryCarryingAnAcquisitionKeepsTheReceiptRuleAndAcquiresNothi
 	m.UnmappedEvidence = []string{"sensitive-data-approvals"}
 	m.Admits = &Admission{Facts: map[string][]string{"/request": {"generated"}}, Evidence: map[string][]string{"intake-form": {"generated"}, "sponsor-endorsement": {"generated"}}}
 	m.Sources[0].ProfileDigest = profileHash(p)
-	m.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}}
+	m.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/request", Source: "/facts/request"}}, Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}}}}
 	input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), encode(sample()), at, 0)}
 	cfg.InputProfiles = []InputProfile{p}
 	cfg.GatewayConnections = []GatewayConnection{{Profile: p.ID, URL: gateway.URL}}

@@ -102,6 +102,30 @@ const MaxExportSize = 8<<20 + len(auditBytesMember) + (maxOutput+2)/3*4 + len(ch
 // sidecar. The bytes are held to maxOutput, the most of an audit trail Runner
 // reads, the chain entry to maxChainLine and the sidecar to maxSidecar.
 func exportWithinLimits(raw []byte, b VerificationBundle) error {
+	c := inputConversion(b.Run.Input)
+	if e := c.validate("preparation-verification"); e != nil {
+		return e
+	}
+	if !sameConversion(c, inputConversion(b.Release.Sample)) {
+		return conversionFailure("capability-unsupported")
+	}
+	if c != nil {
+		if len(raw) > ColumnExportWireLimit {
+			return errors.New("verification bundle exceeds selected wire limit")
+		}
+		// The enclosing export budget does not replace its artifact budgets.
+		// Measure the parsed record token even in v2, which has no AuditBytes;
+		// release/run use the same complete owner encodings as durable storage.
+		if len(b.Run.Audit) > columnRecordLimit {
+			return errors.New("the parsed audit record exceeds selected record limit")
+		}
+		if len(encode(b.Release)) > columnStoredLimit {
+			return errors.New("retained release exceeds selected storage limit")
+		}
+		if len(runText(b.Run)) > columnStoredLimit {
+			return errors.New("retained run exceeds selected storage limit")
+		}
+	}
 	size := len(raw)
 	if len(b.Run.AuditSignatures) > 0 {
 		if len(b.Run.AuditSignatures) > maxSidecar {
@@ -110,7 +134,7 @@ func exportWithinLimits(raw []byte, b VerificationBundle) error {
 		size -= len(auditSignaturesMember) + base64.StdEncoding.EncodedLen(len(b.Run.AuditSignatures))
 	}
 	if b.Version >= 3 {
-		if len(b.Run.AuditBytes) > maxOutput {
+		if len(b.Run.AuditBytes) > artifactLimit(c, maxOutput, columnRecordLimit) {
 			return errors.New("the audit record's bytes exceed 8 MiB")
 		}
 		size -= len(auditBytesMember) + base64.StdEncoding.EncodedLen(len(b.Run.AuditBytes))
@@ -121,7 +145,7 @@ func exportWithinLimits(raw []byte, b VerificationBundle) error {
 		}
 		size -= len(`,"chain":`) + len(encode(b.Chain))
 	}
-	if size > 8<<20 {
+	if size > artifactLimit(c, 8<<20, columnExportBaseLimit) {
 		return errors.New("verification bundle exceeds 8 MiB")
 	}
 	return nil

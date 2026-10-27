@@ -14,6 +14,10 @@ import (
 )
 
 func write(w http.ResponseWriter, status int, v any) {
+	if selected, ok := w.(conversionWriter); ok && len(encode(v))+1 > selected.limit {
+		failure(selected.ResponseWriter, codedProblem(codeOverBound, "reply exceeds selected complete artifact limit"))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
@@ -37,7 +41,11 @@ func decode(w http.ResponseWriter, r *http.Request, dst any) error {
 // decodeRaw is decode, which also returns the bytes it read, so that a
 // refusal can still name what the request named.
 func decodeRaw(w http.ResponseWriter, r *http.Request, dst any) ([]byte, error) {
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBody))
+	limit := int64(MaxBody)
+	if requestConversion(r) != nil {
+		limit = columnRequestLimit
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil || strictJSON(raw, dst) != nil {
 		return raw, &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
 	}
@@ -71,7 +79,13 @@ func decodeInput(w http.ResponseWriter, r *http.Request, dst any) error {
 		return fmt.Errorf("a request of type %T names no input", dst)
 	}
 	if src == nil {
+		if requestConversion(r) != nil {
+			return conversionFailure("capability-unsupported")
+		}
 		return nil
+	}
+	if err := admitInputConversion(Input{Source: src}, requestConversion(r)); err != nil {
+		return err
 	}
 	src.mappingGiven = namedAt(raw, path...)
 	return keptAsWritten(raw, src.Mapping, path...)
@@ -134,6 +148,10 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
+		if !sameConversion(inputConversion(run.Input), requestConversion(r)) {
+			failure(w, conversionFailure("capability-unsupported"))
+			return
+		}
 		var bundle VerificationBundle
 		if version < 4 {
 			bundle = verificationExport(release, run, version)
@@ -158,6 +176,12 @@ func (s *Service) Handler(token string) http.Handler {
 				return
 			}
 		}
+		if requestConversion(r) != nil {
+			if err := exportWithinLimits(append(encode(bundle), '\n'), bundle); err != nil {
+				failure(w, err)
+				return
+			}
+		}
 		write(w, 200, bundle)
 	})
 	mux.HandleFunc("GET /v1/run-chain", s.runChainHandler)
@@ -169,7 +193,7 @@ func (s *Service) Handler(token string) http.Handler {
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration"}})
+		write(w, 200, map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration"}})
 	})
 	mux.HandleFunc("POST /v1/inputs/next", func(w http.ResponseWriter, r *http.Request) {
 		var input Input
@@ -307,7 +331,12 @@ func (s *Service) Handler(token string) http.Handler {
 			write(w, 403, map[string]string{"message": "Use the authenticated Desk API."})
 			return
 		}
-		mux.ServeHTTP(w, r)
+		adapted, err := conversionRequest(r)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		mux.ServeHTTP(selectedReplyWriter(w, adapted), adapted)
 	})
 }
 func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string) {

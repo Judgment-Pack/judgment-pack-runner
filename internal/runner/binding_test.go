@@ -99,8 +99,8 @@ func calculatedTriage(t *testing.T) (Input, InputProfile) {
 	t.Helper()
 	input, profile, key, at := calculatorFixture(t)
 	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{
-		Facts:    []FactMapping{{"/request", "/facts/request"}},
-		Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}},
+		Facts:    []FactMapping{{Target: "/request", Source: "/facts/request"}},
+		Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}},
 	}}
 	input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
 	result := map[string]any{"calculation": calculation(at)}

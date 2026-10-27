@@ -41,7 +41,7 @@ func TestFreshnessJudgedAgainstTheInstantIsNamedSourceBySource(t *testing.T) {
 	})
 	t.Run("a calculator read by a copy", func(t *testing.T) {
 		i := cloneInput(input)
-		i.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/invoice/converted", "/converted"}}, Evidence: []EvidenceMapping{}}}
+		i.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/invoice/converted", Source: "/converted"}}, Evidence: []EvidenceMapping{}}}
 		got, prepared := freshnessOf(t, i, []InputProfile{p}, at)
 		if string(encode(got)) != want(`[{"source":"fx","checks":["acquisition","calculation"],"targets":1}]`) {
 			t.Fatal(string(encode(got)))
@@ -60,7 +60,7 @@ func TestFreshnessJudgedAgainstTheInstantIsNamedSourceBySource(t *testing.T) {
 	})
 	t.Run("a calculator that could not compute, and a source skipped behind it", func(t *testing.T) {
 		i := cloneInput(input)
-		i.Source.Mapping.Sources = append(i.Source.Mapping.Sources, MappingSource{Name: "ledger", Kind: "operation", Profile: "vendors", MaxAge: 300, Parameters: map[string]Parameter{"converted": {From: "fx", Pointer: "/invoice/converted", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"converted":{"$param":"converted"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/ledger", "/ledger"}}, Evidence: []EvidenceMapping{}}}})
+		i.Source.Mapping.Sources = append(i.Source.Mapping.Sources, MappingSource{Name: "ledger", Kind: "operation", Profile: "vendors", MaxAge: 300, Parameters: map[string]Parameter{"converted": {From: "fx", Pointer: "/invoice/converted", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"converted":{"$param":"converted"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/ledger", Source: "/ledger"}}, Evidence: []EvidenceMapping{}}}})
 		vendors, _ := testProfile(t)
 		i.Source.Mapping.Sources[1].ProfileDigest = profileHash(vendors)
 		c := calculation(at)
@@ -74,7 +74,7 @@ func TestFreshnessJudgedAgainstTheInstantIsNamedSourceBySource(t *testing.T) {
 	})
 	t.Run("a local file beside an acquired calculator", func(t *testing.T) {
 		i := cloneInput(input)
-		local := MappingSource{Name: "lookup", Kind: "selected-file", Provider: "local-file", Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/vendor/id", "/id"}}, Evidence: []EvidenceMapping{}}}}
+		local := MappingSource{Name: "lookup", Kind: "selected-file", Provider: "local-file", Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/vendor/id", Source: "/id"}}, Evidence: []EvidenceMapping{}}}}
 		i.Source.Mapping.Sources = append([]MappingSource{local}, i.Source.Mapping.Sources...)
 		i.Source.Sources["lookup"] = SourceValue{Snapshot: fileInput(`{"id":7}`, InputMapping{Version: 1, Provider: "local-file"}).Source.Snapshot}
 		got, prepared := freshnessOf(t, i, []InputProfile{p}, at)
@@ -88,7 +88,7 @@ func TestFreshnessJudgedAgainstTheInstantIsNamedSourceBySource(t *testing.T) {
 	t.Run("a case-only run", func(t *testing.T) {
 		i := cloneInput(input)
 		i.Source.Mapping.Sources = nil
-		i.Source.Mapping.Case.Facts = []FactMapping{{"/amount", "/amount"}}
+		i.Source.Mapping.Case.Facts = []FactMapping{{Target: "/amount", Source: "/amount"}}
 		i.Source.Sources = map[string]SourceValue{}
 		if got, _ := freshnessOf(t, i, nil, at); got != nil {
 			t.Fatal(string(encode(got)))

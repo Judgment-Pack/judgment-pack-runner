@@ -39,7 +39,7 @@ func TestUnsignedParametersAreWorkedOutFromTheFrozenMapping(t *testing.T) {
 	ref := func(from string) map[string]Parameter {
 		return map[string]Parameter{"ref": {From: from, Pointer: "/vendor/id", Type: "integer"}}
 	}
-	copied := SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/vendor/id", "/id"}}, Evidence: []EvidenceMapping{}}}
+	copied := SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/vendor/id", Source: "/id"}}, Evidence: []EvidenceMapping{}}}
 	file := MappingSource{Name: "lookup", Kind: "selected-file", Provider: "local-file", Read: copied}
 	// run is a preparation in which each source has the targets given, and was
 	// acquired or not; a calculator's status is given when it is one.
@@ -253,7 +253,7 @@ func TestVerifyInputsReportsAnEarlierSourcesFactByItsSource(t *testing.T) {
 			p, key := testProfile(t)
 			cfg.InputProfiles = []InputProfile{p}
 			at := time.Now().UTC().Truncate(time.Second)
-			facts := CopyMapping{Facts: []FactMapping{{"/vendor/id", "/id"}}, Evidence: []EvidenceMapping{}}
+			facts := CopyMapping{Facts: []FactMapping{{Target: "/vendor/id", Source: "/id"}}, Evidence: []EvidenceMapping{}}
 			upstream := MappingSource{Name: "lookup", Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Arguments: json.RawMessage(`{"tool":"execute_sql","arguments":{"sql":"SELECT id FROM vendors WHERE id = 7"}}`), Read: SourceRead{Copy: &facts}}
 			value := SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT id FROM vendors WHERE id = 7"}}`), []byte(`{"id":7,"region":"north"}`), at, 0)}
 			index := 1

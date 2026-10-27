@@ -10,12 +10,16 @@ import (
 // PlannedSource is an instruction to acquire, not permission to evaluate.
 // The endpoint is read-only: the caller fetches and submits receipts for checking.
 type PlannedSource struct {
-	Name      string          `json:"name"`
-	Kind      string          `json:"kind"`
-	Provider  string          `json:"provider,omitempty"`
-	Profile   string          `json:"profile,omitempty"`
-	Source    string          `json:"source,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	RetainedColumn     bool           `json:"retainedColumn,omitempty"`
+	ConversionLimits   map[string]int `json:"conversionLimits,omitempty"`
+	retainResponse     bool
+	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`
+	Name               string              `json:"name"`
+	Kind               string              `json:"kind"`
+	Provider           string              `json:"provider,omitempty"`
+	Profile            string              `json:"profile,omitempty"`
+	Source             string              `json:"source,omitempty"`
+	Arguments          json.RawMessage     `json:"arguments,omitempty"`
 }
 type InputPlan struct {
 	Next         *PlannedSource `json:"next,omitempty"`
@@ -34,6 +38,18 @@ func nextInput(input Input, profiles []InputProfile, at time.Time) (InputPlan, e
 	mapped, err := normalizeV2Mode(input, profiles, at, true)
 	var needed *acquisitionNeeded
 	if errors.As(err, &needed) {
+		needed.PlannedSource.ConversionContract = inputConversion(input)
+		needed.RetainedColumn = needed.retainResponse && inputConversion(input) != nil
+		if needed.RetainedColumn {
+			for _, p := range profiles {
+				if p.ID == needed.Profile {
+					needed.ConversionLimits, err = conversionCapabilityLimits(p.ConversionContracts, "producer-carrier", true)
+					if err != nil {
+						return InputPlan{}, err
+					}
+				}
+			}
+		}
 		return InputPlan{Next: &needed.PlannedSource}, nil
 	}
 	if err != nil {

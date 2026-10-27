@@ -72,7 +72,7 @@ func checkedReport(r Release, matrix string, out []byte) (string, error) {
 		ids[c.ID] = true
 	}
 	var report testReport
-	if json.Unmarshal(out, &report) != nil || report.OutputVersion != "2" || report.Command != "packs test" || !report.Experimental || report.Spec != "0.2.0-draft" || len(report.Packs) != 1 {
+	if json.Unmarshal(out, &report) != nil || report.OutputVersion != "2" || report.Command != "packs test" || !report.Experimental || !evaluatorSpecMatches(r, report.Spec) || len(report.Packs) != 1 {
 		return "error", invalid
 	}
 	p := report.Packs[0]

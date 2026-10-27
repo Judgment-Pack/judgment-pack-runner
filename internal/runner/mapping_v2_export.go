@@ -34,8 +34,8 @@ func releaseDigest(r Release) string { b, _ := canonical(encode(r)); return dige
 // come from a separate trusted channel, never implicitly from the export.
 // The result is an input-lineage finding, not verification of policy truth,
 // sealed-session completeness, or a re-execution of Runtime.
-func VerifyRun(raw []byte, profiles []InputProfile, trustedReleaseDigest string) error {
-	_, e := VerifyInputs(raw, profiles, trustedReleaseDigest)
+func VerifyRun(raw []byte, profiles []InputProfile, trustedReleaseDigest string, selection ...*ConversionContract) error {
+	_, e := VerifyInputs(raw, profiles, trustedReleaseDigest, selectedConversion(selection))
 	return e
 }
 
@@ -105,9 +105,9 @@ func (v VerifiedRun) Checked() bool { return v.checked }
 // counted from the recomputed lineage, which is the retained lineage: an export
 // whose lineage differs from the recomputation is refused. So is a mapping-v2
 // export whose record's members cannot be read for its binding.
-func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string) (VerifiedRun, error) {
+func VerifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string, selection ...*ConversionContract) (VerifiedRun, error) {
 	var judged []judgedFreshness
-	b, prepared, e := verifyInputs(raw, profiles, trustedReleaseDigest, &judged)
+	b, prepared, e := verifyInputs(raw, profiles, trustedReleaseDigest, &judged, selectedConversion(selection))
 	// A disposition that differs from the audit record is a finding beside
 	// the preparation's verification, which depends on nothing in the
 	// disposition: when the preparation verified, its checked report is kept
@@ -169,8 +169,8 @@ var ErrDispositionDiffers = errors.New("the retained disposition differs from a 
 // that was hashed is the one run. The evaluation is a rehearsal in a private
 // temporary directory, removed after, so nothing is written to a runner's store
 // and no audit record is appended; a Runtime that leaves one anyway is refused.
-func VerifyDisposition(ctx context.Context, raw []byte, profiles []InputProfile, trustedReleaseDigest, runtime string) error {
-	v, e := VerifyInputs(raw, profiles, trustedReleaseDigest)
+func VerifyDisposition(ctx context.Context, raw []byte, profiles []InputProfile, trustedReleaseDigest, runtime string, selection ...*ConversionContract) error {
+	v, e := VerifyInputs(raw, profiles, trustedReleaseDigest, selectedConversion(selection))
 	if e != nil {
 		return e
 	}
@@ -196,7 +196,9 @@ func (v VerifiedRun) Disposition(ctx context.Context, runtime string) error {
 		return errors.New("this executable is not the Runtime the release froze")
 	}
 	work := filepath.Join(dir, "evaluation")
-	out, _, _, _, e := evaluateWith(ctx, bin, b.Release, Input{Facts: prepared.Facts, Evidence: prepared.Evidence}, work, true, signingInputs{})
+	// Keep the verified selection and its documents/frames through the common
+	// evaluation admission: the exact Runtime may report lower positive limits.
+	out, _, _, _, e := evaluateWith(ctx, bin, b.Release, prepared, work, true, signingInputs{})
 	if e != nil {
 		return e
 	}
@@ -230,12 +232,22 @@ func member(raw json.RawMessage, path ...string) json.RawMessage {
 // verifyInputs is VerifyRun's check. It returns the export and the inputs it
 // recomputed, which a re-execution evaluates, and lists in judged what the
 // recomputation judged against the export's instant.
-func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string, judged *[]judgedFreshness) (b VerificationBundle, prepared Input, e error) {
-	if len(raw) > MaxExportSize {
+func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest string, judged *[]judgedFreshness, selection ...*ConversionContract) (b VerificationBundle, prepared Input, e error) {
+	limit, err := ConversionExportLimit(selectedConversion(selection))
+	if err != nil {
+		return b, prepared, err
+	}
+	if len(raw) > limit {
+		if selectedConversion(selection) != nil {
+			return b, prepared, errors.New("verification bundle exceeds selected wire limit")
+		}
 		return b, prepared, errors.New("verification bundle exceeds 8 MiB")
 	}
 	if e = strictJSON(raw, &b); e != nil {
 		return b, prepared, e
+	}
+	if !sameConversion(inputConversion(b.Run.Input), selectedConversion(selection)) {
+		return b, prepared, conversionFailure("capability-unsupported")
 	}
 	if e = exportWithinLimits(raw, b); e != nil {
 		return b, prepared, e

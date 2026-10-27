@@ -205,6 +205,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stderr, verificationCoverage)
 		flags.PrintDefaults()
 	}
+	conversionText := flags.String("conversion-contract", "", "optional: exact installed retained-column selector in canonical base64url")
 	file := flags.String("file", "", "retained verification export")
 	profilesPath := flags.String("profiles", "", "independently trusted input profiles JSON")
 	release := flags.String("release-digest", "", "independently trusted frozen release digest")
@@ -230,11 +231,23 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	}
 	// A version-3, 4 or 5 export may exceed 8 MiB by the record's bytes, the
 	// chain entry and the signature sidecar it carries.
-	raw, err := readLimit(*file, runner.MaxExportSize)
+	selection, err := runner.ParseConversionSelector(*conversionText, "preparation-verification")
 	if err != nil {
 		return err
 	}
-	p, err := readLimit(*profilesPath, 8<<20)
+	exportLimit, err := runner.ConversionExportLimit(selection)
+	if err != nil {
+		return err
+	}
+	raw, err := readLimit(*file, exportLimit)
+	if err != nil {
+		return err
+	}
+	profilesLimit := 8 << 20
+	if selection != nil {
+		profilesLimit = 80 << 10
+	}
+	p, err := readLimit(*profilesPath, profilesLimit)
 	if err != nil {
 		return err
 	}
@@ -242,7 +255,7 @@ func verifyRun(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	verified, err := runner.VerifyInputs(raw, profiles, *release)
+	verified, err := runner.VerifyInputs(raw, profiles, *release, selection)
 	// A retained disposition that differs from the audit record is a finding
 	// beside the preparation's verification, which reads nothing of the
 	// disposition: when the preparation verified, its checked report is kept

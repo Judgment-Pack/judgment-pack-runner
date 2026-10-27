@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // The codes of spec/dialect.md §11 that only the preparation verifier names
@@ -61,9 +62,10 @@ const (
 	ResultFinding = "finding"
 )
 
-// refusalCodes are the codes §11 gives a refusal; every other code is a
-// finding's.
-var refusalCodes = map[string]bool{codeOverBound: true, codeMalformed: true, "version-unread": true, codeKindUnread: true}
+// refusalCodes includes ordinary §11 refusals and the explicitly selected
+// retained-column extension's unsupported selection/profile refusals. Every
+// other code is a finding's.
+var refusalCodes = map[string]bool{"capability-unsupported": true, "profile-unsupported": true, codeOverBound: true, codeMalformed: true, "version-unread": true, codeKindUnread: true}
 
 // verifiedKinds are the source kinds the verifier reads: those the vectors
 // hold (spec/dialect.md §4, §14). A dialect that names another kind Runner
@@ -136,12 +138,13 @@ func verificationOutcome(err error) (result, code string) {
 // read. Binding is nil when no binding document is given, and Sources when no
 // acquisitions are, which is the empty object.
 type PreparationFixture struct {
-	Dialect     []byte
-	Binding     []byte
-	Case        []byte
-	Sources     []byte
-	Profiles    []byte
-	Preparation []byte
+	ConversionContract *ConversionContract
+	Dialect            []byte
+	Binding            []byte
+	Case               []byte
+	Sources            []byte
+	Profiles           []byte
+	Preparation        []byte
 }
 
 // PreparationPin holds an expected preparation's bytes to the digest supplied
@@ -150,8 +153,11 @@ type PreparationFixture struct {
 // name is not the one its publisher pinned, and is not read. A preparation
 // over its bound is not digested: the reading refuses it, input-over-bound,
 // without reading it whole.
-func PreparationPin(preparation []byte, pin string) error {
-	if len(preparation) > maxPreparationDocument {
+func PreparationPin(preparation []byte, pin string, selection ...*ConversionContract) error {
+	if e := selectedConversion(selection).validate("preparation-verification"); e != nil {
+		return e
+	}
+	if len(preparation) > artifactLimit(selectedConversion(selection), maxPreparationDocument, columnPreparationLimit) {
 		return nil
 	}
 	if got := digest(preparation); got != pin {
@@ -225,6 +231,12 @@ func (r PreparationReport) ExitStatus() int {
 // VerifyPreparation reads a fixture as spec/dialect.md §11 reads one, through
 // Runner's own preparation, at the instant the given preparation names.
 func VerifyPreparation(f PreparationFixture) PreparationReport {
+	return verifyPreparationUsing(f, verifyAcquisition)
+}
+
+// Public verification always uses the full acquisition reader; the private
+// dependency permits exact preparation-only corpus tests with prevalidated inputs.
+func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionReader) PreparationReport {
 	stop := func(code, reason string) PreparationReport {
 		result := ResultFinding
 		if refusalCodes[code] {
@@ -237,6 +249,16 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 		return PreparationReport{Result: result, Code: code, Reason: err.Error()}
 	}
 
+	if e := f.ConversionContract.validate("document-validation", "preview", "preparation", "preparation-verification"); e != nil {
+		return failed(e)
+	}
+	prepLimit := artifactLimit(f.ConversionContract, maxPreparationDocument, columnPreparationLimit)
+	docLimit := artifactLimit(f.ConversionContract, maxPublishedDialect, columnDocumentLimit)
+	allLimit := artifactLimit(f.ConversionContract, MaxBody, columnCombinedLimit)
+	profilesLimit := artifactLimit(f.ConversionContract, maxProfilesDocument, columnProfilesLimit)
+	if code := columnProfileBytes(f.Dialect); code != "" {
+		return stop(code, "retained-column profile is unsupported or malformed")
+	}
 	sources := f.Sources
 	if sources == nil {
 		sources = []byte(`{}`)
@@ -245,13 +267,13 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// §12's bounds on bytes, on every document before any is read (§11's
 	// first phase).
 	switch {
-	case len(f.Preparation) > maxPreparationDocument:
+	case len(f.Preparation) > prepLimit:
 		return stop(codeOverBound, fmt.Sprintf("the preparation is over %d bytes", maxPreparationDocument))
-	case len(f.Dialect) > maxPublishedDialect:
+	case len(f.Dialect) > docLimit:
 		return stop(codeOverBound, fmt.Sprintf("the dialect is over %d bytes", maxPublishedDialect))
-	case len(f.Dialect)+len(f.Case)+len(sources) > MaxBody:
+	case len(f.Dialect)+len(f.Case)+len(sources) > allLimit:
 		return stop(codeOverBound, fmt.Sprintf("the dialect, the case and the acquisitions are together over %d bytes", MaxBody))
-	case len(f.Profiles) > maxProfilesDocument:
+	case len(f.Profiles) > profilesLimit:
 		return stop(codeOverBound, fmt.Sprintf("the profiles are over %d bytes", maxProfilesDocument))
 	case f.Binding != nil && len(f.Binding) > maxBindingDocument:
 		return stop(codeOverBound, fmt.Sprintf("the binding document is over %d bytes", maxBindingDocument))
@@ -304,13 +326,34 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// installation's profiles are not §5.1's.
 	profiles, err := verifierProfiles(read["the profiles"], f.Profiles)
 	if err != nil {
+		if f.ConversionContract != nil {
+			if _, code := verificationOutcome(err); code == "capability-unsupported" {
+				return stop(code, "the profiles: "+err.Error())
+			}
+		}
 		return stop(codeMalformed, "the profiles: "+err.Error())
 	}
-	source := &SourceInput{Case: f.Case}
+	source := &SourceInput{Case: f.Case, ConversionContract: f.ConversionContract}
 	if err = strictJSON(sources, &source.Sources); err != nil || source.Sources == nil || !exactAcquisitionMembers(sources) {
 		return stop(codeMalformed, fmt.Sprintf("the acquisitions are not one object of acquisitions by source: %v", err))
 	}
 	given, _ := read["the preparation"].(map[string]any)
+	// Inspect only the reserved selector here. Ordinary preparation members
+	// retain their historical canonical recomputation/finding semantics.
+	var retainedSelection *ConversionContract
+	for name, value := range given {
+		if strings.EqualFold(name, "conversionContract") {
+			if name != "conversionContract" || value == nil || strictJSON(encode(value), &retainedSelection) != nil {
+				return stop(codeMalformed, "preparation conversion selection differs")
+			}
+		}
+	}
+	if !sameConversion(retainedSelection, f.ConversionContract) {
+		return stop(codeMalformed, "preparation conversion selection differs")
+	}
+	if err := columnReferenceForms(given); err != nil {
+		return stop(codeMalformed, err.Error())
+	}
 	verifiedAt, _ := given["verifiedAt"].(string)
 	at, ok := receiptInstant(verifiedAt)
 	if !ok {
@@ -320,6 +363,7 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	if err = strictJSON(f.Dialect, &dialect); err != nil {
 		return stop(codeMalformed, "the dialect is not a dialect document: "+err.Error())
 	}
+	dialect.selectedConversion = f.ConversionContract
 	if err = exactDialectForm(f.Dialect, dialect); err != nil {
 		return stop(codeMalformed, "the dialect has invalid members")
 	}
@@ -357,7 +401,7 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// The recomputation, at the given preparation's instant (§11's
 	// findings 1 to 4), and the canonical comparison (finding 5).
 	var judged []judgedFreshness
-	prepared, err := prepareV2Mode(Input{Source: source}, profiles, at, false, &judged, true)
+	prepared, err := prepareV2Mode(Input{Source: source}, profiles, at, false, &judged, true, readAcquisition)
 	if err != nil {
 		return failed(err)
 	}
@@ -386,7 +430,7 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 // PreparationVerifierVersion is the version of verify-preparation's
 // interface: its flags, its report and its capabilities. It changes when any
 // of them does.
-const PreparationVerifierVersion = 1
+const PreparationVerifierVersion = 2
 
 // PreparationVerifierCapabilities is what verify-preparation --capabilities
 // prints, so that a caller can check what the command reads before it calls
@@ -400,20 +444,23 @@ const PreparationVerifierVersion = 1
 func PreparationVerifierCapabilities(release string) []byte {
 	shapes := sortedKeys(adapterShapes)
 	capabilities := map[string]any{
-		"command":         "verify-preparation",
-		"version":         PreparationVerifierVersion,
-		"runner":          release,
-		"dialectVersions": []int{2, 3},
-		"formatVersions":  []string{"2.0.0", "3.0.0"},
-		"sourceKinds":     sortedKeys(verifiedKinds),
-		"shapes":          shapes,
-		"instant":         freshnessAgainst,
+		"conversionContracts": ConversionCapabilities("preparation-verification"),
+		"command":             "verify-preparation",
+		"version":             PreparationVerifierVersion,
+		"runner":              release,
+		"dialectVersions":     []int{2, 3},
+		"formatVersions":      []string{"2.0.0", "3.0.0"},
+		"sourceKinds":         sortedKeys(verifiedKinds),
+		"shapes":              shapes,
+		"instant":             freshnessAgainst,
 		"report": map[string]any{
-			"form":       "spec/dialect.md §11",
-			"version":    1,
+			"form": "spec/dialect.md §11",
+			// The declared refusal vocabulary extends in interface 2, even
+			// though the actual §11 report members and exit statuses do not.
+			"version":    2,
 			"results":    []string{ResultReading, ResultRefusal, ResultFinding},
 			"binding":    []string{BindingNotChecked},
-			"refusals":   []string{codeOverBound, codeMalformed, codeKindUnread},
+			"refusals":   []string{codeOverBound, codeMalformed, codeKindUnread, "capability-unsupported", "profile-unsupported"},
 			"findings":   []string{codeMismatch, codeParameter, codeReadFailed, codeMissing, codeUnexpected, codeInvalid, codeStale, codeSessions, codeCalculation, codeAdmission, codeDiffers},
 			"exitStatus": map[string]int{ResultReading: 0, ResultRefusal: 1, ResultFinding: 2, "couldNotRun": 3},
 			// Checked before a reading; one that fails is couldNotRun.

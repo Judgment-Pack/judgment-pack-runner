@@ -147,8 +147,8 @@ func packWithAmpersand(t *testing.T) string {
 // two evidence requirements.
 func caseRun(kase string) Input {
 	return Input{Source: &SourceInput{Mapping: InputMapping{Version: 2, UnmappedEvidence: []string{"sensitive-data-approvals"}, Case: &CaseMapping{
-		Facts:    []FactMapping{{"/request", "/facts/request"}},
-		Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}},
+		Facts:    []FactMapping{{Target: "/request", Source: "/facts/request"}},
+		Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}},
 	}}, Case: json.RawMessage(kase)}}
 }
 

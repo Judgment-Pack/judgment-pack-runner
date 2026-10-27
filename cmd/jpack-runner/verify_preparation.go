@@ -27,8 +27,8 @@ const preparationInputCap = 8<<20 + 1
 // characters.
 var sha256Form = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-const verifyPreparationUsage = `Usage: jpack-runner verify-preparation --dialect FILE [--binding FILE] --case FILE --profiles FILE [--sources FILE] --preparation FILE --preparation-digest sha256:HEX
-       jpack-runner verify-preparation --unbound FILE --binding FILE --case FILE --profiles FILE [--sources FILE] --preparation FILE --preparation-digest sha256:HEX
+const verifyPreparationUsage = `Usage: jpack-runner verify-preparation [--conversion-contract BASE64URL] --dialect FILE [--binding FILE] --case FILE --profiles FILE [--sources FILE] --preparation FILE --preparation-digest sha256:HEX
+       jpack-runner verify-preparation [--conversion-contract BASE64URL] --unbound FILE --binding FILE --case FILE --profiles FILE [--sources FILE] --preparation FILE --preparation-digest sha256:HEX
        jpack-runner verify-preparation --capabilities
 
 Verifies one preparation offline, as a preparation verifier of the specification's
@@ -46,7 +46,10 @@ It writes one report on standard output, one line, and the reason on standard er
 and exits 0 for a reading, 1 for a refusal and 2 for a finding; 3, writing no report
 and saying why on standard error, when it could not run: an argument it does not take,
 a file it cannot open, a preparation its digest does not name, or -h. --capabilities
-prints what it reads, as one JSON object, and exits 0.
+prints interface and report capability version 2, including exact installed
+retained-column support, as one JSON object, and exits 0. It takes no other flag.
+Selected verification requires --conversion-contract explicitly; discovery does
+not select an artifact, enlarge ordinary bounds or install any trusted identity.
 
 A reading establishes that the preparation recomputes from these inputs. Its binding
 is not-checked: no record is given, so nothing here commits the preparation or its
@@ -62,6 +65,7 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, verifyPreparationUsage)
 		flags.PrintDefaults()
 	}
+	conversionText := flags.String("conversion-contract", "", "optional: exact installed retained-column selector in canonical base64url")
 	dialect := flags.String("dialect", "", "the dialect document: bound, or, with --binding, published with unbound sources, which the binding document binds as Runner's import step does (spec/dialect.md §4.4)")
 	unbound := flags.String("unbound", "", "the published dialect, with unbound sources, which --binding binds: --dialect with --binding, named so")
 	binding := flags.String("binding", "", "the binding document of a dialect with unbound sources")
@@ -109,7 +113,15 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 	if given["unbound"] {
 		dialectPath = *unbound
 	}
-	fixture := runner.PreparationFixture{}
+	selection, err := runner.ParseConversionSelector(*conversionText, "document-validation", "preview", "preparation", "preparation-verification")
+	if err != nil {
+		return couldNot("%v", err)
+	}
+	fixture := runner.PreparationFixture{ConversionContract: selection}
+	inputCap := int64(preparationInputCap)
+	if selection != nil {
+		inputCap = 16<<20 + 1
+	}
 	for _, file := range []struct {
 		path  string
 		into  *[]byte
@@ -125,7 +137,7 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 		if !file.given {
 			continue
 		}
-		b, err := readAtMost(file.path, preparationInputCap)
+		b, err := readAtMost(file.path, inputCap)
 		if err != nil {
 			return couldNot("%v", err)
 		}
@@ -133,7 +145,7 @@ func verifyPreparation(args []string, stdout, stderr io.Writer) int {
 	}
 	// The pin, before anything is read: a precondition, as a file the
 	// command can open is, and no reading of §11's (runner.PreparationPin).
-	if err := runner.PreparationPin(fixture.Preparation, *preparationDigest); err != nil {
+	if err := runner.PreparationPin(fixture.Preparation, *preparationDigest, selection); err != nil {
 		return couldNot("%v", err)
 	}
 	report := runner.VerifyPreparation(fixture)

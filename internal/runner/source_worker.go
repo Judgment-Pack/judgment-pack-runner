@@ -26,18 +26,22 @@ import (
 
 type SourceWorkerConfig struct{ Dir, Gateway, GatewayTokenFile string }
 type sourceRequest struct {
-	ID        string          `json:"id"`
-	Gateway   string          `json:"gateway"`
-	Source    string          `json:"source"`
-	Arguments json.RawMessage `json:"arguments"`
-	Deadline  string          `json:"deadline"`
+	RetainedColumn     bool                `json:"retainedColumn,omitempty"`
+	ConversionLimits   map[string]int      `json:"conversionLimits,omitempty"`
+	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`
+	ID                 string              `json:"id"`
+	Gateway            string              `json:"gateway"`
+	Source             string              `json:"source"`
+	Arguments          json.RawMessage     `json:"arguments"`
+	Deadline           string              `json:"deadline"`
 }
 type sourceStatus struct {
-	ID       string          `json:"id"`
-	State    string          `json:"state"`
-	Deadline string          `json:"deadline"`
-	Response json.RawMessage `json:"response,omitempty"`
-	Reason   string          `json:"reason,omitempty"`
+	RetainedResponseJSON string          `json:"retainedResponseJson,omitempty"`
+	ID                   string          `json:"id"`
+	State                string          `json:"state"`
+	Deadline             string          `json:"deadline"`
+	Response             json.RawMessage `json:"response,omitempty"`
+	Reason               string          `json:"reason,omitempty"`
 }
 type SourceWorker struct {
 	cfg          SourceWorkerConfig
@@ -234,6 +238,7 @@ func (s *SourceWorker) Handler() http.Handler {
 		if cancel && (status.State == "running" || status.State == "queued" || status.State == "needs-attention") {
 			status.State = "cancelled"
 			status.Response = nil
+			status.RetainedResponseJSON = ""
 			status.Reason = "Cancelled locally; the provider may still finish."
 			if _, e = s.db.Exec("UPDATE source_operations SET state=?,status=? WHERE id=?", status.State, string(encode(status)), id); e != nil {
 				write(w, 500, map[string]string{"error": "cancellation could not be retained"})
@@ -247,13 +252,30 @@ func (s *SourceWorker) Handler() http.Handler {
 	})
 }
 func (s *SourceWorker) status(id string) (sourceStatus, error) {
-	var raw string
+	var raw, request string
 	var status sourceStatus
-	e := s.db.QueryRow("SELECT status FROM source_operations WHERE id=?", id).Scan(&raw)
+	e := s.db.QueryRow("SELECT request,status FROM source_operations WHERE id=?", id).Scan(&request, &raw)
 	if e == nil {
+		var frozen sourceRequest
+		if strictJSON([]byte(request), &frozen) != nil {
+			return status, conversionFailure(codeMalformed)
+		}
+		if e := frozen.ConversionContract.validate("preparation", "producer-carrier"); e != nil {
+			return status, e
+		}
 		e = json.Unmarshal([]byte(raw), &status)
 		if e != nil {
 			return status, e
+		}
+		if frozen.ConversionContract != nil {
+			if len(status.Response) > 0 || status.State == "completed" && status.RetainedResponseJSON == "" {
+				return status, conversionFailure(codeMalformed)
+			}
+			if len(status.RetainedResponseJSON) > producerResponseLimit(frozen.ConversionContract, frozen.ConversionLimits) || len(encode(status))+1 > columnReplyLimit {
+				return status, codedProblem(codeOverBound, "retained source status exceeds selected limit")
+			}
+		} else if status.RetainedResponseJSON != "" {
+			return status, conversionFailure("capability-unsupported")
 		}
 		previous := status.State
 		if status.State == "running" && s.active[id] == nil {
@@ -268,6 +290,7 @@ func (s *SourceWorker) status(id string) (sourceStatus, error) {
 		}
 		if status.State != previous {
 			status.Response = nil
+			status.RetainedResponseJSON = ""
 			if _, e = s.db.Exec("UPDATE source_operations SET state=?,status=? WHERE id=?", status.State, string(encode(status)), id); e != nil {
 				return sourceStatus{}, e
 			}
@@ -281,6 +304,12 @@ func (s *SourceWorker) status(id string) (sourceStatus, error) {
 	return status, e
 }
 func (s *SourceWorker) submit(req sourceRequest) (sourceStatus, int, error) {
+	if e := validateProducerLimits(req.RetainedColumn, req.ConversionContract, req.ConversionLimits); e != nil {
+		return sourceStatus{}, 422, e
+	}
+	if e := req.ConversionContract.validate("preparation", "producer-carrier"); e != nil {
+		return sourceStatus{}, 422, e
+	}
 	if !sourceOperationID.MatchString(req.ID) || (!readSourceName.MatchString(req.Source) || strings.HasSuffix(req.Source, "/write")) || req.Gateway != s.cfg.Gateway || !json.Valid(req.Arguments) {
 		return sourceStatus{}, 400, errors.New("invalid operation binding")
 	}
@@ -346,7 +375,7 @@ func (s *SourceWorker) submit(req sourceRequest) (sourceStatus, int, error) {
 func (s *SourceWorker) acquire(ctx context.Context, stop context.CancelFunc, req sourceRequest) {
 	defer s.workers.Done()
 	defer stop()
-	raw, e := s.call(ctx, "/acquire", encode(map[string]any{"session": "async." + req.ID, "source": req.Source, "arguments": req.Arguments}), MaxBody)
+	raw, e := s.call(ctx, "/acquire", encode(map[string]any{"session": "async." + req.ID, "source": req.Source, "arguments": req.Arguments}), int64(producerResponseLimit(req.ConversionContract, req.ConversionLimits)))
 	status := sourceStatus{ID: req.ID, State: "completed", Deadline: req.Deadline}
 	if e != nil || ctx.Err() != nil {
 		status.State = "needs-attention"
@@ -366,7 +395,24 @@ func (s *SourceWorker) acquire(ctx context.Context, stop context.CancelFunc, req
 			status.State = "needs-attention"
 			status.Reason = "The Gateway response does not belong to this operation's first acquisition. It was not repeated."
 		} else {
-			status.Response = raw
+			if req.ConversionContract != nil {
+				if req.RetainedColumn {
+					envelope, err := exactMembers(raw)
+					if err == nil {
+						_, err = readColumnCarrierLimits(envelope["result"], req.ConversionLimits, req.ConversionContract)
+					}
+					if err != nil {
+						status.State = "needs-attention"
+						status.Reason = "The source response exceeds its negotiated bounds or is malformed."
+					} else {
+						status.RetainedResponseJSON = string(raw)
+					}
+				} else {
+					status.RetainedResponseJSON = string(raw)
+				}
+			} else {
+				status.Response = raw
+			}
 		}
 	}
 	if s.beforeRetain != nil {
@@ -376,6 +422,7 @@ func (s *SourceWorker) acquire(ctx context.Context, stop context.CancelFunc, req
 	if deadline, _ := time.Parse(time.RFC3339Nano, req.Deadline); !time.Now().Before(deadline) {
 		status.State = "expired"
 		status.Response = nil
+		status.RetainedResponseJSON = ""
 		status.Reason = "The source deadline elapsed; remote completion may still occur."
 	}
 	// Cancellation/expiry wins even when a response was already in transit.

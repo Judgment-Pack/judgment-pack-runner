@@ -276,6 +276,9 @@ func (r sqliteReads) release(id string) (Release, error) {
 	if err := json.Unmarshal(b, &rel); err != nil {
 		return rel, storeFailure(faultUnreadable, "release", err)
 	}
+	if e := validateStoredRelease(rel); e != nil {
+		return rel, storeFailure(faultUnreadable, "release", e)
+	}
 	return rel, nil
 }
 
@@ -371,11 +374,17 @@ func (t *sqliteTx) activeRuns() (int, error) {
 }
 
 func (t *sqliteTx) createRun(r Run, caller, key, requestDigest string) error {
+	if e := validateStoredRun(r); e != nil {
+		return e
+	}
 	_, err := t.tx.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, r.JobID, caller, key, requestDigest, r.State, runText(r))
 	return sqliteFault("run", err, true)
 }
 
 func (t *sqliteTx) putRun(r Run, expected string) (string, error) {
+	if e := validateStoredRun(r); e != nil {
+		return "", e
+	}
 	var from string
 	if err := t.tx.QueryRow("SELECT state FROM runs WHERE id=?", r.ID).Scan(&from); err != nil {
 		return "", sqliteFault("run", err, false)
@@ -416,6 +425,9 @@ func (t *sqliteTx) createEntry(sequence int64, run string, line []byte) error {
 }
 
 func (t *sqliteTx) createRelease(r Release) error {
+	if e := validateStoredRelease(r); e != nil {
+		return e
+	}
 	_, err := t.tx.Exec("INSERT INTO releases(id,record) VALUES (?,?)", r.ID, string(encode(r)))
 	return sqliteFault("release", err, true)
 }

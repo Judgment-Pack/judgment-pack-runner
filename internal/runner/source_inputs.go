@@ -19,17 +19,21 @@ import (
 const maxInputDocument = 200_000
 
 type FactMapping struct {
-	Target string `json:"target"`
-	Source string `json:"source"`
+	Target     string          `json:"target"`
+	Source     string          `json:"source"`
+	Conversion json.RawMessage `json:"conversion,omitempty"`
 }
 type EvidenceMapping struct {
-	Requirement string `json:"requirement"`
-	Source      string `json:"source"`
+	Requirement  string          `json:"requirement"`
+	Source       string          `json:"source"`
+	Availability json.RawMessage `json:"availability,omitempty"`
 }
 type InputMapping struct {
 	// Only offline verification retains the original legacy document encoding.
-	originalDocument json.RawMessage
+	originalDocument   json.RawMessage
+	selectedConversion *ConversionContract
 
+	Profile          string            `json:"profile,omitempty"`
 	FormatVersion    string            `json:"-"`
 	ArtifactID       string            `json:"-"`
 	ArtifactVersion  string            `json:"-"`
@@ -44,11 +48,14 @@ type InputMapping struct {
 	Evidence         []EvidenceMapping `json:"evidence"`
 }
 type SourceInput struct {
-	Case          json.RawMessage        `json:"case,omitempty"`
-	Sources       map[string]SourceValue `json:"sources,omitempty"`
-	Mapping       InputMapping           `json:"mapping"`
-	Snapshot      json.RawMessage        `json:"snapshot,omitempty"`
-	MappingDigest string                 `json:"mappingDigest,omitempty"`
+	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`
+	Case               json.RawMessage     `json:"case,omitempty"`
+	// RetainedCaseJSON is Draft-only sole exact case custody, excluding Case.
+	RetainedCaseJSON string                 `json:"retainedCaseJson,omitempty"`
+	Sources          map[string]SourceValue `json:"sources,omitempty"`
+	Mapping          InputMapping           `json:"mapping"`
+	Snapshot         json.RawMessage        `json:"snapshot,omitempty"`
+	MappingDigest    string                 `json:"mappingDigest,omitempty"`
 	// Import is a published dialect of version 3 and the binding document
 	// that binds its unbound sources to this installation's input profiles
 	// (dialect_v3.go). Mapping is the bound dialect they make, and the
@@ -268,6 +275,9 @@ func (m InputMapping) validate() error {
 	if m.dialect() {
 		return validateMappingV2(m)
 	}
+	if m.Profile != "" || hasColumnCopy(CopyMapping{Facts: m.Facts, Evidence: m.Evidence}) {
+		return inputProblem("Retained columns require a dialect document.")
+	}
 	if m.Case != nil || m.Sources != nil || m.Admits != nil || m.Unmapped != nil || m.UnmappedEvidence != nil {
 		return inputProblem("Version 2 fields require mapping version 2.")
 	}
@@ -379,7 +389,7 @@ func readSourceDocument(c *SourceInput, requireRegistry bool) (any, sourceSnapsh
 	return data, s, r, nil
 }
 func normalizeInput(i Input) (Input, error) {
-	if i.Source != nil && (i.Source.Mapping.dialect() || i.Source.Import != nil || len(i.Source.Case) > 0 || i.Source.Sources != nil) {
+	if i.Source != nil && (i.Source.Mapping.dialect() || i.Source.Import != nil || len(i.Source.Case) > 0 || i.Source.RetainedCaseJSON != "" || i.Source.Sources != nil) {
 		return i, inputProblem("Mapping v2 requires the trusted Runner service.")
 	}
 	if i.Preparation != nil {
@@ -450,6 +460,9 @@ func normalizeInput(i Input) (Input, error) {
 	return mapped, mapped.validate()
 }
 func mappingMatchesRelease(r Release, i Input) bool {
+	if !sameConversion(inputConversion(r.Sample), inputConversion(i)) {
+		return false
+	}
 	if r.InputMapping == nil {
 		return i.Source == nil
 	}

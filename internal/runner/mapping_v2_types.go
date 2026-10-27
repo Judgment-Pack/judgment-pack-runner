@@ -1,19 +1,24 @@
 package runner
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/retainedcolumns"
+)
 
 // InputProfile is installation authority, supplied only by the trusted host.
 // Its digest pins classification and adapter expectations into a release.
 // Classification describes acquisition, not the ultimate authorship of bytes.
 type InputProfile struct {
-	ID        string     `json:"id"`
-	PublicKey string     `json:"publicKey"`
-	Class     string     `json:"class"`
-	Source    string     `json:"source"`
-	Authority string     `json:"authority"`
-	Shape     string     `json:"shape"`
-	Adapter   AdapterPin `json:"adapter"`
-	Endpoint  *string    `json:"endpoint"`
+	ConversionContracts []ConversionCapability `json:"conversionContracts,omitempty"`
+	ID                  string                 `json:"id"`
+	PublicKey           string                 `json:"publicKey"`
+	Class               string                 `json:"class"`
+	Source              string                 `json:"source"`
+	Authority           string                 `json:"authority"`
+	Shape               string                 `json:"shape"`
+	Adapter             AdapterPin             `json:"adapter"`
+	Endpoint            *string                `json:"endpoint"`
 	// EndpointScope, when set, is the profile's endpoint constraint in
 	// place of one exact endpoint, which is then null: the endpoint prefixes,
 	// or the wildcard, a page receipt's endpoint must match (spec/dialect.md
@@ -32,11 +37,17 @@ type InputProfile struct {
 	// the installation's declaration, never an observation of the model,
 	// and its digest pins it. Absent, the profile encodes as before.
 	Research *ResearchDeclaration `json:"research,omitempty"`
+	// RetainedColumnProducer is a trusted host's Draft-only producer grammar pin.
+	// Absent, profiles retain their historical bytes and digest.
+	RetainedColumnProducer *RetainedColumnProducer `json:"retainedColumnProducer,omitempty"`
 	// canonDigest is set only on a profile the preparation verifier is
 	// given: the digest of its canon bytes as given (spec/dialect.md §5.1,
 	// verifierProfiles), which profileHash names for it. An installation's
 	// profile has none, and is digested as Runner admitted it.
 	canonDigest string
+	// profilesDocumentBytes is measured only by the actual profiles-file readers.
+	// It is neither serialized nor authority and preserves whitespace charging.
+	profilesDocumentBytes int
 }
 
 // ResearchDeclaration is a profile's research member (spec/dialect.md
@@ -140,6 +151,10 @@ type Admission struct {
 type SourceValue struct {
 	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 	Response json.RawMessage `json:"response,omitempty"`
+	// RetainedResponseJSON is the sole exact signed envelope serialization on
+	// the Draft producer path, mutually exclusive with Response/Snapshot.
+	// Its signature authenticates canonical content, not outer whitespace/spelling.
+	RetainedResponseJSON string `json:"retainedResponseJson,omitempty"`
 }
 type Citation struct {
 	SessionID string `json:"sessionId"`
@@ -169,8 +184,9 @@ type TargetLineage struct {
 	// to the preparation's cites, in their order: each retained response's,
 	// then the record's own when it has one (spec/dialect.md §9.3). It is
 	// written even when empty, and absent for every other source.
-	Receipts    *[]Citation         `json:"receipts,omitempty"`
-	Calculation *CalculationLineage `json:"calculation,omitempty"`
+	Receipts             *[]Citation                     `json:"receipts,omitempty"`
+	Calculation          *CalculationLineage             `json:"calculation,omitempty"`
+	ColumnTransformation *retainedcolumns.Transformation `json:"columnTransformation,omitempty"`
 }
 
 // CalculationLineage records, for a calculated source, which calculator answered,
@@ -196,13 +212,14 @@ type SourceOutcome struct {
 	Claim      json.RawMessage `json:"claim"`
 }
 type Preparation struct {
-	Version       int             `json:"version"`
-	VerifiedAt    string          `json:"verifiedAt"`
-	MappingDigest string          `json:"mappingDigest"`
-	Verification  string          `json:"verification"`
-	Cites         []Citation      `json:"cites"`
-	Lineage       []TargetLineage `json:"lineage"`
-	Outcomes      []SourceOutcome `json:"outcomes"`
+	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`
+	Version            int                 `json:"version"`
+	VerifiedAt         string              `json:"verifiedAt"`
+	MappingDigest      string              `json:"mappingDigest"`
+	Verification       string              `json:"verification"`
+	Cites              []Citation          `json:"cites"`
+	Lineage            []TargetLineage     `json:"lineage"`
+	Outcomes           []SourceOutcome     `json:"outcomes"`
 }
 type ruleDocument struct {
 	Version    string            `json:"ruleVersion"`

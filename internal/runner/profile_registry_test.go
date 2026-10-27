@@ -138,7 +138,7 @@ func TestRegisteredProfileAvailableToPreparationAndRetainedRelease(t *testing.T)
 	cfg := testConfig(t)
 	input, p, key, at := v2Fixture(t)
 	input.Source.Mapping.UnmappedEvidence = []string{"sensitive-data-approvals"}
-	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/request", "/facts/request"}}, Evidence: []EvidenceMapping{{"intake-form", "/evidence/intake-form"}, {"sponsor-endorsement", "/evidence/sponsor-endorsement"}}}}
+	input.Source.Mapping.Sources[0].Read = SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/request", Source: "/facts/request"}}, Evidence: []EvidenceMapping{{Requirement: "intake-form", Source: "/evidence/intake-form"}, {Requirement: "sponsor-endorsement", Source: "/evidence/sponsor-endorsement"}}}}
 	input.Source.Sources["vendor"] = SourceValue{Response: signResponse(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), encode(sample()), at, 0)}
 	s := openJournal(t, cfg)
 	defer s.Close()

@@ -32,7 +32,7 @@ func threeSources(t *testing.T) (Input, InputProfile, ed25519.PrivateKey, time.T
 	t.Helper()
 	input, p, key, at := v2Fixture(t)
 	for _, name := range []string{"detail", "standing"} {
-		input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: name, Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"of":"` + name + `"}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/" + name, "/" + name}}, Evidence: []EvidenceMapping{}}}})
+		input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: name, Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"of":"` + name + `"}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/" + name, Source: "/" + name}}, Evidence: []EvidenceMapping{}}}})
 	}
 	return input, p, key, at, map[string][]byte{
 		"vendor":   []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`),
@@ -358,7 +358,7 @@ func TestV2OneAcquisitionAloneIsTakenAtAnyIndex(t *testing.T) {
 // skipped for what it depends on, was taken before and is taken the same.
 func TestV2ASkippedOperationLeavesOneAcquisition(t *testing.T) {
 	input, p, key, at := v2Fixture(t)
-	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Parameters: map[string]Parameter{"description": {From: "vendor", Pointer: "/vendor/description", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"description":{"$param":"description"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{"/detail", "/detail"}}, Evidence: []EvidenceMapping{}}}})
+	input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Parameters: map[string]Parameter{"description": {From: "vendor", Pointer: "/vendor/description", Type: "string"}}, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"description":{"$param":"description"}}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/detail", Source: "/detail"}}, Evidence: []EvidenceMapping{}}}})
 	input.Source.Sources["vendor"] = SourceValue{Response: signResponseIn(t, p, key, []byte(`{"tool":"execute_sql","arguments":{"sql":"SELECT * FROM vendors WHERE id = 7"}}`), []byte(`{"id":8,"description":"of another vendor"}`), at, "job.a", 3)}
 	got, e := normalizeV2(input, []InputProfile{p}, at)
 	if e != nil || len(got.Preparation.Cites) != 1 || got.Preparation.Outcomes[2].Reason != "dependency-unavailable" {

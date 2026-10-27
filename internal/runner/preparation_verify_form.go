@@ -21,6 +21,13 @@ func exactAcquisitionMembers(raw []byte) bool {
 			return false
 		}
 		for k := range v {
+			if k == "retainedResponseJson" {
+				var text string
+				if len(v) != 1 || json.Unmarshal(v[k], &text) != nil || text == "" {
+					return false
+				}
+				continue
+			}
 			if k != "response" {
 				return false
 			}
@@ -178,7 +185,18 @@ func preparationAcquisitionForms(m InputMapping, acquisitions map[string]SourceV
 		// Every other acquisition, a selected file's among them, has §5.2's
 		// envelope; a kind the verifier does not read is refused after every
 		// form (§11's sixth phase).
-		if !operationEnvelopeForm(value.Response) {
+		raw := value.Response
+		if value.RetainedResponseJSON != "" {
+			if !known || source.Read.Copy == nil || !hasColumnCopy(*source.Read.Copy) {
+				return researchFail(codeMalformed, "retainedResponseJson is only admitted for a Draft producer read")
+			}
+			var err error
+			raw, err = columnRetainedResponse(value, m.selectedConversion)
+			if err != nil {
+				return err
+			}
+		}
+		if !operationEnvelopeForm(raw) {
 			return researchFail(codeMalformed, "invalid acquisition envelope")
 		}
 	}

@@ -200,7 +200,11 @@ func finishWorkflowAttempt(w workflowInventory, id string, result workflowAttemp
 		if bundle.Run.Input.Preparation == nil && (bundle.Run.State == "completed" || len(bundle.Run.Audit) > 0 || len(bundle.Run.Result) > 0) {
 			return w, errWorkflowTransition
 		}
-		_, caseBytes, err := workflowCase(bundle.Run.Input.Source.Case)
+		retainedCase, caseErr := columnCaseBytes(bundle.Run.Input.Source)
+		if caseErr != nil {
+			return w, errWorkflowTransition
+		}
+		_, caseBytes, err := workflowCase(retainedCase)
 		if err != nil || instance.CaseDigest == nil || digest(caseBytes) != *instance.CaseDigest {
 			return w, errWorkflowTransition
 		}
