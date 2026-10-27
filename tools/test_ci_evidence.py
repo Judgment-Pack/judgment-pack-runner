@@ -258,6 +258,24 @@ class Checks(unittest.TestCase):
                       'TestWorkflowFuture', 'TestAFuture', 'TestMFuture', 'TestNFuture',
                       'TestZFuture', 'TestFutureOrdinary', 'TestΩFuture',
                       'ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzRC2'})
+        # Go matches slash-separated run/skip expressions component by component.
+        # Represent the split parent's leaves so sibling/future subtests must still
+        # run exactly once, including versions below the selected artifact level.
+        offline = 'TestColumnRoleOfflineIndependentArtifactLimits'
+        names.remove(offline)
+        names.update(offline + '/' + artifact + '/' + version
+                     for artifact in ('parsed-record', 'original-record', 'release', 'run', 'future')
+                     for version in ('v2', 'v5', 'future'))
+        names.update({offline + 'Future', offline + '/releaseFuture/v5',
+                      offline + '/runFuture/v5', 'TestColumnRoleStoredAndExportBoundariesFuture',
+                      'TestColumnRoleLiteralSeparatorWireCustodyFuture'})
+
+        def selected(pattern, name):
+            expressions, components = pattern.split('/'), name.split('/')
+            return len(expressions) <= len(components) and all(
+                re.search(expression, component)
+                for expression, component in zip(expressions, components))
+
         groups = []
         for call in main:
             args = call['args']
@@ -273,9 +291,9 @@ class Checks(unittest.TestCase):
                              'unit partition repeats an option')
             matches = set(names)
             if '-run' in args:
-                matches &= {name for name in names if re.search(args[args.index('-run') + 1], name)}
+                matches &= {name for name in names if selected(args[args.index('-run') + 1], name)}
             if '-skip' in args:
-                matches -= {name for name in names if re.search(args[args.index('-skip') + 1], name)}
+                matches -= {name for name in names if selected(args[args.index('-skip') + 1], name)}
             groups.append(matches)
             for key, binary in {'JPACK_TEST_BIN': 'jpack', 'JPACK_RETAINED_TEST_BIN': 'jpack-retained',
                                 'JPACK_EARLIER_TEST_BIN': 'jpack-earlier', 'JPACK_GATEWAY_TEST_BIN': 'gateway',
@@ -285,14 +303,15 @@ class Checks(unittest.TestCase):
         for index, group in enumerate(groups):
             for other in groups[index + 1:]:
                 self.assertFalse(group & other, 'unit partitions repeat cases')
-        self.assertEqual(len(groups), 5)
+        self.assertEqual(len(groups), 10)
         for name in ('ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzRC2'):
             self.assertIn(name, groups[-1])
         conformance = [call for call in calls if '^TestStoreKindsConform$' in call['args']]
         self.assertEqual(len(conformance), 1)
         self.assertEqual(conformance[0]['args'],
                          ['test', '-race', '-count=1', '-v', '-run',
-                          '^TestStoreKindsConform$', './internal/runner'])
+                          '^TestStoreKindsConform$', './internal/runner'],
+                         'store conformance invocation changed')
 
     def test_unit_selections_are_complementary_and_keep_pinned_environments(self):
         process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh')
@@ -305,11 +324,17 @@ class Checks(unittest.TestCase):
     def test_unit_selection_controls_catch_omission_overlap_and_changed_execution(self):
         script = read('scripts/checks/unit-tests.sh')
         mutations = [
+            ('run_unit -run "$offline/^release$"', ': # omitted release partition',
+             'unit partitions omit cases'),
+            (' -skip "$offline/^(release|run)$"', '', 'unit partitions repeat cases'),
+            (' -skip "$large_roles"', '', 'unit partitions repeat cases'),
+            ('"$offline/^release$"', '"$offline/^release"', 'unit partitions repeat cases'),
             ("run_unit -run '^TestWorkflow'", ': # omitted workflow partition', 'unit partitions omit cases'),
             ("'^(TestColumn|TestRC2|TestWorkflow|Test[A-M])'",
              "'^(TestColumn|TestRC2|Test[A-M])'", 'unit partitions repeat cases'),
             ('go test -race "$@"', 'go test "$@"', 'unit partition lost race instrumentation'),
             ('go test -race "$@"', 'go test -race -timeout=700s "$@"', 'unit partitions changed default timeout'),
+            ('-race -count=1 -v', '-race -v', 'store conformance invocation changed'),
             ('JPACK_TEST_BIN="$bin/jpack"', 'JPACK_TEST_BIN="$bin/wrong"', 'JPACK_TEST_BIN'),
         ]
         for before, after, message in mutations:
@@ -322,20 +347,32 @@ class Checks(unittest.TestCase):
                     self.assert_unit_partition_calls(calls)
 
     def test_unit_script_propagates_each_partition_and_conformance_failure(self):
-        for failed in range(1, 7):
+        for failed in range(1, 12):
             with self.subTest(call=failed):
                 process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', fail_call=failed)
                 self.assertNotEqual(process.returncode, 0)
                 self.assertEqual(len(calls), failed, 'script continued after Go failed')
                 self.assertIn('fake Go failure at call %d' % failed, process.stdout)
 
-    def test_unit_script_requires_both_actual_store_conformance_kinds(self):
+    def assert_unit_store_conformance_required(self, *, script_text=None):
         for kinds, missing in [('sqlite', 'memory'), ('memory', 'sqlite'), ('', 'sqlite')]:
-            with self.subTest(kinds=kinds):
-                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', conformance=kinds)
-                self.assertNotEqual(process.returncode, 0)
-                self.assertEqual(len(calls), 6)
-                self.assertIn('TestStoreKindsConform/%s did not run and pass' % missing, process.stdout)
+            process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh',
+                                                   script_text=script_text, conformance=kinds)
+            self.assertNotEqual(process.returncode, 0, 'script accepted missing store conformance')
+            self.assertEqual(len(calls), 11)
+            self.assertIn('TestStoreKindsConform/%s did not run and pass' % missing, process.stdout)
+
+    def test_unit_script_requires_both_actual_store_conformance_kinds(self):
+        self.assert_unit_store_conformance_required()
+
+    def test_unit_store_controls_catch_removed_kind_assertion(self):
+        script = read('scripts/checks/unit-tests.sh')
+        before = 'for kind in sqlite memory; do'
+        self.assertEqual(script.count(before), 1)
+        for after in ('for kind in sqlite; do', 'for kind in memory; do'):
+            with self.subTest(mutation=after):
+                with self.assertRaisesRegex(AssertionError, 'script accepted missing store conformance'):
+                    self.assert_unit_store_conformance_required(script_text=script.replace(before, after))
 
     def test_every_input_is_a_tracked_file(self):
         inputs = config()['inputs']

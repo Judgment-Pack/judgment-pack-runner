@@ -18,7 +18,17 @@ run_unit() {
   JPACK_OLD_RUNNER_TEST_BIN="$bin/jpack-runner-old" \
   go test -race "$@" ./...
 }
-run_unit -run '^TestColumnRole'
+# The offline release/run cases each traverse four 40 MiB artifacts. Give them
+# separate budgets; the exact complement retains record cases and future children.
+# Large export/wire fixtures also run apart from the remaining ColumnRole work.
+offline='^TestColumnRoleOfflineIndependentArtifactLimits$'
+large_roles='^TestColumnRole(OfflineIndependentArtifactLimits|StoredAndExportBoundaries|LiteralSeparatorWireCustody)$'
+run_unit -run "$offline/^release$"
+run_unit -run "$offline/^run$"
+run_unit -run "$offline" -skip "$offline/^(release|run)$"
+run_unit -run '^TestColumnRoleStoredAndExportBoundaries$'
+run_unit -run '^TestColumnRoleLiteralSeparatorWireCustody$'
+run_unit -run '^TestColumnRole' -skip "$large_roles"
 run_unit -run "$retained" -skip '^TestColumnRole'
 run_unit -run '^TestWorkflow'
 run_unit -run '^Test[A-M]' -skip "$retained"
