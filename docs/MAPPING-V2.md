@@ -1911,7 +1911,9 @@ It writes §11's report on standard output, one line in that canonical form,
 and why on standard error, and exits 0 for a reading, 1 for a refusal and 2 for
 a finding; 3, with no report, when it could not run: an argument it does not
 take, a file it cannot open, a preparation its digest does not name, `-h`. Its
-refusals are §11's and no other. A refusal is exactly
+ordinary refusals are §11's. Explicit retained-column selection additionally
+names unsupported selection/profile refusals in its version-2 capability
+description below. A refusal's JSON form is exactly
 `{"refusal":"input-malformed","result":"refusal"}` and a finding
 `{"finding":"acquisition-invalid","result":"finding"}`. A reading is exactly
 `result`, `digest`, `binding`, `facts`, `evidence`, `targetsByClass`, and
@@ -1929,12 +1931,27 @@ does, for a run's export.
 
 `jpack-runner verify-preparation --capabilities` prints, alone, one closed
 object for a caller to check before it calls: the command's version
-(`"version":1`), the release it was built from (`runner`), the dialect versions
+(`"version":2`), the release it was built from (`runner`), the dialect versions
 (`[2,3]`) and named formats (`"2.0.0"`, `"3.0.0"`), the source kinds and shapes
 it reads, the instant it recomputes at, its report's form, results, binding,
 refusal and finding codes and exit statuses, its preconditions
 (`"preconditions":["preparation-digest"]`, each `couldNotRun` when it fails),
 and the bounds it holds the documents to.
+
+Interface version 2 adds the explicit `--conversion-contract BASE64URL` flag and
+`conversionContracts`, the exact installed retained-column Base declaration.
+`--capabilities` still takes no other flag, including a conversion selector.
+Discovery describes support; it neither selects an artifact nor changes the
+ordinary bounds. Selected verification uses the explicit selector before files
+are opened, as [the selected contract](design/retained-columns-draft.md) describes.
+
+The nested report capability description is also version 2: its declared refusal
+vocabulary additionally names `capability-unsupported` and `profile-unsupported`
+for the retained-column extension. This does not add members to the actual §11
+reading, refusal or finding JSON and does not change exit statuses. Ordinary
+preparations retain canonical recomputation: unrelated extra preparation members
+are a `preparation-differs` finding, while a missing, altered or malformed retained
+conversion selector refuses instead of silently changing explicit context.
 
 **What a reading establishes, and what it does not** (§13, §14). A reading
 establishes that the preparation, byte for byte in the canonical form,

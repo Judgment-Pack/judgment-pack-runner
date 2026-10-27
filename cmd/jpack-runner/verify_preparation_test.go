@@ -213,8 +213,15 @@ func TestVerifyPreparationCapabilities(t *testing.T) {
 		t.Fatalf("%d %s %s", status, stdout, stderr)
 	}
 	report := reportOf(t, stdout)
-	if string(report["command"]) != `"verify-preparation"` || string(report["version"]) != "1" || string(report["dialectVersions"]) != "[2,3]" || string(report["sourceKinds"]) != `["operation","research"]` {
+	if string(report["command"]) != `"verify-preparation"` || string(report["version"]) != "2" || string(report["dialectVersions"]) != "[2,3]" || string(report["sourceKinds"]) != `["operation","research"]` {
 		t.Fatal(stdout)
+	}
+	var description struct {
+		Version  int
+		Refusals []string
+	}
+	if err := json.Unmarshal(report["report"], &description); err != nil || description.Version != 2 || !strings.Contains(string(report["report"]), `"capability-unsupported"`) || !strings.Contains(string(report["report"]), `"profile-unsupported"`) || len(report["conversionContracts"]) == 0 {
+		t.Fatalf("selected version-2 discovery differs: %s", stdout)
 	}
 }
 
@@ -251,20 +258,21 @@ func TestVerifyPreparationCouldNotRun(t *testing.T) {
 	}
 	rest := []string{"--case", dir + "case.json", "--profiles", dir + "profiles.json", "--sources", dir + "sources.json", "--preparation", dir + "preparation.json", "--preparation-digest", string(sum)}
 	for name, args := range map[string][]string{
-		"nothing":                          nil,
-		"help":                             {"-h"},
-		"a flag it does not take":          append([]string{"--dialect", dir + "mapping.json", "--record", dir + "run.json"}, rest...),
-		"an argument":                      append([]string{"--dialect", dir + "mapping.json", "extra"}, rest...),
-		"both --dialect and --unbound":     append([]string{"--dialect", dir + "mapping.json", "--unbound", dir + "unbound.json", "--binding", dir + "binding.json"}, rest...),
-		"--unbound without --binding":      append([]string{"--unbound", dir + "unbound.json"}, rest...),
-		"no dialect":                       rest,
-		"no expected digest":               append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-2]...),
-		"a digest of another form":         append(append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-1]...), strings.ToUpper(string(sum))),
-		"a digest that does not name it":   append(append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-1]...), "sha256:"+strings.Repeat("0", 64)),
-		"a file that is not there":         append([]string{"--dialect", dir + "absent.json"}, rest...),
-		"a directory":                      append([]string{"--dialect", dir}, rest...),
-		"a flag naming no file":            append([]string{"--dialect", dir + "mapping.json", "--binding", ""}, rest...),
-		"--capabilities with another flag": {"--capabilities", "--dialect", dir + "mapping.json"},
+		"nothing":                                  nil,
+		"help":                                     {"-h"},
+		"a flag it does not take":                  append([]string{"--dialect", dir + "mapping.json", "--record", dir + "run.json"}, rest...),
+		"an argument":                              append([]string{"--dialect", dir + "mapping.json", "extra"}, rest...),
+		"both --dialect and --unbound":             append([]string{"--dialect", dir + "mapping.json", "--unbound", dir + "unbound.json", "--binding", dir + "binding.json"}, rest...),
+		"--unbound without --binding":              append([]string{"--unbound", dir + "unbound.json"}, rest...),
+		"no dialect":                               rest,
+		"no expected digest":                       append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-2]...),
+		"a digest of another form":                 append(append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-1]...), strings.ToUpper(string(sum))),
+		"a digest that does not name it":           append(append([]string{"--dialect", dir + "mapping.json"}, rest[:len(rest)-1]...), "sha256:"+strings.Repeat("0", 64)),
+		"a file that is not there":                 append([]string{"--dialect", dir + "absent.json"}, rest...),
+		"a directory":                              append([]string{"--dialect", dir}, rest...),
+		"a flag naming no file":                    append([]string{"--dialect", dir + "mapping.json", "--binding", ""}, rest...),
+		"--capabilities with another flag":         {"--capabilities", "--dialect", dir + "mapping.json"},
+		"--capabilities with conversion selection": {"--capabilities", "--conversion-contract", "not-an-admitted-selector"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			status, stdout, stderr := runVerifyPreparation(args...)

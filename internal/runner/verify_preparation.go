@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // The codes of spec/dialect.md §11 that only the preparation verifier names
@@ -61,8 +62,9 @@ const (
 	ResultFinding = "finding"
 )
 
-// refusalCodes are the codes §11 gives a refusal; every other code is a
-// finding's.
+// refusalCodes includes ordinary §11 refusals and the explicitly selected
+// retained-column extension's unsupported selection/profile refusals. Every
+// other code is a finding's.
 var refusalCodes = map[string]bool{"capability-unsupported": true, "profile-unsupported": true, codeOverBound: true, codeMalformed: true, "version-unread": true, codeKindUnread: true}
 
 // verifiedKinds are the source kinds the verifier reads: those the vectors
@@ -336,8 +338,17 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 		return stop(codeMalformed, fmt.Sprintf("the acquisitions are not one object of acquisitions by source: %v", err))
 	}
 	given, _ := read["the preparation"].(map[string]any)
-	var selectedPreparation Preparation
-	if strictJSON(f.Preparation, &selectedPreparation) != nil || !sameConversion(selectedPreparation.ConversionContract, f.ConversionContract) {
+	// Inspect only the reserved selector here. Ordinary preparation members
+	// retain their historical canonical recomputation/finding semantics.
+	var retainedSelection *ConversionContract
+	for name, value := range given {
+		if strings.EqualFold(name, "conversionContract") {
+			if name != "conversionContract" || value == nil || strictJSON(encode(value), &retainedSelection) != nil {
+				return stop(codeMalformed, "preparation conversion selection differs")
+			}
+		}
+	}
+	if !sameConversion(retainedSelection, f.ConversionContract) {
 		return stop(codeMalformed, "preparation conversion selection differs")
 	}
 	if err := columnReferenceForms(given); err != nil {
@@ -419,7 +430,7 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 // PreparationVerifierVersion is the version of verify-preparation's
 // interface: its flags, its report and its capabilities. It changes when any
 // of them does.
-const PreparationVerifierVersion = 1
+const PreparationVerifierVersion = 2
 
 // PreparationVerifierCapabilities is what verify-preparation --capabilities
 // prints, so that a caller can check what the command reads before it calls
@@ -443,11 +454,13 @@ func PreparationVerifierCapabilities(release string) []byte {
 		"shapes":              shapes,
 		"instant":             freshnessAgainst,
 		"report": map[string]any{
-			"form":       "spec/dialect.md §11",
-			"version":    1,
+			"form": "spec/dialect.md §11",
+			// The declared refusal vocabulary extends in interface 2, even
+			// though the actual §11 report members and exit statuses do not.
+			"version":    2,
 			"results":    []string{ResultReading, ResultRefusal, ResultFinding},
 			"binding":    []string{BindingNotChecked},
-			"refusals":   []string{codeOverBound, codeMalformed, codeKindUnread},
+			"refusals":   []string{codeOverBound, codeMalformed, codeKindUnread, "capability-unsupported", "profile-unsupported"},
 			"findings":   []string{codeMismatch, codeParameter, codeReadFailed, codeMissing, codeUnexpected, codeInvalid, codeStale, codeSessions, codeCalculation, codeAdmission, codeDiffers},
 			"exitStatus": map[string]int{ResultReading: 0, ResultRefusal: 1, ResultFinding: 2, "couldNotRun": 3},
 			// Checked before a reading; one that fails is couldNotRun.
