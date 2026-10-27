@@ -3,10 +3,11 @@
 set -e
 root=$(git rev-parse --show-toplevel)
 bin=$root/.ci/bin
-# The selected artifact-boundary family adds substantial byte-scanning work.
-# Complementary invocations retain every test, examples and fuzz seed corpus,
-# race instrumentation and the default per-package timeout. No cases are skipped
-# across the pair; new names naturally belong to exactly one side.
+# Keep cumulative per-package work below Go's default timeout in each invocation.
+# The retained artifact-boundary work and ordinary workflow work have independent
+# budgets; the other ordinary tests are divided by name. These selections are
+# disjoint and exhaustive, including future names, examples and fuzz seed corpus.
+# Every invocation keeps race instrumentation and the default package timeout.
 retained='^(TestColumn|TestRC2)'
 run_unit() {
   JPACK_TEST_BIN="$bin/jpack" \
@@ -17,8 +18,11 @@ run_unit() {
   JPACK_OLD_RUNNER_TEST_BIN="$bin/jpack-runner-old" \
   go test -race "$@" ./...
 }
-run_unit -run "$retained"
-run_unit -skip "$retained"
+run_unit -run '^TestColumnRole'
+run_unit -run "$retained" -skip '^TestColumnRole'
+run_unit -run '^TestWorkflow'
+run_unit -run '^Test[A-M]' -skip "$retained"
+run_unit -skip '^(TestColumn|TestRC2|TestWorkflow|Test[A-M])'
 # The store contract's conformance suite runs against every kind
 # (docs/design/store-interface.md): a kind whose cases do not run and pass
 # fails this step, as a skipped test would otherwise pass.

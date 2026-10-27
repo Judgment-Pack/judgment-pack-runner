@@ -119,11 +119,14 @@ def go_versions(text):
 
 
 
-def unit_partition_trace(script):
+def unit_partition_trace(script, *, script_text=None, fail_call=None, conformance='sqlite,memory'):
     """Execute only shell wiring: the fake Go records selections, never builds."""
     with tempfile.TemporaryDirectory(prefix='runner-unit-selection-') as temporary:
         directory = Path(temporary)
         trace = directory / 'trace.jsonl'
+        if script_text is not None:
+            script = directory / 'unit-tests.sh'
+            script.write_text(script_text, encoding='utf-8')
         fake = directory / 'go'
         fake.write_text('#!' + sys.executable + '\n' + r'''
 import json, os, sys
@@ -133,18 +136,24 @@ with Path(os.environ['UNIT_SELECTION_TRACE']).open('a') as output:
     output.write(json.dumps({'args': args, 'env': {key: os.environ.get(key) for key in (
         'JPACK_TEST_BIN', 'JPACK_RETAINED_TEST_BIN', 'JPACK_EARLIER_TEST_BIN',
         'JPACK_GATEWAY_TEST_BIN', 'JPACK_MCP_ADAPTER_TEST_BIN', 'JPACK_OLD_RUNNER_TEST_BIN')}}) + '\n')
+number = len(Path(os.environ['UNIT_SELECTION_TRACE']).read_text().splitlines())
+if str(number) == os.environ.get('UNIT_SELECTION_FAIL_CALL'):
+    print('fake Go failure at call %d' % number)
+    sys.exit(7)
 if '^TestStoreKindsConform$' in args:
-    print('--- PASS: TestStoreKindsConform/sqlite (0.00s)')
-    print('--- PASS: TestStoreKindsConform/memory (0.00s)')
+    for kind in os.environ['UNIT_SELECTION_CONFORMANCE'].split(','):
+        if kind:
+            print('--- PASS: TestStoreKindsConform/%s (0.00s)' % kind)
 ''', encoding='utf-8')
         fake.chmod(0o700)
         env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ['PATH'],
-                   UNIT_SELECTION_TRACE=str(trace))
+                   UNIT_SELECTION_TRACE=str(trace),
+                   UNIT_SELECTION_FAIL_CALL=str(fail_call),
+                   UNIT_SELECTION_CONFORMANCE=conformance)
         process = subprocess.run(['bash', str(script)], cwd=ROOT, env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        if process.returncode:
-            raise AssertionError(process.stdout)
-        return [json.loads(line) for line in trace.read_text().splitlines()]
+        calls = [json.loads(line) for line in trace.read_text().splitlines()]
+        return process, calls
 
 
 class Jobs(unittest.TestCase):
@@ -234,20 +243,34 @@ class Checks(unittest.TestCase):
                 for spec in runner:
                     self.assertIn(name, spec['checks'])
 
-    def test_unit_selections_are_complementary_and_keep_pinned_environments(self):
-        calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh')
+    def assert_unit_partition_calls(self, calls):
         main = [call for call in calls if '^TestStoreKindsConform$' not in call['args']]
-        # Handwritten representatives include observed real test names and future
-        # names; ordinary invocation also retains examples and fuzz seed corpus.
-        names = {'TestColumnRoleHandwrittenSelectionVectors', 'TestRC2Core030RealRuntimeFirstSaveSignedExports',
-                 'TestTheRuntimesVerifierReadsTheChainOfRuns', 'TestFutureOrdinary',
-                 'TestColumnFuture', 'ExampleFuture', 'FuzzFuture'}
+        # Check every current top-level case and handwritten representatives of
+        # future families, alphabet boundaries, examples and fuzz seed corpus.
+        sources = subprocess.check_output(
+            ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*_test.go'],
+            cwd=ROOT, text=True).split('\0')
+        names = {name for source in sources if source
+                 for name in re.findall(r'^func ((?:Test|Example|Fuzz)\w*)\(',
+                                        (ROOT / source).read_text(encoding='utf-8'), re.M)
+                 if name != 'TestMain'}
+        names.update({'TestColumnRoleFuture', 'TestColumnFuture', 'TestRC2Future',
+                      'TestWorkflowFuture', 'TestAFuture', 'TestMFuture', 'TestNFuture',
+                      'TestZFuture', 'TestFutureOrdinary', 'TestΩFuture',
+                      'ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzRC2'})
         groups = []
         for call in main:
             args = call['args']
-            self.assertIn('-race', args)
-            self.assertIn('./...', args)
-            self.assertFalse(any(arg.startswith('-timeout') for arg in args))
+            self.assertEqual(args[:2], ['test', '-race'], 'unit partition lost race instrumentation')
+            self.assertEqual(args[-1], './...')
+            self.assertFalse(any(arg.startswith(('-timeout', '-count', '-fuzz')) for arg in args),
+                             'unit partitions changed default timeout, cache or fuzz execution')
+            options = args[2:-1]
+            self.assertEqual(len(options) % 2, 0, 'unit partition has an unexpected option')
+            self.assertTrue(all(option in ('-run', '-skip') for option in options[::2]),
+                            'unit partition has an unexpected option')
+            self.assertEqual(len(options[::2]), len(set(options[::2])),
+                             'unit partition repeats an option')
             matches = set(names)
             if '-run' in args:
                 matches &= {name for name in names if re.search(args[args.index('-run') + 1], name)}
@@ -259,10 +282,60 @@ class Checks(unittest.TestCase):
                                 'JPACK_MCP_ADAPTER_TEST_BIN': 'adapter-mcp', 'JPACK_OLD_RUNNER_TEST_BIN': 'jpack-runner-old'}.items():
                 self.assertEqual(call['env'][key], str(ROOT / '.ci/bin' / binary), key)
         self.assertEqual(set().union(*groups), names, 'unit partitions omit cases')
-        self.assertEqual(len(groups), 2)
-        self.assertFalse(groups[0] & groups[1], 'unit partitions repeat cases')
-        self.assertIn('ExampleFuture', groups[1])
-        self.assertIn('FuzzFuture', groups[1])
+        for index, group in enumerate(groups):
+            for other in groups[index + 1:]:
+                self.assertFalse(group & other, 'unit partitions repeat cases')
+        self.assertEqual(len(groups), 5)
+        for name in ('ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzRC2'):
+            self.assertIn(name, groups[-1])
+        conformance = [call for call in calls if '^TestStoreKindsConform$' in call['args']]
+        self.assertEqual(len(conformance), 1)
+        self.assertEqual(conformance[0]['args'],
+                         ['test', '-race', '-count=1', '-v', '-run',
+                          '^TestStoreKindsConform$', './internal/runner'])
+
+    def test_unit_selections_are_complementary_and_keep_pinned_environments(self):
+        process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh')
+        self.assertEqual(process.returncode, 0, process.stdout)
+        self.assert_unit_partition_calls(calls)
+        unit = [row for row in json.loads(read('dev.json'))['checks'] if row['name'] == 'unit-tests']
+        self.assertEqual(len(unit), 1)
+        self.assertEqual(unit[0]['timeout'], 3000)
+
+    def test_unit_selection_controls_catch_omission_overlap_and_changed_execution(self):
+        script = read('scripts/checks/unit-tests.sh')
+        mutations = [
+            ("run_unit -run '^TestWorkflow'", ': # omitted workflow partition', 'unit partitions omit cases'),
+            ("'^(TestColumn|TestRC2|TestWorkflow|Test[A-M])'",
+             "'^(TestColumn|TestRC2|Test[A-M])'", 'unit partitions repeat cases'),
+            ('go test -race "$@"', 'go test "$@"', 'unit partition lost race instrumentation'),
+            ('go test -race "$@"', 'go test -race -timeout=700s "$@"', 'unit partitions changed default timeout'),
+            ('JPACK_TEST_BIN="$bin/jpack"', 'JPACK_TEST_BIN="$bin/wrong"', 'JPACK_TEST_BIN'),
+        ]
+        for before, after, message in mutations:
+            with self.subTest(safeguard=message):
+                self.assertEqual(script.count(before), 1, before)
+                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh',
+                                                       script_text=script.replace(before, after))
+                self.assertEqual(process.returncode, 0, process.stdout)
+                with self.assertRaisesRegex(AssertionError, message):
+                    self.assert_unit_partition_calls(calls)
+
+    def test_unit_script_propagates_each_partition_and_conformance_failure(self):
+        for failed in range(1, 7):
+            with self.subTest(call=failed):
+                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', fail_call=failed)
+                self.assertNotEqual(process.returncode, 0)
+                self.assertEqual(len(calls), failed, 'script continued after Go failed')
+                self.assertIn('fake Go failure at call %d' % failed, process.stdout)
+
+    def test_unit_script_requires_both_actual_store_conformance_kinds(self):
+        for kinds, missing in [('sqlite', 'memory'), ('memory', 'sqlite'), ('', 'sqlite')]:
+            with self.subTest(kinds=kinds):
+                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', conformance=kinds)
+                self.assertNotEqual(process.returncode, 0)
+                self.assertEqual(len(calls), 6)
+                self.assertIn('TestStoreKindsConform/%s did not run and pass' % missing, process.stdout)
 
     def test_every_input_is_a_tracked_file(self):
         inputs = config()['inputs']

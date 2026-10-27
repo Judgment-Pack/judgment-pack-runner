@@ -195,11 +195,10 @@ func (v VerifiedRun) Disposition(ctx context.Context, runtime string) error {
 	if hash != b.Release.RuntimeDigest {
 		return errors.New("this executable is not the Runtime the release froze")
 	}
-	if e := runtimeConversionAdmission(ctx, bin, dir, inputConversion(prepared)); e != nil {
-		return e
-	}
 	work := filepath.Join(dir, "evaluation")
-	out, _, _, _, e := evaluateWith(ctx, bin, b.Release, Input{Facts: prepared.Facts, Evidence: prepared.Evidence}, work, true, signingInputs{})
+	// Keep the verified selection and its documents/frames through the common
+	// evaluation admission: the exact Runtime may report lower positive limits.
+	out, _, _, _, e := evaluateWith(ctx, bin, b.Release, prepared, work, true, signingInputs{})
 	if e != nil {
 		return e
 	}

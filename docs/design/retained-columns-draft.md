@@ -235,7 +235,13 @@ the same bounded header encoding, checked before larger files are opened. The AP
 `VerifyInputs` accepts an explicit optional selector and PreparationFixture carries
 it separately. They never infer selection from retained bodies. Offline readers
 revalidate source/preparation/release identities and complete size limits against
-their own installed manifest. Existing invocations retain ordinary admission.
+their own installed manifest. Every selected export version, including version 2,
+independently bounds its parsed audit token and its complete release/run owner
+encodings; the export base/wire allowance does not replace those limits. Versions
+3–5 additionally bound the exact original record bytes, chain and signature
+sidecars. Disposition replay retains the complete verified input through Runtime
+admission, including the exact Runtime's lower document/frame maxima, before any
+evaluation. Existing invocations retain ordinary admission.
 
 
 Lower positive owner reports are valid. Runner takes the minimum of its Base

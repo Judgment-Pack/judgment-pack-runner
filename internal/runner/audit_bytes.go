@@ -109,8 +109,22 @@ func exportWithinLimits(raw []byte, b VerificationBundle) error {
 	if !sameConversion(c, inputConversion(b.Release.Sample)) {
 		return conversionFailure("capability-unsupported")
 	}
-	if c != nil && len(raw) > ColumnExportWireLimit {
-		return errors.New("verification bundle exceeds selected wire limit")
+	if c != nil {
+		if len(raw) > ColumnExportWireLimit {
+			return errors.New("verification bundle exceeds selected wire limit")
+		}
+		// The enclosing export budget does not replace its artifact budgets.
+		// Measure the parsed record token even in v2, which has no AuditBytes;
+		// release/run use the same complete owner encodings as durable storage.
+		if len(b.Run.Audit) > columnRecordLimit {
+			return errors.New("the parsed audit record exceeds selected record limit")
+		}
+		if len(encode(b.Release)) > columnStoredLimit {
+			return errors.New("retained release exceeds selected storage limit")
+		}
+		if len(runText(b.Run)) > columnStoredLimit {
+			return errors.New("retained run exceeds selected storage limit")
+		}
 	}
 	size := len(raw)
 	if len(b.Run.AuditSignatures) > 0 {
