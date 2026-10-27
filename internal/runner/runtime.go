@@ -231,7 +231,11 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		SpecVersion string `json:"specVersion"`
 	}
 	if json.Unmarshal([]byte(req.Pack), &doc) != nil || !supportedEvaluatorSpec(doc.SpecVersion, inputConversion(req.Input)) {
-		return Release{}, bad("invalid_pack", "This runner supports the Runtime's experimental 0.2.0-draft evaluator contract.")
+		message := "This runner supports the Runtime's experimental 0.2.0-draft evaluator contract."
+		if inputConversion(req.Input) != nil {
+			message = "This retained-column selection supports the Runtime's experimental 0.2.0-draft and Core 0.3.0 Base evaluator contracts."
+		}
+		return Release{}, bad("invalid_pack", message)
 	}
 	r := Release{SchemaVersion: "1", ID: id("release_"), Pack: req.Pack, PackDigest: digest([]byte(req.Pack)), PackID: doc.ID, PackVersion: doc.Version, Title: doc.Title, RuntimeDigest: s.runtimeDigest, CreatedAt: now(), Sample: req.Input, Tests: "not-run"}
 	if req.Input.Source != nil {

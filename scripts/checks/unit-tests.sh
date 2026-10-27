@@ -4,6 +4,7 @@ set -e
 root=$(git rev-parse --show-toplevel)
 bin=$root/.ci/bin
 JPACK_TEST_BIN="$bin/jpack" \
+JPACK_RETAINED_TEST_BIN="$bin/jpack-retained" \
 JPACK_EARLIER_TEST_BIN="$bin/jpack-earlier" \
 JPACK_GATEWAY_TEST_BIN="$bin/gateway" \
 JPACK_MCP_ADAPTER_TEST_BIN="$bin/adapter-mcp" \

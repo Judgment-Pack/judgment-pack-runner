@@ -5,7 +5,8 @@
     "inputs: the module pins; the script that pins the Runtime, earlier Runtime, old Runner and Gateway commits",
     "the integration tests run against; the scripts that fail when a named real-companion test does not run and",
     "pass; the toolchain check and the workflow naming the release toolchain; the runner whose summary is read;",
-    "the Release contents scripts and the packer's configuration."
+    "the Release contents scripts and the packer's configuration.",
+    "The selected retained-column Runtime has its own exact commit/release pin in build-pinned.sh; selected lifecycle and installed Spec identities below are part of this evidence."
   ],
   "schema": 2,
   "repository": "Judgment-Pack/judgment-pack-runner",
@@ -25,7 +26,12 @@
     "tools/third_party_notices.py",
     "tools/release_archives.py",
     "tools/test_release_archives.py",
-    ".goreleaser.yml"
+    ".goreleaser.yml",
+    "internal/runner/column_role_v1.go",
+    "internal/runner/column_role_v1_lifecycle_test.go",
+    "internal/runner/column_rc2_core_test.go",
+    "internal/retainedcolumns/testdata/rc2/release-identity.json",
+    "internal/retainedcolumns/testdata/rc2/release-inventory.json"
   ],
   "fresh_at_release": [
     "tag syntax, tag names the commit, commit on main",
