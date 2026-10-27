@@ -14,6 +14,8 @@ The workflows are read as text, in the shapes this repository writes them. This 
 reader: a workflow rewritten in another shape fails here until the reading follows it.
 """
 import hashlib
+import os
+import tempfile
 import json
 from pathlib import Path
 import re
@@ -116,6 +118,35 @@ def go_versions(text):
     return re.findall(r"^ *go-version: *['\"]?([0-9][0-9.x]*)['\"]? *$", text, re.M)
 
 
+
+def unit_partition_trace(script):
+    """Execute only shell wiring: the fake Go records selections, never builds."""
+    with tempfile.TemporaryDirectory(prefix='runner-unit-selection-') as temporary:
+        directory = Path(temporary)
+        trace = directory / 'trace.jsonl'
+        fake = directory / 'go'
+        fake.write_text('#!' + sys.executable + '\n' + r'''
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path(os.environ['UNIT_SELECTION_TRACE']).open('a') as output:
+    output.write(json.dumps({'args': args, 'env': {key: os.environ.get(key) for key in (
+        'JPACK_TEST_BIN', 'JPACK_RETAINED_TEST_BIN', 'JPACK_EARLIER_TEST_BIN',
+        'JPACK_GATEWAY_TEST_BIN', 'JPACK_MCP_ADAPTER_TEST_BIN', 'JPACK_OLD_RUNNER_TEST_BIN')}}) + '\n')
+if '^TestStoreKindsConform$' in args:
+    print('--- PASS: TestStoreKindsConform/sqlite (0.00s)')
+    print('--- PASS: TestStoreKindsConform/memory (0.00s)')
+''', encoding='utf-8')
+        fake.chmod(0o700)
+        env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ['PATH'],
+                   UNIT_SELECTION_TRACE=str(trace))
+        process = subprocess.run(['bash', str(script)], cwd=ROOT, env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if process.returncode:
+            raise AssertionError(process.stdout)
+        return [json.loads(line) for line in trace.read_text().splitlines()]
+
+
 class Jobs(unittest.TestCase):
     def test_every_job_and_leg_of_ci_is_required_by_its_display_name(self):
         workflow = config()['workflows']['ci']
@@ -202,6 +233,36 @@ class Checks(unittest.TestCase):
                 self.assertIn(script, settings['inputs'])
                 for spec in runner:
                     self.assertIn(name, spec['checks'])
+
+    def test_unit_selections_are_complementary_and_keep_pinned_environments(self):
+        calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh')
+        main = [call for call in calls if '^TestStoreKindsConform$' not in call['args']]
+        # Handwritten representatives include observed real test names and future
+        # names; ordinary invocation also retains examples and fuzz seed corpus.
+        names = {'TestColumnRoleHandwrittenSelectionVectors', 'TestRC2Core030RealRuntimeFirstSaveSignedExports',
+                 'TestTheRuntimesVerifierReadsTheChainOfRuns', 'TestFutureOrdinary',
+                 'TestColumnFuture', 'ExampleFuture', 'FuzzFuture'}
+        groups = []
+        for call in main:
+            args = call['args']
+            self.assertIn('-race', args)
+            self.assertIn('./...', args)
+            self.assertFalse(any(arg.startswith('-timeout') for arg in args))
+            matches = set(names)
+            if '-run' in args:
+                matches &= {name for name in names if re.search(args[args.index('-run') + 1], name)}
+            if '-skip' in args:
+                matches -= {name for name in names if re.search(args[args.index('-skip') + 1], name)}
+            groups.append(matches)
+            for key, binary in {'JPACK_TEST_BIN': 'jpack', 'JPACK_RETAINED_TEST_BIN': 'jpack-retained',
+                                'JPACK_EARLIER_TEST_BIN': 'jpack-earlier', 'JPACK_GATEWAY_TEST_BIN': 'gateway',
+                                'JPACK_MCP_ADAPTER_TEST_BIN': 'adapter-mcp', 'JPACK_OLD_RUNNER_TEST_BIN': 'jpack-runner-old'}.items():
+                self.assertEqual(call['env'][key], str(ROOT / '.ci/bin' / binary), key)
+        self.assertEqual(set().union(*groups), names, 'unit partitions omit cases')
+        self.assertEqual(len(groups), 2)
+        self.assertFalse(groups[0] & groups[1], 'unit partitions repeat cases')
+        self.assertIn('ExampleFuture', groups[1])
+        self.assertIn('FuzzFuture', groups[1])
 
     def test_every_input_is_a_tracked_file(self):
         inputs = config()['inputs']

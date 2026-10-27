@@ -1,0 +1,581 @@
+{
+  "status": "handwritten-test-only",
+  "selection": {
+    "contract": "retained-column/1",
+    "spec": {
+      "version": "0.3.0-rc.2",
+      "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+      "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+      "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+    },
+    "profile": "base",
+    "roles": [
+      "document-validation",
+      "preview",
+      "preparation",
+      "preparation-verification",
+      "producer-carrier"
+    ]
+  },
+  "capabilities": [
+    {
+      "contract": "retained-column/1",
+      "spec": {
+        "version": "0.3.0-rc.2",
+        "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+        "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+        "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+      },
+      "profile": "base",
+      "role": "document-validation",
+      "limits": {
+        "documentBytes": 1048576,
+        "frameBytes": 2097152
+      }
+    },
+    {
+      "contract": "retained-column/1",
+      "spec": {
+        "version": "0.3.0-rc.2",
+        "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+        "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+        "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+      },
+      "profile": "base",
+      "role": "preview",
+      "limits": {
+        "documentBytes": 1048576,
+        "combinedBytes": 12582912,
+        "frameBytes": 2097152,
+        "profilesBytes": 81920,
+        "requestBodyBytes": 16777216,
+        "inputReplyBytes": 37748736
+      }
+    },
+    {
+      "contract": "retained-column/1",
+      "spec": {
+        "version": "0.3.0-rc.2",
+        "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+        "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+        "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+      },
+      "profile": "base",
+      "role": "preparation",
+      "limits": {
+        "documentBytes": 1048576,
+        "combinedBytes": 12582912,
+        "frameBytes": 2097152,
+        "preparationBytes": 16777216,
+        "recordBytes": 9437184,
+        "profilesBytes": 81920,
+        "requestBodyBytes": 16777216,
+        "inputReplyBytes": 37748736,
+        "releaseStoredBytes": 41943040,
+        "runStoredBytes": 41943040,
+        "exportBaseBytes": 75497472,
+        "exportWireBytes": 90177536
+      },
+      "producerGrammar": "desk-reviewed-input/1"
+    },
+    {
+      "contract": "retained-column/1",
+      "spec": {
+        "version": "0.3.0-rc.2",
+        "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+        "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+        "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+      },
+      "profile": "base",
+      "role": "preparation-verification",
+      "limits": {
+        "documentBytes": 1048576,
+        "combinedBytes": 12582912,
+        "frameBytes": 2097152,
+        "preparationBytes": 16777216,
+        "recordBytes": 9437184,
+        "profilesBytes": 81920,
+        "requestBodyBytes": 16777216,
+        "inputReplyBytes": 37748736,
+        "releaseStoredBytes": 41943040,
+        "runStoredBytes": 41943040,
+        "exportBaseBytes": 75497472,
+        "exportWireBytes": 90177536
+      },
+      "producerGrammar": "desk-reviewed-input/1"
+    },
+    {
+      "contract": "retained-column/1",
+      "spec": {
+        "version": "0.3.0-rc.2",
+        "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+        "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+        "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+      },
+      "profile": "base",
+      "role": "producer-carrier",
+      "limits": {
+        "originalSnapshotBytes": 524288,
+        "carrierBytes": 3145728,
+        "grantBytes": 3145728,
+        "adapterStdoutBytes": 3145728,
+        "responseBytes": 5242880,
+        "profilesBytes": 81920
+      },
+      "producerGrammar": "desk-reviewed-input/1"
+    }
+  ],
+  "negativeSelections": [
+    {
+      "name": "null-profile",
+      "member": "profile",
+      "value": null,
+      "code": "capability-unsupported"
+    },
+    {
+      "name": "boolean-profile",
+      "member": "profile",
+      "value": false,
+      "code": "capability-unsupported"
+    },
+    {
+      "name": "numeric-profile",
+      "member": "profile",
+      "value": 0,
+      "code": "capability-unsupported"
+    },
+    {
+      "name": "array-profile",
+      "member": "profile",
+      "value": [],
+      "code": "capability-unsupported"
+    },
+    {
+      "name": "object-profile",
+      "member": "profile",
+      "value": {},
+      "code": "capability-unsupported"
+    },
+    {
+      "name": "extended-profile",
+      "member": "profile",
+      "value": "extended",
+      "code": "capability-unsupported"
+    },
+    {
+      "name": "null-role",
+      "member": "roles",
+      "value": [
+        null
+      ],
+      "code": "input-malformed"
+    },
+    {
+      "name": "unknown-role",
+      "member": "roles",
+      "value": [
+        "unknown"
+      ],
+      "code": "capability-unsupported"
+    },
+    {
+      "name": "repeated-role",
+      "member": "roles",
+      "value": [
+        "preview",
+        "preview"
+      ],
+      "code": "input-malformed"
+    },
+    {
+      "name": "reversed-role",
+      "member": "roles",
+      "value": [
+        "preparation",
+        "preview"
+      ],
+      "code": "input-malformed"
+    },
+    {
+      "name": "empty-role-list",
+      "member": "roles",
+      "value": [],
+      "code": "input-malformed"
+    },
+    {
+      "name": "missing-operation-role",
+      "member": "roles",
+      "value": [
+        "document-validation",
+        "preview"
+      ],
+      "code": "capability-unsupported"
+    }
+  ],
+  "conversions": [
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "kind": "text"
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "kind": "decimal"
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "kind": "number"
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "kind": "research-value"
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "kind": "boolean",
+      "trueValue": "YES",
+      "falseValue": "NO"
+    }
+  ],
+  "availability": {
+    "contractVersion": "1",
+    "column": "X"
+  },
+  "lineages": [
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "input": {
+        "state": "present",
+        "ref": {
+          "frameSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "location": "values"
+        }
+      },
+      "result": {
+        "state": "value",
+        "json": "-0"
+      }
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "input": {
+        "state": "missing"
+      },
+      "result": {
+        "state": "omitted",
+        "reason": "missing"
+      }
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "input": {
+        "state": "present",
+        "ref": {
+          "frameSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "location": "research-value"
+        }
+      },
+      "result": {
+        "state": "value",
+        "json": "-0"
+      },
+      "researchIdentity": {
+        "recipeRevision": "original-7",
+        "fieldSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "input": {
+        "state": "missing"
+      },
+      "result": {
+        "state": "omitted",
+        "reason": "blank"
+      }
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "input": {
+        "state": "missing"
+      },
+      "result": {
+        "state": "omitted",
+        "reason": "legacy-null"
+      }
+    },
+    {
+      "contractVersion": "1",
+      "column": "X",
+      "input": {
+        "state": "missing"
+      },
+      "result": {
+        "state": "omitted",
+        "reason": "unavailable"
+      }
+    }
+  ],
+  "sourceInputs": [
+    {
+      "conversionContract": {
+        "contract": "retained-column/1",
+        "spec": {
+          "version": "0.3.0-rc.2",
+          "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+          "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+          "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+        },
+        "profile": "base",
+        "roles": [
+          "document-validation",
+          "preview",
+          "preparation",
+          "preparation-verification",
+          "producer-carrier"
+        ]
+      },
+      "retainedCaseJson": "{\"retained\":{\"contractVersion\":\"1\",\"origin\":\"asserted\",\"values\":{\"X\":\"-0\"},\"research\":null}}",
+      "mapping": {
+        "version": 2,
+        "profile": "base",
+        "case": {
+          "facts": [
+            {
+              "target": "/value",
+              "source": "/retained",
+              "conversion": {
+                "contractVersion": "1",
+                "column": "X",
+                "kind": "number"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "requirement": "receipt",
+              "source": "/retained",
+              "availability": {
+                "contractVersion": "1",
+                "column": "X"
+              }
+            }
+          ]
+        },
+        "provider": "",
+        "facts": null,
+        "evidence": null
+      }
+    },
+    {
+      "conversionContract": {
+        "contract": "retained-column/1",
+        "spec": {
+          "version": "0.3.0-rc.2",
+          "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+          "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+          "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+        },
+        "profile": "base",
+        "roles": [
+          "document-validation",
+          "preview",
+          "preparation",
+          "preparation-verification",
+          "producer-carrier"
+        ]
+      },
+      "retainedCaseJson": "{\"retained\":{\"contractVersion\":\"1\",\"origin\":\"asserted\",\"values\":{\"X\":\"-0\"},\"research\":null}}",
+      "mapping": {
+        "formatVersion": "2.0.0",
+        "id": "urn:example:retained",
+        "version": "1.0.0",
+        "profile": "base",
+        "case": {
+          "facts": [
+            {
+              "target": "/value",
+              "source": "/retained",
+              "conversion": {
+                "contractVersion": "1",
+                "column": "X",
+                "kind": "number"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "requirement": "receipt",
+              "source": "/retained",
+              "availability": {
+                "contractVersion": "1",
+                "column": "X"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "conversionContract": {
+        "contract": "retained-column/1",
+        "spec": {
+          "version": "0.3.0-rc.2",
+          "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+          "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+          "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+        },
+        "profile": "base",
+        "roles": [
+          "document-validation",
+          "preview",
+          "preparation",
+          "preparation-verification",
+          "producer-carrier"
+        ]
+      },
+      "retainedCaseJson": "{\"retained\":{\"contractVersion\":\"1\",\"origin\":\"asserted\",\"values\":{\"X\":\"-0\"},\"research\":null}}",
+      "mapping": {
+        "formatVersion": "3.0.0",
+        "id": "urn:example:retained",
+        "version": "1.0.0",
+        "profile": "base",
+        "case": {
+          "facts": [
+            {
+              "target": "/value",
+              "source": "/retained",
+              "conversion": {
+                "contractVersion": "1",
+                "column": "X",
+                "kind": "number"
+              }
+            }
+          ],
+          "evidence": [
+            {
+              "requirement": "receipt",
+              "source": "/retained",
+              "availability": {
+                "contractVersion": "1",
+                "column": "X"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "preparations": [
+    {
+      "version": 2,
+      "verifiedAt": "2026-10-26T00:00:00Z",
+      "mappingDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "verification": "handwritten test only",
+      "cites": [],
+      "lineage": [],
+      "outcomes": [],
+      "conversionContract": {
+        "contract": "retained-column/1",
+        "spec": {
+          "version": "0.3.0-rc.2",
+          "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+          "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+          "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+        },
+        "profile": "base",
+        "roles": [
+          "document-validation",
+          "preview",
+          "preparation",
+          "preparation-verification",
+          "producer-carrier"
+        ]
+      }
+    }
+  ],
+  "profiles": [
+    {
+      "id": "fixture",
+      "publicKey": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "class": "generated",
+      "source": "desk-inputs",
+      "authority": "fixture:test",
+      "shape": "mcp",
+      "adapter": {
+        "name": "jpack-desk/reviewed-input",
+        "version": "2",
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "endpoint": "desk-local:reviewed-inputs",
+      "tools": [
+        "read_reviewed_input"
+      ],
+      "retainedColumnProducer": {
+        "contractVersion": "1",
+        "grammar": "desk-reviewed-input/1"
+      },
+      "conversionContracts": [
+        {
+          "contract": "retained-column/1",
+          "spec": {
+            "version": "0.3.0-rc.2",
+            "revision": "bcac15b7537ce21879201b5e5dfe795496225121",
+            "schemaSha256": "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557",
+            "corpusSha256": "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"
+          },
+          "profile": "base",
+          "role": "producer-carrier",
+          "limits": {
+            "originalSnapshotBytes": 524288,
+            "carrierBytes": 3145728,
+            "grantBytes": 3145728,
+            "adapterStdoutBytes": 3145728,
+            "responseBytes": 5242880,
+            "profilesBytes": 81920
+          },
+          "producerGrammar": "desk-reviewed-input/1"
+        }
+      ]
+    }
+  ],
+  "sourceValues": [
+    {
+      "retainedResponseJson": "{\"result\":{},\"receipt\":{},\"salts\":{}}"
+    }
+  ],
+  "copyMappings": [
+    {
+      "facts": [
+        {
+          "target": "/value",
+          "source": "/retained",
+          "conversion": {
+            "contractVersion": "1",
+            "column": "X",
+            "kind": "number"
+          }
+        }
+      ],
+      "evidence": [
+        {
+          "requirement": "receipt",
+          "source": "/retained",
+          "availability": {
+            "contractVersion": "1",
+            "column": "X"
+          }
+        }
+      ]
+    }
+  ]
+}

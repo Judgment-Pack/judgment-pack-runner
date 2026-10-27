@@ -193,6 +193,9 @@ func conversionRequest(r *http.Request) (*http.Request, error) {
 	}
 	var c ConversionContract
 	if e = strictJSON(raw, &c); e != nil {
+		if _, code := verificationOutcome(e); code == "capability-unsupported" {
+			return nil, e
+		}
 		return nil, conversionFailure(codeMalformed)
 	}
 	path := "/v1/" + strings.TrimPrefix(r.URL.Path, prefix)

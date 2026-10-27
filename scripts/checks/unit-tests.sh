@@ -3,13 +3,22 @@
 set -e
 root=$(git rev-parse --show-toplevel)
 bin=$root/.ci/bin
-JPACK_TEST_BIN="$bin/jpack" \
-JPACK_RETAINED_TEST_BIN="$bin/jpack-retained" \
-JPACK_EARLIER_TEST_BIN="$bin/jpack-earlier" \
-JPACK_GATEWAY_TEST_BIN="$bin/gateway" \
-JPACK_MCP_ADAPTER_TEST_BIN="$bin/adapter-mcp" \
-JPACK_OLD_RUNNER_TEST_BIN="$bin/jpack-runner-old" \
-go test -race ./...
+# The selected artifact-boundary family adds substantial byte-scanning work.
+# Complementary invocations retain every test, examples and fuzz seed corpus,
+# race instrumentation and the default per-package timeout. No cases are skipped
+# across the pair; new names naturally belong to exactly one side.
+retained='^(TestColumn|TestRC2)'
+run_unit() {
+  JPACK_TEST_BIN="$bin/jpack" \
+  JPACK_RETAINED_TEST_BIN="$bin/jpack-retained" \
+  JPACK_EARLIER_TEST_BIN="$bin/jpack-earlier" \
+  JPACK_GATEWAY_TEST_BIN="$bin/gateway" \
+  JPACK_MCP_ADAPTER_TEST_BIN="$bin/adapter-mcp" \
+  JPACK_OLD_RUNNER_TEST_BIN="$bin/jpack-runner-old" \
+  go test -race "$@" ./...
+}
+run_unit -run "$retained"
+run_unit -skip "$retained"
 # The store contract's conformance suite runs against every kind
 # (docs/design/store-interface.md): a kind whose cases do not run and pass
 # fails this step, as a skipped test would otherwise pass.

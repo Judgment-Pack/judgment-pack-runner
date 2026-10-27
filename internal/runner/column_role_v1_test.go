@@ -243,7 +243,7 @@ func TestColumnRoleSelectedSourceExpiryClearsCustody(t *testing.T) {
 }
 
 func TestColumnRoleHandwrittenSelectionVectors(t *testing.T) {
-	raw, e := os.ReadFile("../../vectors/retained-column-selection.json")
+	raw, e := os.ReadFile("../../vectors/retained-column-selection-rc2.json")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -327,6 +327,12 @@ func TestColumnRoleHandwrittenSelectionVectors(t *testing.T) {
 			m, _ := exactMembers(encode(f.Selection))
 			m[n.Member] = n.Value
 			header := base64.RawURLEncoding.EncodeToString(encode(m))
+			// The CLI's exported selector owner and authenticated HTTP owner
+			// must preserve the same closed-selector refusal before artifacts.
+			selected, e := ParseConversionSelector(header, "document-validation", "preview", "preparation")
+			if _, code := verificationOutcome(e); e == nil || selected != nil || code != n.Code {
+				t.Fatalf("CLI selector refusal differs: got=%s expected=%s error=%v", code, n.Code, e)
+			}
 			body := &unreadBody{}
 			req := httptest.NewRequest("POST", "/v1/retained-column/1/inputs/next", body)
 			req.Header.Set("Authorization", "Bearer vector")
