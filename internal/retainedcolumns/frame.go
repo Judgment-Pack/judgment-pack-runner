@@ -72,12 +72,18 @@ func ParseFrame(raw []byte, profile Profile) (Frame, error) {
 	if len(values) > 1000 {
 		return Frame{}, refuse("input-over-bound")
 	}
+	// Generated values are exact original record strings, bounded by the
+	// containing original snapshot. Asserted/CSV cells keep their old limit.
+	valueLimit := 16000
+	if origin == "generated" {
+		valueLimit = 524288
+	}
 	for name, value := range values {
 		if _, err = boundedString(name, 160, true); err != nil {
 			return Frame{}, err
 		}
 		if value != nil {
-			if _, err = boundedString(value, 16000, false); err != nil {
+			if _, err = boundedString(value, valueLimit, false); err != nil {
 				return Frame{}, err
 			}
 		}
