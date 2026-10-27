@@ -25,7 +25,8 @@ jobs:
   check:
     name: Runner (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # The sequential unit check keeps its 50-minute bound; allow job setup and evidence headroom.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
