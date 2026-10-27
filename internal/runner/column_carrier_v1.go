@@ -180,7 +180,15 @@ type retainedAcquisitionResult struct{ Canonical, Raw json.RawMessage }
 // The signature domain remains the canonical result. Raw preserves the received
 // carrier/frame spelling separately, never pretending that a signature pins raw
 // serialization. Existing verifyAcquisition callers keep their old contract.
+type acquisitionReader func(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int, selection ...*ConversionContract) (json.RawMessage, *Citation, error)
+
 func verifyRetainedAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int, selection ...*ConversionContract) (retainedAcquisitionResult, *Citation, error) {
+	return verifyRetainedAcquisitionUsing(verifyAcquisition, raw, args, p, public, at, maxAge, selection...)
+}
+
+// Private dependency seam for role-specific preparation consistency tests.
+// Every public/production caller retains the full acquisition reader above.
+func verifyRetainedAcquisitionUsing(read acquisitionReader, raw, args []byte, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int, selection ...*ConversionContract) (retainedAcquisitionResult, *Citation, error) {
 	if e := selectedConversion(selection).validate("producer-carrier"); e != nil {
 		return retainedAcquisitionResult{}, nil, e
 	}
@@ -206,7 +214,7 @@ func verifyRetainedAcquisition(raw, args []byte, p InputProfile, public ed25519.
 	if e == nil && len(envelope["result"]) > artifactLimit(selectedConversion(selection), MaxBody, columnCarrierLimit) {
 		return retainedAcquisitionResult{}, nil, withCode(codeOverBound, errors.New("retained-column carrier exceeds selected limit"))
 	}
-	canonical, cite, e := verifyAcquisition(raw, args, p, public, at, maxAge, selectedConversion(selection))
+	canonical, cite, e := read(raw, args, p, public, at, maxAge, selectedConversion(selection))
 	if e != nil {
 		return retainedAcquisitionResult{}, nil, e
 	}

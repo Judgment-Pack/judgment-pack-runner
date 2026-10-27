@@ -229,6 +229,12 @@ func (r PreparationReport) ExitStatus() int {
 // VerifyPreparation reads a fixture as spec/dialect.md §11 reads one, through
 // Runner's own preparation, at the instant the given preparation names.
 func VerifyPreparation(f PreparationFixture) PreparationReport {
+	return verifyPreparationUsing(f, verifyAcquisition)
+}
+
+// Public verification always uses the full acquisition reader; the private
+// dependency permits exact preparation-only corpus tests with prevalidated inputs.
+func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionReader) PreparationReport {
 	stop := func(code, reason string) PreparationReport {
 		result := ResultFinding
 		if refusalCodes[code] {
@@ -318,6 +324,11 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// installation's profiles are not §5.1's.
 	profiles, err := verifierProfiles(read["the profiles"], f.Profiles)
 	if err != nil {
+		if f.ConversionContract != nil {
+			if _, code := verificationOutcome(err); code == "capability-unsupported" {
+				return stop(code, "the profiles: "+err.Error())
+			}
+		}
 		return stop(codeMalformed, "the profiles: "+err.Error())
 	}
 	source := &SourceInput{Case: f.Case, ConversionContract: f.ConversionContract}
@@ -379,7 +390,7 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 	// The recomputation, at the given preparation's instant (§11's
 	// findings 1 to 4), and the canonical comparison (finding 5).
 	var judged []judgedFreshness
-	prepared, err := prepareV2Mode(Input{Source: source}, profiles, at, false, &judged, true)
+	prepared, err := prepareV2Mode(Input{Source: source}, profiles, at, false, &judged, true, readAcquisition)
 	if err != nil {
 		return failed(err)
 	}

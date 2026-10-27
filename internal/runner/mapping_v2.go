@@ -179,7 +179,11 @@ func prepareV2(i Input, profiles []InputProfile, at time.Time, planning bool, ju
 }
 
 // offline changes only finding precedence; acquisition and derivation stay shared.
-func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool, judged *[]judgedFreshness, offline bool) (Input, error) {
+func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool, judged *[]judgedFreshness, offline bool, readers ...acquisitionReader) (Input, error) {
+	readAcquisition := acquisitionReader(verifyAcquisition)
+	if len(readers) > 0 {
+		readAcquisition = readers[0]
+	}
 	// An installation's profiles are held to Runner's admission; the
 	// verifier's were held to spec/dialect.md §5.1 alone when it read them
 	// (verifierProfiles), and only their keys are taken here.
@@ -356,6 +360,14 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		ft, et, err := readTargets(read)
 		if err != nil {
 			return err
+		}
+		if c.ConversionContract != nil && read.Copy != nil && hasColumnCopy(*read.Copy) {
+			// Selected Dialect §9.3 order is independent of authoring order.
+			// Clone: checked document/read identity must not be reordered.
+			ft = append([]FactMapping(nil), ft...)
+			et = append([]EvidenceMapping(nil), et...)
+			sort.Slice(ft, func(i, j int) bool { return ft[i].Target < ft[j].Target })
+			sort.Slice(et, func(i, j int) bool { return et[i].Requirement < et[j].Requirement })
 		}
 		fv, err := readInputJSON(claim.Facts)
 		if err != nil {
@@ -591,7 +603,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 					if err != nil {
 						return fail(err)
 					}
-					verified, citation, err := verifyRetainedAcquisition(raw, args, profile, profileKeys[profile.ID], at, source.MaxAge, c.ConversionContract)
+					verified, citation, err := verifyRetainedAcquisitionUsing(readAcquisition, raw, args, profile, profileKeys[profile.ID], at, source.MaxAge, c.ConversionContract)
 					if err != nil {
 						return fail(err)
 					}

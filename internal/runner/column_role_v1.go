@@ -29,9 +29,10 @@ type ConversionContract struct {
 	Roles    []string       `json:"roles"`
 }
 
-// Experimental immutable Draft candidate, pending independent review/adoption.
+// Published RC2 selected-leaf contract, at draft maturity. The immutable
+// release inventory is independently checked against this package identity.
 // The compiled identity is never taken from caller or host configuration.
-var installedConversionSpec = ConversionSpec{Version: "Draft RFC0029", Revision: "ade3914b0b81ef299e5b9a8d6147f37ff3f0976c", SchemaSHA256: "sha256:996cec17473987eebf1aa553536df0ce5a740971532567f411282ee70036879f", CorpusSHA256: "sha256:e2ac53f56cd5ab779e032d2847b49fa04438ffb9df57d456f75f2ba058dc12d2"}
+var installedConversionSpec = ConversionSpec{Version: "0.3.0-rc.2", Revision: "bcac15b7537ce21879201b5e5dfe795496225121", SchemaSHA256: "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557", CorpusSHA256: "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"}
 
 var conversionRoles = [...]string{"document-validation", "preview", "preparation", "preparation-verification", "producer-carrier"}
 
@@ -61,9 +62,6 @@ func conversionFailure(code string) error {
 func (c *ConversionContract) UnmarshalJSON(raw []byte) error {
 	type plain ConversionContract
 	var v plain
-	if strictJSON(raw, &v) != nil {
-		return conversionFailure(codeMalformed)
-	}
 	m, e := exactMembers(raw)
 	if e != nil || len(m) != 4 {
 		return conversionFailure(codeMalformed)
@@ -84,6 +82,9 @@ func (c *ConversionContract) UnmarshalJSON(raw []byte) error {
 	}
 	if e := conversionIdentityForm(m); e != nil {
 		return e
+	}
+	if strictJSON(raw, &v) != nil {
+		return conversionFailure(codeMalformed)
 	}
 	if len(bytes.TrimSpace(m["roles"])) == 0 || bytes.TrimSpace(m["roles"])[0] != '[' {
 		return conversionFailure(codeMalformed)
@@ -265,7 +266,10 @@ func ParseConversionSelector(encoded string, roles ...string) (*ConversionContra
 		return nil, conversionFailure(codeMalformed)
 	}
 	var c ConversionContract
-	if strictJSON(raw, &c) != nil {
+	if e = strictJSON(raw, &c); e != nil {
+		if _, code := verificationOutcome(e); code == "capability-unsupported" {
+			return nil, e
+		}
 		return nil, conversionFailure(codeMalformed)
 	}
 	if e = c.validate(roles...); e != nil {
@@ -300,11 +304,13 @@ func selectedReplyWriter(w http.ResponseWriter, r *http.Request) http.ResponseWr
 }
 
 func conversionIdentityForm(m map[string]json.RawMessage) error {
-	for _, k := range []string{"contract", "profile"} {
-		v := bytes.TrimSpace(m[k])
-		if len(v) == 0 || v[0] != '"' {
-			return conversionFailure(codeMalformed)
-		}
+	var profile string
+	if json.Unmarshal(m["profile"], &profile) != nil || profile != "base" {
+		return conversionFailure("capability-unsupported")
+	}
+	v := bytes.TrimSpace(m["contract"])
+	if len(v) == 0 || v[0] != '"' {
+		return conversionFailure(codeMalformed)
 	}
 	spec, e := exactMembers(m["spec"])
 	if e != nil {

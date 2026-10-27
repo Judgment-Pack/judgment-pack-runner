@@ -1,4 +1,4 @@
-# Retained columns: intermediate Draft integration
+# Retained columns: selected RC2 integration
 
 This is an experimental dependency slice for Agent #171 and Draft RFC0029.
 The pure conversion foundation retains its original `dd2cc944` corpus and focused
@@ -7,7 +7,7 @@ amendment merged in Spec `be16a0f427c881cc7428ad0ceedb7ed4a8511d6c` (tree
 `00a7e3eeb8a7b3eea5ce84f0f7c97f345d193646`, schema
 `d402d26ed35f9cd8a3ab5f8a0a8288d222742d1742c00ebee47d81dc4766d725`, corpus
 `395381002de6f50793d4d484c48ec2fc8eb4ed34d55afcf91e1b47b14e79c10e`).
-The Draft is not adopted. The earlier unselected slice advertised no public `retained-column/1`
+Those historical fixtures were not an adoption claim. The earlier unselected slice advertised no public `retained-column/1`
 capability. The scoped experimental Base adapter is described below; Extended
 Runner remains unsupported. Old foundation corpus coverage is not a claim
 that it executed the amended producer probes.
@@ -155,13 +155,26 @@ requirements; the future production original-history producer is still Desk-owne
 
 ## Scoped Base consumer and transport selection
 
-The experimental immutable Draft candidate is Spec commit
-`ade3914b0b81ef299e5b9a8d6147f37ff3f0976c`, version `Draft RFC0029`, schema
-`sha256:996cec17473987eebf1aa553536df0ce5a740971532567f411282ee70036879f`, corpus
-`sha256:e2ac53f56cd5ab779e032d2847b49fa04438ffb9df57d456f75f2ba058dc12d2`.
-It remains pending independent review and adoption. These constants cannot be
-replaced by an HTTP request or host configuration. Extended Runner is unsupported;
-Runtime document validation alone does not establish complete Runner support.
+The selected installed contract is published Spec `v0.3.0-rc.2`, commit
+`bcac15b7537ce21879201b5e5dfe795496225121`, version `0.3.0-rc.2`, schema
+`sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557`, corpus
+`sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863`.
+Its maturity remains draft. The earlier sections describe preserved historical
+foundation evidence; the selected corpus is separately byte-pinned. These constants
+cannot be replaced by an HTTP request or host configuration. Extended Runner remains
+unsupported. Runtime document validation alone does not establish complete Runner support.
+Selected releases additionally admit Runtime's existing Core `0.3.0` Base evaluator,
+while preserving selected and ordinary `0.2.0-draft`. Ordinary and manual admission
+are unchanged. Evaluation and replay require the evaluator version from that same
+retained release pack; mismatched or unknown reports refuse.
+
+Published synthetic preparation fixtures exercise preparation consistency with a
+fixed test-only installation and the companion's receipt conditions. They do not
+establish Gateway chain authenticity or complete signed export validity. Public
+verification retains those full checks. Actual signed lifecycle tests separately
+exercise both supported selected Core versions against an explicitly identified Runtime.
+The synthetic source-input probes with a v2 root `snapshot` are outside Runner's
+existing v2 grammar, which requires named sources; they do not extend that grammar.
 
 Authenticated `/v1/retained-column/1/inputs/next`, `/inputs/preview`, `/previews`,
 `/jobs/{job}/runs`, and `/runs/{run}/verification` adapt the corresponding existing

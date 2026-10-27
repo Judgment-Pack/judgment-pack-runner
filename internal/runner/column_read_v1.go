@@ -151,7 +151,7 @@ func rawPointer(raw []byte, pointer string) (json.RawMessage, bool) {
 	}
 	return value, true
 }
-func deriveCaseColumn(raw []byte, source string, leaf json.RawMessage, availability bool, frames map[string]retainedcolumns.Frame) (*retainedcolumns.Transformation, error) {
+func deriveCaseColumn(raw []byte, source string, leaf json.RawMessage, availability bool, frames map[string]retainedcolumns.Frame, selection ...*ConversionContract) (*retainedcolumns.Transformation, error) {
 	p, e := columnPlan(leaf, availability)
 	if e != nil {
 		return nil, e
@@ -161,6 +161,18 @@ func deriveCaseColumn(raw []byte, source string, leaf json.RawMessage, availabil
 		frameRaw, ok := rawPointer(raw, source)
 		if !ok {
 			return nil, withCode(codeReadFailed, errors.New("retained frame is missing"))
+		}
+		if selectedConversion(selection) != nil {
+			// CASE context cannot confer generated authority. Reject that known
+			// origin before the standalone generated-frame structural reader;
+			// exactMembers still rejects duplicate outer members here.
+			members, err := exactMembers(frameRaw)
+			if err == nil {
+				var origin string
+				if json.Unmarshal(members["origin"], &origin) == nil && origin == "generated" {
+					return nil, withCode(codeReadFailed, errors.New("case retained frame must be asserted; generated frames require verified producer provenance"))
+				}
+			}
 		}
 		frame, e = retainedcolumns.ParseFrame(frameRaw, retainedcolumns.Base)
 		if e != nil {
@@ -182,7 +194,7 @@ func applyColumnCase(read SourceRead, raw []byte, artifact any, params map[strin
 	}
 	mapFrames := map[string]retainedcolumns.Frame{}
 	return applyColumnCopy(read, artifact, func(source string, leaf json.RawMessage, availability bool) (*retainedcolumns.Transformation, error) {
-		return deriveCaseColumn(raw, source, leaf, availability, mapFrames)
+		return deriveCaseColumn(raw, source, leaf, availability, mapFrames, selectedConversion(selection))
 	}, selectedConversion(selection))
 }
 func applyColumnCopy(read SourceRead, artifact any, derive func(string, json.RawMessage, bool) (*retainedcolumns.Transformation, error), selection ...*ConversionContract) (derivedClaim, map[string]*retainedcolumns.Transformation, error) {
@@ -247,6 +259,15 @@ func applyColumnCopy(read SourceRead, artifact any, derive func(string, json.Raw
 		}
 	}
 	sort.Strings(c.Basis)
+	// Dialect §6.2 basis is a set, even when several converted targets
+	// select the same retained frame. Ordinary copyClaim remains unchanged.
+	unique := c.Basis[:0]
+	for _, pointer := range c.Basis {
+		if len(unique) == 0 || unique[len(unique)-1] != pointer {
+			unique = append(unique, pointer)
+		}
+	}
+	c.Basis = unique
 	c.Facts = encode(facts)
 	_, e = proofCanon(encode(c))
 	if selectedConversion(selection) != nil {

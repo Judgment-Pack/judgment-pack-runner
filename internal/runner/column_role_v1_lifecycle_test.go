@@ -18,7 +18,16 @@ import (
 // The Gateway below is a signed producer fixture, not a live Desk producer.
 // Runtime execution, SQLite custody, source-worker transport and exports are real.
 func TestColumnRoleRealRuntimeFirstSaveSignedExports(t *testing.T) {
+	columnRoleRealRuntimeFirstSaveSignedExports(t, "0.2.0-draft")
+}
+func TestRC2Core030RealRuntimeFirstSaveSignedExports(t *testing.T) {
+	columnRoleRealRuntimeFirstSaveSignedExports(t, "0.3.0")
+}
+func columnRoleRealRuntimeFirstSaveSignedExports(t *testing.T, core string) {
 	cfg := testConfig(t)
+	if bin := os.Getenv("JPACK_RETAINED_TEST_BIN"); bin != "" {
+		cfg.Runtime = bin
+	}
 	cfg.SigningKey = signingKey(t)
 	cfg.disableAutomation = true
 	cfg.disableDispatcher = true
@@ -91,6 +100,14 @@ func TestColumnRoleRealRuntimeFirstSaveSignedExports(t *testing.T) {
 	pack, e := os.ReadFile("testdata/triage.pack.json")
 	if e != nil {
 		t.Fatal(e)
+	}
+	if core == "0.3.0" {
+		var document map[string]any
+		if json.Unmarshal(pack, &document) != nil || document["specVersion"] != "0.2.0-draft" {
+			t.Fatal("handwritten legacy pack identity")
+		}
+		document["specVersion"] = "0.3.0"
+		pack = encode(document)
 	}
 	body := encode(PreviewRequest{Pack: string(pack), Input: producer.input})
 	body = bytes.Replace(body, encode(rawCase), rawCase, 1)

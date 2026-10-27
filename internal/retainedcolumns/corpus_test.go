@@ -210,8 +210,8 @@ func TestPinnedCompatibilityCorpus(t *testing.T) {
 		t.Run(row.ID, func(t *testing.T) { assertCase(t, row) })
 	}
 }
-func TestPinnedTypeBounds(t *testing.T) {
-	c := loadCorpus(t)
+func TestPinnedTypeBounds(t *testing.T) { assertCorpusTypeBounds(t, loadCorpus(t)) }
+func assertCorpusTypeBounds(t *testing.T, c corpus) {
 	for _, b := range c.Boundary {
 		t.Run(b.ID, func(t *testing.T) {
 			value := any(strings.Repeat(b.Repeat, b.Count))
@@ -240,8 +240,9 @@ func TestPinnedTypeBounds(t *testing.T) {
 		})
 	}
 }
-func TestPinnedShortestRationals(t *testing.T) {
-	for _, c := range loadCorpus(t).Shortest {
+func TestPinnedShortestRationals(t *testing.T) { assertCorpusShortest(t, loadCorpus(t)) }
+func assertCorpusShortest(t *testing.T, data corpus) {
+	for _, c := range data.Shortest {
 		t.Run(c.ID, func(t *testing.T) {
 			bits, e := strconv.ParseUint(c.Binary64Hex, 16, 64)
 			if e != nil {

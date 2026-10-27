@@ -230,7 +230,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		Title       string `json:"title"`
 		SpecVersion string `json:"specVersion"`
 	}
-	if json.Unmarshal([]byte(req.Pack), &doc) != nil || doc.SpecVersion != "0.2.0-draft" {
+	if json.Unmarshal([]byte(req.Pack), &doc) != nil || !supportedEvaluatorSpec(doc.SpecVersion, inputConversion(req.Input)) {
 		return Release{}, bad("invalid_pack", "This runner supports the Runtime's experimental 0.2.0-draft evaluator contract.")
 	}
 	r := Release{SchemaVersion: "1", ID: id("release_"), Pack: req.Pack, PackDigest: digest([]byte(req.Pack)), PackID: doc.ID, PackVersion: doc.Version, Title: doc.Title, RuntimeDigest: s.runtimeDigest, CreatedAt: now(), Sample: req.Input, Tests: "not-run"}
@@ -359,6 +359,32 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 	return evaluateWithInvoker(ctx, bin, r, input, dir, rehearsal, signing, invokeWith)
 }
 
+// A selected leaf adds the existing Core0.3 Base evaluator; it does not change
+// ordinary pack admission or replace historical selected Core0.2 releases.
+func supportedEvaluatorSpec(version string, selection *ConversionContract) bool {
+	if version == "0.2.0-draft" {
+		return true
+	}
+	return version == "0.3.0" && selection != nil && selection.validate("document-validation", "preview", "preparation") == nil
+}
+func expectedEvaluatorSpec(r Release) string {
+	if inputConversion(r.Sample) == nil {
+		return "0.2.0-draft"
+	}
+	var pack struct {
+		SpecVersion string `json:"specVersion"`
+	}
+	if json.Unmarshal([]byte(r.Pack), &pack) != nil || !supportedEvaluatorSpec(pack.SpecVersion, inputConversion(r.Sample)) {
+		return ""
+	}
+	return pack.SpecVersion
+}
+
+func evaluatorSpecMatches(r Release, spec string) bool {
+	expected := expectedEvaluatorSpec(r)
+	return expected != "" && spec == expected
+}
+
 func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs, invoke runtimeInvoker, starters ...func(*exec.Cmd) error) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
 	limits, admissionErr := runtimeConversionLimits(ctx, bin, filepath.Dir(dir), inputConversion(input), starters...)
 	if admissionErr != nil {
@@ -366,6 +392,9 @@ func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input
 	}
 	if e := runtimeConversionInput(limits, input, r.Pack); e != nil {
 		return nil, nil, nil, nil, e
+	}
+	if expectedEvaluatorSpec(r) == "" {
+		return nil, nil, nil, nil, errors.New("unsupported retained release evaluator contract")
 	}
 	// The directory is exclusively created per invocation and never reused.
 	if err := os.Mkdir(dir, 0700); err != nil {
@@ -429,7 +458,7 @@ func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input
 		Rehearsal     bool            `json:"rehearsal"`
 		Disposition   json.RawMessage `json:"disposition"`
 	}
-	if json.Unmarshal(out, &result) != nil || result.OutputVersion != "2" || result.Status != "evaluated" || result.PackID != r.PackID || result.PackVersion != r.PackVersion || result.Spec != "0.2.0-draft" || result.Rehearsal != rehearsal || len(result.Disposition) == 0 {
+	if json.Unmarshal(out, &result) != nil || result.OutputVersion != "2" || result.Status != "evaluated" || result.PackID != r.PackID || result.PackVersion != r.PackVersion || !evaluatorSpecMatches(r, result.Spec) || result.Rehearsal != rehearsal || len(result.Disposition) == 0 {
 		return nil, nil, nil, nil, errors.New("unsupported or mismatched Runtime response")
 	}
 	if rehearsal {

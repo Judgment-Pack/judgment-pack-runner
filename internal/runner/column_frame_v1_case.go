@@ -30,6 +30,11 @@ func columnCaseBytes(c *SourceInput) (json.RawMessage, error) {
 	if len(raw) > artifactLimit(c.ConversionContract, MaxBody, 2*MaxBody+256) {
 		return nil, withCode(codeOverBound, errors.New("case custody exceeds selected case limit"))
 	}
+	if c.ConversionContract != nil {
+		if e := measureBytes(raw, maxValueDepth); e != nil {
+			return nil, e
+		}
+	}
 	v, e := readInputJSON(raw)
 	if e != nil {
 		return nil, withCode(codeMalformed, errors.New("case custody is not strict UTF8 object JSON"))

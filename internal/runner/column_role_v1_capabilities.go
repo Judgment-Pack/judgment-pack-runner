@@ -36,9 +36,6 @@ func conversionRoleLimits(role string) map[string]int {
 func (c *ConversionCapability) UnmarshalJSON(raw []byte) error {
 	type plain ConversionCapability
 	var p plain
-	if strictJSON(raw, &p) != nil {
-		return conversionFailure(codeMalformed)
-	}
 	m, e := exactMembers(raw)
 	if e != nil || len(m) < 5 || len(m) > 6 {
 		return conversionFailure(codeMalformed)
@@ -72,8 +69,11 @@ func (c *ConversionCapability) UnmarshalJSON(raw []byte) error {
 	for _, k := range []string{"role"} {
 		v := bytes.TrimSpace(m[k])
 		if len(v) == 0 || v[0] != '"' {
-			return conversionFailure(codeMalformed)
+			return conversionFailure("capability-unsupported")
 		}
+	}
+	if strictJSON(raw, &p) != nil {
+		return conversionFailure(codeMalformed)
 	}
 	if v, ok := m["producerGrammar"]; ok {
 		if p.Role != "preparation" && p.Role != "preparation-verification" && p.Role != "producer-carrier" {
@@ -199,7 +199,7 @@ func producerResponseLimit(c *ConversionContract, limits map[string]int) int {
 	return n
 }
 
-// ConversionCapabilities is the experimental installed package's declaration.
+// ConversionCapabilities declares this package's exact selected RC2 roles.
 // Producer support belongs to each independently approved producer profile.
 func ConversionCapabilities(roles ...string) []ConversionCapability {
 	out := []ConversionCapability{}

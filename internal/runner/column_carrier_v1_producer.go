@@ -281,6 +281,11 @@ func columnRetainedResponse(value SourceValue, selection ...*ConversionContract)
 	if len(raw) > responseLimit(selectedConversion(selection)) {
 		return nil, withCode(codeOverBound, errors.New("complete retained response exceeds base limit"))
 	}
+	if selectedConversion(selection) != nil {
+		if e := measureBytes(raw, maxDocumentDepth); e != nil {
+			return nil, e
+		}
+	}
 	_, canonErr := proofCanon(raw)
 	if selectedConversion(selection) != nil {
 		_, canonErr = scopedJSON(raw, columnResponseLimit)

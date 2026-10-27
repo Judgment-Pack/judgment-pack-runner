@@ -79,6 +79,10 @@ func TestReferencePinnedDraftCases(t *testing.T) {
 	if e != nil || digest(schema) != "sha256:b5c6d5fe2c4819e76de70070c4e35222e8f5fe19819166d054c0c2fc2359369b" {
 		t.Fatal("experimental Draft reference schema changed")
 	}
+	assertCorpusReferences(t, raw)
+}
+
+func assertCorpusReferences(t *testing.T, raw []byte) {
 	var corpus struct {
 		References []struct {
 			ID       string
@@ -87,7 +91,7 @@ func TestReferencePinnedDraftCases(t *testing.T) {
 			WireJSON string
 		} `json:"referenceCases"`
 	}
-	if e = json.Unmarshal(raw, &corpus); e != nil {
+	if e := json.Unmarshal(raw, &corpus); e != nil {
 		t.Fatal(e)
 	}
 	count := 0
@@ -104,7 +108,7 @@ func TestReferencePinnedDraftCases(t *testing.T) {
 		if row.WireJSON != "" {
 			wire = []byte(row.WireJSON)
 		}
-		if e = json.Unmarshal(wire, &req); e != nil {
+		if e := json.Unmarshal(wire, &req); e != nil {
 			t.Fatal(e)
 		}
 		action := req["lineage"]
