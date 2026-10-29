@@ -1,4 +1,4 @@
-# Selected RC2 owner coverage
+# Selected v0.3.0 owner coverage
 
 These bytes come from the exact published Spec archive identified in README.md.
 The corresponding focused Go tests execute these owners:

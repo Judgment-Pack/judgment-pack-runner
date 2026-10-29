@@ -79,3 +79,21 @@ physical spawn. Withdrawal before the anchored commitment blocks. This is not
 an atomic ledger/OS transaction; failure or uncertainty after commitment remains
 history without automatic replay. Exact ordering and host lifecycle behavior
 require the combined real Desk/Runner/Runtime fixture before usable activation.
+
+## Fences and the acceptance cases (runner #147)
+
+The admission epoch is a fencing epoch in the lease vocabulary the agent's ADR-0025 fixes and
+the Desk's store locks share: an owner, an authoritative expiry kept by the store clock, an
+epoch, and the fence `{resource, owner, epoch}`. Here the resource is the registered
+job/release tuple, the owner is the executor the authority activated (`executorId`), and the
+epoch is the one its activation returned. The Runner reads an epoch only as a canonical
+positive decimal string (the wire's counter domain, which contains ADR-0025's
+1..999999999999999999); a JSON number is refused. A restart activates a new epoch, and a
+reservation retained under the old one is never started.
+
+`internal/runner/manual_admission_acceptance_test.go` holds the acceptance cases against the
+real Runtime, each a test named for its case, all required by the `manual-gate` step:
+omitted-dependency substitution, withdrawal/enqueue/dispatch races, lost admission response,
+worker restart and fencing, identity revocation, and pre-withdrawal restore. No case needed a
+new mechanic. The transport peer there stands in for the authority; it is not Desk Policy
+authority.

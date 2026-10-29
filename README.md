@@ -141,7 +141,7 @@ validation output, sample inputs/output, and a digest-pinned copy of the Runtime
 executable. A job's only revision in this pilot is revision 1. Later edits to a pack
 cannot change an existing job. Create and review a new job for changed policy.
 The evaluator is Runtime's **experimental JPS 0.2.0-draft** contract, outputVersion 2;
-the exact selected retained-column RC2 path additionally admits Runtime's existing
+the exact selected retained-column path (Spec v0.3.0) additionally admits Runtime's existing
 Core 0.3.0 Base contract and binds responses and replay to the retained pack version.
 Ordinary and manual paths retain 0.2.0-draft. This package does not expand Runtime's
 conformance claim or approve external action.

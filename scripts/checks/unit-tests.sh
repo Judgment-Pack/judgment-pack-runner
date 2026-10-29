@@ -8,7 +8,7 @@ bin=$root/.ci/bin
 # budgets; the other ordinary tests are divided by name. These selections are
 # disjoint and exhaustive, including future names, examples and fuzz seed corpus.
 # Every invocation keeps race instrumentation and the default package timeout.
-retained='^(TestColumn|TestRC2)'
+retained='^(TestColumn|TestSelectedLeaf)'
 run_unit() {
   JPACK_TEST_BIN="$bin/jpack" \
   JPACK_RETAINED_TEST_BIN="$bin/jpack-retained" \
@@ -32,7 +32,7 @@ run_unit -run '^TestColumnRole' -skip "$large_roles"
 run_unit -run "$retained" -skip '^TestColumnRole'
 run_unit -run '^TestWorkflow'
 run_unit -run '^Test[A-M]' -skip "$retained"
-run_unit -skip '^(TestColumn|TestRC2|TestWorkflow|Test[A-M])'
+run_unit -skip '^(TestColumn|TestSelectedLeaf|TestWorkflow|Test[A-M])'
 # The store contract's conformance suite runs against every kind
 # (docs/design/store-interface.md): a kind whose cases do not run and pass
 # fails this step, as a skipped test would otherwise pass.

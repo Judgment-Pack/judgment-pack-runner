@@ -1,4 +1,4 @@
-# Retained columns: selected RC2 integration
+# Retained columns: selected Spec v0.3.0 integration
 
 This is an experimental dependency slice for Agent #171 and Draft RFC0029.
 The pure conversion foundation retains its original `dd2cc944` corpus and focused
@@ -155,11 +155,13 @@ requirements; the future production original-history producer is still Desk-owne
 
 ## Scoped Base consumer and transport selection
 
-The selected installed contract is published Spec `v0.3.0-rc.2`, commit
-`bcac15b7537ce21879201b5e5dfe795496225121`, version `0.3.0-rc.2`, schema
+The selected installed contract is published Spec `v0.3.0`, commit
+`27cb29bf13e4a2d58d69fe19c7ebfeb762b014fc` (the signed tag), version `0.3.0`, schema
 `sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557`, corpus
 `sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863`.
-Its maturity remains draft. The earlier sections describe preserved historical
+Its maturity remains draft. The schema and corpus are byte-identical to the
+`v0.3.0-rc.2` candidate's (commit `bcac15b7537ce21879201b5e5dfe795496225121`), which
+this installation replaced and now refuses. The earlier sections describe preserved historical
 foundation evidence; the selected corpus is separately byte-pinned. These constants
 cannot be replaced by an HTTP request or host configuration. Extended Runner remains
 unsupported. Runtime document validation alone does not establish complete Runner support.

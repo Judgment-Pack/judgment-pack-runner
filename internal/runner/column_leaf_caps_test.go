@@ -9,7 +9,7 @@ import (
 // Declaration/minimum/selector cases exercise the real private admission owners,
 // not producer effects or measurement of invented artifact bytes. Extended rows
 // belong to separately supporting owners; Runner advertises Base only.
-func TestRC2PublishedBaseCapabilityCorpus(t *testing.T) {
+func TestSelectedLeafPublishedBaseCapabilityCorpus(t *testing.T) {
 	var data struct {
 		Caps, Interface []struct {
 			ID       string
@@ -22,7 +22,7 @@ func TestRC2PublishedBaseCapabilityCorpus(t *testing.T) {
 	}
 	// Published JSON group names differ from the intentionally small Go adapter.
 	var groups map[string]json.RawMessage
-	if e := json.Unmarshal(rc2Read(t, "cases.json"), &groups); e != nil {
+	if e := json.Unmarshal(leafRead(t, "cases.json"), &groups); e != nil {
 		t.Fatal(e)
 	}
 	if e := json.Unmarshal(groups["capCases"], &data.Caps); e != nil {
@@ -32,7 +32,7 @@ func TestRC2PublishedBaseCapabilityCorpus(t *testing.T) {
 		t.Fatal(e)
 	}
 	saved := installedConversionSpec
-	fixture := rc2SyntheticInstallation()
+	fixture := leafSyntheticInstallation()
 	fixture.Version = "draft-rfc0029"
 	installedConversionSpec = fixture
 	t.Cleanup(func() { installedConversionSpec = saved })
@@ -41,7 +41,7 @@ func TestRC2PublishedBaseCapabilityCorpus(t *testing.T) {
 		if a := row.Request["admission"]; a != nil {
 			if _, e := exactMembers(a); e != nil {
 				checked++
-				t.Run(row.ID, func(t *testing.T) { rc2ExpectedRefusal(t, row.Expected.Refusal, conversionFailure(codeMalformed)) })
+				t.Run(row.ID, func(t *testing.T) { leafExpectedRefusal(t, row.Expected.Refusal, conversionFailure(codeMalformed)) })
 				continue
 			}
 			var request struct {
@@ -100,7 +100,7 @@ func TestRC2PublishedBaseCapabilityCorpus(t *testing.T) {
 						}
 					}
 				}
-				rc2ExpectedRefusal(t, row.Expected.Refusal, e)
+				leafExpectedRefusal(t, row.Expected.Refusal, e)
 			})
 		} else if a := row.Request["selection"]; a != nil {
 			var request struct {
@@ -119,7 +119,7 @@ func TestRC2PublishedBaseCapabilityCorpus(t *testing.T) {
 			checked++
 			t.Run(row.ID, func(t *testing.T) {
 				_, e := ParseConversionSelector(base64.RawURLEncoding.EncodeToString(request.Selector), request.Role)
-				rc2ExpectedRefusal(t, row.Expected.Refusal, e)
+				leafExpectedRefusal(t, row.Expected.Refusal, e)
 			})
 		}
 	}
@@ -128,7 +128,7 @@ func TestRC2PublishedBaseCapabilityCorpus(t *testing.T) {
 	}
 	t.Logf("actual Base declaration/minimum/selection rows=%d; Extended role rows outside Runner support=%d", checked, extended)
 }
-func rc2ExpectedRefusal(t *testing.T, want string, e error) {
+func leafExpectedRefusal(t *testing.T, want string, e error) {
 	t.Helper()
 	if want == "" {
 		if e != nil {

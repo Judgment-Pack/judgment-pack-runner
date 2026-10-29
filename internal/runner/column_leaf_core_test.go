@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestRC2EvaluatorContractIsExactAndScoped(t *testing.T) {
+func TestSelectedLeafEvaluatorContractIsExactAndScoped(t *testing.T) {
 	selected := selectedContract()
 	if !supportedEvaluatorSpec("0.2.0-draft", nil) || !supportedEvaluatorSpec("0.2.0-draft", selected) || !supportedEvaluatorSpec("0.3.0", selected) {
 		t.Fatal("supported ordinary or selected evaluator removed")

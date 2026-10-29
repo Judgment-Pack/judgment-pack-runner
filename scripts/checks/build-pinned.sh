@@ -40,11 +40,12 @@ fetch_pin judgment-pack-runtime 09206e743cdf410d7b5ee970f1c9d09ca7c015ca "$root/
 # moves the version with it.
 (cd "$root/.ci/runtime" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.33.0-dev.09206e7" -o "$bin/jpack" ./cmd/jpack)
 
-# Dedicated retained-column companion: published v0.39.0-alpha.2. Its exact
-# Spec RC2/Base report and both selected Core lifecycles are required separately
-# from the historical ordinary and earlier Runtime contracts above/below.
-fetch_pin judgment-pack-runtime 57c854abb9ace8a91013a75ab688bd70d063797c "$root/.ci/runtime-retained"
-(cd "$root/.ci/runtime-retained" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.39.0-alpha.2" -o "$bin/jpack-retained" ./cmd/jpack)
+# Dedicated retained-column companion: published v0.39.0 (the signed tag's
+# commit). Its exact Spec v0.3.0/Base report (selector retained-column/1@27cb29bf)
+# and both selected Core lifecycles are required separately from the historical
+# ordinary and earlier Runtime contracts above/below.
+fetch_pin judgment-pack-runtime 12793d2dd24d18549567ac422711a2b3c1489f04 "$root/.ci/runtime-retained"
+(cd "$root/.ci/runtime-retained" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.39.0" -o "$bin/jpack-retained" ./cmd/jpack)
 
 # Test-only old companion: its current-store refusal is part of the
 # explicit manual-store preparation contract, not a release dependency.

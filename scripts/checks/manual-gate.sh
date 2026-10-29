@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # CI step: Manual admission helper and real Runtime gate tests cannot skip
+# The governed admission acceptance cases of #147 are among them.
 set -e
 root=$(git rev-parse --show-toplevel)
 bin=$root/.ci/bin
 out="$(JPACK_TEST_BIN="$bin/jpack" \
   JPACK_OLD_RUNNER_TEST_BIN="$bin/jpack-runner-old" \
   go test -count=1 -v \
-  -run '^(TestManualGovernedRealRuntimeGate|TestManualGovernedActualRuntimeHasNoAuthorityFD|TestManualStorePrepareActualChildRetainsOriginalCustody|TestManualStorePreparationDurableAndNoDowngrade|TestManualStorePreparationSubstitutedStateRefuses|TestManualStoreSQLiteTargetUsesHeldDirectory|TestManualStoreLibraryNeverChangesCWD|TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec|TestManualAuthorityDescriptorObserverDetectsSocket|TestManualStorePreparationPendingAndUnsupported|TestManualExternalDemandCannotBeOmitted|TestManualQueuedRunListsKeepPrivatePreimages)$' \
+  -run '^(TestManualGovernedRealRuntimeGate|TestManualGovernedActualRuntimeHasNoAuthorityFD|TestManualStorePrepareActualChildRetainsOriginalCustody|TestManualStorePreparationDurableAndNoDowngrade|TestManualStorePreparationSubstitutedStateRefuses|TestManualStoreSQLiteTargetUsesHeldDirectory|TestManualStoreLibraryNeverChangesCWD|TestManualInheritedAuthoritySocketClosesBeforeRuntimeExec|TestManualAuthorityDescriptorObserverDetectsSocket|TestManualStorePreparationPendingAndUnsupported|TestManualExternalDemandCannotBeOmitted|TestManualQueuedRunListsKeepPrivatePreimages|TestGovernedAdmissionOmittedDependencySubstitution|TestGovernedAdmissionWithdrawalEnqueueDispatchRaces|TestGovernedAdmissionLostAdmissionResponse|TestGovernedAdmissionWorkerRestartAndFencing|TestGovernedAdmissionIdentityRevocation|TestGovernedAdmissionPreWithdrawalRestore)$' \
   ./internal/runner)" || { printf '%s\n' "$out"; exit 1; }
 printf '%s\n' "$out"
 for name in \
@@ -37,7 +38,13 @@ for name in \
   TestManualAuthorityDescriptorObserverDetectsSocket \
   TestManualStorePreparationPendingAndUnsupported \
   TestManualExternalDemandCannotBeOmitted \
-  TestManualQueuedRunListsKeepPrivatePreimages; do
+  TestManualQueuedRunListsKeepPrivatePreimages \
+  TestGovernedAdmissionOmittedDependencySubstitution \
+  TestGovernedAdmissionWithdrawalEnqueueDispatchRaces \
+  TestGovernedAdmissionLostAdmissionResponse \
+  TestGovernedAdmissionWorkerRestartAndFencing \
+  TestGovernedAdmissionIdentityRevocation \
+  TestGovernedAdmissionPreWithdrawalRestore; do
   printf '%s\n' "$out" | grep -q -- "^[[:space:]]*--- PASS: $name " || { echo "$name did not run and pass"; exit 1; }
 done
 # This observer identifies the actual Runtime through Linux /proc.

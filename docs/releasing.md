@@ -113,7 +113,9 @@ not check it. A tag is never moved or reused; a fix is a new version.
 requires an annotated tag (`git tag -s` makes one). The evidence gate accepts the same grammar:
 `.github/ci-evidence.json` sets `tag.prerelease: true` (kit v0.11.0), so a prerelease such as
 `v0.1.0-rc.1` passes the gate like a release and is published as a prerelease, never marked
-latest. A lightweight tag is refused (`tag-annotated`).
+latest. A lightweight tag is refused (`tag-annotated`). Two prerelease forms are used, as the
+development kit's release policy defines them: `-rc.N` is a candidate of the complete milestone,
+and `-alpha.N` is a scoped cut for a named consumer that never graduates.
 
 ## What the workflow does
 

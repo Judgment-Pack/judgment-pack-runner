@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-func TestSelectedRC2PublishedCorpus(t *testing.T) {
-	raw, e := os.ReadFile("testdata/rc2/cases.json")
+func TestSelectedLeafPublishedCorpus(t *testing.T) {
+	raw, e := os.ReadFile("testdata/v0.3.0/cases.json")
 	if e != nil {
 		t.Fatal(e)
 	}

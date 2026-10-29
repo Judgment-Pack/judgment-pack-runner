@@ -10,7 +10,7 @@ import (
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/retainedcolumns"
 )
 
-func TestRC2PublishedProducerConsistencyCorpus(t *testing.T) {
+func TestSelectedLeafPublishedProducerConsistencyCorpus(t *testing.T) {
 	// Expand ONLY the published handwritten literal patches, exactly as the
 	// publisher's fixture driver does. No interpreter is asked for expectations;
 	// no signed/preparation fixture is modified or re-signed.
@@ -28,7 +28,7 @@ for row in data['producerCases']:
    else:parent[key]=copy.deepcopy(edit['value'])
  out.append({'id':row['id'],'requestJson':row.get('wireJson') or json.dumps(c['request'],ensure_ascii=True,separators=(',',':')),'expected':c['expected']})
 print(json.dumps(out))`
-	raw, e := exec.Command("python3", "-c", script, rc2FixtureDirectory).Output()
+	raw, e := exec.Command("python3", "-c", script, leafFixtureDirectory).Output()
 	if e != nil {
 		t.Fatal("literal producer fixture expansion", e)
 	}
@@ -57,8 +57,8 @@ print(json.dumps(out))`
 		}
 		checked++
 		t.Run(row.ID, func(t *testing.T) {
-			c, tr, e := rc2ProducerConsistency(request.GeneratedConsistency)
-			rc2ExpectedRefusal(t, row.Expected.Refusal, e)
+			c, tr, e := leafProducerConsistency(request.GeneratedConsistency)
+			leafExpectedRefusal(t, row.Expected.Refusal, e)
 			if e == nil {
 				if !row.Expected.Consistent || c.OriginalSnapshotSHA256 != row.Expected.OriginalSnapshotSHA256 || digest(c.RawFrame) != row.Expected.FrameSHA256 || !sameJSON(encode(tr), row.Expected.Transformation) {
 					t.Fatalf("published original-inventory/reference result differs: frame%s want%s transformation%s", digest(c.RawFrame), row.Expected.FrameSHA256, encode(tr))
@@ -72,7 +72,7 @@ print(json.dumps(out))`
 // This is the corpus's explicit prevalidated trust projection, not profile
 // registration or a receipt verifier. Actual production entry tests separately
 // require the complete trusted profile, request, signature and freshness.
-func rc2ProducerConsistency(raw []byte) (retainedColumnCarrier, *retainedcolumns.Transformation, error) {
+func leafProducerConsistency(raw []byte) (retainedColumnCarrier, *retainedcolumns.Transformation, error) {
 	fail := func(code string) (retainedColumnCarrier, *retainedcolumns.Transformation, error) {
 		return retainedColumnCarrier{}, nil, withCode(code, errors.New("published producer consistency refusal"))
 	}

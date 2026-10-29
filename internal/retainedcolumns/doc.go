@@ -1,6 +1,6 @@
 // Package retainedcolumns implements retained conversion leaves. Historical
 // foundation fixtures remain pinned to Spec dd2cc94461950563729d1bbf672d785afeb1b02c;
-// the selected RC2 corpus is separately byte-pinned. It interprets already selected
+// the selected Spec v0.3.0 corpus is separately byte-pinned. It interprets already selected
 // conversion leaves and retained frames without acquiring or evaluating anything.
 // It does not validate a whole dialect or establish generated-input review,
 // source authenticity, capability negotiation, or preparation validity.

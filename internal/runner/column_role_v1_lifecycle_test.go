@@ -20,7 +20,7 @@ import (
 func TestColumnRoleRealRuntimeFirstSaveSignedExports(t *testing.T) {
 	columnRoleRealRuntimeFirstSaveSignedExports(t, "0.2.0-draft")
 }
-func TestRC2Core030RealRuntimeFirstSaveSignedExports(t *testing.T) {
+func TestSelectedLeafCore030RealRuntimeFirstSaveSignedExports(t *testing.T) {
 	columnRoleRealRuntimeFirstSaveSignedExports(t, "0.3.0")
 }
 func columnRoleRealRuntimeFirstSaveSignedExports(t *testing.T, core string) {
