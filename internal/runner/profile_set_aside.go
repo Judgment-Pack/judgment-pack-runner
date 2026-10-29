@@ -56,13 +56,18 @@ func (s *Service) SetAside() []SetAsideProfile {
 	return append([]SetAsideProfile(nil), s.setAside...)
 }
 
-// refuseSetAsideIDs refuses the first of ids that names a set-aside profile.
+// refuseSetAsideIDs refuses the first of ids that names a set-aside profile,
+// or a selected one (selected_profiles.go): every ordinary binding resolves
+// through here, so none binds a selected profile.
 func (s *Service) refuseSetAsideIDs(ids []string) error {
 	for _, id := range ids {
 		for _, p := range s.setAside {
 			if p.ID == id {
 				return p.refusal()
 			}
+		}
+		if s.selectedProfileID(id) {
+			return selectedRefusal(id)
 		}
 	}
 	return nil

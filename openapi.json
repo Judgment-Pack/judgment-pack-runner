@@ -41,7 +41,7 @@
             }
           }
         },
-        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before."
+        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served."
       }
     },
     "/previews": {
@@ -459,7 +459,7 @@
       },
       "post": {
         "operationId": "registerInputProfile",
-        "description": "Trusted-host configuration only. Add one immutable profile (request at most 32 KiB) without restarting workers. Persist before visibility. An identical retry returns the same digest; changed contents under an existing ID are refused, and so is the ID of a profile set aside when Runner opened its store. At most 16 combined profiles, a set-aside one included; none is evicted. The store's row keeps every profile it holds as it holds it, a set-aside one byte for byte. Does not acquire data, change releases or authorize model execution. Bearer authentication is required and browser Origin requests are refused.",
+        "description": "Trusted-host configuration only. Add one immutable profile (request at most 32 KiB) without restarting workers. Persist before visibility. An identical retry returns the same digest; changed contents under an existing ID are refused, and so is the ID of a profile set aside when Runner opened its store. At most 16 combined profiles, a set-aside one included; none is evicted. The store's row keeps every profile it holds as it holds it, a set-aside one byte for byte. Does not acquire data, change releases or authorize model execution. Bearer authentication is required and browser Origin requests are refused. The ID of a selected profile (admitSelectedProfile) is refused as 409 input_profile_selected.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2289,6 +2289,174 @@
           }
         }
       }
+    },
+    "/retained-column/1/selected-profiles": {
+      "get": {
+        "operationId": "listSelectedProfiles",
+        "description": "The selected-profile namespace's capability report: its contract, its bound, and each selected profile with its canonical digest, then each set aside when Runner opened its store, with its reason. Selected profiles are listed here only, never by GET /input-profiles, and never count toward the 16 ordinary profiles. Served by the same Service as every other route: the same store, and the same executor lease and authority; it opens no store, takes no lease and starts no worker.",
+        "parameters": [
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON naming the exact installed contract with the roles document-validation, preview, preparation and producer-carrier. Validated after authentication and before the body is read. Without the prefix and this selector the route is refused as selected_preparation_unselected."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The namespace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelectedProfiles"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "admitSelectedProfile",
+        "description": "Trusted-host configuration only. Admit one explicitly selected retained generated-input profile (request at most 32 KiB) to the selected-profile namespace, beside the ordinary profiles and outside their bound of 16. The profile is the retained-column producer profile, valid on its own, declaring the installed producer-carrier capability; any other is refused as selected_profile_unsupported. Persist before visibility. An identical retry returns the same digest; changed contents under an admitted ID are refused as selected_profile_conflict, and so is the ID of a selected profile set aside. The ID of an ordinary profile, configured, registered or set aside, is refused as selected_profile_ordinary, and an ordinary registration of a selected ID as input_profile_selected. At most 16 selected profiles, whose stored JSON array is at most 81920 bytes (the profilesBytes a retained preparation holds its profiles to), are admitted; one past either is refused as selected_profile_limit and none is evicted. A selected profile is immutable and kept for the store's life; no request removes it. Does not acquire data, create a release or authorize execution. Served by the same Service as every other route: the same store, and the same executor lease and authority; it opens no store, takes no lease and starts no worker. Refused under manual admission as manual_profile_unsupported.",
+        "parameters": [
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON naming the exact installed contract with the roles document-validation, preview, preparation and producer-carrier. Validated after authentication and before the body is read. Without the prefix and this selector the route is refused as selected_preparation_unselected."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputProfile"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Profile durably admitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstalledInputProfile"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Identical profile already admitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstalledInputProfile"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "selected_profile_conflict or selected_profile_ordinary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "selected_profile_unsupported, selected_profile_limit or selected_preparation_unselected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/retained-column/1/selected-inputs/next": {
+      "post": {
+        "operationId": "selectedPlanNextInputSource",
+        "description": "Preparation only. Plan and prepare a mapping v2 input under the selected profiles alone, as retainedColumnPlanNextInputSource does under the ordinary ones: returns the next instantiated acquisition request, or the complete prepared input. Accepts source-only partial input. Performs no network calls, acquisition, evaluation or persistence, and creates no release, job or run; no such route exists under the namespace. An input naming an ordinary profile is refused as selected_profile_ordinary, and one naming a selected profile set aside as input_profile_set_aside. Every ordinary route, and every release, job and run, refuses a selected profile as input_profile_selected. Served by the same Service as every other route: the same store, and the same executor lease and authority; it opens no store, takes no lease and starts no worker. Refused under manual admission as manual_profile_unsupported.",
+        "parameters": [
+          {
+            "name": "JPack-Conversion-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Canonical unpadded base64url of closed ConversionContract JSON naming the exact installed contract with the roles document-validation, preview, preparation and producer-carrier. Validated after authentication and before the body is read. Without the prefix and this selector the route is refused as selected_preparation_unselected."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Input"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Next source or complete preparation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputPlan"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Rejected input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2386,7 +2554,7 @@
           "reviewed"
         ],
         "additionalProperties": false,
-        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. An installation booted with requireTestedReleases refuses a new job from a not-run release with 409 release_untested; repeating the creation of an existing job still returns it. Coverage never gates. Reusing an immutable release and name is idempotent. A new job from a release that names a profile set aside when Runner opened its store is refused as 422 input_profile_set_aside; repeating the creation of a job made before still returns it."
+        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. An installation booted with requireTestedReleases refuses a new job from a not-run release with 409 release_untested; repeating the creation of an existing job still returns it. Coverage never gates. Reusing an immutable release and name is idempotent. A new job from a release that names a profile set aside when Runner opened its store is refused as 422 input_profile_set_aside; repeating the creation of a job made before still returns it. A release, job or run that names a selected profile (admitSelectedProfile) is refused as 422 input_profile_selected: a selected profile is bound by selected preparation alone."
       },
       "Job": {
         "type": "object",
@@ -7175,6 +7343,54 @@
           }
         },
         "description": "Downward-only caller ceilings derived from the approved producer profile. They grant no producer or installation authority. Retained with durable acquisition intent; resumed intent must match."
+      },
+      "SelectedProfiles": {
+        "type": "object",
+        "description": "The selected-profile namespace (contract selected-profile-preparation/1).",
+        "properties": {
+          "contract": {
+            "const": "selected-profile-preparation/1"
+          },
+          "bound": {
+            "type": "object",
+            "properties": {
+              "profiles": {
+                "type": "integer",
+                "const": 16
+              },
+              "profilesBytes": {
+                "type": "integer",
+                "const": 81920
+              }
+            },
+            "required": [
+              "profiles",
+              "profilesBytes"
+            ],
+            "additionalProperties": false,
+            "description": "At most 16 selected profiles, whose stored JSON array is at most 81920 bytes, apart from the 16 ordinary profiles."
+          },
+          "profiles": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/InstalledInputProfile"
+                },
+                {
+                  "$ref": "#/components/schemas/SetAsideInputProfile"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "contract",
+          "bound",
+          "profiles"
+        ],
+        "additionalProperties": false
       }
     }
   }

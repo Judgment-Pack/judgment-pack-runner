@@ -208,6 +208,12 @@ func conversionRequest(r *http.Request) (*http.Request, error) {
 		supported = true
 		required = []string{"preparation-verification"}
 	}
+	// The selected-profile namespace's routes (selected_profiles.go) bind
+	// retained-column producer profiles, and so require producer-carrier.
+	if path == "/v1/selected-profiles" && (r.Method == "GET" || r.Method == "POST") || r.Method == "POST" && path == "/v1/selected-inputs/next" {
+		supported = true
+		required = append(required, "producer-carrier")
+	}
 	if !supported {
 		return nil, conversionFailure("capability-unsupported")
 	}

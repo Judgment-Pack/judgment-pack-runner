@@ -1,0 +1,31 @@
+{
+  "status": "handwritten-test-only",
+  "contract": "selected-profile-preparation/1",
+  "statusCapability": "selected-profile-preparation",
+  "selectorRoles": [
+    "document-validation",
+    "preview",
+    "preparation",
+    "producer-carrier"
+  ],
+  "routes": [
+    {"method": "GET", "path": "/v1/retained-column/1/selected-profiles"},
+    {"method": "POST", "path": "/v1/retained-column/1/selected-profiles"},
+    {"method": "POST", "path": "/v1/retained-column/1/selected-inputs/next"}
+  ],
+  "emptyReport": {
+    "bound": {"profiles": 16, "profilesBytes": 81920},
+    "contract": "selected-profile-preparation/1",
+    "profiles": []
+  },
+  "refusals": [
+    {"code": "selected_preparation_unselected", "status": 422, "when": "a selected route reached without the retained-column prefix and its exact selector"},
+    {"code": "selected_profile_unsupported", "status": 422, "when": "a profile that is not a valid retained-column producer declaring the installed producer-carrier capability"},
+    {"code": "selected_profile_conflict", "status": 409, "when": "changed contents under an admitted or set-aside selected ID"},
+    {"code": "selected_profile_ordinary", "status": 409, "when": "admitting the ID of an ordinary profile"},
+    {"code": "selected_profile_ordinary", "status": 422, "when": "selected planning of an input that names an ordinary profile"},
+    {"code": "selected_profile_limit", "status": 422, "when": "one past 16 selected profiles, or past 81920 bytes of them"},
+    {"code": "input_profile_selected", "status": 409, "when": "an ordinary registration of a selected ID"},
+    {"code": "input_profile_selected", "status": 422, "when": "an ordinary planning, preview, release, job or run that names a selected profile"}
+  ]
+}
