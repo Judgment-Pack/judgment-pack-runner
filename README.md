@@ -42,7 +42,7 @@ The initial local pilot was verified with these source revisions:
 | Gateway, for connected inputs | [`v0.3.1`](https://github.com/Judgment-Pack/judgment-pack-gateway/releases/tag/v0.3.1), as pinned by Desk |
 
 CI tests Runner with Runtime and Gateway built from source, at the commits
-[ci.yml](.github/workflows/ci.yml) pins. The [notes](docs/releases/) of a release of this
+[build-pinned.sh](scripts/checks/build-pinned.sh) pins (Gateway v0.23.0 since #192). The [notes](docs/releases/) of a release of this
 repository say what that release was tested with.
 
 These are a reproducible baseline, not a promise that every earlier release supports

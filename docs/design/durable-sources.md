@@ -85,12 +85,28 @@ path also set `JPACK_GATEWAY_TEST_BIN` and `JPACK_MCP_ADAPTER_TEST_BIN`, then ru
 go test -race -run TestDurablePreparation ./internal/runner
 ```
 
+CI builds those binaries from Gateway v0.23.0 (`scripts/checks/build-pinned.sh`). The test
+starts the Gateway with command-line sources and no engine configuration, so engine
+configurations 13 and 14 (the source sandbox, an `actionKey` on `/act`) do not apply to it,
+and Runner never calls `/act`.
+
 The integration test builds a controllable MCP service, uses a separate caller worker, real Gateway and
 adapter binaries, pins their actual identity, reviews a real Runtime release,
 restarts Runner while the MCP call waits and checks that one source invocation
 produces one auditable evaluation. Other tests cover checkpoint recovery,
 original-ID reconciliation, cancellation, unrelated-job progress, expiry,
 redaction, altered request commitments and stale receipts.
+
+A v0.23.0 receipt for an MCP acquisition may carry `acquisition.descriptorProvenance`
+(gateway SPEC.md §9), a reference to a retained descriptor snapshot and signed statement.
+Runner verifies such a receipt as it verifies one without the member: the member is covered
+by the receipt's signature and kept in the retained response as signed, and the verdict,
+the facts read and the citation are the same. Runner verifies one retained receipt and holds
+neither the snapshot nor the statement, so its acceptance does not establish §9's property;
+a Gateway reader over the store that retains them does
+(`TestAGatewayV0230ReceiptWithDescriptorProvenanceIsVerified`,
+`TestTheGatewayV0230DescriptorProvenanceVectorVerifies`,
+`TestAnEarlierGatewayReceiptVerifiesUnchanged`).
 
 Provider-native asynchronous operation IDs, authenticated callbacks, explicit
 refresh plans and browser-initiated acquisition are outside this first slice.
