@@ -243,7 +243,7 @@ func TestColumnRoleSelectedSourceExpiryClearsCustody(t *testing.T) {
 }
 
 func TestColumnRoleHandwrittenSelectionVectors(t *testing.T) {
-	raw, e := os.ReadFile("../../vectors/retained-column-selection-rc2.json")
+	raw, e := os.ReadFile("../../vectors/retained-column-selection-v0.3.0.json")
 	if e != nil {
 		t.Fatal(e)
 	}

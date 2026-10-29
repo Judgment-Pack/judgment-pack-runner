@@ -199,7 +199,7 @@ func producerResponseLimit(c *ConversionContract, limits map[string]int) int {
 	return n
 }
 
-// ConversionCapabilities declares this package's exact selected RC2 roles.
+// ConversionCapabilities declares this package's exact selected Spec v0.3.0 roles.
 // Producer support belongs to each independently approved producer profile.
 func ConversionCapabilities(roles ...string) []ConversionCapability {
 	out := []ConversionCapability{}

@@ -254,10 +254,10 @@ class Checks(unittest.TestCase):
                  for name in re.findall(r'^func ((?:Test|Example|Fuzz)\w*)\(',
                                         (ROOT / source).read_text(encoding='utf-8'), re.M)
                  if name != 'TestMain'}
-        names.update({'TestColumnRoleFuture', 'TestColumnFuture', 'TestRC2Future',
+        names.update({'TestColumnRoleFuture', 'TestColumnFuture', 'TestSelectedLeafFuture',
                       'TestWorkflowFuture', 'TestAFuture', 'TestMFuture', 'TestNFuture',
                       'TestZFuture', 'TestFutureOrdinary', 'TestΩFuture',
-                      'ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzRC2'})
+                      'ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzSelectedLeaf'})
         # Go matches slash-separated run/skip expressions component by component.
         # Represent the split parent's leaves so sibling/future subtests must still
         # run exactly once, including versions below the selected artifact level.
@@ -304,7 +304,7 @@ class Checks(unittest.TestCase):
             for other in groups[index + 1:]:
                 self.assertFalse(group & other, 'unit partitions repeat cases')
         self.assertEqual(len(groups), 10)
-        for name in ('ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzRC2'):
+        for name in ('ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzSelectedLeaf'):
             self.assertIn(name, groups[-1])
         conformance = [call for call in calls if '^TestStoreKindsConform$' in call['args']]
         self.assertEqual(len(conformance), 1)
@@ -330,8 +330,8 @@ class Checks(unittest.TestCase):
             (' -skip "$large_roles"', '', 'unit partitions repeat cases'),
             ('"$offline/^release$"', '"$offline/^release"', 'unit partitions repeat cases'),
             ("run_unit -run '^TestWorkflow'", ': # omitted workflow partition', 'unit partitions omit cases'),
-            ("'^(TestColumn|TestRC2|TestWorkflow|Test[A-M])'",
-             "'^(TestColumn|TestRC2|Test[A-M])'", 'unit partitions repeat cases'),
+            ("'^(TestColumn|TestSelectedLeaf|TestWorkflow|Test[A-M])'",
+             "'^(TestColumn|TestSelectedLeaf|Test[A-M])'", 'unit partitions repeat cases'),
             ('go test -race "$@"', 'go test "$@"', 'unit partition lost race instrumentation'),
             ('go test -race "$@"', 'go test -race -timeout=700s "$@"', 'unit partitions changed default timeout'),
             ('-race -count=1 -v', '-race -v', 'store conformance invocation changed'),

@@ -29,9 +29,9 @@
     ".goreleaser.yml",
     "internal/runner/column_role_v1.go",
     "internal/runner/column_role_v1_lifecycle_test.go",
-    "internal/runner/column_rc2_core_test.go",
-    "internal/retainedcolumns/testdata/rc2/release-identity.json",
-    "internal/retainedcolumns/testdata/rc2/release-inventory.json"
+    "internal/runner/column_leaf_core_test.go",
+    "internal/retainedcolumns/testdata/v0.3.0/release-identity.json",
+    "internal/retainedcolumns/testdata/v0.3.0/release-inventory.json"
   ],
   "fresh_at_release": [
     "tag syntax, tag names the commit, commit on main",

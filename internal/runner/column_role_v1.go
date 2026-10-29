@@ -29,10 +29,10 @@ type ConversionContract struct {
 	Roles    []string       `json:"roles"`
 }
 
-// Published RC2 selected-leaf contract, at draft maturity. The immutable
+// Published Spec v0.3.0 selected-leaf contract, at draft maturity. The immutable
 // release inventory is independently checked against this package identity.
 // The compiled identity is never taken from caller or host configuration.
-var installedConversionSpec = ConversionSpec{Version: "0.3.0-rc.2", Revision: "bcac15b7537ce21879201b5e5dfe795496225121", SchemaSHA256: "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557", CorpusSHA256: "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"}
+var installedConversionSpec = ConversionSpec{Version: "0.3.0", Revision: "27cb29bf13e4a2d58d69fe19c7ebfeb762b014fc", SchemaSHA256: "sha256:0cb49f238c78391cb163a65474cc9af962df2bb1024a55c5310c2b784b2f0557", CorpusSHA256: "sha256:17b16ff7a9b74fe4cc81eb6f6129a6aabdd9834621d9e756aa2d4c1a3f245863"}
 
 var conversionRoles = [...]string{"document-validation", "preview", "preparation", "preparation-verification", "producer-carrier"}
 
