@@ -211,6 +211,10 @@ func (s *Service) registerInputProfile(p InputProfile) (bool, error) {
 			return false, &apiError{409, "input_profile_conflict", "A registered profile is immutable, and this ID names one that was set aside when Runner opened its store. Use a new profile ID and review a new binding."}
 		}
 	}
+	// A selected profile's id is the selected namespace's alone.
+	if s.selectedProfileID(frozen.ID) {
+		return false, &apiError{409, codeInputProfileSelected, "This ID names a selected profile, which is never an ordinary profile. Use a new profile ID."}
+	}
 	proposed := append(append([]InputProfile(nil), s.registeredInputProfiles()...), frozen)
 	if _, err := combinedProfiles(s.cfg.InputProfiles, proposed, len(s.setAside)); err != nil {
 		return false, err

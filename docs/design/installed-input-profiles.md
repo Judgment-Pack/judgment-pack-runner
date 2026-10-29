@@ -41,3 +41,7 @@ Acceptance covers authenticated API refusal, exact forms, bounds, independent
 caller/snapshot mutation, concurrent idempotency, restart, bootstrap conflict, real
 Runtime preparation and release-pin preservation. This is a prerequisite for Desk
 fresh portable research (#423), not an AI executor or a workflow implementation.
+
+An explicitly selected retained generated-input profile can be admitted beside a full
+registry, outside these 16, for preparation only: see
+[selected-profile preparation](selected-profile-preparation.md).

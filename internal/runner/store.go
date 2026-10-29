@@ -91,6 +91,14 @@ type Service struct {
 	// under profilesMu, with a registration.
 	storedProfiles []json.RawMessage
 	setAside       []SetAsideProfile
+	// selectedProfiles is the selected-profile namespace's admitted profiles
+	// (selected_profiles.go), published as registeredProfiles is;
+	// selectedStored is each profile its row holds, as it holds it, and
+	// selectedSetAside each set aside when the store opened. They change
+	// only under profilesMu, with an admission.
+	selectedProfiles atomic.Pointer[[]InputProfile]
+	selectedStored   []json.RawMessage
+	selectedSetAside []SetAsideProfile
 }
 
 func Open(cfg Config) (_ *Service, err error) {
@@ -218,6 +226,9 @@ func Open(cfg Config) (_ *Service, err error) {
 		return nil, err
 	}
 	if err = s.loadRegisteredProfiles(); err != nil {
+		return nil, err
+	}
+	if err = s.loadSelectedProfiles(); err != nil {
 		return nil, err
 	}
 	// A configured Gateway connection names an installed profile, and one
