@@ -30,6 +30,7 @@
     "internal/runner/column_role_v1.go",
     "internal/runner/column_role_v1_lifecycle_test.go",
     "internal/runner/column_leaf_core_test.go",
+    "internal/runner/core_selection_test.go",
     "internal/retainedcolumns/testdata/v0.3.0/release-identity.json",
     "internal/retainedcolumns/testdata/v0.3.0/release-inventory.json"
   ],

@@ -10,8 +10,9 @@ func TestSelectedLeafEvaluatorContractIsExactAndScoped(t *testing.T) {
 	if !supportedEvaluatorSpec("0.2.0-draft", nil) || !supportedEvaluatorSpec("0.2.0-draft", selected) || !supportedEvaluatorSpec("0.3.0", selected) {
 		t.Fatal("supported ordinary or selected evaluator removed")
 	}
-	if supportedEvaluatorSpec("0.3.0", nil) || supportedEvaluatorSpec("0.4.0", selected) || supportedEvaluatorSpec("0.3.0-rc.2", selected) {
-		t.Fatal("selected evaluator admission enlarged ordinary or unknown Core")
+	// Ordinary runs admit Core 0.3.0 since #188 (core_selection_test.go).
+	if supportedEvaluatorSpec("0.4.0", selected) || supportedEvaluatorSpec("0.3.0-rc.2", selected) {
+		t.Fatal("selected evaluator admission enlarged to unknown Core")
 	}
 	bad := *selected
 	bad.Spec.Revision = strings.Repeat("0", 40)
