@@ -419,7 +419,12 @@ func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input
 	if e := runtimeConversionInput(limits, input, r.Pack); e != nil {
 		return nil, nil, nil, nil, e
 	}
-	if expectedEvaluatorSpec(r) == "" {
+	// A selected release whose evaluator is not admitted reaches no Runtime,
+	// as before #188. Every release's Runtime answer is held to the Core
+	// version its pack declares (evaluatorSpecMatches, below), which no answer
+	// matches when Runner evaluates no such version; preview refuses such a
+	// pack by name before any release of it exists.
+	if inputConversion(r.Sample) != nil && expectedEvaluatorSpec(r) == "" {
 		return nil, nil, nil, nil, errors.New("unsupported retained release evaluator contract")
 	}
 	// The directory is exclusively created per invocation and never reused.
