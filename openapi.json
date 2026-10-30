@@ -41,7 +41,7 @@
             }
           }
         },
-        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served."
+        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory; without one, both are absent. Every path Runner takes and every stored binding is valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
       }
     },
     "/previews": {
@@ -2880,7 +2880,17 @@
         "additionalProperties": false
       },
       "Status": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "inputRootReplacementCharacter": {
+            "type": "boolean",
+            "description": "Present when an input root is bound: whether the binding contains U+FFFD."
+          },
+          "inputRootExists": {
+            "type": "boolean",
+            "description": "Present when an input root is bound: whether the bound root exists as a directory."
+          }
+        }
       },
       "Error": {
         "type": "object",

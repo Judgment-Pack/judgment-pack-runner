@@ -194,7 +194,13 @@ func (s *Service) Handler(token string) http.Handler {
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration", "selected-profile-preparation"}})
+		status := map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration", "selected-profile-preparation"}}
+		// A bound input root reports whether it holds U+FFFD and whether it
+		// exists (path_domain.go).
+		if b := s.InputRootBinding(); b.Root != "" {
+			status["inputRootReplacementCharacter"], status["inputRootExists"] = b.ReplacementCharacter, b.Exists
+		}
+		write(w, 200, status)
 	})
 	mux.HandleFunc("POST /v1/inputs/next", func(w http.ResponseWriter, r *http.Request) {
 		var input Input

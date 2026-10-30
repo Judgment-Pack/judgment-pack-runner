@@ -90,7 +90,8 @@ computer does not execute jobs. This is not a hosted scheduler or a Vercel funct
 The executable receives one bounded JSON boot line on stdin with `dir`, `runtime`,
 `workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, `requireTestedReleases` ([below](#release-readiness)), an absolute `signingKey`
 and the `signingPublicKey` it is expected to have
-([below](#verified-mapping-v2-runner-and-desk)). It binds an ephemeral IPv4 loopback port,
+([below](#verified-mapping-v2-runner-and-desk)). Its paths are valid UTF-8 with no
+NUL ([below](#paths-are-utf-8)). It binds an ephemeral IPv4 loopback port,
 prints `{"protocol":"jobs/1","url":"http://127.0.0.1:..."}`, and stays alive until
 stdin closes. The bearer is never printed, passed in argv, read from a project file,
 or sent to the browser. Desk selects the workspace and stable installation owner.
@@ -393,6 +394,41 @@ Saved briefs are shared by views of the same local workspace and installation;
 this pilot does not add multi-user sharing or access control. Test-case briefs are
 stored by Desk, outside Runner's job/run records.
 
+## Paths are UTF-8
+
+Every path a host gives Runner is valid UTF-8 with no NUL: the boot line's `dir`,
+`workspace`, `runtime` and `inputRoot`, the same members of a direct Go host's
+`runner.Config`, and a relocation's `dir`, `workspace`, `previousInputRoot` and
+`inputRoot`. So is every stored input root binding. Runner refuses a path outside
+this domain and never normalizes it: `encoding/json` would decode an invalid byte, or
+an unpaired surrogate escape, as U+FFFD, which names a different path. Raw-byte
+roots are not supported, and there is no byte-exact relocation route; a host whose
+source root is not valid UTF-8 refuses it before creating a workspace or queuing a
+relocation. Each refusal ends with its code in parentheses, and none creates or
+records anything:
+
+| Code | Refused |
+|---|---|
+| `request-not-utf8` | a boot line or relocation request whose raw bytes are not valid UTF-8, checked before it is decoded |
+| `path-unpaired-surrogate` | a boot line or relocation request whose path member, in any spelling `encoding/json` matches, has a `\u` escape of a surrogate that is not a high one followed by an escaped low one |
+| `path-not-utf8` | a Go host's path, given to `runner.Open` or `runner.RelocateWorkspace`, that is not valid UTF-8 |
+| `path-contains-nul` | a path that contains NUL, such as a decoded `\u0000` |
+| `stored-binding-not-utf8` | a store whose input root binding is not valid UTF-8, which only a direct Go host could have stored; the refusal shows the binding with its bytes escaped, and Runner does not guess the path it stood for |
+| `stored-binding-contains-nul` | a store whose input root binding contains NUL, shown and refused the same way |
+
+The boot line's refusals name the member, not its value. A stored binding refused
+at open is refused by the relocation command too, and Runner offers no operation
+that rewrites it.
+
+A binding that contains U+FFFD is valid and opens: Runner cannot tell a literal
+U+FFFD from one that replaced a byte lost before the path reached it, and does not
+try. `GET /v1/status` reports `inputRootReplacementCharacter`, true when the bound
+input root contains U+FFFD, and `inputRootExists`, true when it exists as a
+directory, whenever an input root is bound. When the binding contains U+FFFD,
+Runner says so on standard error as it opens, with whether the bound root exists,
+and a Go host reads the same from `Service.InputRootBinding`. A literal U+FFFD in a
+valid path is kept, compared, relocated and replayed byte for byte.
+
 ## API
 
 See [the HTTP contract](openapi.json). Desk exposes each `/v1/<suffix>` operation at
@@ -502,6 +538,10 @@ This is an offline host operation, with no HTTP endpoint or browser capability.
 Saved releases, decisions, signatures and run-chain bytes are unchanged. The
 metadata entry is maintenance history, not a signed decision record. Unknown or
 duplicate JSON members and trailing values are refused before opening storage.
+Its paths are in the [path domain](#paths-are-utf-8): a request that is not valid
+UTF-8, a path member with an unpaired surrogate escape, a path that is not valid
+UTF-8 or contains NUL, and a store whose binding is outside the domain are refused
+with their codes, and nothing is recorded.
 The host remains responsible for folder moves, destination safety, quiescing
 other processes, journaling and restarting with the new boot configuration.
 

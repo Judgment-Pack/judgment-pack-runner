@@ -35,6 +35,9 @@ func DecodeRelocateRequest(raw []byte) (RelocateRequest, error) {
 	if len(raw) > 16384 {
 		return request, errors.New("bounded relocation request required")
 	}
+	if err := checkRequestPaths("the relocation request", raw, relocationPathMembers); err != nil {
+		return request, err
+	}
 	if err := strictJSON(raw, &request); err != nil {
 		return request, errors.New("invalid relocation request")
 	}
@@ -43,6 +46,10 @@ func DecodeRelocateRequest(raw []byte) (RelocateRequest, error) {
 
 func RelocateWorkspace(request RelocateRequest) (RelocateResult, error) {
 	result := RelocateResult{Version: 1, ID: request.ID, InputRoot: request.InputRoot}
+	// A Go host's paths are in the path domain too, before anything is read.
+	if err := checkPaths("dir", request.Dir, "workspace", request.Workspace, "previousInputRoot", request.PreviousInputRoot, "inputRoot", request.InputRoot); err != nil {
+		return result, err
+	}
 	absolute := func(path string) bool {
 		return filepath.IsAbs(path) && filepath.Clean(path) == path && filepath.Dir(path) != path
 	}
@@ -99,6 +106,9 @@ func RelocateWorkspace(request RelocateRequest) (RelocateResult, error) {
 	historyKey := "inputRootRelocation:" + request.ID
 	var binding, prior string
 	if err = tx.QueryRow("SELECT value FROM metadata WHERE key='inputRoot'").Scan(&binding); err != nil {
+		return result, err
+	}
+	if err = checkStoredBinding(binding); err != nil {
 		return result, err
 	}
 	err = tx.QueryRow("SELECT value FROM metadata WHERE key=?", historyKey).Scan(&prior)

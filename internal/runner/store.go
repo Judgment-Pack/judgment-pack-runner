@@ -102,6 +102,11 @@ type Service struct {
 }
 
 func Open(cfg Config) (_ *Service, err error) {
+	// The host's paths are in the path domain (path_domain.go), before any
+	// lease, directory or store is touched.
+	if err = checkPaths("dir", cfg.Dir, "workspace", cfg.Workspace, "runtime", cfg.Runtime, "inputRoot", cfg.InputRoot); err != nil {
+		return nil, err
+	}
 	if cfg.ExecutorAdmission != nil {
 		binding := *cfg.ExecutorAdmission
 		cfg.ExecutorAdmission = &binding

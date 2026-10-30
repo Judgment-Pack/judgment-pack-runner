@@ -85,6 +85,10 @@ func prepareManualStore(stdin io.Reader, stdout io.Writer) int {
 // bootConfig reads the boot line: the service's configuration and the
 // bearer.
 func bootConfig(line []byte) (runner.Config, string, error) {
+	// The paths are refused, never normalized, before the line is decoded.
+	if err := runner.CheckBootLinePaths(line); err != nil {
+		return runner.Config{}, "", err
+	}
 	if err := checkBootCapabilities(line); err != nil {
 		return runner.Config{}, "", err
 	}
@@ -140,6 +144,10 @@ func serve(stdin io.Reader, stdout, stderr io.Writer) error {
 	// on standard error; standard output carries the protocol alone.
 	for _, p := range service.SetAside() {
 		fmt.Fprintln(stderr, "runner:", p)
+	}
+	// So is an input root binding that holds U+FFFD, with whether it exists.
+	if note := service.InputRootBinding().String(); note != "" {
+		fmt.Fprintln(stderr, "runner:", note)
 	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
