@@ -63,7 +63,11 @@ fetch_pin judgment-pack-runner 1cc6b29885b344716a970cd21fefeaca0a4edaeb "$root/.
 fetch_pin judgment-pack-runtime 7a2fcfe20cedba5f164246fc544c4920971d2c56 "$root/.ci/runtime-earlier"
 (cd "$root/.ci/runtime-earlier" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.27.1" -o "$bin/jpack-earlier" ./cmd/jpack)
 
-# The durable Gateway contract. The commit is v0.9.1.
-fetch_pin judgment-pack-gateway 5b49e1e094b55fdd1deb9f613815c2beebd411f1 "$root/.ci/gateway"
+# The durable Gateway contract. The commit is v0.23.0 (the signed tag's
+# commit), moved from v0.9.1 (#192). Its receipts may carry an
+# acquisition's descriptorProvenance (gateway SPEC.md section 9), which
+# the Runner's verifier accepts as a signed member it does not check
+# against artifacts it does not hold.
+fetch_pin judgment-pack-gateway 82d4f8ad9c5b38e5f27e9031c289d06434d1fab1 "$root/.ci/gateway"
 (cd "$root/.ci/gateway/go" && go build -trimpath -o "$bin/gateway" .)
 (cd "$root/.ci/gateway/adapters" && go build -trimpath -o "$bin/adapter-mcp" ./cmd/adapter-mcp)

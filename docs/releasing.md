@@ -301,6 +301,15 @@ over handwritten API answers; `tools/test_ci_evidence.py` holds the configuratio
 
 ### Moving a pin
 
+- **A companion commit.** `scripts/checks/build-pinned.sh` pins each companion (the tested
+  Runtime, the retained-column Runtime, the earlier Runtime, the old Runner and the durable
+  Gateway contract) by commit, never by tag, with the release it was taken from named beside
+  it; whoever moves one moves the other. A signed tag names a tag object: pin the commit that
+  object names (`gh api repos/<owner>/<repo>/git/tags/<object>`), not the object. Keep an
+  earlier release as a pin of its own only where a test needs its history, and name it as
+  earlier. The durable Gateway contract is Gateway v0.23.0 (`82d4f8a`), moved from v0.9.1
+  (#192); `TestDurablePreparationRealGatewayMCPAndRunnerRestart` runs against its `gateway`
+  and `adapter-mcp`. The next release's notes name the pins it was tested with.
 - **The Go toolchain.** Every `go-version` in `ci.yml` (`Runner` and `Release contents`) and
   `release.yml` (`Package` and `CI at the tag`), and the two `go` pins in
   `.github/ci-evidence.json`, move together in one pull request; `tools/test_ci_evidence.py`
