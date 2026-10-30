@@ -166,8 +166,9 @@ foundation evidence; the selected corpus is separately byte-pinned. These consta
 cannot be replaced by an HTTP request or host configuration. Extended Runner remains
 unsupported. Runtime document validation alone does not establish complete Runner support.
 Selected releases additionally admit Runtime's existing Core `0.3.0` Base evaluator,
-while preserving selected and ordinary `0.2.0-draft`. Ordinary and manual admission
-are unchanged. Evaluation and replay require the evaluator version from that same
+while preserving selected and ordinary `0.2.0-draft`. Since #188 ordinary admission
+admits Core `0.3.0` too, through the same evaluator selection: the retained pack's
+declared `specVersion`. Manual admission is unchanged. Evaluation and replay require the evaluator version from that same
 retained release pack; mismatched or unknown reports refuse.
 
 Published synthetic preparation fixtures exercise preparation consistency with a

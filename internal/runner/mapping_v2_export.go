@@ -278,6 +278,9 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if e = checkAuditSignatures(b); e != nil {
 		return b, prepared, e
 	}
+	if e = checkEvaluatorSpec(b); e != nil {
+		return b, prepared, e
+	}
 	// Bind the retained answer before either mapped or unmapped input checks,
 	// even if no Runtime is supplied for replay. An unfinished historical run
 	// can have neither disposition; one present on either side must match.
@@ -345,6 +348,51 @@ func verifyPreparation(b VerificationBundle, profiles []InputProfile, judged *[]
 		return prepared, errors.New("retained audit inputs or citations do not match verified inputs")
 	}
 	return prepared, nil
+}
+
+// ErrEvaluatorSpec means a run's record names another Core version than the
+// one its release's pack declares.
+var ErrEvaluatorSpec = errors.New("evaluator-spec-mismatch: the run's record names another Core version than its release's pack declares")
+
+// checkEvaluatorSpec holds the Core version a run's record names to the one
+// its release's pack declares (expectedEvaluatorSpec), which selected the
+// evaluator: the result's evaluatorSpecVersion, which every run Runner
+// completes carries, and the audit record's, under the record's signature.
+// Each is held where it is present: a record that names none, as an unfinished
+// run's has no result, keeps the meaning it had. Members are read by their
+// exact names; one that equals evaluatorSpecVersion but for case is refused,
+// as it is for the disposition.
+func checkEvaluatorSpec(b VerificationBundle) error {
+	for _, raw := range []json.RawMessage{b.Run.Result, b.Run.Audit} {
+		value, e := exactMember(raw, "evaluatorSpecVersion")
+		if e != nil {
+			return e
+		}
+		if len(value) == 0 {
+			continue
+		}
+		var version string
+		if json.Unmarshal(value, &version) != nil || version == "" || version != expectedEvaluatorSpec(b.Release) {
+			return ErrEvaluatorSpec
+		}
+	}
+	return nil
+}
+
+// exactMember is a retained object's member by its exact name, nil when it
+// has none or is not an object. A member whose name equals it but for case is
+// refused: a case-insensitive reader could read that one instead.
+func exactMember(raw json.RawMessage, name string) (json.RawMessage, error) {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(raw, &object) != nil {
+		return nil, nil
+	}
+	for other := range object {
+		if other != name && strings.EqualFold(other, name) {
+			return nil, fmt.Errorf("member-name: a run result or audit member equals %s except for case", name)
+		}
+	}
+	return object[name], nil
 }
 
 func exactDisposition(raw json.RawMessage) (json.RawMessage, error) {
