@@ -129,13 +129,11 @@ func TestARunKeepsItsAuditRecordsBytes(t *testing.T) {
 // packWithAmpersand is the triage pack with an identifier holding &, which the
 // Runtime writes in its audit record as it is. A run's facts reach the Runtime
 // as Runner encoded them when it stored the run, with &, < and > escaped, and
-// are recorded so; the pack's identifier is not.
+// are recorded so; the pack's identifier is not. It declares the Core
+// recordingPack declares.
 func packWithAmpersand(t *testing.T) string {
 	t.Helper()
-	pack, e := os.ReadFile("testdata/triage.pack.json")
-	if e != nil {
-		t.Fatal(e)
-	}
+	pack := []byte(recordingPack(t))
 	from := `"id": "https://example.invalid/judgment-packs/data-request-intake-triage",`
 	if !bytes.Contains(pack, []byte(from)) {
 		t.Fatal("the pack's identifier moved")
@@ -217,6 +215,17 @@ func TestVersion3ExportCarriesTheRecordsBytes(t *testing.T) {
 	}
 	if verified, e = VerifyInputs(want.Bytes(), nil, v3.ReleaseDigest); e != nil || verified.ExportVersion() != 2 || verified.RecordDigest() != "" {
 		t.Fatal(e, verified.ExportVersion(), verified.RecordDigest())
+	}
+	// The recording set's escaped-strings is made from this run's version-2
+	// export (scripts/recording-set.sh, JPACK_CASE_ONLY_EXPORT_DIR): a
+	// case-only run whose case holds &, <, > and non-ASCII letters, and which
+	// trusts no profile.
+	if dir := os.Getenv("JPACK_CASE_ONLY_EXPORT_DIR"); dir != "" {
+		for name, data := range map[string][]byte{"run.json": want.Bytes(), "profiles.json": encode([]InputProfile{}), "release-digest.txt": []byte(v3.ReleaseDigest)} {
+			if e = os.WriteFile(filepath.Join(dir, name), data, 0o644); e != nil {
+				t.Fatal(e)
+			}
+		}
 	}
 }
 

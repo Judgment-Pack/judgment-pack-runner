@@ -33,6 +33,15 @@
 // byte for byte. So were the six after them, the endpoint-scope vectors, the
 // first whose page profile carries an endpoint scope (RFC 0018 round 15,
 // runner #141): the run wrote the first forty-one again byte for byte.
+//
+// With -core 0.3.0 it writes a separate set, the Core 0.3.0 recording set
+// (runner #174), into a new directory: the same scenarios recorded again,
+// through the Runner's own tests, with the triage pack declaring Core 0.3.0
+// and the pinned Runtime that evaluates it, and the same alterations made of
+// them. It writes no file of vectors/preparation, which stays as it was
+// generated. scripts/recording-set.sh runs it so (-record), and its manifest
+// records the Runner commit, the Runtime and the Spec it was recorded with,
+// the signing identity and what a regeneration cannot fix.
 package main
 
 import (
@@ -53,7 +62,7 @@ import (
 )
 
 const (
-	fixtures = "internal/runner/testdata"
+	testdata = "internal/runner/testdata"
 	// bindingKind is the scheme of the binding Runner passes the Runtime.
 	bindingKind = "judgment-pack-runner/preparation/1"
 	// otherKind is the scheme the foreign-kind vector's record names instead.
@@ -87,6 +96,13 @@ type spec struct {
 	// want is the status of verify-run's report, or its refusal when it
 	// writes none.
 	want string
+	// historical is why a vector is not recorded under a later Core: what it
+	// holds no Runner run of that Core makes. Empty for every other vector.
+	historical string
+	// coreFrom and coreNote, where set, are the fixture and the note of the
+	// vector recorded under a later Core, whose run differs from the
+	// historical fixture's in what the note says.
+	coreFrom, coreNote string
 }
 
 var specs = []spec{
@@ -95,7 +111,8 @@ var specs = []spec{
 	{name: "recomputed-one-second-later", from: valid, altered: "The export's preparation is recomputed one second later: its verifiedAt, and the runAt each outcome retains among its parameters. The record, its signature and its chain entry are as they were.", alter: oneSecondLater, args: strongest, key: true, held: true, want: "binding-mismatch",
 		note: "preparation.json is what the Runner computes at the later instant, and the export retains it: every check of the inputs passes, and freshness is still within its limits. Its digest is not the one the record binds. A reader concludes binding-mismatch: the preparation, its instant included, is not the one the signed record binds."},
 	{name: "unbound-record", from: "mapping-v2-before-calculators", args: []string{"--require-bound"}, want: "unbound",
-		note: "A run Runner exported (version 2) before it passed a binding: its record carries none, as a Runtime before 0.31.0 records. Its preparation verifies. A reader concludes the binding is absent, and nothing in the record commits the preparation or its instant; --require-bound refuses it as unbound."},
+		historical: "A record that carries no binding is made only by a Runtime before 0.31.0, which takes none (runtime ADR-0050). Every Runtime that evaluates Core 0.3.0 takes one, and Runner gives it the preparation's binding on every run, so no Core 0.3.0 run of the Runner records none. The Core 0.2.0-draft set's unbound-record remains the vector of that finding.",
+		note:       "A run Runner exported (version 2) before it passed a binding: its record carries none, as a Runtime before 0.31.0 records. Its preparation verifies. A reader concludes the binding is absent, and nothing in the record commits the preparation or its instant; --require-bound refuses it as unbound."},
 	{name: "foreign-binding-kind", from: valid, altered: "The record's binding names another scheme, another-companion/preparation/1, with the preparation's digest; the record's chain entry and checkpoint are made again for the rewritten record, and the record is signed again under the fixture's key, as an operator who rewrote it would sign it.", alter: foreignKind, args: []string{"--public-key", "@public-key.txt", "--require-signed"}, key: true, want: "binding-foreign-kind",
 		note: "The rewritten record's signature verifies. A reader concludes binding-foreign-kind before any digest is compared: a binding of another scheme commits nothing a reader of this scheme can check. A checkpoint held from before the rewrite would refuse the chain first, so none is supplied."},
 	{name: "changed-table-lineage", from: valid, altered: "The export's retained lineage names another instant for the calculator's table: the first lineage entry's calculation.asOf, ecb-rates, is the preparation's verifiedAt.", alter: changedTable, args: strongest, key: true, held: true, want: "retained lineage does not match recomputation",
@@ -103,9 +120,11 @@ var specs = []spec{
 	{name: "disposition-differs-from-audit", from: valid, altered: "The run's retained result names another outcome, decline-redirect, than its audit record, proceed.", alter: otherDisposition, args: strongest, key: true, held: true, want: "audit-disposition-mismatch",
 		note: "The preparation is unchanged and verifies. The retained disposition is checked first, independently of any re-execution: a reader concludes audit-disposition-mismatch."},
 	{name: "unsigned-parameters", from: "mapping-v2-unsigned-parameters", want: "verified-inputs",
-		note: "A run of two acquired sources whose rules read parameters their receipts do not commit, as Runner exported it (version 2), before it passed a binding. Its preparation verifies, and the report names the parameters: runAt for the first source, a case parameter and one carried in ambiguous text for the second."},
-	{name: "escaped-strings", from: "mapping-v2-before-exact-bytes", want: "verified-inputs",
-		note: "A case-only run, as Runner exported it (version 2), before it passed a binding: every target is asserted, and nothing was acquired. A case value holds &, <, >, a letter with an accent and a snowman, so preparation.json shows the canonical form's escaping: &, < and > escaped as \\u0026, \\u003c and \\u003e, the others written as UTF-8."},
+		coreNote: "A run of two acquired sources whose rules read parameters their receipts do not commit, as Runner exports it in version 2, unsigned, its record binding its preparation. Its preparation verifies, and the report names the parameters: runAt for the first source, a case parameter and one carried in ambiguous text for the second.",
+		note:     "A run of two acquired sources whose rules read parameters their receipts do not commit, as Runner exported it (version 2), before it passed a binding. Its preparation verifies, and the report names the parameters: runAt for the first source, a case parameter and one carried in ambiguous text for the second."},
+	{name: "escaped-strings", from: "mapping-v2-before-exact-bytes", want: "verified-inputs", coreFrom: "mapping-v2-case-only",
+		coreNote: "A case-only run, as Runner exports it in version 2, unsigned, its record binding its preparation: every target is asserted, and nothing was acquired. The pack's identifier holds &, as the Core 0.2.0-draft vector's does. A case value holds &, <, >, a letter with an accent and a snowman, so preparation.json shows the canonical form's escaping: &, < and > escaped as \\u0026, \\u003c and \\u003e, the others written as UTF-8.",
+		note:     "A case-only run, as Runner exported it (version 2), before it passed a binding: every target is asserted, and nothing was acquired. A case value holds &, <, >, a letter with an accent and a snowman, so preparation.json shows the canonical form's escaping: &, < and > escaped as \\u0026, \\u003c and \\u003e, the others written as UTF-8."},
 	{name: "numeric-spellings", from: "mapping-v2-calculated-numeric", args: strongest, key: true, held: true, want: "verified-inputs",
 		note: "The valid case's mapping and inputs, run again with three integer case parameters more, which nothing reads: zero written -0, largest 9007199254740991 and least -9007199254740991, the largest and the least integers mapping v2 admits. Each outcome keeps them among its parameters as the case wrote them, and so does preparation.json: -0 is not 0, and neither large integer is written with an exponent. Numbers such as 1.00 and 1e+02, and integers beyond 2^53-1, are outside what mapping v2 admits (integers from -(2^53-1) to 2^53-1, with no fraction or exponent): preparation refuses them as a parameter and as a copied value, so no preparation holds them and no vector can. A reader concludes verified-inputs, the record's binding matching the preparation as written."},
 	{name: "http-shaped-source", from: "mapping-v2-http-shaped", args: strongest, key: true, held: true, want: "verified-inputs",
@@ -183,17 +202,67 @@ type vector struct {
 }
 
 type manifest struct {
-	Family        string  `json:"family"`
-	BindingKind   string  `json:"bindingKind"`
-	CanonicalForm string  `json:"canonicalForm"`
-	Generator     string  `json:"generator"`
-	Vectors       []entry `json:"vectors"`
+	Family        string `json:"family"`
+	BindingKind   string `json:"bindingKind"`
+	CanonicalForm string `json:"canonicalForm"`
+	Generator     string `json:"generator"`
+	// The members from Core to NotRecorded are a later Core's recording
+	// set's (-core), and absent from vectors/preparation: the Core its packs
+	// declare and its records name; what recorded it; the identity its
+	// records are signed under; what a regeneration cannot reproduce; the
+	// tests that recorded its fixtures; and the vectors it does not hold.
+	Core        string        `json:"core,omitempty"`
+	Producer    *producer     `json:"producer,omitempty"`
+	Signing     *signing      `json:"signing,omitempty"`
+	NotFixed    []string      `json:"notFixed,omitempty"`
+	Recordings  []recorder    `json:"recordings,omitempty"`
+	NotRecorded []notRecorded `json:"notRecorded,omitempty"`
+	Vectors     []entry       `json:"vectors"`
+}
+
+// producer is what recorded a later Core's set: the Runner commit whose
+// tests recorded the runs and whose verify-run reported them; the Runtime
+// that evaluated and signed them, by the version its records name and the
+// commit it was built from; and the Spec release whose Core they declare.
+type producer struct {
+	RunnerCommit   string `json:"runnerCommit"`
+	RuntimeVersion string `json:"runtimeVersion"`
+	RuntimeCommit  string `json:"runtimeCommit"`
+	SpecVersion    string `json:"specVersion"`
+	SpecCommit     string `json:"specCommit"`
+}
+
+// signing is the identity every signed record of the set is signed under.
+type signing struct {
+	Identity  string `json:"identity"`
+	Seed      string `json:"seed"`
+	PublicKey string `json:"publicKey"`
+	KeyID     string `json:"keyId"`
+	Note      string `json:"note"`
+}
+
+// recorder is a test of internal/runner that writes fixtures when the
+// variable env names a directory: dir, relative to the fixtures' directory.
+type recorder struct {
+	Test string `json:"test"`
+	Env  string `json:"env"`
+	Dir  string `json:"dir"`
+}
+
+// notRecorded is a vector of vectors/preparation that a later Core's set
+// does not hold, and why.
+type notRecorded struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 type entry struct {
-	Name        string            `json:"name"`
-	Note        string            `json:"note"`
-	From        string            `json:"from"`
+	Name string `json:"name"`
+	Note string `json:"note"`
+	From string `json:"from"`
+	// Recorded is, in a later Core's set, the SHA-256 of the run's export as
+	// the Runner wrote it, before any alteration.
+	Recorded    string            `json:"recorded,omitempty"`
 	Altered     *string           `json:"altered"`
 	VerifiedAt  string            `json:"verifiedAt"`
 	Files       map[string]string `json:"files"`
@@ -232,11 +301,42 @@ type verifyEntry struct {
 func main() {
 	runner := flag.String("runner", "", "a jpack-runner built from this commit, whose verify-run report on each vector the manifest records")
 	out := flag.String("out", "vectors/preparation", "the directory to write, which must not exist")
+	from := flag.String("fixtures", testdata, "the directory of the fixtures the vectors are made from")
+	core := flag.String("core", "", "the later Core whose recording set to write (0.3.0), recorded by the Runner's own tests; empty for vectors/preparation")
+	record := flag.Bool("record", false, "with -core: record the fixtures first, running the tests that write them under -runtime into a new directory, in place of -fixtures")
+	runtime := flag.String("runtime", "", "with -record: the Runtime that evaluates -core, given to the tests as JPACK_TEST_BIN")
+	only := flag.String("only", "", "with -core: the vectors to write, separated by commas; every vector when empty")
+	var p producer
+	flag.StringVar(&p.RunnerCommit, "runner-commit", "", "with -core: the Runner commit the fixtures were recorded and -runner built from")
+	flag.StringVar(&p.RuntimeCommit, "runtime-commit", "", "with -core: the commit the Runtime was built from")
+	flag.StringVar(&p.SpecVersion, "spec-version", "", "with -core: the Spec release whose Core the packs declare, as its tag")
+	flag.StringVar(&p.SpecCommit, "spec-commit", "", "with -core: the commit that Spec release names")
 	flag.Parse()
-	if err := generate(*runner, *out); err != nil {
+	err := func() error {
+		if *core == "" {
+			if *record || *runtime != "" || *only != "" || p != (producer{}) {
+				return errors.New("-record, -runtime, -only and the producer's flags are a later Core's (-core)")
+			}
+			fixtures = *from
+			return generate(*runner, *out)
+		}
+		return generateCore(*runner, *out, *from, *core, *record, *runtime, *only, p)
+	}()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "preparation-vectors:", err)
 		os.Exit(1)
 	}
+}
+
+// fixtures is the directory the vectors are made from, and fromPrefix what
+// a manifest entry's from names it by: vectors/preparation's are named by
+// their path in the repository, a later Core's by their name among the
+// fixtures its recordings wrote. core is the later Core, or empty.
+var fixtures, fromPrefix, core = testdata, testdata + "/", ""
+
+// allSpecs are the vectors in order.
+func allSpecs() []spec {
+	return append(append(append(append([]spec{}, specs...), researchSpecs()...), afterResearch...), afterScope...)
 }
 
 func generate(runner, out string) error {
@@ -256,13 +356,17 @@ func generate(runner, out string) error {
 		CanonicalForm: "docs/MAPPING-V2.md, \"The canonical form of a preparation\"",
 		Generator:     "tools/preparation-vectors, run once from the fixtures named by each vector's from; the vectors are not regenerated",
 	}
-	for _, s := range append(append(append(append([]spec{}, specs...), researchSpecs()...), afterResearch...), afterScope...) {
+	for _, s := range allSpecs() {
 		e, err := write(s, runner, filepath.Join(out, s.name))
 		if err != nil {
 			return fmt.Errorf("%s: %w", s.name, err)
 		}
 		m.Vectors = append(m.Vectors, e)
 	}
+	return writeManifest(out, m)
+}
+
+func writeManifest(out string, m manifest) error {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -270,11 +374,247 @@ func generate(runner, out string) error {
 	return os.WriteFile(filepath.Join(out, "manifest.json"), append(b, '\n'), 0o644)
 }
 
+// laterCore is the one Core, beside vectors/preparation's 0.2.0-draft, whose
+// recording set this writes: the one Runner admits on ordinary runs beside it
+// (runner #188).
+const laterCore = "0.3.0"
+
+// recorders are the tests that record a later Core's fixtures, each writing
+// its fixtures into the directory its variable names when it is set, as they
+// wrote vectors/preparation's fixtures into internal/runner/testdata
+// (writeBoundFixture). JPACK_RECORDING_CORE gives their runs the triage pack
+// declaring that Core (recordingPack). The research and endpoint-scope tests
+// and the acquired dependent source's write one directory per run.
+var recorders = []recorder{
+	{"TestACalculatedSignedAndWitnessedRunRefusesAnswerAndTableTimeTampering", "JPACK_V2_CALCULATED_EXPORT_DIR", "mapping-v2-calculated-bound"},
+	{"TestAPreparationKeepsItsNumbersAsWritten", "JPACK_V2_NUMERIC_EXPORT_DIR", "mapping-v2-calculated-numeric"},
+	{"TestVerifyInputsReportsUnsignedParameters", "JPACK_V2_UNSIGNED_EXPORT_DIR", "mapping-v2-unsigned-parameters"},
+	{"TestVersion3ExportCarriesTheRecordsBytes", "JPACK_CASE_ONLY_EXPORT_DIR", "mapping-v2-case-only"},
+	{"TestAnHTTPShapedRunIsSignedWitnessedAndBound", "JPACK_V2_HTTP_EXPORT_DIR", "mapping-v2-http-shaped"},
+	{"TestAVersion3RunIsSignedWitnessedAndBound", "JPACK_V3_BOUND_EXPORT_DIR", "mapping-v3-bound"},
+	{"TestAnImportedRunIsSignedWitnessedAndBound", "JPACK_V3_IMPORT_EXPORT_DIR", "mapping-v3-imported"},
+	{"TestASkippedSourceRunIsSignedWitnessedAndBound", "JPACK_V2_SKIPPED_EXPORT_DIR", "mapping-v2-skipped-source"},
+	{"TestAnAcquiredDependentSourceRunIsSignedWitnessedAndBound", "JPACK_V2_ACQUIRED_EXPORT_DIR", "."},
+	{"TestResearchRunsAreSignedWitnessedAndBound", "JPACK_RESEARCH_EXPORT_DIR", "research"},
+	{"TestScopedPageRunsAreSignedWitnessedAndBound", "JPACK_SCOPE_EXPORT_DIR", "research"},
+}
+
+// The identity the Runner's tests sign every record under (signingKey,
+// internal/runner): the seed of RFC 8032's first test vector, published with
+// it, which signs nothing real. The foreign-kind vector's record is signed
+// again under it. testKeyID is the key identifier the Runtime names it by.
+const (
+	testPublicKey = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+	testKeyID     = "21fe31dfa154a261626bf854046fd227"
+)
+
+// notFixed is what a regeneration of a later Core's set gives otherwise.
+var notFixed = []string{
+	"Each run's instants: the preparation's verifiedAt and the runAt its outcomes retain, each receipt's time, the record's and the chain's times. They are the clock's when the run is recorded, since the Runner and the Runtime judge freshness against it.",
+	"The keys of the stand-in gateways and of each profile, made for each run by the test that records it and not kept: the profiles' public keys, so their digests, the mappings and bound dialects that pin them and their digests, and every receipt signed under them.",
+	"The identifiers and salts made for each run: run, job and release identifiers, the record's trail, receipts' salts and sessions' nonces.",
+	"The Runtime's digest, which every record names (tool.digest): the digest of the binary built from the Runtime commit, which depends on the Go toolchain that built it.",
+	"Every digest and signature over the bytes above: preparations, records, chain entries and checkpoints, releases and locks, and the record signatures, made under the fixed identity of signing.",
+}
+
+// generateCore writes a later Core's recording set into out: every vector,
+// or those only names, made as generate makes vectors/preparation's, from
+// fixtures the Runner's own tests recorded under that Core, with the members
+// of the set's manifest.
+func generateCore(runner, out, from, version string, record bool, runtime, only string, p producer) error {
+	if version != laterCore {
+		return fmt.Errorf("-core %q: the recording set is written for Core %s", version, laterCore)
+	}
+	if runner == "" {
+		return errors.New("-runner is required")
+	}
+	hex40 := func(s string) bool {
+		b, err := hex.DecodeString(s)
+		return err == nil && len(b) == 20 && strings.ToLower(s) == s
+	}
+	if !hex40(p.RunnerCommit) || !hex40(p.RuntimeCommit) || !hex40(p.SpecCommit) || !strings.HasPrefix(p.SpecVersion, "v") {
+		return errors.New("-runner-commit, -runtime-commit and -spec-commit must each be a commit's 40 lowercase hexadecimal characters, and -spec-version a release tag")
+	}
+	runner, err := filepath.Abs(runner)
+	if err != nil {
+		return err
+	}
+	if _, err = os.Lstat(out); err == nil {
+		return fmt.Errorf("%s exists: a recording set is written into a new directory", out)
+	}
+	if record {
+		if runtime == "" {
+			return errors.New("-record needs -runtime, the Runtime that evaluates Core " + version)
+		}
+		if from, err = os.MkdirTemp("", "recording-fixtures-"); err != nil {
+			return err
+		}
+		defer os.RemoveAll(from)
+		if err = recordFixtures(from, runtime, version); err != nil {
+			return err
+		}
+	}
+	fixtures, fromPrefix, core = from, "", version
+	selected, unseen := map[string]bool{}, map[string]bool{}
+	for _, name := range strings.Split(only, ",") {
+		if name != "" {
+			selected[name], unseen[name] = true, true
+		}
+	}
+	m := manifest{
+		Family:        "preparation",
+		BindingKind:   bindingKind,
+		CanonicalForm: "docs/MAPPING-V2.md, \"The canonical form of a preparation\"",
+		Generator:     "tools/preparation-vectors -core " + version + ", as scripts/recording-set.sh runs it: the fixtures each vector's from names were recorded by the tests of recordings, and the vectors made of them as vectors/preparation's were made; the set is regenerated by that command, never edited",
+		Core:          version,
+		Producer:      &p,
+		Signing: &signing{
+			Identity:  "RFC 8032, section 7.1, TEST 1",
+			Seed:      testSeed,
+			PublicKey: testPublicKey,
+			KeyID:     testKeyID,
+			Note:      "A published test key, which signs nothing real: the Runtime signed every signed record of the set under it, as the Runner's tests give it (public-key.txt holds its public key), and foreign-binding-kind's rewritten record is signed again under it. The stand-in gateways' receipts are signed under keys made for each run, whose public keys profiles.json holds.",
+		},
+		NotFixed:   notFixed,
+		Recordings: recorders,
+	}
+	runtimeVersion := ""
+	for _, s := range allSpecs() {
+		if len(selected) > 0 && !selected[s.name] {
+			continue
+		}
+		delete(unseen, s.name)
+		if s.historical != "" {
+			m.NotRecorded = append(m.NotRecorded, notRecorded{s.name, s.historical})
+			continue
+		}
+		if s.coreFrom != "" {
+			s.from = s.coreFrom
+		}
+		if s.coreNote != "" {
+			s.note = s.coreNote
+		}
+		dir := filepath.Join(out, s.name)
+		e, err := write(s, runner, dir)
+		if err != nil {
+			return fmt.Errorf("%s: %w", s.name, err)
+		}
+		run, err := os.ReadFile(filepath.Join(dir, "run.json"))
+		if err != nil {
+			return err
+		}
+		tool, err := namesCore(run, version)
+		if err != nil {
+			return fmt.Errorf("%s: %w", s.name, err)
+		}
+		if runtimeVersion != "" && tool != runtimeVersion {
+			return fmt.Errorf("%s: recorded by Runtime %s, where another was recorded by %s", s.name, tool, runtimeVersion)
+		}
+		runtimeVersion = tool
+		m.Vectors = append(m.Vectors, e)
+	}
+	if len(unseen) > 0 {
+		return fmt.Errorf("-only names vectors there are not: %v", unseen)
+	}
+	m.Producer.RuntimeVersion = runtimeVersion
+	return writeManifest(out, m)
+}
+
+// recordFixtures runs the recorders under runtime, each writing its fixtures
+// into dir, and requires each to run and pass: a skipped test writes nothing.
+func recordFixtures(dir, runtime, version string) error {
+	runtime, err := filepath.Abs(runtime)
+	if err != nil {
+		return err
+	}
+	env := append(os.Environ(), "JPACK_TEST_BIN="+runtime, "JPACK_RECORDING_CORE="+version)
+	names := []string{}
+	for _, r := range recorders {
+		target := filepath.Join(dir, r.Dir)
+		if err = os.MkdirAll(target, 0o755); err != nil {
+			return err
+		}
+		env = append(env, r.Env+"="+target)
+		names = append(names, r.Test)
+	}
+	var output bytes.Buffer
+	cmd := exec.Command("go", "test", "-count=1", "-v", "-timeout", "30m", "-run", "^("+strings.Join(names, "|")+")$", "./internal/runner")
+	cmd.Env, cmd.Stdout, cmd.Stderr = env, &output, &output
+	err = cmd.Run()
+	for _, name := range names {
+		if !bytes.Contains(output.Bytes(), []byte("--- PASS: "+name+" (")) {
+			os.Stderr.Write(output.Bytes())
+			return fmt.Errorf("%s did not run and pass, so its fixtures were not recorded: %v", name, err)
+		}
+	}
+	return err
+}
+
+// namesCore requires a vector's export to be of a pack declaring version and
+// its records to name it, the run's result, its record as the export parses
+// it and, where the export carries them, the record's own bytes, as the
+// record's pack does; and returns the Runtime version the record names.
+func namesCore(run []byte, version string) (string, error) {
+	var export struct {
+		Version int `json:"version"`
+		Release struct {
+			Pack string `json:"pack"`
+		} `json:"release"`
+		Run struct {
+			Result     json.RawMessage `json:"result"`
+			Audit      json.RawMessage `json:"audit"`
+			AuditBytes []byte          `json:"auditBytes"`
+		} `json:"run"`
+	}
+	if err := json.Unmarshal(run, &export); err != nil {
+		return "", err
+	}
+	var pack, result struct {
+		SpecVersion          string `json:"specVersion"`
+		EvaluatorSpecVersion string `json:"evaluatorSpecVersion"`
+	}
+	if err := json.Unmarshal([]byte(export.Release.Pack), &pack); err != nil || pack.SpecVersion != version {
+		return "", fmt.Errorf("the release's pack declares Core %q, not %s: %v", pack.SpecVersion, version, err)
+	}
+	if err := json.Unmarshal(export.Run.Result, &result); err != nil || result.EvaluatorSpecVersion != version {
+		return "", fmt.Errorf("the run's result names Core %q, not %s: %v", result.EvaluatorSpecVersion, version, err)
+	}
+	records := [][]byte{export.Run.Audit}
+	if export.Version >= 3 {
+		records = append(records, export.Run.AuditBytes)
+	}
+	tool := ""
+	for _, raw := range records {
+		var record struct {
+			EvaluatorSpecVersion string `json:"evaluatorSpecVersion"`
+			Pack                 struct {
+				SpecVersion string `json:"specVersion"`
+			} `json:"pack"`
+			Tool struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"tool"`
+		}
+		if err := json.Unmarshal(raw, &record); err != nil || record.EvaluatorSpecVersion != version || record.Pack.SpecVersion != version {
+			return "", fmt.Errorf("the record names Core %q and its pack %q, not %s: %v", record.EvaluatorSpecVersion, record.Pack.SpecVersion, version, err)
+		}
+		if record.Tool.Name != "jpack" || record.Tool.Version == "" || tool != "" && record.Tool.Version != tool {
+			return "", fmt.Errorf("the record names the Runtime %s %s", record.Tool.Name, record.Tool.Version)
+		}
+		tool = record.Tool.Version
+	}
+	return tool, nil
+}
+
 // write makes one vector's directory and its manifest entry.
 func write(s spec, runner, dir string) (entry, error) {
 	v, err := load(s)
 	if err != nil {
 		return entry{}, err
+	}
+	recorded := ""
+	if core != "" {
+		recorded = sha(v.run)
 	}
 	if s.alter != nil {
 		if err = s.alter(v); err != nil {
@@ -336,7 +676,7 @@ func write(s spec, runner, dir string) (entry, error) {
 	if err != nil {
 		return entry{}, err
 	}
-	e := entry{Name: s.name, Note: s.note, From: fixtures + "/" + s.from, VerifiedAt: v.verifiedAt, Files: digests, RecordBinding: record, VerifyRun: run,
+	e := entry{Name: s.name, Note: s.note, From: fromPrefix + s.from, Recorded: recorded, VerifiedAt: v.verifiedAt, Files: digests, RecordBinding: record, VerifyRun: run,
 		Preparation: preparationEntry{SHA256: sha(v.preparation), Binding: `{"kind":"` + bindingKind + `","digest":"` + sha(v.preparation) + `"}`, Retained: v.retained}}
 	if s.altered != "" {
 		e.Altered = &s.altered

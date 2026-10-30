@@ -512,11 +512,7 @@ func signedAndWitnessedExportOf(t *testing.T, cfg Config, input Input, profiles 
 		t.Fatal(err)
 	}
 	defer s.Close()
-	pack, err := os.ReadFile("testdata/triage.pack.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	release, err := s.preview(context.Background(), PreviewRequest{Pack: string(pack), Input: input})
+	release, err := s.preview(context.Background(), PreviewRequest{Pack: recordingPack(t), Input: input})
 	if err != nil {
 		t.Fatal(err)
 	}

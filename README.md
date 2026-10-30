@@ -340,6 +340,18 @@ from them in its [canonical form](docs/MAPPING-V2.md#the-canonical-form-of-a-pre
 with its SHA-256, and the export with what `verify-run` reports of it, valid and altered.
 They were generated once and are not regenerated; tests hold Runner to them byte for byte.
 
+They were recorded under Core 0.2.0-draft. The **Core 0.3.0 recording set** is a separate
+set of the same scenarios, recorded again through Runner's own tests with the triage pack
+declaring Core 0.3.0 and the pinned Runtime that evaluates it, and made into vectors by the
+same generator: `scripts/recording-set.sh OUT` writes it into a new directory, never into
+`vectors/preparation`, and the specification publishes it beside the historical set. Its
+manifest names the Runner commit, the Runtime and Spec releases, the signing identity (the
+published RFC 8032 test key every record is signed under), each recording's digest, and what
+a regeneration cannot reproduce: each run's instants, the keys made for each run and every
+digest and signature over them. `unbound-record` is not in it: no Runtime that evaluates Core
+0.3.0 records a run without the binding Runner gives it. A test regenerates a sample of the
+set and verifies it (`TestCore030RecordingSetSampleRegenerates`).
+
 `verify-preparation` reads one preparation with no run: a dialect, bound or published
 with its binding document, a case, the acquisitions, the profiles and the expected
 preparation, with its digest supplied apart, as an Exchange entry's fixture holds them.
