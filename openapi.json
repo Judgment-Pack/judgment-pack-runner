@@ -3735,7 +3735,7 @@
           },
           "arguments": {
             "type": "object",
-            "description": "Frozen template; whole-value $param and integer-only $text. runAt is derivation-only."
+            "description": "Frozen template; whole-value $param and integer-only $text. runAt is derivation-only. Under a profile whose adapter.name is adapter-http, a query, when present, is an object, not a template form, each of whose members is a string template (spec/dialect.md section 4.1): profile-mismatch otherwise."
           },
           "read": {
             "$ref": "#/components/schemas/SourceRead"

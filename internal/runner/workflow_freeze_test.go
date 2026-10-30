@@ -214,6 +214,66 @@ func TestWorkflowFreezeEveryStageBeforeReturningAny(t *testing.T) {
 	}
 }
 
+// Saved releases do not pass through today's preview again. Their pack,
+// runtime and profile pins can agree while a stage's request still breaks its
+// profile's request contract. Freeze holds every stage's request to it, an
+// unused downstream stage included, before returning any snapshot (#200).
+func TestWorkflowFreezeRechecksSavedProfileRequestsAtRootAndUnusedDownstream(t *testing.T) {
+	for _, adapter := range []string{"adapter-http", "mcp"} {
+		for _, position := range []string{"root", "unused-downstream"} {
+			t.Run(adapter+"/"+position, func(t *testing.T) {
+				input, profile, _, _ := v2Fixture(t)
+				mapping := input.Source.Mapping
+				mapping.Version = 3
+				mapping.Case.Parameters["query"] = Parameter{Pointer: "/query", Type: "string"}
+				valid := []byte(`{"tool":"lookup","arguments":{}}`)
+				invalid := []byte(`{"tool":"delete_rows","arguments":{}}`)
+				if adapter == "adapter-http" {
+					profile.Shape, profile.Tools, profile.Adapter.Name = "http", nil, adapter
+					valid = []byte(`{"query":{"q":{"$param":"query"}}}`)
+					invalid = []byte(`{"query":{"$param":"query"}}`)
+				}
+				profiles := []InputProfile{profile}
+				mapping.Sources[0].ProfileDigest = profileHash(profile)
+				mapping.Sources[0].Arguments = valid
+				raw, good, runtime := workflowFreezeFixture(t, encode(mapping), nil, profiles)
+				doc := decoded(t, raw).(map[string]any)
+				first := doc["stages"].([]any)[0].(map[string]any)
+				first["selection"] = map[string]any{"mode": "reviewer"}
+				second := decoded(t, encode(first)).(map[string]any)
+				second["id"], second["execution"], second["input"] = "people", "each-selected-record", map[string]any{"fromStage": "companies", "selected": true}
+				second["caseBindings"] = []any{map[string]any{"from": "/name", "to": "/query", "type": "string", "required": true}}
+				delete(second, "selection")
+				doc["stages"], doc["result"] = []any{first, second}, "people"
+				if _, err := freezeWorkflowStages(encode(doc), []workflowFreezeInput{good, good}, profiles, runtime); err != nil {
+					t.Fatal("valid saved release control failed", err)
+				}
+				mapping.Sources[0].Arguments = invalid
+				_, bad, _ := workflowFreezeFixture(t, encode(mapping), nil, profiles)
+				if err := mapping.validate(); err != nil {
+					t.Fatal("the request must reach the profile-specific check", err)
+				}
+				if _, code := verificationOutcome(preflightV2(mapping, profiles)); code != codeMismatch {
+					t.Fatal("shared preflight did not name the profile request mismatch", code)
+				}
+				inputs := []workflowFreezeInput{good, good}
+				index := 0
+				if position == "unused-downstream" {
+					index = 1
+				}
+				inputs[index] = bad
+				stage := doc["stages"].([]any)[index].(map[string]any)
+				stage["dialect"].(map[string]any)["digest"] = mappingV2Hash(mapping)
+				if frozen, err := freezeWorkflowStages(encode(doc), inputs, profiles, runtime); err == nil || frozen != nil {
+					t.Fatal("a saved invalid request was frozen", err)
+				} else if _, code := verificationOutcome(err); code != codeMismatch {
+					t.Fatal("a saved invalid request was not refused as profile-mismatch", err, code)
+				}
+			})
+		}
+	}
+}
+
 func TestWorkflowFreezeDispositionRequiresDeclaredOutcome(t *testing.T) {
 	f := newImportFixture(t)
 	raw, in, runtime := workflowFreezeFixture(t, encode(f.direct), nil, []InputProfile{f.profile})

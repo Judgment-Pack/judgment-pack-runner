@@ -215,6 +215,9 @@ func workflowSourceAdmission(m InputMapping, profiles []InputProfile) error {
 				return err
 			}
 			class = profile.Class
+			if err := profileRequestForm(source, profile, m); err != nil {
+				return err
+			}
 		}
 		facts, evidence, err := readTargets(source.Read)
 		if err != nil {
