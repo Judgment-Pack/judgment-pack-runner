@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,13 @@ func TestBootLinePathsOutsideTheDomainAreRefusedBeforeAnyState(t *testing.T) {
 		{"escaped member name", `"inputRoot":"`, `"input` + esc("0052") + `oot":"` + esc("d800"), "path-unpaired-surrogate"},
 		{"NUL in inputRoot", `missing-workspace"`, `missing-workspace\u0000"`, "path-contains-nul"},
 		{"NUL in dir", `"dir":"`, `"dir":"\u0000`, "path-contains-nul"},
+		// Every occurrence is checked: a case-variant duplicate, which
+		// encoding/json would let replace the first, cannot hide behind a
+		// valid one.
+		{"case-variant duplicate after a valid one", `missing-workspace"`, `missing-workspace","InputRoot":"/x` + esc("d800") + `"`, "path-unpaired-surrogate"},
+		// A high surrogate is paired only by a \u escape: another escape
+		// followed by four hexadecimal digits is not its low half.
+		{"high then another escape and hex", `missing-workspace"`, `missing-workspace` + esc("d800") + `\nDC00"`, "path-unpaired-surrogate"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			parent := t.TempDir()
@@ -80,15 +88,26 @@ func TestServeNamesABindingHoldingUFFFD(t *testing.T) {
 	if err = os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
 	}
+	// A root whose name holds a newline is quoted, so it cannot forge a
+	// second line.
+	forging := filepath.Join(parent, "project\xef\xbf\xbd\nrunner: forged")
+	if err = os.Mkdir(forging, 0700); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		name, inputRoot, want string
 	}{
 		{"flagged", root, "the bound root exists"},
+		{"newline", forging, "the bound root exists"},
 		{"plain", parent, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			state := filepath.Join(parent, "state-"+c.name)
-			boot := `{"dir":"` + state + `","runtime":"` + runtime + `","workspace":"workspace","owner":"owner","token":"` + strings.Repeat("secret", 8) + `","inputRoot":"` + c.inputRoot + "\"}\n"
+			line, err := json.Marshal(map[string]string{"dir": state, "runtime": runtime, "workspace": "workspace", "owner": "owner", "token": strings.Repeat("secret", 8), "inputRoot": c.inputRoot})
+			if err != nil {
+				t.Fatal(err)
+			}
+			boot := string(line) + "\n"
 			var stdout, stderr bytes.Buffer
 			if status := runnerCommand(nil, strings.NewReader(boot), &stdout, &stderr); status != 0 {
 				t.Fatalf("status=%d stderr=%q", status, stderr.String())
@@ -101,6 +120,11 @@ func TestServeNamesABindingHoldingUFFFD(t *testing.T) {
 			}
 			if !strings.Contains(stderr.String(), "U+FFFD") || !strings.Contains(stderr.String(), c.want) || !strings.Contains(stderr.String(), "inputRoot") {
 				t.Fatalf("open diagnostics do not flag the binding: %q", stderr.String())
+			}
+			for _, l := range strings.Split(strings.TrimSuffix(stderr.String(), "\n"), "\n") {
+				if !strings.HasPrefix(l, "runner: ") || strings.HasPrefix(l, "runner: forged") {
+					t.Fatalf("a binding's name forged a line on standard error: %q", stderr.String())
+				}
 			}
 		})
 	}

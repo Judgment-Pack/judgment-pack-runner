@@ -414,7 +414,7 @@ records anything:
 | `path-not-utf8` | a Go host's path, given to `runner.Open` or `runner.RelocateWorkspace`, that is not valid UTF-8 |
 | `path-contains-nul` | a path that contains NUL, such as a decoded `\u0000` |
 | `stored-binding-not-utf8` | a store whose input root binding is not valid UTF-8, which only a direct Go host could have stored; the refusal shows the binding with its bytes escaped, and Runner does not guess the path it stood for |
-| `stored-binding-contains-nul` | a store whose input root binding contains NUL, shown and refused the same way |
+| `stored-binding-contains-nul` | a store whose input root binding contains NUL, shown and refused the same way. A boot line before v0.28.0 could store one too, from a decoded `\u0000`. The operating system refuses a path containing NUL, so such a binding never named a usable directory; since no relocation can name it, re-create the workspace |
 
 The boot line's refusals name the member, not its value. A stored binding refused
 at open is refused by the relocation command too, and Runner offers no operation

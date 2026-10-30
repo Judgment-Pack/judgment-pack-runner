@@ -209,6 +209,8 @@ func TestRelocationRequestBytesAreRefusedBeforeDecoding(t *testing.T) {
 		{"high at the end", strings.Replace(member("x", ""), `"/new"`, `"\ud83d"`, 1), "path-unpaired-surrogate"},
 		{"case-aliased member", strings.Replace(member("x", ""), `"inputRoot":"/new"`, `"INPUTROOT":"/new\udfff"`, 1), "path-unpaired-surrogate"},
 		{"escaped member name", strings.Replace(member("x", ""), `"inputRoot":"/new"`, `"input`+esc("0052")+`oot":"/new`+esc("dfff")+`"`, 1), "path-unpaired-surrogate"},
+		{"case-variant duplicate after a valid one", strings.Replace(member("x", ""), `"inputRoot":"/new"`, `"inputRoot":"/new","InputRoot":"/x`+esc("d800")+`"`, 1), "path-unpaired-surrogate"},
+		{"high then another escape and hex", strings.Replace(member("x", ""), `"/new"`, `"/new`+esc("d800")+`\nDC00"`, 1), "path-unpaired-surrogate"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			raw := strings.Replace(c.raw, `,"x":""`, "", 1)
@@ -310,6 +312,23 @@ func TestTheStatusFlagsABindingHoldingUFFFD(t *testing.T) {
 		t.Fatalf("open diagnostics do not say the bound root is gone: %q", note)
 	}
 	s.Close()
+
+	// A bound path that is a file exists, but not as a directory.
+	file := filepath.Join(relocationTempDir(t), "project\xef\xbf\xbd")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	filed := journalConfig(t)
+	filed.InputRoot = file
+	s = openJournal(t, filed)
+	if status = statusOf(t, s); status.Replacement == nil || !*status.Replacement || status.Exists == nil || *status.Exists || s.InputRootBinding().Exists {
+		t.Fatalf("a file is reported as the bound directory: %+v", status)
+	}
+	s.Close()
+	// The diagnostic quotes the root: a newline in its name stays escaped.
+	if note := (InputRootBinding{Root: "/p\xef\xbf\xbd\nrunner: forged", ReplacementCharacter: true}).String(); strings.Contains(note, "\n") || !strings.Contains(note, `\nrunner: forged`) {
+		t.Fatalf("the diagnostic does not quote the root: %q", note)
+	}
 
 	plain := journalConfig(t)
 	plain.InputRoot = relocationTempDir(t)
