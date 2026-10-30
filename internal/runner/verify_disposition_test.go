@@ -94,11 +94,7 @@ func completeExport(t *testing.T, cfg Config, input Input, cited bool) Verificat
 		t.Fatal(e)
 	}
 	defer s.Close()
-	pack, e := os.ReadFile("testdata/triage.pack.json")
-	if e != nil {
-		t.Fatal(e)
-	}
-	release, e := s.preview(context.Background(), PreviewRequest{Pack: string(pack), Input: input})
+	release, e := s.preview(context.Background(), PreviewRequest{Pack: recordingPack(t), Input: input})
 	if e != nil {
 		t.Fatal(e)
 	}
