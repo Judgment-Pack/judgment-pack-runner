@@ -821,9 +821,12 @@ or evidence, if present, must equal that computation. The derived facts and
 evidence are both the Runtime's inputs: the evidence is the evidence-availability
 document, `{}` when no target names a requirement (spec/dialect.md §8.1), and
 never left out. `verify-run` holds the run's retained facts and evidence to the
-recomputation and refuses an export whose run retains other ones, or leaves one
-out: `retained facts or evidence do not match verified derivation`. An earlier
-export is not repaired into the derived inputs. It retains all source
+recomputation. One that is present and differs, `null` included, is refused as
+supplied input is: `supplied facts differ from the verified derivation` or
+`supplied evidence differs from the verified derivation`. One that is left out is
+refused too: `retained facts or evidence do not match verified derivation`. The
+values are compared as JSON, so the order of their members does not matter. An
+earlier export is not repaired into the derived inputs. It retains all source
 responses/salts, instantiated requests, parameters, source outcomes and lineage.
 Each lineage entry names class, generated influence, presence/omission, reason,
 read digest, actual condition `basis`, dependency pointers and verified citation.

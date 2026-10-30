@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -72,6 +73,39 @@ func TestAdapterHTTPQueryIsAnObjectOfStringTemplates(t *testing.T) {
 	input.Source.Mapping.Sources[0].Arguments = json.RawMessage(`{"query":{"$param":"search"}}`)
 	if plan, err := nextInput(input, []InputProfile{other}, at); err != nil || plan.Next == nil {
 		t.Fatal("adapter-http's rule narrowed another adapter", err)
+	}
+}
+
+// A query template's scope is the case's parameters and the source's own
+// (spec/dialect.md §3, §4.1): a source parameter of type string is a string
+// template's $param, and one of type integer is not.
+func TestAdapterHTTPQueryScopeIncludesTheSourcesOwnParameters(t *testing.T) {
+	base, vendor, _, _ := v2Fixture(t)
+	intake := vendor
+	intake.ID, intake.Shape, intake.Tools = "intake", "http", nil
+	intake.Adapter.Name = "adapter-http"
+	profiles := []InputProfile{vendor, intake}
+	for _, c := range []struct {
+		kind  string
+		valid bool
+	}{{"string", true}, {"integer", false}} {
+		t.Run(c.kind, func(t *testing.T) {
+			mapping := cloneInput(base).Source.Mapping
+			mapping.Sources = append(mapping.Sources, MappingSource{Name: "lookup", Kind: "operation", Profile: intake.ID, ProfileDigest: profileHash(intake), MaxAge: 300,
+				Parameters: map[string]Parameter{"description": {From: "vendor", Pointer: "/vendor/description", Type: c.kind}},
+				Arguments:  json.RawMessage(`{"path":"/records","query":{"d":{"$param":"description"}}}`),
+				Read:       SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/lookup", Source: "/value"}}, Evidence: []EvidenceMapping{}}}})
+			if err := mapping.validate(); err != nil {
+				t.Fatal("the dialect must reach the profile-specific check", err)
+			}
+			err := preflightV2(mapping, profiles)
+			if c.valid && err != nil {
+				t.Fatal("a string source parameter was not in the query's scope", err)
+			}
+			if _, code := verificationOutcome(err); !c.valid && (err == nil || code != codeMismatch) {
+				t.Fatalf("an integer source parameter was not refused as profile-mismatch: %v (code %s)", err, code)
+			}
+		})
 	}
 }
 
@@ -159,9 +193,10 @@ func TestResearchRuntimeRetainsTheDerivedEmptyEvidenceObject(t *testing.T) {
 }
 
 // A run's retained facts and evidence are the inputs its export says were
-// evaluated. Verification recomputes them from the retained acquisitions and
-// refuses an export whose retained run inputs are not that derivation,
-// omitted ones included (#200). The export is the checked-in http-shaped run.
+// evaluated. Verification recomputes them from the retained acquisitions.
+// Present ones that differ were already refused by the preparation's own
+// comparison; an omitted one is now refused too (#200). The export is the
+// checked-in http-shaped run.
 func TestVerificationRefusesRetainedInputsThatAreNotTheDerivation(t *testing.T) {
 	dir := "testdata/mapping-v2-http-shaped/"
 	raw, err := os.ReadFile(dir + "run.json")
@@ -206,13 +241,34 @@ func TestVerificationRefusesRetainedInputsThatAreNotTheDerivation(t *testing.T) 
 			}
 		})
 	}
-	// Retained inputs that are present and differ were refused before, and
-	// still are, by the preparation's own comparison.
-	for _, changed := range []string{"facts", "evidence"} {
+	// The comparison is of JSON values: the same inputs written with their
+	// members in another order still verify.
+	t.Run("members reordered", func(t *testing.T) {
+		var bundle VerificationBundle
+		if err := strictJSON(raw, &bundle); err != nil {
+			t.Fatal(err)
+		}
+		bundle.Run.Input.Facts = json.RawMessage(`{"request":{"type":"data-access","embargoedInformationToUnauthorizedRecipients":false,"completeness":"complete","appropriateness":"pass"}}`)
+		bundle.Run.Input.Evidence = json.RawMessage(`{"sponsor-endorsement":"present","intake-form":"present"}`)
+		prepared, err := verifyPreparation(bundle, profiles, nil)
+		if err != nil {
+			t.Fatal("reordered retained inputs were refused", err)
+		}
+		if bytes.Equal(bundle.Run.Input.Facts, prepared.Facts) || bytes.Equal(bundle.Run.Input.Evidence, prepared.Evidence) {
+			t.Fatal("the reordered inputs are written as the derivation is: the case shows nothing")
+		}
+		if _, err := VerifyInputs(encode(bundle), profiles, digest); err != nil {
+			t.Fatal("the export with reordered retained inputs does not verify", err)
+		}
+	})
+	// Retained inputs that are present and differ, null included, were
+	// refused before this check, and still are, by the preparation's own
+	// comparison and with its messages.
+	for changed, message := range map[string]string{"facts": "supplied facts differ from the verified derivation", "evidence": "supplied evidence differs from the verified derivation"} {
 		t.Run(changed+" null", func(t *testing.T) {
 			export, bundle := tamper(t, func(input map[string]any) { input[changed] = nil })
-			if _, err := verifyPreparation(bundle, profiles, nil); err == nil {
-				t.Error("null retained inputs were accepted")
+			if _, err := verifyPreparation(bundle, profiles, nil); err == nil || !strings.Contains(err.Error(), message) {
+				t.Error("null retained inputs were not refused as before:", err)
 			}
 			if _, err := VerifyInputs(export, profiles, digest); err == nil {
 				t.Error("the export was verified with null retained inputs")
