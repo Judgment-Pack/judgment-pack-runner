@@ -707,13 +707,10 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		return i, codedProblem(codeOverBound, "retained-column preparation exceeds base limit")
 	}
 	c.MappingDigest = hash
-	mapped := Input{Facts: encode(facts), Source: c, Preparation: prep}
-	for _, l := range prep.Lineage {
-		if l.Kind == "evidence" {
-			mapped.Evidence = encode(evidence)
-			break
-		}
-	}
+	// Both derived documents are the Runtime's inputs, an empty
+	// evidence-availability document included (spec/dialect.md §8.1).
+	// Leaving it out would evaluate, and retain, no evidence instead.
+	mapped := Input{Facts: encode(facts), Evidence: encode(evidence), Source: c, Preparation: prep}
 	if len(i.Facts) > 0 && !sameJSON(i.Facts, mapped.Facts) {
 		return i, inputProblem("supplied facts differ from the verified derivation")
 	}

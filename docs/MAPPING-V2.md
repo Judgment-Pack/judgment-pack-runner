@@ -143,7 +143,14 @@ Source kinds:
   operator-allowed tool. For another shape it is the request that source reads (for
   the gateway's `adapter-http`, a path, a method, a query and a body), formed by the
   mapping's author and held to the template rules below, which the receipt commits
-  to. A paged acquisition (`acquisition.pageItems`), which the gateway's
+  to. Under a profile whose `adapter.name` is `adapter-http`, a request's `query`,
+  when it has one, is also an object, not a template form, each of whose members is
+  a string template: a string, a `$text`, or a `$param` naming a parameter of type
+  `string` or `timestamp` (spec/dialect.md §4.1); another `query` is
+  `profile-mismatch`. Other `http`-shaped adapters are not held to it. Each request
+  is held to its profile before the first acquisition, at every preparation and in
+  `verify-run`, and when a saved release is frozen into a workflow, a stage that has
+  not run included. A paged acquisition (`acquisition.pageItems`), which the gateway's
   `adapter-airbyte` makes of every read, is refused whatever the shape
   ([Deferred scope](#deferred-scope)). Each source is one acquisition. The
   preparation's form does not depend on the source's shape: the receipt is verified,
@@ -810,7 +817,13 @@ review obligations, not a search for one `equalsParam` anywhere in the rule.
 Mapping readiness is separate from saved behavioral tests and advisory test coverage.
 
 Runner ignores supplied preparation metadata and recomputes it. Supplied facts
-or evidence, if present, must equal that computation. It retains all source
+or evidence, if present, must equal that computation. The derived facts and
+evidence are both the Runtime's inputs: the evidence is the evidence-availability
+document, `{}` when no target names a requirement (spec/dialect.md §8.1), and
+never left out. `verify-run` holds the run's retained facts and evidence to the
+recomputation and refuses an export whose run retains other ones, or leaves one
+out: `retained facts or evidence do not match verified derivation`. An earlier
+export is not repaired into the derived inputs. It retains all source
 responses/salts, instantiated requests, parameters, source outcomes and lineage.
 Each lineage entry names class, generated influence, presence/omission, reason,
 read digest, actual condition `basis`, dependency pointers and verified citation.
