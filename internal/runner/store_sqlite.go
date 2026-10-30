@@ -165,6 +165,13 @@ func openSQLiteStore(o storeOpening) (_ *sqliteStore, err error) {
 		if err = k.db.QueryRow("SELECT value FROM metadata WHERE key=?", m.key).Scan(&held); err != nil {
 			return nil, err
 		}
+		// A stored binding outside the path domain is refused by name,
+		// whatever the host names now (path_domain.go).
+		if m.key == "inputRoot" {
+			if err = checkStoredBinding(held); err != nil {
+				return nil, err
+			}
+		}
 		if held != m.value {
 			return nil, errors.New("runner store belongs to another owner, workspace or schema")
 		}
