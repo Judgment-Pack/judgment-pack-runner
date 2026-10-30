@@ -132,6 +132,18 @@ func selectedRefusal(id string) error {
 	return bad(codeInputProfileSelected, fmt.Sprintf("The input profile %s is a selected profile, bound only by selected preparation. It is never an ordinary profile, and no release, job or run binds it.", id))
 }
 
+// refuseSelectedIDs refuses the first of ids that names a selected profile,
+// admitted or set aside. A run's submission refuses its mapping through here
+// before it compares the mapping with its job's release.
+func (s *Service) refuseSelectedIDs(ids []string) error {
+	for _, id := range ids {
+		if s.selectedProfileID(id) {
+			return selectedRefusal(id)
+		}
+	}
+	return nil
+}
+
 // loadSelectedProfiles reads the namespace's row when the store opens, after
 // the ordinary profiles. A row Runner did not write refuses to open the store,
 // as the ordinary row does: over its bound, unreadable, not an array of
@@ -148,6 +160,10 @@ func (s *Service) loadSelectedProfiles() error {
 	if err != nil {
 		return err
 	}
+	// The row is measured before it is parsed, as the ordinary row is.
+	if len(raw) > selectedProfilesBytes {
+		return errors.New("selected input profiles exceed their bound")
+	}
 	var profiles []InputProfile
 	var stored []json.RawMessage
 	if strictJSON([]byte(raw), &profiles) != nil || profiles == nil || json.Unmarshal([]byte(raw), &stored) != nil || len(stored) != len(profiles) {
@@ -158,7 +174,7 @@ func (s *Service) loadSelectedProfiles() error {
 			return fmt.Errorf("selected input profiles are invalid: element %d is not a profile in its exact form: %w", i, e)
 		}
 	}
-	if len(raw) > selectedProfilesBytes || len(stored) > selectedProfileBound {
+	if len(stored) > selectedProfileBound {
 		return errors.New("selected input profiles exceed their bound")
 	}
 	ids := map[string]bool{}

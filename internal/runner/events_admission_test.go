@@ -145,6 +145,14 @@ func TestEveryAdmissionRefusalIsJournaledOnce(t *testing.T) {
 		{"submit-run: no facts", 422, &want{"submit-run", "invalid_input", "installation"}, submit(`{"evidence":{"intake-form":"present"}}`, "k")},
 		{"submit-run: evidence of another value", 422, &want{"submit-run", "invalid_evidence", "installation"}, submit(`{"facts":{},"evidence":{"intake-form":"maybe"}}`, "k")},
 		{"submit-run: a mapping the job does not have", 422, &want{"submit-run", "mapping_mismatch", "installation"}, submit(`{"source":{"mapping":{"version":2}}}`, "k")},
+		{"submit-run: a mapping that names a selected profile", 422, &want{"submit-run", codeInputProfileSelected, "installation"}, func(w *coverWorld) int {
+			f := selectedProducer(w.t)
+			_, e := w.s.admitSelectedProfile(f.profile)
+			must(w.t, e)
+			i := cloneInput(f.input)
+			i.Source.ConversionContract = nil
+			return submit(selectedBody(i), "k")(w)
+		}},
 		{"submit-run: a key used with other inputs", 409, &want{"submit-run", "idempotency_conflict", "installation"}, func(w *coverWorld) int {
 			_, _, e := w.s.submit(w.job.ID, "k", journalInput())
 			must(w.t, e)

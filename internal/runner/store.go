@@ -459,6 +459,13 @@ func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *T
 		if !absent(e) {
 			return Run{}, false, e
 		}
+		// A mapping that names a selected profile is refused by that name
+		// before the job, its release or the mapping's comparison with the
+		// release is read (selected_profiles.go). An identical retry has been
+		// answered above, as it is after a profile was set aside.
+		if e = s.refuseSelectedIDs(mappingProfileIDs(input.Source.Mapping)); e != nil {
+			return Run{}, false, e
+		}
 		job, e := s.job(jobID)
 		if e != nil {
 			return Run{}, false, e

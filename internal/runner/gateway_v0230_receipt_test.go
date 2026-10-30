@@ -3,11 +3,14 @@ package runner
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // descriptorProvenance is a gateway v0.23.0 acquisition's optional reference
@@ -177,4 +180,42 @@ func TestAnEarlierGatewayReceiptVerifiesUnchanged(t *testing.T) {
 	if len(got.Preparation.Cites) != 1 || got.Preparation.Cites[0] != (Citation{"mapping.session", 0, receipt["signature"].(string)}) {
 		t.Fatal("citation", got.Preparation.Cites)
 	}
+}
+
+// descriptorProvenance is a member of an MCP acquisition only: on an
+// acquisition of another shape gateway SPEC.md section 9 calls it malformed,
+// and Runner refuses the receipt as acquisition-invalid, as it refuses a
+// paged acquisition, whoever prepares it, though the gateway's key signed it
+// (runner #194, from #195). The same member on an MCP acquisition reads.
+func TestDescriptorProvenanceIsRefusedOnANonMCPAcquisition(t *testing.T) {
+	verificationCodeOf := func(err error) string { _, code := verificationOutcome(err); return code }
+	public, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC().Truncate(time.Second)
+	carry := func(receipt map[string]any) {
+		receipt["acquisition"].(map[string]any)["descriptorProvenance"] = descriptorProvenance()
+	}
+	for _, shape := range []string{"http", "airbyte"} {
+		t.Run(shape, func(t *testing.T) {
+			input, p := shapedFixture(t, shape, public, key, at)
+			if err := preparedByEachCaller(t, input, p, at); err != nil {
+				t.Fatal("the receipt without the member does not read:", err)
+			}
+			resign(t, &input, key, carry)
+			err := preparedByEachCaller(t, input, p, at)
+			var problem *apiError
+			if err == nil || !errors.As(err, &problem) || problem.Message != "Source vendor: descriptor provenance is valid on an MCP acquisition only. No decision was requested." || verificationCodeOf(err) != codeInvalid {
+				t.Fatalf("a %s acquisition carrying descriptorProvenance was not refused as malformed: %v", shape, err)
+			}
+		})
+	}
+	t.Run("mcp", func(t *testing.T) {
+		input, p := shapedFixture(t, "mcp", public, key, at)
+		resign(t, &input, key, carry)
+		if err := preparedByEachCaller(t, input, p, at); err != nil {
+			t.Fatal("an MCP acquisition carrying descriptorProvenance was refused:", err)
+		}
+	})
 }

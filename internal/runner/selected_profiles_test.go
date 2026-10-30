@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -257,6 +261,25 @@ func TestSelectedProfilesRefusalsBothWays(t *testing.T) {
 		}
 	}
 
+	// The planning body's source.conversionContract is the selector itself:
+	// a body that names no selection, or another one, is refused before
+	// planning, though the selector header is the exact installed one.
+	planned := func(contract *ConversionContract) *httptest.ResponseRecorder {
+		i := cloneInput(f.input)
+		i.Source.ConversionContract = contract
+		return serveSelected(t, s, "POST", "/v1/selected-inputs/next", selectedBody(i))
+	}
+	if w := planned(selectedContract()); w.Code != 200 {
+		t.Fatal("the body that names the selector:", w.Code, w.Body.String())
+	}
+	withoutCarrier := selectedContract()
+	withoutCarrier.Roles = []string{"document-validation", "preview", "preparation"}
+	reordered := selectedContract()
+	reordered.Roles[0], reordered.Roles[1] = reordered.Roles[1], reordered.Roles[0]
+	for name, contract := range map[string]*ConversionContract{"no selection": nil, "without producer-carrier": withoutCarrier, "roles reordered": reordered} {
+		wantRefusal(t, "a planning body that names "+name, planned(contract), 422, "capability-unsupported")
+	}
+
 	// Immutable once admitted, across a restart too.
 	changed := f.profile
 	changed.Authority = "another authority"
@@ -441,6 +464,25 @@ func TestSelectedProfilesStoredRowAtOpen(t *testing.T) {
 		}
 		s = openJournalWithout(t, cfg)
 	}
+	// The row is measured before it is parsed, as the ordinary row is: a row
+	// over the bound of bytes is refused for its size, whatever it holds,
+	// and one within it is read.
+	for name, c := range map[string]struct{ row, want string }{
+		"over the bound and no JSON":   {strings.Repeat("[", selectedProfilesBytes+1), "selected input profiles exceed their bound"},
+		"over the bound of bytes":      {distinct(9, strings.Repeat("a", 10<<10)), "selected input profiles exceed their bound"},
+		"within the bound and no JSON": {strings.Repeat("[", selectedProfilesBytes), "selected input profiles are invalid"},
+	} {
+		put(c.row)
+		other, err := Open(cfg)
+		if err == nil {
+			other.Close()
+			t.Fatal(name, "opened")
+		}
+		if err.Error() != c.want {
+			t.Fatalf("%s: refused as %q, want %q", name, err, c.want)
+		}
+		s = openJournalWithout(t, cfg)
+	}
 	put(storedRow([]json.RawMessage{encode(refused), encode(f.profile)}))
 	s = openJournal(t, cfg)
 	defer func() { s.Close() }()
@@ -479,4 +521,181 @@ func openJournalWithout(t *testing.T, cfg Config) *Service {
 	}
 	db.Close()
 	return openJournal(t, cfg)
+}
+
+// A run's submission whose mapping names a selected profile is refused by
+// that name, input_profile_selected, before the job, its release or the
+// mapping's comparison with the release is read, with or without the
+// selector, and no run is made (runner #194, F1). A mapping that names a
+// profile that is neither is still refused as one the job does not have.
+func TestSelectedProfilesRunSubmissionIsRefusedByName(t *testing.T) {
+	w := newCoverWorld(t)
+	f := selectedProducer(t)
+	if r := serveSelected(t, w.s, "POST", "/v1/selected-profiles", string(encode(f.profile))); r.Code != http.StatusCreated {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	plain := cloneInput(f.input)
+	plain.Source.ConversionContract = nil
+	submit := func(path string, i Input, key string, header map[string]string) *httptest.ResponseRecorder {
+		h := map[string]string{"Idempotency-Key": key}
+		for k, v := range header {
+			h[k] = v
+		}
+		return serve(t, w.s, "POST", path, selectedBody(i), h)
+	}
+	selector := map[string]string{"JPack-Conversion-Contract": selectedHeader(selectedContract())}
+	wantRefusal(t, "a run naming a selected profile", submit("/v1/jobs/"+w.job.ID+"/runs", plain, "plain", nil), 422, codeInputProfileSelected)
+	wantRefusal(t, "a selected run naming a selected profile", submit("/v1/retained-column/1/jobs/"+w.job.ID+"/runs", f.input, "selected", selector), 422, codeInputProfileSelected)
+	wantRefusal(t, "a run naming a selected profile, to a job the store does not hold", submit("/v1/jobs/job_unknown/runs", plain, "unknown", nil), 422, codeInputProfileSelected)
+	if _, _, e := w.s.submit(w.job.ID, "direct", plain); e == nil || refusedCode(e) != codeInputProfileSelected {
+		t.Fatal("a submission naming a selected profile:", e)
+	}
+	if n := countRows(t, w.s, "runs"); n != 0 {
+		t.Fatal("runs were made:", n)
+	}
+	neither := cloneInput(plain)
+	neither.Source.Mapping.Sources[0].Profile = "neither"
+	wantRefusal(t, "a run naming a profile that is neither", submit("/v1/jobs/"+w.job.ID+"/runs", neither, "neither", nil), 422, "mapping_mismatch")
+}
+
+// refusedCode is the code of an API error, or "".
+func refusedCode(e error) string {
+	var problem *apiError
+	if errors.As(e, &problem) {
+		return problem.Code
+	}
+	return ""
+}
+
+// storeRows is every row of every table of the store, schema included, each
+// written out value by value and sorted within its table.
+func storeRows(t *testing.T, s *Service) map[string][]string {
+	t.Helper()
+	tables := []string{"sqlite_master"}
+	names, err := s.db.Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for names.Next() {
+		var name string
+		if err = names.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, name)
+	}
+	if err = names.Close(); err != nil {
+		t.Fatal(err)
+	}
+	all := map[string][]string{}
+	for _, table := range tables {
+		rows, err := s.db.Query(`SELECT * FROM "` + table + `"`)
+		if err != nil {
+			t.Fatal(table, err)
+		}
+		columns, _ := rows.Columns()
+		held := []string{}
+		for rows.Next() {
+			values := make([]any, len(columns))
+			pointers := make([]any, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			if err = rows.Scan(pointers...); err != nil {
+				t.Fatal(table, err)
+			}
+			var row strings.Builder
+			for i, v := range values {
+				if b, ok := v.([]byte); ok {
+					v = string(b)
+				}
+				fmt.Fprintf(&row, "%s=%#v;", columns[i], v)
+			}
+			held = append(held, row.String())
+		}
+		if err = rows.Close(); err != nil {
+			t.Fatal(table, err)
+		}
+		sort.Strings(held)
+		all[table] = held
+	}
+	return all
+}
+
+// storeFiles is each file under the store's directory but the database's
+// own, with its bytes' digest.
+func storeFiles(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasPrefix(d.Name(), "runs.sqlite") {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[path] = digest(b)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+// Selected planning persists nothing (runner #194, O2): after the profile's
+// admission, which writes the namespace's row and nothing else, planning the
+// next source, preparing an input completely and a refused planning leave
+// every table of the store, and every other file under its directory, as
+// they were.
+func TestSelectedPlanningPersistsNothing(t *testing.T) {
+	cfg := journalConfig(t)
+	s := openJournal(t, cfg)
+	defer s.Close()
+	f := selectedProducer(t)
+	before := storeRows(t, s)
+	if w := serveSelected(t, s, "POST", "/v1/selected-profiles", string(encode(f.profile))); w.Code != http.StatusCreated {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	admitted, files := storeRows(t, s), storeFiles(t, cfg.Dir)
+	var row []string
+	for _, r := range admitted["metadata"] {
+		if strings.Contains(r, `"`+selectedProfilesKey+`"`) {
+			row = append(row, r)
+		}
+	}
+	if len(row) != 1 {
+		t.Fatal("the admission wrote no row of its own:", admitted["metadata"])
+	}
+	without := map[string][]string{}
+	for table, rows := range admitted {
+		without[table] = slices.DeleteFunc(slices.Clone(rows), func(r string) bool { return r == row[0] })
+	}
+	if !reflect.DeepEqual(without, before) {
+		t.Fatal("the admission wrote more than the namespace's row")
+	}
+
+	partial := cloneInput(f.input)
+	partial.Source.Sources = nil
+	refused := cloneInput(f.input)
+	refused.Source.Mapping.Sources[0].Profile = "unadmitted"
+	for name, c := range map[string]struct {
+		input  Input
+		status int
+	}{"the next source": {partial, 200}, "a complete preparation": {f.input, 200}, "a refused planning": {refused, 422}} {
+		if w := serveSelected(t, s, "POST", "/v1/selected-inputs/next", selectedBody(c.input)); w.Code != c.status {
+			t.Fatal(name, w.Code, w.Body.String())
+		}
+	}
+	if after := storeRows(t, s); !reflect.DeepEqual(after, admitted) {
+		for table := range after {
+			if !reflect.DeepEqual(after[table], admitted[table]) {
+				t.Errorf("selected planning changed the table %s:\n%q\n%q", table, admitted[table], after[table])
+			}
+		}
+		t.FailNow()
+	}
+	if after := storeFiles(t, cfg.Dir); !reflect.DeepEqual(after, files) {
+		t.Fatal("selected planning changed the store's files:", files, after)
+	}
 }
