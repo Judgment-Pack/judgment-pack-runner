@@ -340,7 +340,7 @@
               "maxLength": 128,
               "pattern": "^[!-~]+$"
             },
-            "description": "An identical retry under the same key returns the run first accepted, also after a profile its mapping names was set aside. A retry whose input is an import that names a set-aside profile is refused as 422 input_profile_set_aside: the import is bound before the retry is looked up."
+            "description": "An identical retry under the same key returns the run first accepted, also after a profile its mapping names was set aside. A retry whose input is an import that names a set-aside profile is refused as 422 input_profile_set_aside: the import is bound before the retry is looked up. A request whose mapping names a selected profile (admitSelectedProfile) and that is not such a retry is refused as 422 input_profile_selected before its mapping is compared with the job's release."
           }
         ]
       }
@@ -2187,7 +2187,7 @@
               "maxLength": 128,
               "pattern": "^[!-~]+$"
             },
-            "description": "An identical retry under the same key returns the run first accepted, also after a profile its mapping names was set aside. A retry whose input is an import that names a set-aside profile is refused as 422 input_profile_set_aside: the import is bound before the retry is looked up."
+            "description": "An identical retry under the same key returns the run first accepted, also after a profile its mapping names was set aside. A retry whose input is an import that names a set-aside profile is refused as 422 input_profile_set_aside: the import is bound before the retry is looked up. A request whose mapping names a selected profile (admitSelectedProfile) and that is not such a retry is refused as 422 input_profile_selected before its mapping is compared with the job's release."
           },
           {
             "name": "JPack-Conversion-Contract",
@@ -2386,7 +2386,7 @@
             }
           },
           "422": {
-            "description": "selected_profile_unsupported, selected_profile_limit or selected_preparation_unselected",
+            "description": "selected_profile_unsupported or selected_profile_limit",
             "content": {
               "application/json": {
                 "schema": {

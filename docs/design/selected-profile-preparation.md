@@ -60,12 +60,17 @@ is evicted. The reasons:
 `POST /v1/retained-column/1/selected-inputs/next` runs next-input planning under the
 selected profiles alone. It prepares and checks the supplied input and returns either
 the next source to acquire or the complete prepared input. It acquires no source,
-calls no network, evaluates nothing and persists nothing. The namespace has no
+calls no network, evaluates nothing and persists nothing: every table of the store is
+the same after it as before. The namespace has no
 release, job or run route. A selected profile is never bound outside this route:
 every ordinary binding resolves through `refuseSetAsideIDs`, which refuses a selected
 profile as 422 `input_profile_selected`. That covers planning, preview, import,
-release creation, job creation and upgrade, and a run's submission and start. In the
-other direction, selected planning refuses an input that names an ordinary profile as
+release creation, job creation and upgrade, and a run's submission and start. A run's
+submission whose mapping names a selected profile is refused by that name before the
+job, its release or the mapping's comparison with the release is read. Only an
+identical retry under an idempotency key already used is answered first, with the run
+first accepted, as it is after a profile was set aside. In the other direction,
+selected planning refuses an input that names an ordinary profile as
 `selected_profile_ordinary`. The route keeps no state per request, so a cancelled
 request leaves nothing to clean up.
 

@@ -103,8 +103,11 @@ Runner verifies such a receipt as it verifies one without the member: the member
 by the receipt's signature and kept in the retained response as signed, and the verdict,
 the facts read and the citation are the same. Runner verifies one retained receipt and holds
 neither the snapshot nor the statement, so its acceptance does not establish §9's property;
-a Gateway reader over the store that retains them does
-(`TestAGatewayV0230ReceiptWithDescriptorProvenanceIsVerified`,
+a Gateway reader over the store that retains them does. On an acquisition of another
+shape the member is malformed (§9), and Runner refuses the receipt as
+`acquisition-invalid`, as it refuses a paged acquisition, before its signature is checked
+(`TestDescriptorProvenanceIsRefusedOnANonMCPAcquisition`,
+`TestAGatewayV0230ReceiptWithDescriptorProvenanceIsVerified`,
 `TestTheGatewayV0230DescriptorProvenanceVectorVerifies`,
 `TestAnEarlierGatewayReceiptVerifiesUnchanged`).
 

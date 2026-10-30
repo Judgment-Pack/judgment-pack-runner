@@ -296,6 +296,11 @@ func verifyAcquisition(raw, args []byte, p InputProfile, public ed25519.PublicKe
 	if !ok || shape != p.Shape {
 		return fail("acquisition shape differs from the trusted profile")
 	}
+	// descriptorProvenance (gateway SPEC.md section 9) is carried by an MCP
+	// acquisition only; on one of another shape the member is malformed.
+	if _, present := a["descriptorProvenance"]; present && shape != "mcp" {
+		return fail("descriptor provenance is valid on an MCP acquisition only")
+	}
 	if str("keyId") != keyID(p.PublicKey) || str("source") != p.Source || str("authority") != p.Authority {
 		return fail("receipt identity differs from the trusted profile")
 	}
