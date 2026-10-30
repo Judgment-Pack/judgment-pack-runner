@@ -50,7 +50,7 @@
       "checks": ["local-paths", "agent-docs", "diff-check", "ci-evidence"]
     },
     {
-      "paths": ["*.md", "docs/**", "LICENSE", "deploy/**", "scripts/checks/local-paths.sh", "scripts/sync-agent-docs.sh", "scripts/dev/handover_check.sh"],
+      "paths": ["*.md", "docs/**", "LICENSE", "deploy/**", "scripts/checks/local-paths.sh", "scripts/sync-agent-docs.sh", "scripts/dev/handover_check.sh", "scripts/recording-set.sh"],
       "checks": ["local-paths", "agent-docs", "diff-check"]
     }
   ]

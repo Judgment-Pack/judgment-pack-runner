@@ -74,32 +74,38 @@ func TestResearchRunsAreSignedWitnessedAndBound(t *testing.T) {
 		} else {
 			h.session, h.next, h.previous = researchSession+"-2", 0, nil
 		}
-		t.Run(r.name, func(t *testing.T) {
-			plan := r.plan(h)
-			run := testConfig(t)
-			keyPath := signingKey(t)
-			run.SigningKey = keyPath
-			run.Runtime = signingRuntimeWithKey(t, run.Runtime, filepath.Join(t.TempDir(), "signing.log"), keyPath)
-			run.InputProfiles = plan.profiles
-			input := h.researchInput(t, plan, time.Now().UTC().Truncate(time.Second))
-			bundle := signedAndWitnessedExportOf(t, run, input, plan.profiles, "Research: "+r.name, r.name)
-			v, err := VerifyInputs(encode(bundle), plan.profiles, bundle.ReleaseDigest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if bundle.Run.Input.Source.Import == nil || bundle.Run.Input.Preparation.Version != 3 || v.Classes.Generated == 0 || v.Freshness == nil {
-				t.Fatalf("the run is not of a research dialect bound at import: %+v", v.Classes)
-			}
-			if runtimeTakesBinding(t, os.Getenv("JPACK_TEST_BIN")) && (v.Binding == nil || v.Binding.Status != BindingMatches) {
-				t.Fatalf("the record does not bind the preparation: %+v", v.Binding)
-			}
-			if dir != "" {
-				out := filepath.Join(dir, r.name)
-				if err = os.MkdirAll(out, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				writeBoundFixtureOf(t, out, bundle, plan.profiles)
-			}
-		})
+		t.Run(r.name, func(t *testing.T) { recordResearchRun(t, h, r, dir) })
+	}
+}
+
+// recordResearchRun completes the research run r, from the stand-in h,
+// signed, witnessed and bound, verifies it offline, and writes its export
+// into dir/<name> when dir is set.
+func recordResearchRun(t *testing.T, h *researchStandIn, r researchRecording, dir string) {
+	t.Helper()
+	plan := r.plan(h)
+	run := testConfig(t)
+	keyPath := signingKey(t)
+	run.SigningKey = keyPath
+	run.Runtime = signingRuntimeWithKey(t, run.Runtime, filepath.Join(t.TempDir(), "signing.log"), keyPath)
+	run.InputProfiles = plan.profiles
+	input := h.researchInput(t, plan, time.Now().UTC().Truncate(time.Second))
+	bundle := signedAndWitnessedExportOf(t, run, input, plan.profiles, "Research: "+r.name, r.name)
+	v, err := VerifyInputs(encode(bundle), plan.profiles, bundle.ReleaseDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Run.Input.Source.Import == nil || bundle.Run.Input.Preparation.Version != 3 || v.Classes.Generated == 0 || v.Freshness == nil {
+		t.Fatalf("the run is not of a research dialect bound at import: %+v", v.Classes)
+	}
+	if runtimeTakesBinding(t, os.Getenv("JPACK_TEST_BIN")) && (v.Binding == nil || v.Binding.Status != BindingMatches) {
+		t.Fatalf("the record does not bind the preparation: %+v", v.Binding)
+	}
+	if dir != "" {
+		out := filepath.Join(dir, r.name)
+		if err = os.MkdirAll(out, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeBoundFixtureOf(t, out, bundle, plan.profiles)
 	}
 }
