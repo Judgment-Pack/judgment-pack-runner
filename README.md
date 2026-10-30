@@ -140,11 +140,16 @@ A release retains the exact pack text, pack digest, generated config and lock,
 validation output, sample inputs/output, and a digest-pinned copy of the Runtime
 executable. A job's only revision in this pilot is revision 1. Later edits to a pack
 cannot change an existing job. Create and review a new job for changed policy.
-The evaluator is Runtime's **experimental JPS 0.2.0-draft** contract, outputVersion 2;
-the exact selected retained-column path (Spec v0.3.0) additionally admits Runtime's existing
-Core 0.3.0 Base contract and binds responses and replay to the retained pack version.
-Ordinary and manual paths retain 0.2.0-draft. This package does not expand Runtime's
-conformance claim or approve external action.
+The evaluator is selected by the Core version the pack declares as `specVersion`, exactly:
+Runtime's **experimental JPS 0.2.0-draft** contract or its Core 0.3.0 contract, outputVersion 2,
+on ordinary runs and on the exact selected retained-column path (Spec v0.3.0) alike. Core 0.3.0
+needs a pinned Runtime that evaluates it, such as v0.39.0. A 0.2.0-draft pack is never upgraded:
+Runner gives the Runtime the release's pack unchanged, refuses an answer that names another
+Core version, and binds responses, release tests and replay to the retained pack's version.
+Each run's result and audit record name the version (`evaluatorSpecVersion`), and `verify-run`
+refuses a record that names another one than the release's pack declares. A pack that declares
+any other version is refused by name. The manual profile retains 0.2.0-draft. This package does
+not expand Runtime's conformance claim or approve external action.
 
 For manual inputs and version 1 file mappings, evidence is a caller-declared map of requirement IDs to `present`, `absent`, or
 `unknown`. It is not verified source acquisition. Omitted evidence is preserved as

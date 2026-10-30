@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -231,11 +232,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		SpecVersion string `json:"specVersion"`
 	}
 	if json.Unmarshal([]byte(req.Pack), &doc) != nil || !supportedEvaluatorSpec(doc.SpecVersion, inputConversion(req.Input)) {
-		message := "This runner supports the Runtime's experimental 0.2.0-draft evaluator contract."
-		if inputConversion(req.Input) != nil {
-			message = "This retained-column selection supports the Runtime's experimental 0.2.0-draft and Core 0.3.0 Base evaluator contracts."
-		}
-		return Release{}, bad("invalid_pack", message)
+		return Release{}, bad("invalid_pack", unsupportedEvaluatorSpec(doc.SpecVersion))
 	}
 	r := Release{SchemaVersion: "1", ID: id("release_"), Pack: req.Pack, PackDigest: digest([]byte(req.Pack)), PackID: doc.ID, PackVersion: doc.Version, Title: doc.Title, RuntimeDigest: s.runtimeDigest, CreatedAt: now(), Sample: req.Input, Tests: "not-run"}
 	if req.Input.Source != nil {
@@ -363,18 +360,43 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 	return evaluateWithInvoker(ctx, bin, r, input, dir, rehearsal, signing, invokeWith)
 }
 
-// A selected leaf adds the existing Core0.3 Base evaluator; it does not change
-// ordinary pack admission or replace historical selected Core0.2 releases.
+// The evaluator a release is run under is the Core version its pack declares,
+// exactly: specVersion selects it, and nothing else does. Runner admits the
+// pinned Runtime's experimental 0.2.0-draft contract and its Core 0.3.0
+// contract, on ordinary and selected retained-column runs alike (#188). A pack
+// is never evaluated under another version than the one it declares: a
+// 0.2.0-draft pack is not upgraded, and the Runtime's answer must name the
+// declared version (evaluatorSpecMatches). A selected run admits 0.3.0 only
+// under the installed selection, as it did before ordinary runs did.
 func supportedEvaluatorSpec(version string, selection *ConversionContract) bool {
-	if version == "0.2.0-draft" {
+	switch version {
+	case "0.2.0-draft":
 		return true
+	case "0.3.0":
+		return selection == nil || selection.validate("document-validation", "preview", "preparation") == nil
 	}
-	return version == "0.3.0" && selection != nil && selection.validate("document-validation", "preview", "preparation") == nil
+	return false
 }
-func expectedEvaluatorSpec(r Release) string {
-	if inputConversion(r.Sample) == nil {
-		return "0.2.0-draft"
+
+// unsupportedEvaluatorSpec is the refusal of a pack whose declared Core
+// version Runner does not evaluate: it names the version the pack declares,
+// when that is a short string, and the versions Runner evaluates.
+func unsupportedEvaluatorSpec(declared string) string {
+	const supported = "This runner evaluates packs that declare specVersion 0.2.0-draft or 0.3.0"
+	switch {
+	case declared == "":
+		return supported + "; this pack declares none."
+	case len(declared) > 64:
+		return supported + "; this pack declares another version."
 	}
+	return fmt.Sprintf("%s; this pack declares %q.", supported, declared)
+}
+
+// expectedEvaluatorSpec is the Core version a release's runs are evaluated
+// under: the one its pack declares, or "" when Runner evaluates none such.
+// Every ordinary release Runner froze before 0.3.0 was admitted declares
+// 0.2.0-draft, which it still names.
+func expectedEvaluatorSpec(r Release) string {
 	var pack struct {
 		SpecVersion string `json:"specVersion"`
 	}
@@ -397,7 +419,12 @@ func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input
 	if e := runtimeConversionInput(limits, input, r.Pack); e != nil {
 		return nil, nil, nil, nil, e
 	}
-	if expectedEvaluatorSpec(r) == "" {
+	// A selected release whose evaluator is not admitted reaches no Runtime,
+	// as before #188. Every release's Runtime answer is held to the Core
+	// version its pack declares (evaluatorSpecMatches, below), which no answer
+	// matches when Runner evaluates no such version; preview refuses such a
+	// pack by name before any release of it exists.
+	if inputConversion(r.Sample) != nil && expectedEvaluatorSpec(r) == "" {
 		return nil, nil, nil, nil, errors.New("unsupported retained release evaluator contract")
 	}
 	// The directory is exclusively created per invocation and never reused.

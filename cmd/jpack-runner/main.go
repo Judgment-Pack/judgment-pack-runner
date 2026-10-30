@@ -179,8 +179,8 @@ const verificationCoverage = "Every retained result disposition must match the a
 	"unsignedParameters, binding, runChain, signature), standard error says so, and a --require flag the " +
 	"export fails is added to the error; if the preparation fails its own verification, the report is the " +
 	"finding alone and the error carries both refusals. A refusal before the preparation is verified (the " +
-	"export's envelope, the release's digest, the record's bytes, chain entry or signature sidecar) " +
-	"reports alone. " +
+	"export's envelope, the release's digest, the record's bytes, chain entry, signature sidecar or Core " +
+	"version) reports alone. " +
 	"The record signature covers the exact audit bytes, " +
 	"not the export envelope: version, releaseDigest, release, inputs, chain (entry and checkpoint), " +
 	"run.trigger, run.schemaVersion, run.id, run.jobId, run.releaseId, run.revision, run.state, run.input " +
@@ -195,7 +195,10 @@ const verificationCoverage = "Every retained result disposition must match the a
 	"and refuses on a mismatch; nothing else of run.input is bound by it. The operator, who holds the key, " +
 	"can recompute a preparation and sign its record again with the new binding, which only --require-witnessed, " +
 	"against a checkpoint held independently, shows. Separate release-digest, " +
-	"input, chain and checkpoint checks bind only what their documented scope states."
+	"input, chain and checkpoint checks bind only what their documented scope states. The Core version " +
+	"a run's record names, as run.result.evaluatorSpecVersion and as the audit record's " +
+	"evaluatorSpecVersion, each where present, must be the specVersion the release's pack declares, " +
+	"0.2.0-draft or 0.3.0, which selected its evaluator; a difference fails with evaluator-spec-mismatch."
 
 func verifyRun(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("verify-run", flag.ContinueOnError)
