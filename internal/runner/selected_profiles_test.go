@@ -699,3 +699,113 @@ func TestSelectedPlanningPersistsNothing(t *testing.T) {
 		t.Fatal("selected planning changed the store's files:", files, after)
 	}
 }
+
+// The bytes of the refusals at the boundary of a full ordinary registry and
+// the selected namespace (runner #190), as failure writes them: written by
+// hand from the messages of profile_registry.go and selected_profiles.go.
+const (
+	refusedOrdinaryLimit = `{"error":{"code":"input_profile_limit","message":"At most 16 installation input profiles are supported, a stored profile set aside included. Existing profiles were retained.","retryable":false}}` + "\n"
+	refusedSelectedLimit = `{"error":{"code":"selected_profile_limit","message":"At most 16 selected profiles of at most 81920 bytes together are supported, apart from the 16 ordinary profiles. Existing profiles were retained.","retryable":false}}` + "\n"
+	refusedOrdinaryID    = `{"error":{"code":"selected_profile_ordinary","message":"This ID names an ordinary installation profile, which is never selected. Use a new profile ID.","retryable":false}}` + "\n"
+	refusedSelectedID    = `{"error":{"code":"input_profile_selected","message":"This ID names a selected profile, which is never an ordinary profile. Use a new profile ID.","retryable":false}}` + "\n"
+)
+
+// refusedOrdinaryPlanning is the refusal of selected planning of an input
+// that names the ordinary profile id.
+func refusedOrdinaryPlanning(id string) string {
+	return `{"error":{"code":"selected_profile_ordinary","message":"The input profile ` + id + ` is an ordinary installation profile. Selected preparation binds selected profiles only.","retryable":false}}` + "\n"
+}
+
+// refusedSelectedBinding is the refusal of an ordinary planning, preview,
+// release, job or run that names the selected profile id.
+func refusedSelectedBinding(id string) string {
+	return `{"error":{"code":"input_profile_selected","message":"The input profile ` + id + ` is a selected profile, bound only by selected preparation. It is never an ordinary profile, and no release, job or run binds it.","retryable":false}}` + "\n"
+}
+
+// wantBytes holds an answer to its status and its exact bytes.
+func wantBytes(t *testing.T, what string, w *httptest.ResponseRecorder, status int, body string) {
+	t.Helper()
+	if w.Code != status || w.Body.String() != body {
+		t.Fatalf("%s: want %d %q, got %d %q", what, status, body, w.Code, w.Body.String())
+	}
+}
+
+// installedProducer is the host's installed ordinary generated-input profile
+// (runner #190): a retained-column producer, registered as an ordinary
+// profile under its own id, with its input bound to it.
+func installedProducer(t *testing.T) producerFixture {
+	t.Helper()
+	f := selectedProducer(t)
+	f.profile.ID = "installed"
+	f.input.Source.Mapping.Sources[0].Profile = f.profile.ID
+	f.input.Source.Mapping.Sources[0].ProfileDigest = profileHash(f.profile)
+	return f
+}
+
+// fifteenConfigured is 15 configured ordinary profiles, the first the one
+// ordinary is, and the others it under other ids, each changed by change.
+func fifteenConfigured(ordinary InputProfile, change func(*InputProfile)) []InputProfile {
+	profiles := []InputProfile{ordinary}
+	for i := 1; i < 15; i++ {
+		p := ordinary
+		p.ID = fmt.Sprintf("configured%d", i)
+		if change != nil {
+			change(&p)
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles
+}
+
+// Selected planning is measured against profilesBytes over the selected
+// profiles alone (runner #190). Sixteen ordinary profiles may together exceed
+// that bound, each holding up to 32 KiB; they never consume the namespace's
+// bytes, so the selected profile prepares beside them. The installed
+// profile's ordinary retained preparation, planned under the ordinary
+// profiles, keeps its own bound over them as before. The ordinary registry
+// also fills to its 16 after a selected admission, and no further.
+func TestSelectedPlanningIsNotMeasuredWithTheOrdinaryProfiles(t *testing.T) {
+	cfg := journalConfig(t)
+	ordinaryInput, vendors, _, _ := v2Fixture(t)
+	cfg.InputProfiles = fifteenConfigured(vendors, func(p *InputProfile) {
+		p.Tools = nil
+		for j := 0; j < 64; j++ {
+			p.Tools = append(p.Tools, fmt.Sprintf("tool%02d-%s", j, strings.Repeat("x", 100)))
+		}
+	})
+	s := openJournal(t, cfg)
+	defer s.Close()
+	selected := selectedProducer(t)
+	if w := serveSelected(t, s, "POST", "/v1/selected-profiles", string(encode(selected.profile))); w.Code != http.StatusCreated {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	installed := installedProducer(t)
+	if w := serve(t, s, "POST", "/v1/input-profiles", string(encode(installed.profile)), nil); w.Code != http.StatusCreated {
+		t.Fatal("the 16th ordinary profile, after a selected admission:", w.Code, w.Body.String())
+	}
+	wantBytes(t, "a 17th ordinary profile", serve(t, s, "POST", "/v1/input-profiles", string(encode(selectedNamed(selectedProducer(t), "seventeenth"))), nil), 422, refusedOrdinaryLimit)
+	if n := len(encode(s.inputProfiles())); len(s.inputProfiles()) != 16 || n <= selectedProfilesBytes {
+		t.Fatal("the 16 ordinary profiles do not exceed profilesBytes together:", len(s.inputProfiles()), n)
+	}
+
+	w := serveSelected(t, s, "POST", "/v1/selected-inputs/next", selectedBody(selected.input))
+	var plan InputPlan
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if w.Code != 200 || plan.Input == nil || plan.Input.Preparation == nil {
+		t.Fatal("selected preparation beside ordinary profiles over profilesBytes:", w.Code, w.Body.String())
+	}
+	plan = InputPlan{}
+	w = serve(t, s, "POST", "/v1/inputs/next", string(encode(ordinaryInput)), nil)
+	_ = json.Unmarshal(w.Body.Bytes(), &plan)
+	if w.Code != 200 || plan.Input == nil {
+		t.Fatal("ordinary planning:", w.Code, w.Body.String())
+	}
+	w = serveSelected(t, s, "POST", "/v1/inputs/next", selectedBody(installed.input))
+	var refusal struct {
+		Error struct{ Code, Message string } `json:"error"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &refusal)
+	if w.Code != 422 || refusal.Error.Code != "invalid_source_input" || refusal.Error.Message != "profiles exceed selected limit" {
+		t.Fatal("the installed profile's retained preparation is not held to profilesBytes over the ordinary profiles:", w.Code, w.Body.String())
+	}
+}
