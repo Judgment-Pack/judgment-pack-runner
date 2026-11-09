@@ -74,6 +74,39 @@ selected planning refuses an input that names an ordinary profile as
 `selected_profile_ordinary`. The route keeps no state per request, so a cancelled
 request leaves nothing to clean up.
 
+## A full ordinary registry
+
+Runner #190 asked whether a host whose ordinary registry is full can still prepare
+inputs for an explicitly selected retained generated-input profile. It can, through
+this namespace, and nothing else is needed: no boot flag, configuration member,
+second service, second workspace or second executor owner.
+
+- **What counts as full.** The 16 ordinary profiles are counted together: configured,
+  registered, and set aside ([installed input profiles](installed-input-profiles.md)).
+  The host of Judgment-Pack/judgment-pack-desk#599 is full: 15 configured profiles and
+  its installed ordinary generated-input profile, a retained-column producer
+  registered as ordinary. A 17th ordinary profile is refused as `input_profile_limit`.
+- **What the host does.** It admits the selected profile with
+  `POST /v1/retained-column/1/selected-profiles`, and prepares with
+  `POST /v1/retained-column/1/selected-inputs/next`. Both go to the running Service,
+  under its executor lease when it holds one. The order does not matter: the ordinary
+  registry fills to its 16 after a selected admission too.
+- **What stays as it was.** Ordinary planning, the installed profile's retained
+  preparation and ordinary runs go on as before, including a run already in the
+  executor and one queued behind it. No ordinary profile is evicted, no work is
+  paused, and the ordinary ceiling is not raised. A restart finds both namespaces and
+  the runs as they were, under the one lease.
+- **Bytes.** Selected planning is measured against `profilesBytes` over the selected
+  profiles alone. The ordinary profiles never count toward it, so 16 ordinary profiles
+  over 81920 bytes together do not narrow the namespace. Ordinary retained preparation
+  is planned under the ordinary profiles and held to the same `profilesBytes` over
+  them, as before. The namespace changes neither.
+
+`TestSelectedProfilesBesideFifteenConfiguredAndTheInstalledProfile` executes this
+host under an executor lease. It pins byte for byte the refusals at both ceilings and
+across the boundary in both directions.
+`TestSelectedPlanningIsNotMeasuredWithTheOrdinaryProfiles` executes the bytes rule.
+
 ## Routes and the capability report
 
 The three routes follow the retained-column adapter's style. Each is served only under
