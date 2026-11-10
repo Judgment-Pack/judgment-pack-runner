@@ -197,9 +197,12 @@ func adapterHTTPQuery(source MappingSource, m InputMapping) error {
 	for name, parameter := range source.Parameters {
 		scope[name] = parameter.Type
 	}
+	// A member's name is the request's own and quoted: a newline in it
+	// stays escaped. The source's name is held to the dialect's name form
+	// before this check.
 	for name, value := range query {
 		if !stringTemplate(value, scope) {
-			return fmt.Errorf("source %s: adapter-http query member %s must be a string template", source.Name, name)
+			return fmt.Errorf("source %s: adapter-http query member %q must be a string template", source.Name, name)
 		}
 	}
 	return nil
