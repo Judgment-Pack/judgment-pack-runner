@@ -396,10 +396,13 @@ stored by Desk, outside Runner's job/run records.
 
 ## Paths are UTF-8
 
-Every path a host gives Runner is valid UTF-8 with no NUL: the boot line's `dir`,
-`workspace`, `runtime` and `inputRoot`, the same members of a direct Go host's
+These paths a host gives Runner are held to valid UTF-8 with no NUL: the boot line's
+`dir`, `workspace`, `runtime` and `inputRoot`, the same members of a direct Go host's
 `runner.Config`, and a relocation's `dir`, `workspace`, `previousInputRoot` and
-`inputRoot`. So is every stored input root binding. Runner refuses a path outside
+`inputRoot`. So is every stored input root binding. Other paths a host gives Runner,
+such as the boot line's `signingKey` and `executorOwnership.root`, are not held to
+this domain; a boot line whose bytes are not valid UTF-8 is still refused whole
+(`request-not-utf8`). Runner refuses a path outside
 this domain and never normalizes it: `encoding/json` would decode an invalid byte, or
 an unpaired surrogate escape, as U+FFFD, which names a different path. Raw-byte
 roots are not supported, and there is no byte-exact relocation route; a host whose
@@ -424,9 +427,12 @@ A binding that contains U+FFFD is valid and opens: Runner cannot tell a literal
 U+FFFD from one that replaced a byte lost before the path reached it, and does not
 try. `GET /v1/status` reports `inputRootReplacementCharacter`, true when the bound
 input root contains U+FFFD, and `inputRootExists`, true when it exists as a
-directory, whenever an input root is bound. When the binding contains U+FFFD,
-Runner says so on standard error as it opens, with whether the bound root exists,
-and a Go host reads the same from `Service.InputRootBinding`. A literal U+FFFD in a
+directory, whenever an input root is bound. When the root's status cannot be read
+for a reason other than its absence, such as a permission refused on a directory
+above it, `inputRootUnreadable` is `true` in place of `inputRootExists`: Runner does
+not report such a root as absent. When the binding contains U+FFFD, Runner says so
+on standard error as it opens, with whether the bound root exists or could not be
+read, and a Go host reads the same from `Service.InputRootBinding`. A literal U+FFFD in a
 valid path is kept, compared, relocated and replayed byte for byte.
 
 ## API

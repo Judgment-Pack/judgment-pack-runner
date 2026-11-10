@@ -309,6 +309,12 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 		if !sameJSON(encode(prepared.Preparation), encode(input.Preparation)) {
 			return nil, nil, nil, nil, errors.New("retained preparation failed recomputation")
 		}
+		// The facts and evidence the Runtime is given are the derivation's,
+		// as verify-run holds them: a run that retained other ones, or left
+		// one out, is not evaluated, and none is filled in.
+		if e := retainedInputsDerived(input, prepared); e != nil {
+			return nil, nil, nil, nil, e
+		}
 	}
 	if digest([]byte(r.Pack)) != r.PackDigest {
 		return nil, nil, nil, nil, errors.New("release pack digest mismatch")

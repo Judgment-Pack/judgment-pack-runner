@@ -276,3 +276,45 @@ func TestVerificationRefusesRetainedInputsThatAreNotTheDerivation(t *testing.T) 
 		})
 	}
 }
+
+// The adapter-http query refusals, byte for byte (written by hand). A query
+// member's name is the request's own and is quoted, so a newline in it cannot
+// start a line of its own on verify-run's standard error, where a refusal is
+// printed after "runner: ".
+func TestAdapterHTTPQueryRefusalBytes(t *testing.T) {
+	base, profile, _, at := v2Fixture(t)
+	profile.Shape, profile.Tools = "http", nil
+	profile.Adapter.Name = "adapter-http"
+	base.Source.Mapping.Case.Parameters["search"] = Parameter{Pointer: "/search", Type: "string"}
+	base.Source.Case = json.RawMessage(`{"id":7,"search":"synthetic query"}`)
+	base.Source.Mapping.Sources[0].ProfileDigest = profileHash(profile)
+	base.Source.Sources = map[string]SourceValue{}
+	for _, c := range []struct{ name, arguments, want string }{
+		{"arguments", `["query"]`, "source vendor: operation arguments must be an object"},
+		{"query", `{"query":"query"}`, "source vendor: adapter-http query must be an object of string templates"},
+		{"whole parameter", `{"query":{"$param":"search"}}`, "source vendor: adapter-http query must not be a template form"},
+		{"whole text", `{"query":{"$text":"q={{vendorId}}"}}`, "source vendor: adapter-http query must not be a template form"},
+		{"member", `{"query":{"id":7}}`, `source vendor: adapter-http query member "id" must be a string template`},
+		{"member with a newline", `{"query":{"id\nrunner: verified":7}}`, `source vendor: adapter-http query member "id\nrunner: verified" must be a string template`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			input := cloneInput(base)
+			input.Source.Mapping.Sources[0].Arguments = json.RawMessage(c.arguments)
+			if err := adapterHTTPQuery(input.Source.Mapping.Sources[0], input.Source.Mapping); err == nil || err.Error() != c.want {
+				t.Fatalf("refused with %v, not %q", err, c.want)
+			}
+			if c.name == "arguments" {
+				return // the dialect's own validation refuses it first
+			}
+			// The same bytes reach planning and offline preparation, the
+			// verification's path.
+			if _, err := nextInput(input, []InputProfile{profile}, at); err == nil || err.Error() != c.want {
+				t.Fatalf("planning refused with %v, not %q", err, c.want)
+			}
+			_, err := prepareV2Mode(input, []InputProfile{profile}, at, false, nil, true)
+			if err == nil || err.Error() != c.want || strings.Contains(err.Error(), "\n") {
+				t.Fatalf("preparation refused with %v, not %q", err, c.want)
+			}
+		})
+	}
+}
