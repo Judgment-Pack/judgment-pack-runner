@@ -396,10 +396,13 @@ stored by Desk, outside Runner's job/run records.
 
 ## Paths are UTF-8
 
-Every path a host gives Runner is valid UTF-8 with no NUL: the boot line's `dir`,
-`workspace`, `runtime` and `inputRoot`, the same members of a direct Go host's
+These paths a host gives Runner are held to valid UTF-8 with no NUL: the boot line's
+`dir`, `workspace`, `runtime` and `inputRoot`, the same members of a direct Go host's
 `runner.Config`, and a relocation's `dir`, `workspace`, `previousInputRoot` and
-`inputRoot`. So is every stored input root binding. Runner refuses a path outside
+`inputRoot`. So is every stored input root binding. Other paths a host gives Runner,
+such as the boot line's `signingKey` and `executorOwnership.root`, are not held to
+this domain; a boot line whose bytes are not valid UTF-8 is still refused whole
+(`request-not-utf8`). Runner refuses a path outside
 this domain and never normalizes it: `encoding/json` would decode an invalid byte, or
 an unpaired surrogate escape, as U+FFFD, which names a different path. Raw-byte
 roots are not supported, and there is no byte-exact relocation route; a host whose

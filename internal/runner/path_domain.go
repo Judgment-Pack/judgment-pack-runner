@@ -1,9 +1,10 @@
 package runner
 
-// Runner's path domain (#202). Every path a host gives Runner (the boot
-// line's and a Go host's dir, workspace, runtime and inputRoot, and a
-// relocation's dir, workspace, previousInputRoot and inputRoot) and every
-// stored input root binding is valid UTF-8 with no NUL. A request outside it is
+// Runner's path domain (#202). The paths it holds (the boot line's and a Go
+// host's dir, workspace, runtime and inputRoot, and a relocation's dir,
+// workspace, previousInputRoot and inputRoot) and every stored input root
+// binding are valid UTF-8 with no NUL. Other host paths, such as signingKey
+// and executorOwnership.root, are not held to it. A request outside it is
 // refused, never normalized: encoding/json would decode an invalid byte, or an
 // unpaired surrogate escape, as U+FFFD, which names another path. Raw-byte
 // paths are not supported, and Runner never guesses the path a stored binding
