@@ -1,9 +1,10 @@
 package runner
 
-// Runner's path domain (#202). Every path a host gives Runner (the boot
-// line's and a Go host's dir, workspace, runtime and inputRoot, and a
-// relocation's dir, workspace, previousInputRoot and inputRoot) and every
-// stored input root binding is valid UTF-8 with no NUL. A request outside it is
+// Runner's path domain (#202). The paths it holds (the boot line's and a Go
+// host's dir, workspace, runtime and inputRoot, and a relocation's dir,
+// workspace, previousInputRoot and inputRoot) and every stored input root
+// binding are valid UTF-8 with no NUL. Other host paths, such as signingKey
+// and executorOwnership.root, are not held to it. A request outside it is
 // refused, never normalized: encoding/json would decode an invalid byte, or an
 // unpaired surrogate escape, as U+FFFD, which names another path. Raw-byte
 // paths are not supported, and Runner never guesses the path a stored binding
@@ -11,7 +12,9 @@ package runner
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -121,10 +124,14 @@ func checkStoredBinding(binding string) error {
 // whether it holds U+FFFD, which may be a literal character or may have
 // replaced a byte lost before the path reached Runner (Runner cannot tell
 // which and does not try), and whether the bound root exists as a directory.
+// Unreadable is a bound root whose status could not be read for any reason
+// but its absence, such as a permission refused on a directory above it:
+// Exists is then false and says nothing, since Runner cannot tell.
 type InputRootBinding struct {
 	Root                 string
 	ReplacementCharacter bool
 	Exists               bool
+	Unreadable           bool
 }
 
 // InputRootBinding is the store's input root binding as it is now. Open holds
@@ -138,6 +145,7 @@ func (s *Service) InputRootBinding() InputRootBinding {
 	b.ReplacementCharacter = strings.ContainsRune(b.Root, utf8.RuneError)
 	info, err := os.Stat(b.Root)
 	b.Exists = err == nil && info.IsDir()
+	b.Unreadable = err != nil && !errors.Is(err, fs.ErrNotExist)
 	return b
 }
 
@@ -148,7 +156,10 @@ func (b InputRootBinding) String() string {
 		return ""
 	}
 	exists := "the bound root exists"
-	if !b.Exists {
+	switch {
+	case b.Unreadable:
+		exists = "the bound root could not be read, so whether it exists is not known"
+	case !b.Exists:
 		exists = "the bound root does not exist"
 	}
 	return fmt.Sprintf("the inputRoot binding %q contains U+FFFD, which may stand for a byte lost before the path reached Runner; %s", b.Root, exists)

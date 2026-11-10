@@ -106,8 +106,11 @@ type Run struct {
 	// dispatcher reached it; binding-refused, for a run whose Runtime refused
 	// the preparation's binding Runner passed (binding.go); profile-set-aside,
 	// for a run queued before a profile its release names was set aside when
-	// the store opened (profile_set_aside.go), which never starts. Its state
-	// stays failed, and its problem the sentence it was. A run that expired
+	// the store opened (profile_set_aside.go), which never starts;
+	// prepared-by-earlier-runner, for a run a Runner before 0.28.0 queued
+	// without its empty evidence-availability document (mapping_v2_export.go),
+	// which is not evaluated. Its state stays failed, and its problem the
+	// sentence it was. A run that expired
 	// before Runner kept the code has none, and is not given one. Kept and
 	// served as InterruptedAt is, and not part of a verification export.
 	Reason string `json:"-"`
