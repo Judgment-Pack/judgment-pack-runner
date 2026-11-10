@@ -670,6 +670,11 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 		if errors.Is(err, errBindingRefused) {
 			r.Reason = runBindingRefused
 		}
+		// A run a Runner before 0.28.0 queued without its empty evidence
+		// document is not evaluated, and says so by its reason.
+		if errors.Is(err, errPreparedByEarlierRunner) {
+			r.Reason = runPreparedByEarlierRunner
+		}
 	}
 	r.FinishedAt = now()
 	if err == nil {

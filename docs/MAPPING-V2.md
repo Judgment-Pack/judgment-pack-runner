@@ -826,7 +826,28 @@ supplied input is: `supplied facts differ from the verified derivation` or
 `supplied evidence differs from the verified derivation`. One that is left out is
 refused too: `retained facts or evidence do not match verified derivation`. The
 values are compared as JSON, so the order of their members does not matter. An
-earlier export is not repaired into the derived inputs. It retains all source
+earlier export is not repaired into the derived inputs.
+
+A Runner before 0.28.0 left the evidence-availability document out when it was
+`{}`. An export whose run retained the derived facts and no `evidence` member,
+where the derivation is `{}`, is that shape, and `verify-run` refuses it by its own
+sentence: `the export is in the shape a Runner before 0.28.0 made: its run retained
+no evidence-availability document where the derivation is {}, and this Runner does
+not verify such an export`. Every other difference keeps the sentences above.
+
+A run is held to the same comparison when it is dispatched, after its preparation
+is recomputed and before the Runtime is invoked, so it is never evaluated with
+facts or evidence other than the derivation's. A run of that earlier shape, queued
+before an upgrade to 0.28.0, is not evaluated, with the evidence left out or with
+`{}` filled in: it ends `failed` with `reason` `prepared-by-earlier-runner` and the
+problem `This run was prepared by a Runner before 0.28.0, which left out its empty
+evidence-availability document. This Runner evaluates a dialect run only with the
+evidence its preparation derives, {} here, so the run was not evaluated. Submit its
+input again: this Runner's preparation derives the document.` Any other retained facts or evidence
+that differ end the run `failed` with the problem `retained facts or evidence do not
+match verified derivation` and no reason.
+
+Runner retains all source
 responses/salts, instantiated requests, parameters, source outcomes and lineage.
 Each lineage entry names class, generated influence, presence/omission, reason,
 read digest, actual condition `basis`, dependency pointers and verified citation.

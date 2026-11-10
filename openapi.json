@@ -2787,9 +2787,10 @@
             "enum": [
               "queue-expired",
               "binding-refused",
-              "profile-set-aside"
+              "profile-set-aside",
+              "prepared-by-earlier-runner"
             ],
-            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it; binding-refused, for a mapping-v2 run whose Runtime refused the preparation's binding Runner passed (JPS-INVOCATION-BINDING), a defect of Runner, never retried without the binding; profile-set-aside, for a mapping-v2 run queued before a profile its release names was set aside when Runner opened its store, which never starts; its problem names the profile. Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
+            "description": "Why a run ended without an evaluation, as a code: queue-expired, for an automatic run whose queue time ran out before the dispatcher reached it; binding-refused, for a mapping-v2 run whose Runtime refused the preparation's binding Runner passed (JPS-INVOCATION-BINDING), a defect of Runner, never retried without the binding; profile-set-aside, for a mapping-v2 run queued before a profile its release names was set aside when Runner opened its store, which never starts; its problem names the profile; prepared-by-earlier-runner, for a mapping-v2 run a Runner before 0.28.0 queued without its empty evidence-availability document, which this Runner does not evaluate, without the document or with {} filled in (MAPPING-V2.md). Its state stays failed, and its problem the sentence it was. Absent for every other run, and for a run that expired before Runner kept the code. Served with the run and in run lists; not in verification exports."
           },
           "signing": {
             "type": "object",

@@ -303,6 +303,45 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	return b, prepared, e
 }
 
+// The refusals of retained facts and evidence that are not the derivation.
+// A Runner before 0.28.0 left the evidence-availability document out of a
+// dialect run whose document is empty, {}, and so evaluated and retained no
+// evidence for it (#200): a queued run of that shape is not evaluated, with
+// the reason runPreparedByEarlierRunner, and its export, or one made of a run
+// that Runner completed, is refused by its own sentence. Neither is repaired
+// into the derived document.
+var (
+	errRetainedInputsDiffer    = errors.New("retained facts or evidence do not match verified derivation")
+	errExportEvidenceLeftOut   = errors.New("the export is in the shape a Runner before 0.28.0 made: its run retained no evidence-availability document where the derivation is {}, and this Runner does not verify such an export")
+	errPreparedByEarlierRunner = errors.New("This run was prepared by a Runner before 0.28.0, which left out its empty evidence-availability document. This Runner evaluates a dialect run only with the evidence its preparation derives, {} here, so the run was not evaluated. Submit its input again: this Runner's preparation derives the document.")
+)
+
+// runPreparedByEarlierRunner is the Reason of a run a Runner before 0.28.0
+// queued without its empty evidence-availability document: it ends failed,
+// without an evaluation.
+const runPreparedByEarlierRunner = "prepared-by-earlier-runner"
+
+// emptyEvidenceLeftOut says whether retained inputs are the shape a Runner
+// before 0.28.0 retained for a preparation whose evidence-availability
+// document is empty: the derived facts, and no evidence member at all. A
+// retained null is present, and differs.
+func emptyEvidenceLeftOut(retained, derived Input) bool {
+	return len(retained.Evidence) == 0 && sameJSON(retained.Facts, derived.Facts) && sameJSON(derived.Evidence, []byte(`{}`))
+}
+
+// retainedInputsDerived holds a run's retained facts and evidence to its
+// recomputed preparation before it is evaluated, as verifyPreparation holds
+// its export: equal as JSON, or refused, and never filled in.
+func retainedInputsDerived(retained, derived Input) error {
+	if sameJSON(retained.Facts, derived.Facts) && sameJSON(retained.Evidence, derived.Evidence) {
+		return nil
+	}
+	if emptyEvidenceLeftOut(retained, derived) {
+		return errPreparedByEarlierRunner
+	}
+	return errRetainedInputsDiffer
+}
+
 // verifyPreparation is verifyInputs's check of the export's inputs, once its
 // envelope, release digest, record and dispositions have been held to it. It
 // reads nothing of either disposition.
@@ -345,9 +384,13 @@ func verifyPreparation(b VerificationBundle, profiles []InputProfile, judged *[]
 		return prepared, errors.New("retained lineage does not match recomputation")
 	}
 	// The run's retained inputs are the derivation, present: an omitted
-	// facts or evidence document is not repaired into the derived one.
+	// facts or evidence document is not repaired into the derived one. The
+	// shape a Runner before 0.28.0 retained is refused by its own sentence.
 	if !sameJSON(r.Input.Facts, prepared.Facts) || !sameJSON(r.Input.Evidence, prepared.Evidence) {
-		return prepared, errors.New("retained facts or evidence do not match verified derivation")
+		if emptyEvidenceLeftOut(r.Input, prepared) {
+			return prepared, errExportEvidenceLeftOut
+		}
+		return prepared, errRetainedInputsDiffer
 	}
 	if r.State == "completed" && !auditRecordsInputs(r.Audit, release, prepared, prepared.Preparation.Cites) {
 		return prepared, errors.New("retained audit inputs or citations do not match verified inputs")
