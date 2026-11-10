@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -273,6 +275,7 @@ func TestAStoredBindingOutsideTheDomainIsRefusedByName(t *testing.T) {
 type pathStatus struct {
 	Replacement *bool `json:"inputRootReplacementCharacter"`
 	Exists      *bool `json:"inputRootExists"`
+	Unreadable  *bool `json:"inputRootUnreadable"`
 }
 
 func statusOf(t *testing.T, s *Service) pathStatus {
@@ -305,7 +308,7 @@ func TestTheStatusFlagsABindingHoldingUFFFD(t *testing.T) {
 	if err := os.Remove(flagged); err != nil {
 		t.Fatal(err)
 	}
-	if status = statusOf(t, s); status.Replacement == nil || !*status.Replacement || status.Exists == nil || *status.Exists {
+	if status = statusOf(t, s); status.Replacement == nil || !*status.Replacement || status.Exists == nil || *status.Exists || status.Unreadable != nil {
 		t.Fatalf("status does not say the bound root is gone: %+v", status)
 	}
 	if note := s.InputRootBinding().String(); !strings.Contains(note, "the bound root does not exist") {
@@ -416,3 +419,48 @@ func TestALiteralUFFFDPathRoundTrips(t *testing.T) {
 
 // esc is the JSON escape of one UTF-16 code unit, given in hexadecimal.
 func esc(hex string) string { return "\\" + "u" + hex }
+
+// A bound root whose status cannot be read for a reason other than its
+// absence (here a permission refused on the directory above it) is not
+// reported as absent: the status serves inputRootUnreadable in place of
+// inputRootExists, and the open diagnostic says the root could not be read.
+func TestAnUnreadableBoundRootIsNotReportedAbsent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission refusal needs a user other than root")
+	}
+	locked := filepath.Join(relocationTempDir(t), "locked")
+	root := filepath.Join(locked, "project\xef\xbf\xbd")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := journalConfig(t)
+	cfg.InputRoot = root
+	s := openJournal(t, cfg)
+	defer s.Close()
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0700) })
+	if _, err := os.Stat(root); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the root's status is not refused: %v", err)
+	}
+	status := statusOf(t, s)
+	if status.Replacement == nil || !*status.Replacement || status.Exists != nil || status.Unreadable == nil || !*status.Unreadable {
+		t.Fatalf("status does not say the bound root could not be read: %+v", status)
+	}
+	binding := s.InputRootBinding()
+	if binding.Exists || !binding.Unreadable {
+		t.Fatalf("the binding does not say the root could not be read: %+v", binding)
+	}
+	want := "the inputRoot binding " + strconv.Quote(root) + " contains U+FFFD, which may stand for a byte lost before the path reached Runner; the bound root could not be read, so whether it exists is not known"
+	if note := binding.String(); note != want {
+		t.Fatalf("open diagnostic %q, not %q", note, want)
+	}
+	// Readable again, it is reported as it is.
+	if err := os.Chmod(locked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if status = statusOf(t, s); status.Exists == nil || !*status.Exists || status.Unreadable != nil {
+		t.Fatalf("status after the permission is restored: %+v", status)
+	}
+}

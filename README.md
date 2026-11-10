@@ -424,9 +424,12 @@ A binding that contains U+FFFD is valid and opens: Runner cannot tell a literal
 U+FFFD from one that replaced a byte lost before the path reached it, and does not
 try. `GET /v1/status` reports `inputRootReplacementCharacter`, true when the bound
 input root contains U+FFFD, and `inputRootExists`, true when it exists as a
-directory, whenever an input root is bound. When the binding contains U+FFFD,
-Runner says so on standard error as it opens, with whether the bound root exists,
-and a Go host reads the same from `Service.InputRootBinding`. A literal U+FFFD in a
+directory, whenever an input root is bound. When the root's status cannot be read
+for a reason other than its absence, such as a permission refused on a directory
+above it, `inputRootUnreadable` is `true` in place of `inputRootExists`: Runner does
+not report such a root as absent. When the binding contains U+FFFD, Runner says so
+on standard error as it opens, with whether the bound root exists or could not be
+read, and a Go host reads the same from `Service.InputRootBinding`. A literal U+FFFD in a
 valid path is kept, compared, relocated and replayed byte for byte.
 
 ## API
