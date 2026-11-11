@@ -604,8 +604,7 @@ func TestAChangedPayloadUnderOneEventIdentityIsRefusedByName(t *testing.T) {
 // While the store's queue of pending occurrences is full, a record delivery
 // is refused, 429 queue_full and retryable, and nothing is admitted: its
 // event ID stays free, and the same envelope is admitted once the queue has
-// room. A credential's delivery is still recorded skipped, as the events
-// route says.
+// room. A credential's delivery to the events route is refused alike (#211).
 func TestARecordDeliveryIsRefusedNotSkippedWhileTheQueueIsFull(t *testing.T) {
 	w := newCoverWorld(t)
 	tr, key := w.eventTrigger("queue")
@@ -640,7 +639,7 @@ func TestARecordDeliveryIsRefusedNotSkippedWhileTheQueueIsFull(t *testing.T) {
 		t.Fatalf("%+v", refused)
 	}
 	token := serve(t, w.s, "POST", "/v1/triggers/"+tr.ID+"/events", string(encode(delivery("credential-event"))), map[string]string{"X-Trigger-Token": key})
-	if code, a := answerOf(t, token.Code, token.Body.Bytes()); code != 202 || a.Occurrence.State != "skipped" || a.Occurrence.Reason != "queue-full" {
+	if code, a := answerOf(t, token.Code, token.Body.Bytes()); code != 429 || a.Error.Code != "queue_full" || !a.Error.Retryable || countRows(t, w.s, "occurrences") != queueLimit {
 		t.Fatal("a credential's delivery to a full queue", code, a)
 	}
 	room := queued[0]

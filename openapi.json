@@ -1309,7 +1309,7 @@
             }
           }
         },
-        "description": "Direct Runner requires owner bearer plus X-Trigger-Token. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap/queue policy: inspect occurrence.state. The token that created an occurrence can read its result with readEventResult."
+        "description": "Direct Runner requires owner bearer plus X-Trigger-Token. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap policy: inspect occurrence.state. While the local queue of pending occurrences is full a new delivery is refused with 429 queue_full, retryable, and nothing is admitted: the event ID stays unused, and the same bytes delivered again are admitted once the queue has room, while occurredAt is no older than 5 minutes; after that they are refused with 422 event_expired. No Retry-After header is sent. The token that created an occurrence can read its result with readEventResult."
       }
     },
     "/triggers/{trigger}/occurrences/{occurrence}": {
@@ -1706,7 +1706,7 @@
             }
           }
         },
-        "description": "Owner-authenticated local control delivery of a previously persisted immutable record envelope. Bind releaseId to the reviewed release. Older occurredAt timestamps are allowed for outbox recovery; future timestamps, source freshness, mapping checks and queue expiry still apply. Persist exact bytes before the first request. Exact retries return the original occurrence, even when paused; changed payloads conflict. While the local queue of pending occurrences is full the delivery is refused with 429 queue_full, retryable, and nothing is admitted: deliver the same bytes again later. Unlike deliverEvent, it is never recorded as skipped for a full queue. This route is not exposed through the public Desk event-token ingress."
+        "description": "Owner-authenticated local control delivery of a previously persisted immutable record envelope. Bind releaseId to the reviewed release. Older occurredAt timestamps are allowed for outbox recovery; future timestamps, source freshness, mapping checks and queue expiry still apply. Persist exact bytes before the first request. Exact retries return the original occurrence, even when paused; changed payloads conflict. While the local queue of pending occurrences is full the delivery is refused with 429 queue_full, retryable, and nothing is admitted: deliver the same bytes again later. As with deliverEvent, it is never recorded as skipped for a full queue. This route is not exposed through the public Desk event-token ingress."
       }
     },
     "/triggers/{trigger}/deliveries/{event}": {

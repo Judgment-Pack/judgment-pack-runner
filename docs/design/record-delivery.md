@@ -86,7 +86,8 @@ refusal under clause 5.
    `waiting`), a record delivery is refused, `429 queue_full` with
    `retryable: true`, and nothing is admitted; the refusal is journaled. This
    is the change #70 needed. Runner admitted such a delivery `skipped`, reason
-   `queue-full`, as it still admits a credential's delivery to `deliverEvent`.
+   `queue-full`, as it admitted a credential's delivery to `deliverEvent` until
+   #211; that delivery is now refused the same way, within its five minutes.
    An event ID that is a record revision's would then answer that skip for
    good, and the revision could never run: an include-existing backfill of more
    records than the queue holds would lose every revision past it.

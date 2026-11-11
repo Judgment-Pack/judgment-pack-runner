@@ -206,6 +206,11 @@ func TestEveryAdmissionRefusalIsJournaledOnce(t *testing.T) {
 			}
 			return post(w, "/v1/triggers/"+tr.ID+"/deliveries", string(encode(RecordDelivery{ReleaseID: w.job.ReleaseID, Event: EventDelivery{ID: "e", OccurredAt: now(), Input: journalInput()}})), nil)
 		}},
+		{"deliver-event: a credential's delivery while the queue is full", 429, &want{"deliver-event", "queue_full", "trigger-credential"}, deliver(func(w *coverWorld, tr Trigger, key string) {
+			for range queueLimit {
+				w.admitted(tr, nil)
+			}
+		}, valid("e"), theKey)},
 		{"create-job: an unsupported member", 400, &want{"create-job", "invalid_request", "installation"}, create(func(w *coverWorld) string {
 			return `{"name":"x","releaseId":"` + otherRelease(w, "not-run").ID + `","reviewed":true,"unexpected":true}`
 		})},
