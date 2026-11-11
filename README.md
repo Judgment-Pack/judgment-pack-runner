@@ -770,7 +770,9 @@ While 100 occurrences are pending in the store (`accepted`, `preparing` or
 (`retryable: true`) and nothing is admitted. Its ID stays unused: send the same
 bytes again later, and they are admitted once the queue has room, as long as
 `occurredAt` is no more than five minutes old. After that the same bytes are
-refused with 422 `event_expired`, as any delivery with an old timestamp is. The
+refused with 422 `event_expired`, as any delivery with an old timestamp is. An
+ID that an earlier Runner version recorded as `skipped` with reason
+`queue-full` still answers with that recorded occurrence. The
 answer carries no `Retry-After` header. The refusal is journaled as
 `admission.refused`, once a minute for alike refusals; no occurrence is recorded.
 

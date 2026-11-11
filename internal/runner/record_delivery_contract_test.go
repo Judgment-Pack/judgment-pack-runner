@@ -97,6 +97,7 @@ type recordAnswer struct {
 	Replayed   bool       `json:"replayed"`
 	Error      struct {
 		Code      string `json:"code"`
+		Message   string `json:"message"`
 		Retryable bool   `json:"retryable"`
 	} `json:"error"`
 }
@@ -620,8 +621,12 @@ func TestARecordDeliveryIsRefusedNotSkippedWhileTheQueueIsFull(t *testing.T) {
 	}
 	before := len(w.entries())
 	for range 2 {
-		if code, a := deliver(); code != 429 || a.Error.Code != "queue_full" || !a.Error.Retryable {
+		code, a := deliver()
+		if code != 429 || a.Error.Code != "queue_full" || !a.Error.Retryable {
 			t.Fatal("a record delivery to a full queue", code, a)
+		}
+		if want := "The local queue is full. Deliver the same record again after queued occurrences are submitted."; a.Error.Message != want {
+			t.Fatalf("a record delivery to a full queue says %q, want %q", a.Error.Message, want)
 		}
 	}
 	read := serve(t, w.s, "GET", "/v1/triggers/"+tr.ID+"/deliveries/"+url.PathEscape(event), "", nil)

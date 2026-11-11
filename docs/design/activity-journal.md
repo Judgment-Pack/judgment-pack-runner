@@ -210,7 +210,7 @@ holds the change and its entry (section 4).
 - At admission, one entry for the occurrence's first state:
   `occurrence.received`; `occurrence.skipped` for overlap, or a full queue met
   by a schedule, a file change or a cloud signal
-  (`triggers_store.go:375-381`; an event delivery at a full queue is refused,
+  (`triggers_store.go:513-518`; an event delivery at a full queue is refused,
   an `admission.refused` entry, and admits nothing), a missed schedule
   (`triggers_dispatch.go:123-126`), or a paused or missed cloud trigger
   (`cloud.go:149-157`); `occurrence.failed` when automatic input could not be
