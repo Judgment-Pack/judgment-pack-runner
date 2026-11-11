@@ -42,6 +42,11 @@ func printManualCapabilities(stdout io.Writer) error {
 	}{3, []string{jobsCapability, requiredBootCapability, executorOwnershipCapability, manualAdmissionCapability}, true, []string{runner.ManualAdmissionProfile}})
 }
 
+// bootRequirements are the boot members that are true or false and gate what
+// becomes a job: requireComparableFacts and requireSuppliedReviewedSet
+// (runner #210).
+var bootRequirements = []string{"requireComparableFacts", "requireSuppliedReviewedSet"}
+
 // checkBootCapabilities runs before runner.Open: even a rejected requirement
 // must not create state, pin a Runtime, recover a queue, or start workers.
 func checkBootCapabilities(line []byte) error {
@@ -73,16 +78,21 @@ func checkBootCapabilities(line []byte) error {
 		if name != "requiredCapabilities" && strings.EqualFold(name, "requiredCapabilities") {
 			return fmt.Errorf("invalid required boot capabilities")
 		}
-		// Nor a second spelling of requireComparableFacts, which encoding/json
-		// would read as the same member and let the later one win.
-		if name != "requireComparableFacts" && strings.EqualFold(name, "requireComparableFacts") {
-			return invalidBoot
+		// Nor a second spelling of a requirement that is true or false, which
+		// encoding/json would read as the same member and let the later one
+		// win.
+		for _, requirement := range bootRequirements {
+			if name != requirement && strings.EqualFold(name, requirement) {
+				return invalidBoot
+			}
 		}
 	}
-	// requireComparableFacts is true or false; a null, which encoding/json
+	// Each such requirement is true or false; a null, which encoding/json
 	// reads as false, is not taken for either.
-	if raw, present := boot["requireComparableFacts"]; present && string(raw) != "true" && string(raw) != "false" {
-		return invalidBoot
+	for _, requirement := range bootRequirements {
+		if raw, present := boot[requirement]; present && string(raw) != "true" && string(raw) != "false" {
+			return invalidBoot
+		}
 	}
 	raw, required := boot["requiredCapabilities"]
 	if !required {

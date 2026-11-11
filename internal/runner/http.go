@@ -70,6 +70,11 @@ func decodeInput(w http.ResponseWriter, r *http.Request, dst any) error {
 	case *Input:
 		src, path = d.Source, []string{"source", "mapping"}
 	case *PreviewRequest:
+		// A reviewedSet written null is a malformed body, and is not read
+		// as a release check without one (reviewed_set.go).
+		if d.ReviewedSet == nil && namedAt(raw, "reviewedSet") {
+			return &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
+		}
 		src, path = d.Input.Source, []string{"input", "source", "mapping"}
 	case *RecordDelivery:
 		src, path = d.Event.Input.Source, []string{"event", "input", "source", "mapping"}
@@ -322,7 +327,12 @@ func (s *Service) Handler(token string) http.Handler {
 		if replayed {
 			status = 200
 		}
-		write(w, status, servedRun(run))
+		response, err := s.servedRun(run)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		write(w, status, response)
 	})
 	mux.HandleFunc("GET /v1/runs/{run}", func(w http.ResponseWriter, r *http.Request) {
 		run, err := s.run(r.PathValue("run"))
@@ -330,7 +340,12 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
-		write(w, 200, servedRun(run))
+		response, err := s.servedRun(run)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		write(w, 200, response)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

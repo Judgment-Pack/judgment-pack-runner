@@ -88,7 +88,7 @@ Desk resumes queued work and marks previously running work interrupted. A shut d
 computer does not execute jobs. This is not a hosted scheduler or a Vercel function.
 
 The executable receives one bounded JSON boot line on stdin with `dir`, `runtime`,
-`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, `requireTestedReleases` ([below](#release-readiness)), `requireComparableFacts` ([below](#comparable-facts)), an absolute `signingKey`
+`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, `requireTestedReleases` ([below](#release-readiness)), `requireComparableFacts` ([below](#comparable-facts)), `requireSuppliedReviewedSet` ([below](#supplied-reviewed-sets)), an absolute `signingKey`
 and the `signingPublicKey` it is expected to have
 ([below](#verified-mapping-v2-runner-and-desk)). Its paths are valid UTF-8 with no
 NUL ([below](#paths-are-utf-8)). It binds an ephemeral IPv4 loopback port,
@@ -197,14 +197,21 @@ release is given that configuration and lock and nothing else: no project's
 `jpack.json` or `jpack.lock.json` reaches a run. So `reviewed: true` and `reviewedSet`
 in a run's result and audit record show only that the pack the run applied is byte for
 byte the pack the release froze, that it has not changed since the release was made.
-They show neither that a project reviewed the pack nor that a project's lock names it,
-and Runner does not hold a release to a reviewed set made outside it.
+They show neither that a project reviewed the pack nor that a project's lock names it.
+A release check can also hold the pack to a reviewed set made outside Runner
+([below](#supplied-reviewed-sets)); without one, a release is held to no reviewed set
+but its own lock.
 
 `GET /v1/runs/{run}` and `POST /v1/jobs/{job}/runs` say so beside the claim:
 `"reviewedSetOrigin": "release"` when the run's result or record says `reviewed: true`,
-and nothing when neither does. The member is read off the run each time it is served,
-so runs completed before it are served with it too. Run lists, briefs and verification
-exports do not carry it; an export carries the release, and the release its lock.
+and nothing when neither does. When the run's release was checked against a supplied
+reviewed set, the origin is `"supplied"` in place of `"release"`, with that lock's digest
+as `suppliedLockDigest`. The members are read off the run, and the release it names, each
+time it is served, so runs completed before them are served with them too; a run whose
+release cannot be read, or whose release's supplied lock is no longer the bytes its digest
+names, is refused with 500 `store_error` rather than served as resting on either lock.
+Run lists, briefs and verification exports do not carry them; an export carries the
+release, with its lock and any supplied reviewed set.
 
 ## Comparable facts
 
@@ -242,6 +249,88 @@ before this one ignores the member and applies no gate, so a host that relies on
 a Runner that has it. Manual
 admission refuses the option on a release check, so an installation booted with both
 creates no job from a release it checks.
+
+## Supplied reviewed sets
+
+A release check can hold the pack to a reviewed-set lock made outside Runner, such as
+the lock of the project the pack was reviewed in. `POST /v1/previews` takes, beside the
+pack,
+
+```json
+{"reviewedSet":{"lock":"<the lock's exact bytes>","id":"<the decision id the pack is locked under in it>"}}
+```
+
+The lock is the file the Runtime's `packs lock` wrote, as one string of 1 byte to 1 MiB
+within the request's 2 MiB. The id has the form a Runtime configuration gives a decision
+id: lowercase letters and digits in words joined by single hyphens, at most 128
+characters. A lock or id outside those bounds is refused as 422 `invalid_reviewed_set`
+before anything is written or any Runtime is asked.
+
+Runner writes the lock, readable by its owner alone, into the release's directory beside
+the pack, and asks the pinned Runtime, with no shell and without `--config`,
+`packs covers --lock reviewed-set.lock.json --id ID --pack pack.json --format json`
+(Runtime ADR-0072), before the pack is validated. Runner does not read the lock itself:
+the Runtime is the one reader of its format. The release is checked only when the Runtime
+answers that the lock covers the pack's exact bytes under the id: exit 0, status
+`valid`, an empty list of findings, the id, the pack's digest and the lock's digest
+Runner gave, and an entry whose digest is the pack's. Any other answer refuses the
+check, and no release is saved:
+
+- 422 `pack_not_in_reviewed_set` when the Runtime reports that the lock does not cover
+  the pack, naming its findings, such as `lock-entry-missing` or `document-drift`;
+- 422 `invalid_reviewed_set` when the Runtime refuses to compare the lock, naming its
+  code, which begins `JPS-LOCK-` or `JPS-RESOURCE-LOCK-`, such as `JPS-LOCK-JSON`,
+  `JPS-LOCK-SHAPE`, `JPS-LOCK-VERSION` or `JPS-RESOURCE-LOCK-BYTE-LIMIT`;
+- 500 `store_error` when the Runtime refuses with any other code, such as one about the
+  pack file Runner wrote: that is Runner's fault, not the lock's;
+- 422 `reviewed_set_unsupported` for anything else, among it the answer of a Runtime
+  before 0.41.0, which has no `packs covers`.
+
+A refusal carries the Runtime's code or finding names and nothing else of its answer:
+neither the lock's bytes nor the Runtime's messages. An answer of more than 64 KiB is
+refused as `reviewed_set_unsupported`. Runner knows the Runtime has the verb from the
+answer itself, whose `command` is `packs covers` only from a Runtime that has it; a
+version number would take a second invocation and say nothing of a development build,
+and exit 3 alone is also the verb's answer to an invocation it refuses.
+
+The check says that this lock pins these bytes under this id. `packs covers` is given no
+configuration, because a release's configuration is Runner's own and is never the one
+the lock pins, so the check does not say that a project's configuration declares the
+pack, or that the lock is the one a given project holds: the caller chooses the lock.
+
+The lock is the caller's. A lock is a document anyone can write, so `"supplied"` and
+`requireSuppliedReviewedSet` show only that some lock naming exactly these pack bytes was
+supplied with the release check. They are no control against whoever may call
+`POST /v1/previews`. A consumer that needs a particular reviewed set compares
+`suppliedLockDigest`, or the lock the release keeps, with the digest of a lock it obtained
+from a source it trusts.
+
+The release keeps the lock as `suppliedReviewedSet`, with the id and the lock's digest,
+and its own configuration and lock are unchanged: every evaluation of it is still given
+those and nothing else. `packs covers` is not asked again at each attempt. Its answer
+depends only on the lock's bytes, the id, the pack's bytes and the Runtime, and each
+attempt checks by digest that the release still holds that pack, that lock and the
+Runtime it pinned; an attempt of a release whose lock is no longer its digest's fails
+without being evaluated. Its runs that say `reviewed: true` are served with
+`reviewedSetOrigin: "supplied"` ([above](#what-a-runs-reviewed-claim-means)). Under
+manual admission the option is refused as 409 `manual_profile_unsupported`, since the
+executor admits no `packs covers`. A `reviewedSet` written `null` is refused as 400
+`invalid_request`. Without the option a release is checked as before,
+and runs on an earlier Runtime as before.
+
+With `"requireSuppliedReviewedSet": true` on the boot line, creating a job from, or
+upgrading a job to, a release not checked against a supplied reviewed set, or one whose
+supplied lock is no longer its digest's, returns 409 `release_reviewed_set_required`. As
+with `requireComparableFacts`, only the creation or upgrade is refused: repeating the
+creation of a job made before returns that job, and its runs keep running. The member is
+`true` or `false`; `null` or a second spelling of its name refuses the boot. A Runner
+before this one ignores the member and applies no gate, so a host that relies on it pins
+a Runner that has it, and a Runtime of 0.41.0 or later. Manual admission refuses the
+option on a release check, so an installation booted with both creates no job from a
+release it checks.
+
+Runner releases packs only, not graphs, so a reviewed set is never asked to cover a
+graph.
 
 ## File inputs and connected sources
 

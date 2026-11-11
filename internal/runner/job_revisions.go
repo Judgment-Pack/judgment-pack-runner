@@ -106,6 +106,9 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	if s.cfg.RequireComparableFacts && !releaseRefusesIncomparableFacts(next) {
 		return Job{}, errUpgradeComparableFactsRequired
 	}
+	if s.cfg.RequireSuppliedReviewedSet && !heldToSuppliedReviewedSet(next) {
+		return Job{}, errUpgradeReviewedSetRequired
+	}
 	if old.PackDigest != next.PackDigest {
 		if err = s.checkUpgradeVersion(ctx, old.PackVersion, next.PackVersion); err != nil {
 			return Job{}, err

@@ -33,6 +33,11 @@ type PreviewRequest struct {
 	// some comparison of the pack reads is present and of a type that
 	// comparison can never match (comparable_facts.go).
 	RequireComparableFacts bool `json:"requireComparableFacts,omitempty"`
+	// ReviewedSet asks for a release held to a reviewed-set lock made outside
+	// Runner: the release is checked only when the pinned Runtime's packs
+	// covers says the lock covers the pack's exact bytes under the id given
+	// (reviewed_set.go).
+	ReviewedSet *ReviewedSetRequest `json:"reviewedSet,omitempty"`
 }
 type Release struct {
 	Dialect         *DialectIdentity `json:"dialect,omitempty"`
@@ -55,6 +60,11 @@ type Release struct {
 	Tests           string           `json:"tests"`
 	TestEvidence    *ReleaseTests    `json:"testEvidence,omitempty"`
 	InputMapping    *InputMapping    `json:"inputMapping,omitempty"`
+
+	// SuppliedReviewedSet is the reviewed-set lock the release was checked
+	// against, when its check supplied one (reviewed_set.go). A release
+	// checked without one, every release before #210 among them, has none.
+	SuppliedReviewedSet *SuppliedReviewedSet `json:"suppliedReviewedSet,omitempty"`
 }
 type Job struct {
 	InitialTriggerID     string `json:"initialTriggerId,omitempty"`
@@ -156,38 +166,72 @@ func served(r Run) storedRun {
 	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing, Binding: r.Binding}
 }
 
-// reviewedSetOriginRelease is the only reviewedSetOrigin a run has: the
-// release's own lock.
-const reviewedSetOriginRelease = "release"
+// The reviewedSetOrigin values. release: the release's own lock. supplied:
+// the reviewed-set lock the release was checked against (reviewed_set.go).
+const (
+	reviewedSetOriginRelease  = "release"
+	reviewedSetOriginSupplied = "supplied"
+)
 
 // runResponse is a run as the run routes serve it: as the store keeps it
 // (storedRun), and, beside the reviewed claim its result and audit record
-// make, whose reviewed set that claim is about. The store does not keep
-// ReviewedSetOrigin: it is read off the run each time it is served, so a run
-// completed before Runner said it is served with it too. Run lists, briefs and
-// verification exports do not carry it; an export carries the release, whose
-// lock is that reviewed set.
+// make, whose reviewed set that claim is about, with the digest of a supplied
+// lock. The store does not keep either member: they are read off the run, and
+// the release it names, each time the run is served, so a run completed before
+// Runner said it is served with them too. Run lists, briefs and verification
+// exports do not carry them; an export carries the release, with its lock and
+// any supplied reviewed set.
 type runResponse struct {
 	storedRun
-	ReviewedSetOrigin string `json:"reviewedSetOrigin,omitempty"`
+	ReviewedSetOrigin  string `json:"reviewedSetOrigin,omitempty"`
+	SuppliedLockDigest string `json:"suppliedLockDigest,omitempty"`
 }
 
-func servedRun(r Run) runResponse {
-	return runResponse{storedRun: served(r), ReviewedSetOrigin: reviewedSetOrigin(r)}
+// servedRun is r as the run routes serve it, where release is the release r
+// names, read when r makes the reviewed claim (Service.servedRun). Its claim
+// rests on a supplied lock only while the release still holds the lock's
+// bytes its digest names.
+func servedRun(r Run, release Release) runResponse {
+	out := runResponse{storedRun: served(r), ReviewedSetOrigin: reviewedSetOrigin(r)}
+	if out.ReviewedSetOrigin != "" && heldToSuppliedReviewedSet(release) {
+		out.ReviewedSetOrigin, out.SuppliedLockDigest = reviewedSetOriginSupplied, release.SuppliedReviewedSet.LockDigest
+	}
+	return out
+}
+
+// servedRun is r as the run routes serve it. The release r names is read only
+// when r makes the reviewed claim. One that cannot be read, or whose supplied
+// lock is no longer the bytes its digest names, refuses the answer rather than
+// serve the claim as resting on either lock.
+func (s *Service) servedRun(r Run) (runResponse, error) {
+	var release Release
+	if reviewedSetOrigin(r) != "" {
+		var err error
+		if release, err = s.release(r.ReleaseID); err != nil {
+			return runResponse{}, err
+		}
+		if release.SuppliedReviewedSet != nil && !heldToSuppliedReviewedSet(release) {
+			return runResponse{}, errors.New("release reviewed-set lock digest mismatch")
+		}
+	}
+	return servedRun(r, release), nil
 }
 
 // reviewedSetOrigin is whose reviewed set the reviewed claim of a run's result
-// or audit record is about: release, when either says reviewed is true, and
-// none when neither makes the claim.
+// or audit record is about, as far as the run says: release, when either says
+// reviewed is true, and none when neither makes the claim. servedRun says
+// supplied in its place for a release checked against a supplied reviewed set.
 //
 // Every operational evaluation Runner starts is given the release's own
 // configuration and lock, and nothing else, in a directory made for it alone
 // (evaluateWithInvoker, manualLaunchMaterial). Runner generated that lock when
 // the release was checked, over the pack the request gave it (preview). So a
-// Runtime's reviewed: true says only that the pack the run applied is byte for
-// byte the pack the release froze: it has not changed since the release was
-// made. It does not say that any project reviewed the pack, or that a
-// project's reviewed set names it.
+// Runtime's reviewed: true says that the pack the run applied is byte for byte
+// the pack the release froze: it has not changed since the release was made.
+// Of itself it does not say that any project reviewed the pack, or that a
+// project's reviewed set names it. A release checked against a supplied
+// reviewed set was checked only when the Runtime said that lock covers those
+// same bytes (reviewed_set.go), so the claim of its runs rests on that lock.
 func reviewedSetOrigin(r Run) string {
 	for _, raw := range []json.RawMessage{r.Result, r.Audit} {
 		if bytes.Equal(member(raw, "reviewed"), []byte("true")) {

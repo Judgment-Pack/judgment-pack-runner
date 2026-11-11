@@ -72,6 +72,12 @@ func manualRelease(r Release) bool {
 	if json.Unmarshal([]byte(r.Pack), &pack) != nil || pack.ID != r.PackID || pack.Version != r.PackVersion || pack.SpecVersion != "0.2.0-draft" {
 		return false
 	}
+	// A release checked against a supplied reviewed set, before the
+	// installation admitted manually, still holds the lock it was checked
+	// against, as evaluate requires of every other attempt (reviewed_set.go).
+	if r.SuppliedReviewedSet != nil && !heldToSuppliedReviewedSet(r) {
+		return false
+	}
 	return r.SchemaVersion == "1" && r.Dialect == nil && len(r.InputProfiles) == 0 && len(r.MappingWarnings) == 0 && r.InputMapping == nil && r.Sample.Source == nil && r.Sample.Preparation == nil && validDigest(r.PackDigest) && digest([]byte(r.Pack)) == r.PackDigest && validDigest(r.RuntimeDigest) && releaseReady(r)
 }
 func manualUnsupported() error {

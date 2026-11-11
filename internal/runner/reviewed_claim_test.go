@@ -27,11 +27,15 @@ const (
 // checkLock; and experimental evaluate, a rehearsal or not, an operational one
 // with its audit record. Each invocation writes a line to log first: its
 // arguments, then the jpack.json and the jpack.lock.json it was given, or none.
+// packs covers then logs the reviewed-set lock and the pack it was given, and
+// answers with what answerCovers left beside log, exiting 9 when it left
+// nothing.
 func checkRuntime(t *testing.T, schema string, schemaExit int, log string) string {
 	t.Helper()
 	answer := func(rehearsal string) string {
 		return `{"outputVersion":"2","status":"evaluated","packId":"journal","packVersion":"1.0.0","evaluatorSpecVersion":"0.2.0-draft","rehearsal":` + rehearsal + `,"disposition":` + journalDisposition + `}`
 	}
+	covers := filepath.Join(filepath.Dir(log), "covers")
 	script := `#!/bin/sh
 PATH=/usr/bin:/bin
 export PATH
@@ -50,6 +54,11 @@ case "$1 $2" in
 'packs lock')
 	printf '%s' '` + checkLock + `' > jpack.lock.json
 	printf '%s\n' '{"outputVersion":"2","status":"locked"}' ;;
+'packs covers')
+	{ printf 'given '; cat reviewed-set.lock.json; printf ' | '; cat pack.json; printf '\n'; } >> '` + log + `'
+	[ -f '` + covers + `.answer' ] || exit 9
+	cat '` + covers + `.answer'
+	exit "$(cat '` + covers + `.exit')" ;;
 'experimental evaluate')
 	case " $* " in
 	*' --rehearsal '*)
