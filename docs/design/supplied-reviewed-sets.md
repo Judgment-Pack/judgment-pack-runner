@@ -108,12 +108,14 @@ The releases table holds each release as one JSON record, and the member is omit
 when absent, so existing records read unchanged and their release digests do not
 change. A verification export carries the release, and so the supplied lock, under the
 release digest a verifier is given; an earlier Runner's `verify-run`, which reads the
-release strictly, refuses an export whose release has the member.
+release strictly, refuses an export whose release has the member. The export route
+refuses, with 500 `store_error`, a run whose release's supplied lock is no longer the
+bytes its digest names, as the run routes do.
 
-`verify-run` neither recomputes the supplied lock's digest nor asks the Runtime again.
-The release digest covers the member, so a verifier holding the release digest from a
-trusted channel can hash the kept lock and run `packs covers` over it and the pack
-itself. An older `verify-run` refuses an export carrying the member, because it decodes
+`verify-run` checks that the supplied lock is the bytes its digest names, and fails an
+export whose lock is not, but does not ask the Runtime again. The release digest covers
+the member, so a verifier holding the release digest from a trusted channel can run
+`packs covers` over the kept lock and the pack itself. An older `verify-run` refuses an export carrying the member, because it decodes
 the release strictly.
 
 ## Graphs

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -462,6 +463,54 @@ func TestEachAttemptChecksTheSuppliedLockByItsDigest(t *testing.T) {
 	must(t, e)
 	if run := runOnce(t, s, j.ID, "kept"); run.State != "completed" {
 		t.Fatal("the run of a kept lock ended", run.State, run.Problem)
+	}
+}
+
+// A run's export carries its release, and so the supplied lock, under the
+// release digest. It is refused with these bytes, as the run routes refuse it,
+// when the store's release keeps a supplied lock that is no longer the bytes
+// its digest names; and verify-run fails an export whose supplied lock is not
+// its digest's, even under the digest of the release as exported.
+func TestAnExportChecksTheSuppliedLockByItsDigest(t *testing.T) {
+	s, _ := checkService(t)
+	set := &SuppliedReviewedSet{ID: "journal", Lock: suppliedLock, LockDigest: sha(suppliedLock)}
+	r := heldReleaseWith(t, s, set)
+	j, e := s.createJob("Exported", r.ID)
+	must(t, e)
+	run := runOnce(t, s, j.ID, "exported")
+	if run.State != "completed" {
+		t.Fatal("the run ended", run.State, run.Problem)
+	}
+	res := serve(t, s, "GET", "/v1/runs/"+run.ID+"/verification?version=3", "", nil)
+	if res.Code != 200 || !strings.Contains(res.Body.String(), `"suppliedReviewedSet":{"id":"journal","lock":`+string(encode(suppliedLock))+`,"lockDigest":"`+sha(suppliedLock)+`"}`) {
+		t.Fatalf("the export was served %d %s", res.Code, res.Body.String())
+	}
+	exported := bytes.TrimSuffix(res.Body.Bytes(), []byte("\n"))
+	if e := VerifyRun(exported, nil, releaseDigest(r)); e != nil {
+		t.Fatal("verify-run refused the export of a kept lock:", e)
+	}
+
+	// The lock verify-run is given is not its digest's, under the digest of
+	// the release as exported.
+	var b VerificationBundle
+	must(t, json.Unmarshal(exported, &b))
+	b.Release.SuppliedReviewedSet = &SuppliedReviewedSet{ID: "journal", Lock: suppliedLock + " ", LockDigest: sha(suppliedLock)}
+	b.ReleaseDigest = releaseDigest(b.Release)
+	if e := VerifyRun(encode(b), nil, b.ReleaseDigest); e == nil || e.Error() != "release reviewed-set lock digest mismatch" {
+		t.Fatal("verify-run answered the export of a changed lock with", e)
+	}
+
+	// The store's release keeps a lock that is no longer its digest's.
+	changed := r
+	changed.SuppliedReviewedSet = &SuppliedReviewedSet{ID: "journal", Lock: suppliedLock + " ", LockDigest: sha(suppliedLock)}
+	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(changed)), r.ID); e != nil {
+		t.Fatal(e)
+	}
+	want := `{"error":{"code":"store_error","message":"The local runner could not complete this request.","retryable":false}}` + "\n"
+	for _, version := range []string{"", "?version=2", "?version=3", "?version=4", "?version=5"} {
+		if res := serve(t, s, "GET", "/v1/runs/"+run.ID+"/verification"+version, "", nil); res.Code != 500 || res.Body.String() != want {
+			t.Fatalf("%q: the export of a changed lock was served %d %s", version, res.Code, res.Body.String())
+		}
 	}
 }
 

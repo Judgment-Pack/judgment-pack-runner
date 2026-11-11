@@ -193,7 +193,7 @@ const verificationCoverage = "Every retained result disposition must match the a
 	"unsignedParameters, binding, runChain, signature), standard error says so, and a --require flag the " +
 	"export fails is added to the error; if the preparation fails its own verification, the report is the " +
 	"finding alone and the error carries both refusals. A refusal before the preparation is verified (the " +
-	"export's envelope, the release's digest, the record's bytes, chain entry, signature sidecar or Core " +
+	"export's envelope, the release's digest or its supplied reviewed-set lock, the record's bytes, chain entry, signature sidecar or Core " +
 	"version) reports alone. " +
 	"The record signature covers the exact audit bytes, " +
 	"not the export envelope: version, releaseDigest, release, inputs, chain (entry and checkpoint), " +

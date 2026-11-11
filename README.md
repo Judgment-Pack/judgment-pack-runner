@@ -211,7 +211,8 @@ time it is served, so runs completed before them are served with them too; a run
 release cannot be read, or whose release's supplied lock is no longer the bytes its digest
 names, is refused with 500 `store_error` rather than served as resting on either lock.
 Run lists, briefs and verification exports do not carry them; an export carries the
-release, with its lock and any supplied reviewed set.
+release, with its lock and any supplied reviewed set. The export of such a run is refused
+the same way, and `verify-run` fails an export whose supplied lock is not its digest's.
 
 ## Comparable facts
 

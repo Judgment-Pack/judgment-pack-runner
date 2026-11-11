@@ -171,6 +171,13 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
+		// As the run routes refuse it, so an export refuses a release whose
+		// supplied lock is no longer the bytes its digest names, rather than
+		// carry it under the release digest (reviewed_set.go).
+		if release.SuppliedReviewedSet != nil && !heldToSuppliedReviewedSet(release) {
+			failure(w, errors.New("release reviewed-set lock digest mismatch"))
+			return
+		}
 		if !sameConversion(inputConversion(run.Input), requestConversion(r)) {
 			failure(w, conversionFailure("capability-unsupported"))
 			return
