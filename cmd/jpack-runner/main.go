@@ -104,6 +104,7 @@ func bootConfig(line []byte) (runner.Config, string, error) {
 		InputProfiles      []runner.InputProfile      `json:"inputProfiles,omitempty"`
 		RequireTested      bool                       `json:"requireTestedReleases,omitempty"`
 		RequireComparable  bool                       `json:"requireComparableFacts,omitempty"`
+		RequireSupplied    bool                       `json:"requireSuppliedReviewedSet,omitempty"`
 		SigningKey         string                     `json:"signingKey,omitempty"`
 		SigningPublicKey   string                     `json:"signingPublicKey,omitempty"`
 	}
@@ -123,7 +124,7 @@ func bootConfig(line []byte) (runner.Config, string, error) {
 			return runner.Config{}, "", fmt.Errorf("invalid manual admission binding")
 		}
 	}
-	return runner.Config{ExecutorAdmission: admission, ExecutorOwnership: ownership, Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, RequireComparableFacts: boot.RequireComparable, SigningKey: boot.SigningKey, SigningPublicKey: boot.SigningPublicKey}, boot.Token, nil
+	return runner.Config{ExecutorAdmission: admission, ExecutorOwnership: ownership, Dir: boot.Dir, Runtime: boot.Runtime, Workspace: boot.Workspace, Owner: boot.Owner, InputProfiles: boot.InputProfiles, InputRoot: boot.InputRoot, CloudConnections: boot.CloudConnections, GatewayConnections: boot.GatewayConnections, RequireTestedReleases: boot.RequireTested, RequireComparableFacts: boot.RequireComparable, RequireSuppliedReviewedSet: boot.RequireSupplied, SigningKey: boot.SigningKey, SigningPublicKey: boot.SigningPublicKey}, boot.Token, nil
 }
 
 func serve(stdin io.Reader, stdout, stderr io.Writer) error {

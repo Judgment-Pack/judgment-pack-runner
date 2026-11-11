@@ -322,7 +322,12 @@ func (s *Service) Handler(token string) http.Handler {
 		if replayed {
 			status = 200
 		}
-		write(w, status, servedRun(run))
+		response, err := s.servedRun(run)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		write(w, status, response)
 	})
 	mux.HandleFunc("GET /v1/runs/{run}", func(w http.ResponseWriter, r *http.Request) {
 		run, err := s.run(r.PathValue("run"))
@@ -330,7 +335,12 @@ func (s *Service) Handler(token string) http.Handler {
 			failure(w, err)
 			return
 		}
-		write(w, 200, servedRun(run))
+		response, err := s.servedRun(run)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		write(w, 200, response)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

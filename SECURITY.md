@@ -133,10 +133,18 @@ is off by default, and a job made before it was on keeps running.
 the configuration and reviewed-set lock Runner generated when the release was checked, and no
 project's. The claim shows only that the pack the run applied has not changed since the release was
 made, and the run says so with `reviewedSetOrigin: "release"`. It shows neither that a project
-reviewed the pack nor that a project's lock names it; Runner does not hold a release to a lock made
-outside it. A project's `requireComparableFacts` likewise reaches a run only when its release was
-checked with it, and an installation can require that with `requireComparableFacts` on its boot
-line.
+reviewed the pack nor that a project's lock names it. A release check can also supply a reviewed-set
+lock made outside Runner, with the decision id the pack is locked under in it. The release is then
+checked only when the pinned Runtime's `packs covers` says that lock covers the pack's exact bytes
+under that id, and its runs say `reviewedSetOrigin: "supplied"` with the lock's digest. The lock and
+id are caller input: the lock is held to 1 MiB and the id to the decision id form before anything is
+written, the lock is written to a private file in the release's directory and named to the Runtime
+by path, with no shell, and neither the lock's bytes nor the Runtime's messages reach a refusal.
+The check does not say that the lock is the one a given project holds; the caller chooses it. An
+installation can require such a release for every new job and upgrade with
+`requireSuppliedReviewedSet` on its boot line. A project's `requireComparableFacts` likewise reaches
+a run only when its release was checked with it, and an installation can require that with
+`requireComparableFacts` on its boot line.
 
 **Storage is local files.** Job artifacts, input snapshots and records are kept on the local
 filesystem, with SQLite holding the queue and records. The source worker's database contains

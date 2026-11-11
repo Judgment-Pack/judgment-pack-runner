@@ -35,6 +35,11 @@ type Config struct {
 	// requireComparableFacts (comparable_facts.go). Off by default. A job made
 	// before is returned as it was and keeps running.
 	RequireComparableFacts bool
+	// RequireSuppliedReviewedSet refuses to create a job from, or upgrade a
+	// job to, a release not checked against a supplied reviewed-set lock
+	// (reviewed_set.go). Off by default. A job made before is returned as it
+	// was and keeps running.
+	RequireSuppliedReviewedSet bool
 	// SigningKey is the absolute path of an Ed25519 seed, held outside the
 	// state directory, that each operational evaluation's Runtime signs its
 	// audit record with (runtime ADR-0047 §2b). Runner reads it once, at
@@ -364,6 +369,9 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	}
 	if s.cfg.RequireComparableFacts && !releaseRefusesIncomparableFacts(r) {
 		return Job{}, errJobComparableFactsRequired
+	}
+	if s.cfg.RequireSuppliedReviewedSet && !heldToSuppliedReviewedSet(r) {
+		return Job{}, errJobReviewedSetRequired
 	}
 	// Likewise, a release that names a profile set aside since it was made
 	// makes no new job; a job made from it before is returned as it was.

@@ -196,10 +196,15 @@ func invokeStarting(ctx context.Context, bin, dir, label string, env []string, s
 }
 func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, error) {
 	// Under manual admission the executor starts only the Runtime utilities it
-	// admits, among which the packs schema answer requireComparableFacts asks
-	// for is not (comparable_facts.go).
-	if s.cfg.ExecutorAdmission != nil && (inputConversion(req.Input) != nil || req.RequireComparableFacts) {
+	// admits, among which neither the packs schema answer
+	// requireComparableFacts asks for (comparable_facts.go) nor the packs
+	// covers answer a reviewedSet asks for (reviewed_set.go) is.
+	if s.cfg.ExecutorAdmission != nil && (inputConversion(req.Input) != nil || req.RequireComparableFacts || req.ReviewedSet != nil) {
 		return Release{}, manualUnsupported()
+	}
+	// A reviewed set is held to its bounds before anything is written.
+	if err := req.ReviewedSet.check(); err != nil {
+		return Release{}, err
 	}
 	limits, admissionErr := runtimeConversionLimits(ctx, s.runtime, s.cfg.Dir, inputConversion(req.Input), s.startRuntime)
 	if admissionErr != nil {
@@ -261,6 +266,13 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	}
 	for name, b := range map[string][]byte{"pack.json": []byte(r.Pack), "jpack.json": []byte(r.Config)} {
 		if err := saveFile(filepath.Join(dir, name), b, 0600); err != nil {
+			return r, err
+		}
+	}
+	// Before anything else is asked of the pack: a release held to a supplied
+	// reviewed set is checked only when that lock covers its exact bytes.
+	if req.ReviewedSet != nil {
+		if r.SuppliedReviewedSet, err = s.coveredBy(ctx, dir, r, *req.ReviewedSet); err != nil {
 			return r, err
 		}
 	}
@@ -327,6 +339,12 @@ func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir stri
 	}
 	if digest([]byte(r.Pack)) != r.PackDigest {
 		return nil, nil, nil, nil, errors.New("release pack digest mismatch")
+	}
+	// A release checked against a supplied reviewed set still holds the lock
+	// it was checked against: packs covers is not asked again, and its answer
+	// stands only for these bytes (reviewed_set.go).
+	if r.SuppliedReviewedSet != nil && !heldToSuppliedReviewedSet(r) {
+		return nil, nil, nil, nil, errors.New("release reviewed-set lock digest mismatch")
 	}
 	bin := filepath.Join(s.cfg.Dir, "runtimes", strings.TrimPrefix(r.RuntimeDigest, "sha256:"))
 	b, err := readLimit(bin, 128<<20)
