@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Runner #210: a release check held to a reviewed-set lock made outside
@@ -365,6 +368,55 @@ func TestReviewedSetRefusalNotAboutTheLockIsRunnersFault(t *testing.T) {
 	}
 }
 
+// A packs covers invocation that did not exit gave no answer to read: the
+// Runtime could not start, was killed, or was still running at the deadline,
+// whatever it wrote before. That is Runner's own fault, answered as a release
+// check's packs lock that did not exit is (500 store_error), and never as a
+// Runtime without packs covers. No release is saved, and nothing else is asked
+// of the pack.
+func TestReviewedSetCoversThatDidNotExitIsRunnersFault(t *testing.T) {
+	want := `{"error":{"code":"store_error","message":"The local runner could not complete this request.","retryable":false}}` + "\n"
+	for _, c := range []struct {
+		name, covers string
+		deadline     time.Duration
+	}{
+		{"a Runtime that could not start", "", 0},
+		{"a Runtime killed after it wrote that the lock covers the pack", "printf '%s' '" + covered + "'; kill -9 $$", 0},
+		{"a Runtime still running at the deadline", "exec sleep 60", 2 * time.Second},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := journalConfig(t)
+			log := filepath.Join(t.TempDir(), "invocations.log")
+			// journalConfig's Runtime is a text file, which cannot start.
+			if c.covers != "" {
+				cfg.Runtime = filepath.Join(t.TempDir(), "covers-runtime")
+				script := "#!/bin/sh\nPATH=/usr/bin:/bin\nexport PATH\nprintf '%s\\n' \"$*\" >> '" + log + "'\ncase \"$1 $2\" in\n'packs covers') " + c.covers + " ;;\nesac\nexit 9\n"
+				must(t, os.WriteFile(cfg.Runtime, []byte(script), 0700))
+			}
+			s := openJournal(t, cfg)
+			t.Cleanup(s.Close)
+			req := httptest.NewRequest("POST", "/v1/previews", strings.NewReader(reviewedRequest(&ReviewedSetRequest{Lock: suppliedLock, ID: "journal"})))
+			req.Header.Set("Authorization", "Bearer "+journalBearer)
+			if c.deadline > 0 {
+				ctx, cancel := context.WithTimeout(context.Background(), c.deadline)
+				defer cancel()
+				req = req.WithContext(ctx)
+			}
+			res := httptest.NewRecorder()
+			s.Handler(journalBearer).ServeHTTP(res, req)
+			if res.Code != 500 || res.Body.String() != want {
+				t.Fatalf("answered %d %s", res.Code, res.Body.String())
+			}
+			if n := releasesHeld(t, s); n != 0 {
+				t.Fatal("a failed check saved a release:", n)
+			}
+			if got := takeLog(t, log); c.covers != "" && got != coversCall+"\n" {
+				t.Fatalf("the Runtime was invoked\n%s", got)
+			}
+		})
+	}
+}
+
 // Under manual admission the executor admits no packs covers invocation, and a
 // release check that supplies a reviewed set is refused as every feature the
 // manual profile lacks is, before any Runtime is invoked.
@@ -411,6 +463,54 @@ func TestEachAttemptChecksTheSuppliedLockByItsDigest(t *testing.T) {
 	must(t, e)
 	if run := runOnce(t, s, j.ID, "kept"); run.State != "completed" {
 		t.Fatal("the run of a kept lock ended", run.State, run.Problem)
+	}
+}
+
+// A run's export carries its release, and so the supplied lock, under the
+// release digest. It is refused with these bytes, as the run routes refuse it,
+// when the store's release keeps a supplied lock that is no longer the bytes
+// its digest names; and verify-run fails an export whose supplied lock is not
+// its digest's, even under the digest of the release as exported.
+func TestAnExportChecksTheSuppliedLockByItsDigest(t *testing.T) {
+	s, _ := checkService(t)
+	set := &SuppliedReviewedSet{ID: "journal", Lock: suppliedLock, LockDigest: sha(suppliedLock)}
+	r := heldReleaseWith(t, s, set)
+	j, e := s.createJob("Exported", r.ID)
+	must(t, e)
+	run := runOnce(t, s, j.ID, "exported")
+	if run.State != "completed" {
+		t.Fatal("the run ended", run.State, run.Problem)
+	}
+	res := serve(t, s, "GET", "/v1/runs/"+run.ID+"/verification?version=3", "", nil)
+	if res.Code != 200 || !strings.Contains(res.Body.String(), `"suppliedReviewedSet":{"id":"journal","lock":`+string(encode(suppliedLock))+`,"lockDigest":"`+sha(suppliedLock)+`"}`) {
+		t.Fatalf("the export was served %d %s", res.Code, res.Body.String())
+	}
+	exported := bytes.TrimSuffix(res.Body.Bytes(), []byte("\n"))
+	if e := VerifyRun(exported, nil, releaseDigest(r)); e != nil {
+		t.Fatal("verify-run refused the export of a kept lock:", e)
+	}
+
+	// The lock verify-run is given is not its digest's, under the digest of
+	// the release as exported.
+	var b VerificationBundle
+	must(t, json.Unmarshal(exported, &b))
+	b.Release.SuppliedReviewedSet = &SuppliedReviewedSet{ID: "journal", Lock: suppliedLock + " ", LockDigest: sha(suppliedLock)}
+	b.ReleaseDigest = releaseDigest(b.Release)
+	if e := VerifyRun(encode(b), nil, b.ReleaseDigest); e == nil || e.Error() != "release reviewed-set lock digest mismatch" {
+		t.Fatal("verify-run answered the export of a changed lock with", e)
+	}
+
+	// The store's release keeps a lock that is no longer its digest's.
+	changed := r
+	changed.SuppliedReviewedSet = &SuppliedReviewedSet{ID: "journal", Lock: suppliedLock + " ", LockDigest: sha(suppliedLock)}
+	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(changed)), r.ID); e != nil {
+		t.Fatal(e)
+	}
+	want := `{"error":{"code":"store_error","message":"The local runner could not complete this request.","retryable":false}}` + "\n"
+	for _, version := range []string{"", "?version=2", "?version=3", "?version=4", "?version=5"} {
+		if res := serve(t, s, "GET", "/v1/runs/"+run.ID+"/verification"+version, "", nil); res.Code != 500 || res.Body.String() != want {
+			t.Fatalf("%q: the export of a changed lock was served %d %s", version, res.Code, res.Body.String())
+		}
 	}
 }
 

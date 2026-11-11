@@ -46,6 +46,7 @@ The answer is data, read to at most 64 KiB, and nothing is taken for a yes:
 | exit 1, status `invalid`, findings whose names are of the decision id form, about the id, pack and lock Runner gave | 422 `pack_not_in_reviewed_set`, naming the findings |
 | status `error` at exit 1 or 4, or `unsupported` at exit 2, whose first diagnostic code is of the `JPS-` form and begins `JPS-LOCK-` or `JPS-RESOURCE-LOCK-` | 422 `invalid_reviewed_set`, naming the code |
 | the same, with any other code of the `JPS-` form, such as `JPS-INPUT-READ` about the pack file Runner wrote | 500 `store_error`: Runner's fault, not the lock's |
+| no answer, because the Runtime could not start or did not exit within its 30 seconds | 500 `store_error`: Runner's fault, as for `packs lock` |
 | anything else, among it every answer whose `command` is not `packs covers` | 422 `reviewed_set_unsupported` |
 
 A refusal carries only the code or finding names, which are held to their forms and to
@@ -107,12 +108,14 @@ The releases table holds each release as one JSON record, and the member is omit
 when absent, so existing records read unchanged and their release digests do not
 change. A verification export carries the release, and so the supplied lock, under the
 release digest a verifier is given; an earlier Runner's `verify-run`, which reads the
-release strictly, refuses an export whose release has the member.
+release strictly, refuses an export whose release has the member. The export route
+refuses, with 500 `store_error`, a run whose release's supplied lock is no longer the
+bytes its digest names, as the run routes do.
 
-`verify-run` neither recomputes the supplied lock's digest nor asks the Runtime again.
-The release digest covers the member, so a verifier holding the release digest from a
-trusted channel can hash the kept lock and run `packs covers` over it and the pack
-itself. An older `verify-run` refuses an export carrying the member, because it decodes
+`verify-run` checks that the supplied lock is the bytes its digest names, and fails an
+export whose lock is not, but does not ask the Runtime again. The release digest covers
+the member, so a verifier holding the release digest from a trusted channel can run
+`packs covers` over the kept lock and the pack itself. An older `verify-run` refuses an export carrying the member, because it decodes
 the release strictly.
 
 ## Graphs

@@ -160,6 +160,56 @@ func TestComparableFactsRefusedOnARuntimeThatDoesNotSayItReadsVersionFive(t *tes
 	}
 }
 
+// A requireComparableFacts written null, in any spelling the decoder reads as
+// it, is a malformed body and is refused with these bytes before any Runtime
+// is invoked or anything is written: it is not read as false, which a bool
+// cannot tell apart once decoded. Written true or false, or absent, the check
+// is as before.
+func TestRequireComparableFactsWrittenNullIsRefused(t *testing.T) {
+	body := func(member string) string {
+		return `{"pack":` + string(encode(journalPack)) + `,"input":` + string(encode(journalInput())) + member + `}`
+	}
+	refusal := `{"error":{"code":"invalid_request","message":"Supply one bounded JSON request with supported fields and no duplicate members.","retryable":false}}` + "\n"
+	s, log := checkService(t)
+	for name, member := range map[string]string{
+		"null":                             `,"requireComparableFacts":null`,
+		"null, spaced":                     `,"requireComparableFacts": null `,
+		"null, in capitals":                `,"RequireComparableFacts":null`,
+		"null, escaped":                    `,"requireComparable\u0046acts":null`,
+		"null beside a true in capitals":   `,"requireComparableFacts":true,"REQUIRECOMPARABLEFACTS":null`,
+		"null beside a false in lowercase": `,"requirecomparablefacts":null,"requireComparableFacts":false`,
+	} {
+		res := serve(t, s, "POST", "/v1/previews", body(member), nil)
+		if res.Code != 400 || res.Body.String() != refusal {
+			t.Fatalf("%s: answered %d %s", name, res.Code, res.Body.String())
+		}
+	}
+	if got := takeLog(t, log); got != "" {
+		t.Fatalf("a refused check invoked the Runtime\n%s", got)
+	}
+	if n := releasesHeld(t, s); n != 0 {
+		t.Fatal("a refused check saved a release:", n)
+	}
+	for _, c := range []struct{ name, member, config, probe string }{
+		{"true", `,"requireComparableFacts":true`, configWith, "packs schema --format json | none | none\n"},
+		{"false", `,"requireComparableFacts":false`, configWithout, ""},
+		{"absent", ``, configWithout, ""},
+	} {
+		res := serve(t, s, "POST", "/v1/previews", body(c.member), nil)
+		if res.Code != 201 {
+			t.Fatalf("%s: answered %d %s", c.name, res.Code, res.Body.String())
+		}
+		var r Release
+		must(t, json.Unmarshal(res.Body.Bytes(), &r))
+		if r.Config != c.config {
+			t.Fatalf("%s: the release holds %s", c.name, r.Config)
+		}
+		if got := takeLog(t, log); !strings.HasPrefix(got, c.probe+"spec validate ") {
+			t.Fatalf("%s: the check invoked\n%s", c.name, got)
+		}
+	}
+}
+
 // Under manual admission the executor admits no packs schema invocation, and a
 // release check that asks for requireComparableFacts is refused as every
 // feature the manual profile lacks is, before any Runtime is invoked.

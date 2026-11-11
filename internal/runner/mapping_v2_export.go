@@ -261,6 +261,12 @@ func verifyInputs(raw []byte, profiles []InputProfile, trustedReleaseDigest stri
 	if b.Version < 2 || b.Version > 5 || !validDigest(trustedReleaseDigest) || b.ReleaseDigest != trustedReleaseDigest || releaseDigest(b.Release) != trustedReleaseDigest {
 		return b, prepared, errors.New("release does not match the independently trusted digest")
 	}
+	// The release digest covers a supplied reviewed set's lock and its
+	// digest, not that one is the other's: each attempt and the export route
+	// check that, and so does the verifier (reviewed_set.go).
+	if b.Release.SuppliedReviewedSet != nil && !heldToSuppliedReviewedSet(b.Release) {
+		return b, prepared, errors.New("release reviewed-set lock digest mismatch")
+	}
 	resultDisposition, e := exactDisposition(b.Run.Result)
 	if e != nil {
 		return b, prepared, e

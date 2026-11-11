@@ -71,8 +71,10 @@ func decodeInput(w http.ResponseWriter, r *http.Request, dst any) error {
 		src, path = d.Source, []string{"source", "mapping"}
 	case *PreviewRequest:
 		// A reviewedSet written null is a malformed body, and is not read
-		// as a release check without one (reviewed_set.go).
-		if d.ReviewedSet == nil && namedAt(raw, "reviewedSet") {
+		// as a release check without one (reviewed_set.go). Nor is a
+		// requireComparableFacts written null read as false, which a bool
+		// cannot tell apart once decoded (comparable_facts.go).
+		if (d.ReviewedSet == nil && namedAt(raw, "reviewedSet")) || writtenNull(raw, "requireComparableFacts") {
 			return &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
 		}
 		src, path = d.Input.Source, []string{"input", "source", "mapping"}
@@ -94,6 +96,21 @@ func decodeInput(w http.ResponseWriter, r *http.Request, dst any) error {
 	}
 	src.mappingGiven = namedAt(raw, path...)
 	return keptAsWritten(raw, src.Mapping, path...)
+}
+
+// writtenNull says whether the JSON object raw has a member name, in any
+// spelling encoding/json reads as it, written null.
+func writtenNull(raw []byte, name string) bool {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return false
+	}
+	for member, value := range members {
+		if strings.EqualFold(member, name) && string(bytes.TrimSpace(value)) == "null" {
+			return true
+		}
+	}
+	return false
 }
 
 // releaseNamed is the release a job creation's body names, read leniently:
@@ -152,6 +169,13 @@ func (s *Service) Handler(token string) http.Handler {
 		release, err := s.release(run.ReleaseID)
 		if err != nil {
 			failure(w, err)
+			return
+		}
+		// As the run routes refuse it, so an export refuses a release whose
+		// supplied lock is no longer the bytes its digest names, rather than
+		// carry it under the release digest (reviewed_set.go).
+		if release.SuppliedReviewedSet != nil && !heldToSuppliedReviewedSet(release) {
+			failure(w, errors.New("release reviewed-set lock digest mismatch"))
 			return
 		}
 		if !sameConversion(inputConversion(run.Input), requestConversion(r)) {

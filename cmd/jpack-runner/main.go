@@ -155,9 +155,13 @@ func serve(stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// A release check can run validation, lock, rehearsal and saved tests, each
-	// with a 30-second subprocess deadline. Allow the bounded sequence to finish.
-	server := &http.Server{Handler: service.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 135 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	// A release check can run up to seven Runtime invocations, each with a
+	// 30-second subprocess deadline: packs schema (requireComparableFacts),
+	// packs covers (reviewedSet), validation, lock, packs list (a dialect
+	// mapping's coverage), rehearsal and saved tests; and, for a selected
+	// conversion, two dialect contract reads of 10 seconds each. Allow the
+	// bounded sequence, 230 seconds, to finish, with 15 to spare.
+	server := &http.Server{Handler: service.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 245 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	defer server.Close()
 	if err = json.NewEncoder(stdout).Encode(map[string]string{"url": "http://" + listener.Addr().String(), "protocol": "jobs/1"}); err != nil {
 		return err
@@ -189,7 +193,7 @@ const verificationCoverage = "Every retained result disposition must match the a
 	"unsignedParameters, binding, runChain, signature), standard error says so, and a --require flag the " +
 	"export fails is added to the error; if the preparation fails its own verification, the report is the " +
 	"finding alone and the error carries both refusals. A refusal before the preparation is verified (the " +
-	"export's envelope, the release's digest, the record's bytes, chain entry, signature sidecar or Core " +
+	"export's envelope, the release's digest or its supplied reviewed-set lock, the record's bytes, chain entry, signature sidecar or Core " +
 	"version) reports alone. " +
 	"The record signature covers the exact audit bytes, " +
 	"not the export envelope: version, releaseDigest, release, inputs, chain (entry and checkpoint), " +

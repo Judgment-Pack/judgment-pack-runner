@@ -181,6 +181,7 @@ on the boot line, creating a job from a `not-run` release returns 409 `release_u
 a refusal of its own beside `release_not_ready`. The setting is off by default, and then
 nothing changes. It refuses the creation of a job only: repeating the creation of a job
 made before the setting was on returns that job, as before, and the job keeps running.
+The member is `true` or `false`; `null` or a second spelling of its name refuses the boot.
 
 Desk rereads the pack and saved cases before checking and again before creation;
 changed inputs require a new review. Once admitted, the job stays bound to its
@@ -211,13 +212,15 @@ time it is served, so runs completed before them are served with them too; a run
 release cannot be read, or whose release's supplied lock is no longer the bytes its digest
 names, is refused with 500 `store_error` rather than served as resting on either lock.
 Run lists, briefs and verification exports do not carry them; an export carries the
-release, with its lock and any supplied reviewed set.
+release, with its lock and any supplied reviewed set. The export of such a run is refused
+the same way, and `verify-run` fails an export whose supplied lock is not its digest's.
 
 ## Comparable facts
 
 A project's `requireComparableFacts` (Runtime ADR-0046) does not reach a run either.
 A release check can ask for it with `"requireComparableFacts": true` in
-`POST /v1/previews`. Runner then generates
+`POST /v1/previews`, where it is `true` or `false`; written `null`, the check is refused
+as 400 `invalid_request`. Runner then generates
 
 ```json
 {"configVersion":"5","packs":{"target":{"path":"pack.json"}},"audit":{"dir":"audit"},"requireComparableFacts":true}
@@ -282,7 +285,8 @@ check, and no release is saved:
   code, which begins `JPS-LOCK-` or `JPS-RESOURCE-LOCK-`, such as `JPS-LOCK-JSON`,
   `JPS-LOCK-SHAPE`, `JPS-LOCK-VERSION` or `JPS-RESOURCE-LOCK-BYTE-LIMIT`;
 - 500 `store_error` when the Runtime refuses with any other code, such as one about the
-  pack file Runner wrote: that is Runner's fault, not the lock's;
+  pack file Runner wrote, or does not answer at all, because it could not start or did
+  not exit within its 30 seconds: that is Runner's fault, not the lock's;
 - 422 `reviewed_set_unsupported` for anything else, among it the answer of a Runtime
   before 0.41.0, which has no `packs covers`.
 
