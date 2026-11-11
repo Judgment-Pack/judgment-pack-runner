@@ -811,6 +811,10 @@ is obtained from the exact frozen pack. Every candidate fact pointer must be
 covered by a target/ancestor or acknowledged in `unmapped`; evidence requirements
 must be mapped or listed in `unmappedEvidence`. Undeclared evidence is refused.
 Root and partially mapped aggregate pointers generate explicit review warnings.
+A sample whose derivation has fact targets and yields none of them adds, after
+the others, the review warning `The sample derived no fact: the release's sample
+shows nothing of how the mapping turns a record into facts.`; it is a warning
+and not a refusal, and a mapping with only evidence targets does not get it.
 Inventory paths over-approximate actual reads, and an omission is not a guarantee
 of an unknown evaluation. Subject binding and row cardinality remain explicit
 review obligations, not a search for one `equalsParam` anywhere in the rule.
