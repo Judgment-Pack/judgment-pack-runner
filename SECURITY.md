@@ -142,7 +142,11 @@ written, the lock is written to a private file in the release's directory and na
 by path, with no shell, and neither the lock's bytes nor the Runtime's messages reach a refusal.
 The check does not say that the lock is the one a given project holds; the caller chooses it. An
 installation can require such a release for every new job and upgrade with
-`requireSuppliedReviewedSet` on its boot line. A project's `requireComparableFacts` likewise reaches
+`requireSuppliedReviewedSet` on its boot line. The lock is the caller's: a lock is a document anyone
+can write, so `"supplied"` and `requireSuppliedReviewedSet` show only that some lock naming exactly
+these pack bytes was supplied with the release check. They are no control against whoever may call
+the preview route. A consumer that needs a particular reviewed set compares `suppliedLockDigest`, or
+the lock the release keeps, with the digest of a lock it obtained from a source it trusts. A project's `requireComparableFacts` likewise reaches
 a run only when its release was checked with it, and an installation can require that with
 `requireComparableFacts` on its boot line.
 

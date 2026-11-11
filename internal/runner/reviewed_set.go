@@ -39,8 +39,12 @@ import (
 //     lock-entry-missing or document-drift, about the id, pack and lock Runner
 //     gave: refused as pack_not_in_reviewed_set, naming them;
 //   - a lock the Runtime refuses to compare: status error at exit 1 or 4, or
-//     unsupported at exit 2, with a diagnostic code: refused as
+//     unsupported at exit 2, with a diagnostic code about the lock, one that
+//     begins JPS-LOCK- or JPS-RESOURCE-LOCK-: refused as
 //     invalid_reviewed_set, naming the code;
+//   - the same refusal with any other code, such as one about the pack file
+//     Runner wrote: Runner's own fault, not the caller's lock, answered as
+//     any other failure of the request is (500 store_error);
 //   - any other answer: refused as reviewed_set_unsupported.
 //
 // A Runtime before 0.41.0 has no packs covers and answers as packs does, with
@@ -219,7 +223,11 @@ func coversAnswer(out []byte, exit int, kept *SuppliedReviewedSet, pack string) 
 		}
 	case answer.Status == "error" && (exit == 1 || exit == 4), answer.Status == "unsupported" && exit == 2:
 		if len(answer.Diagnostics) > 0 && len(answer.Diagnostics[0].Code) <= 64 && runtimeCode.MatchString(answer.Diagnostics[0].Code) {
-			return errReviewedSetRefused(answer.Diagnostics[0].Code)
+			code := answer.Diagnostics[0].Code
+			if strings.HasPrefix(code, "JPS-LOCK-") || strings.HasPrefix(code, "JPS-RESOURCE-LOCK-") {
+				return errReviewedSetRefused(code)
+			}
+			return errors.New("packs covers refused Runner's own invocation (" + code + ")")
 		}
 	}
 	return errReviewedSetUnsupported

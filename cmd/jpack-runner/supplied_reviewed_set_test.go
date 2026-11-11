@@ -40,7 +40,7 @@ func TestBootRequireSuppliedReviewedSetRefusesAmbiguousSpellings(t *testing.T) {
 		"a case variant alone":      `,"RequireSuppliedReviewedSet":true`,
 		"a case variant downgrade":  `,"requireSuppliedReviewedSet":true,"REQUIRESUPPLIEDREVIEWEDSET":false`,
 		"an exact duplicate":        `,"requireSuppliedReviewedSet":true,"requireSuppliedReviewedSet":false`,
-		"an escaped duplicate":      `,"requireSuppliedReviewedSet":true,"requireSuppliedReviewedSet":false`,
+		"an escaped duplicate":      `,"requireSuppliedReviewedSet":true,"requireSupplied\u0052eviewedSet":false`,
 		"a case variant of a false": `,"requireSuppliedReviewedSet":false,"requiresuppliedreviewedset":true`,
 	} {
 		t.Run(name, func(t *testing.T) {

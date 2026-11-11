@@ -29,6 +29,13 @@ check therefore says that this lock pins these bytes under this id, and no more:
 that a project's configuration declares the pack, and not that the lock is the one a
 given project holds. The caller chooses the lock.
 
+The lock is the caller's. A lock is a document anyone can write, so `supplied` and
+`requireSuppliedReviewedSet` show only that some lock naming exactly these pack bytes was
+supplied with the release check. They are no control against whoever may call
+`POST /v1/previews`. A consumer that needs a particular reviewed set compares
+`suppliedLockDigest`, or the lock the release keeps, with the digest of a lock it
+obtained from a source it trusts.
+
 ## Reading the answer
 
 The answer is data, read to at most 64 KiB, and nothing is taken for a yes:
@@ -37,12 +44,16 @@ The answer is data, read to at most 64 KiB, and nothing is taken for a yes:
 |---|---|
 | exit 0, status `valid`, `findings` present and empty, the id, pack digest and lock digest Runner gave, and an entry whose digest is the pack's | checked |
 | exit 1, status `invalid`, findings whose names are of the decision id form, about the id, pack and lock Runner gave | 422 `pack_not_in_reviewed_set`, naming the findings |
-| status `error` at exit 1 or 4, or `unsupported` at exit 2, whose first diagnostic code is of the `JPS-` form | 422 `invalid_reviewed_set`, naming the code |
+| status `error` at exit 1 or 4, or `unsupported` at exit 2, whose first diagnostic code is of the `JPS-` form and begins `JPS-LOCK-` or `JPS-RESOURCE-LOCK-` | 422 `invalid_reviewed_set`, naming the code |
+| the same, with any other code of the `JPS-` form, such as `JPS-INPUT-READ` about the pack file Runner wrote | 500 `store_error`: Runner's fault, not the lock's |
 | anything else, among it every answer whose `command` is not `packs covers` | 422 `reviewed_set_unsupported` |
 
 A refusal carries only the code or finding names, which are held to their forms and to
 64 characters. Neither the lock's bytes nor the Runtime's messages reach a refusal, the
-journal or a log. Nothing is saved on any refusal.
+journal or a log. On a refusal no release record is saved; the release's private
+directory keeps its files, as for any failed check. A lock or id outside its bounds, or a
+`reviewedSet` written `null` (400 `invalid_request`), is refused before anything is
+written.
 
 ## Detecting the capability
 
@@ -74,8 +85,9 @@ bytes already checked by digest.
 result or record says `reviewed: true` and its release keeps a supplied reviewed set.
 Both are read off the run and its release whenever the run routes serve it, as
 `release` already was, so nothing is stored on the run and earlier runs are served the
-same way. A run whose release cannot be read is refused rather than served as resting
-on the release's own lock.
+same way. A run whose release cannot be read, or whose release's supplied lock is no
+longer the bytes its digest names, is refused with 500 `store_error` rather than served
+as resting on either lock.
 
 ## Admission
 
@@ -96,6 +108,12 @@ when absent, so existing records read unchanged and their release digests do not
 change. A verification export carries the release, and so the supplied lock, under the
 release digest a verifier is given; an earlier Runner's `verify-run`, which reads the
 release strictly, refuses an export whose release has the member.
+
+`verify-run` neither recomputes the supplied lock's digest nor asks the Runtime again.
+The release digest covers the member, so a verifier holding the release digest from a
+trusted channel can hash the kept lock and run `packs covers` over it and the pack
+itself. An older `verify-run` refuses an export carrying the member, because it decodes
+the release strictly.
 
 ## Graphs
 

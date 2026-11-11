@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -206,11 +207,13 @@ func TestReviewedSetRequestIsHeldToItsBounds(t *testing.T) {
 		}
 	}
 	for name, body := range map[string]string{
-		"a member a reviewed set does not have": `{"pack":` + string(encode(journalPack)) + `,"input":{"facts":{}},"reviewedSet":{"lock":"{}","id":"journal","lockDigest":"` + sha("{}") + `"}}`,
-		"a reviewed set that is a string":       `{"pack":` + string(encode(journalPack)) + `,"input":{"facts":{}},"reviewedSet":"{}"}`,
+		"a member a reviewed set does not have":    `{"pack":` + string(encode(journalPack)) + `,"input":{"facts":{}},"reviewedSet":{"lock":"{}","id":"journal","lockDigest":"` + sha("{}") + `"}}`,
+		"a reviewed set that is a string":          `{"pack":` + string(encode(journalPack)) + `,"input":{"facts":{}},"reviewedSet":"{}"}`,
+		"a reviewed set written null":              `{"pack":` + string(encode(journalPack)) + `,"input":{"facts":{}},"reviewedSet":null}`,
+		"a reviewed set written null, in capitals": `{"pack":` + string(encode(journalPack)) + `,"input":{"facts":{}},"ReviewedSet":null}`,
 	} {
 		res := serve(t, s, "POST", "/v1/previews", body, nil)
-		if res.Code != 400 || !strings.Contains(res.Body.String(), `"code":"invalid_request"`) {
+		if res.Code != 400 || res.Body.String() != `{"error":{"code":"invalid_request","message":"Supply one bounded JSON request with supported fields and no duplicate members.","retryable":false}}`+"\n" {
 			t.Fatalf("%s: answered %d %s", name, res.Code, res.Body.String())
 		}
 	}
@@ -328,6 +331,40 @@ func TestReviewedSetRefusedUnlessTheRuntimeSaysTheLockCoversThePack(t *testing.T
 	}
 }
 
+// A refusal of packs covers whose code is not about the lock, such as one
+// about the pack file Runner wrote beside it, is Runner's own fault and not
+// the caller's: it is answered as any other failure of the request is, never
+// as invalid_reviewed_set, and no release is saved.
+func TestReviewedSetRefusalNotAboutTheLockIsRunnersFault(t *testing.T) {
+	want := `{"error":{"code":"store_error","message":"The local runner could not complete this request.","retryable":false}}` + "\n"
+	for _, c := range []struct {
+		name, status, code string
+		exit               int
+	}{
+		{"the pack file could not be read", "error", "JPS-INPUT-READ", 4},
+		{"the pack file is not JSON", "error", "JPS-INPUT-JSON", 1},
+		{"a resource limit not of the lock", "error", "JPS-RESOURCE-PACK-BYTE-LIMIT", 4},
+		{"an unsupported pack", "unsupported", "JPS-PACK-VERSION", 2},
+		{"a code that only begins as a lock's", "error", "JPS-LOCKS-SHAPE", 1},
+		{"a code that is the lock prefix alone", "error", "JPS-LOCK", 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, log := checkService(t)
+			answerCovers(t, log, coversRefusal(c.status, c.code), c.exit)
+			res := serve(t, s, "POST", "/v1/previews", reviewedRequest(&ReviewedSetRequest{Lock: suppliedLock, ID: "journal"}), nil)
+			if res.Code != 500 || res.Body.String() != want {
+				t.Fatalf("answered %d %s", res.Code, res.Body.String())
+			}
+			if n := releasesHeld(t, s); n != 0 {
+				t.Fatal("a failed check saved a release:", n)
+			}
+			if got := takeLog(t, log); !strings.HasPrefix(got, coversCall+" | ") || strings.Contains(got, "spec validate") {
+				t.Fatalf("the Runtime was invoked\n%s", got)
+			}
+		})
+	}
+}
+
 // Under manual admission the executor admits no packs covers invocation, and a
 // release check that supplies a reviewed set is refused as every feature the
 // manual profile lacks is, before any Runtime is invoked.
@@ -403,8 +440,8 @@ func TestManualAdmissionChecksTheSuppliedLockByItsDigest(t *testing.T) {
 
 // A run's reviewed claim rests on the supplied lock exactly when its release
 // was checked against one; a run that makes no claim says nothing of either.
-// A run whose release cannot be read is not served as resting on the
-// release's own lock.
+// A run whose release cannot be read, or whose release's stored lock is no
+// longer the bytes its digest names, is not served as resting on either lock.
 func TestRunsOfAReleaseHeldToASuppliedReviewedSetSaySo(t *testing.T) {
 	set := &SuppliedReviewedSet{ID: "journal", Lock: suppliedLock, LockDigest: sha(suppliedLock)}
 	claim := Run{Result: json.RawMessage(`{"reviewed":true}`)}
@@ -432,10 +469,26 @@ func TestRunsOfAReleaseHeldToASuppliedReviewedSetSaySo(t *testing.T) {
 	if run.State != "completed" {
 		t.Fatal("the run ended", run.State, run.Problem)
 	}
+	want := `{"error":{"code":"store_error","message":"The local runner could not complete this request.","retryable":false}}` + "\n"
+	if res := serve(t, s, "GET", "/v1/runs/"+run.ID, "", nil); res.Code != 200 || !strings.Contains(res.Body.String(), `"reviewedSetOrigin":"supplied","suppliedLockDigest":"`+set.LockDigest+`"`) {
+		t.Fatalf("the run of a kept lock was served %d\n%s", res.Code, res.Body.String())
+	}
+	altered := r
+	altered.SuppliedReviewedSet = &SuppliedReviewedSet{ID: set.ID, Lock: set.Lock + " ", LockDigest: set.LockDigest}
+	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(altered)), r.ID); e != nil {
+		t.Fatal(e)
+	}
+	for name, res := range map[string]*httptest.ResponseRecorder{
+		"GET /v1/runs/{run}":                     serve(t, s, "GET", "/v1/runs/"+run.ID, "", nil),
+		"POST /v1/jobs/{job}/runs, a repetition": serve(t, s, "POST", "/v1/jobs/"+j.ID+"/runs", string(encode(journalInput())), map[string]string{"Idempotency-Key": "unreadable"}),
+	} {
+		if res.Code != 500 || res.Body.String() != want {
+			t.Fatalf("%s, of a release whose stored lock is not its digest's, served %d\n%s", name, res.Code, res.Body.String())
+		}
+	}
 	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", "{", r.ID); e != nil {
 		t.Fatal(e)
 	}
-	want := `{"error":{"code":"store_error","message":"The local runner could not complete this request.","retryable":false}}` + "\n"
 	for name, res := range map[string]interface{ String() string }{
 		"GET /v1/runs/{run}":                     serve(t, s, "GET", "/v1/runs/"+run.ID, "", nil).Body,
 		"POST /v1/jobs/{job}/runs, a repetition": serve(t, s, "POST", "/v1/jobs/"+j.ID+"/runs", string(encode(journalInput())), map[string]string{"Idempotency-Key": "unreadable"}).Body,

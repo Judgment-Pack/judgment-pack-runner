@@ -208,9 +208,10 @@ and nothing when neither does. When the run's release was checked against a supp
 reviewed set, the origin is `"supplied"` in place of `"release"`, with that lock's digest
 as `suppliedLockDigest`. The members are read off the run, and the release it names, each
 time it is served, so runs completed before them are served with them too; a run whose
-release cannot be read is refused with 500 `store_error` rather than served as resting on
-the release's own lock. Run lists, briefs and verification exports do not carry them; an
-export carries the release, with its lock and any supplied reviewed set.
+release cannot be read, or whose release's supplied lock is no longer the bytes its digest
+names, is refused with 500 `store_error` rather than served as resting on either lock.
+Run lists, briefs and verification exports do not carry them; an export carries the
+release, with its lock and any supplied reviewed set.
 
 ## Comparable facts
 
@@ -278,8 +279,10 @@ check, and no release is saved:
 - 422 `pack_not_in_reviewed_set` when the Runtime reports that the lock does not cover
   the pack, naming its findings, such as `lock-entry-missing` or `document-drift`;
 - 422 `invalid_reviewed_set` when the Runtime refuses to compare the lock, naming its
-  code, such as `JPS-LOCK-JSON`, `JPS-LOCK-SHAPE`, `JPS-LOCK-VERSION` or
-  `JPS-RESOURCE-LOCK-BYTE-LIMIT`;
+  code, which begins `JPS-LOCK-` or `JPS-RESOURCE-LOCK-`, such as `JPS-LOCK-JSON`,
+  `JPS-LOCK-SHAPE`, `JPS-LOCK-VERSION` or `JPS-RESOURCE-LOCK-BYTE-LIMIT`;
+- 500 `store_error` when the Runtime refuses with any other code, such as one about the
+  pack file Runner wrote: that is Runner's fault, not the lock's;
 - 422 `reviewed_set_unsupported` for anything else, among it the answer of a Runtime
   before 0.41.0, which has no `packs covers`.
 
@@ -295,6 +298,13 @@ configuration, because a release's configuration is Runner's own and is never th
 the lock pins, so the check does not say that a project's configuration declares the
 pack, or that the lock is the one a given project holds: the caller chooses the lock.
 
+The lock is the caller's. A lock is a document anyone can write, so `"supplied"` and
+`requireSuppliedReviewedSet` show only that some lock naming exactly these pack bytes was
+supplied with the release check. They are no control against whoever may call
+`POST /v1/previews`. A consumer that needs a particular reviewed set compares
+`suppliedLockDigest`, or the lock the release keeps, with the digest of a lock it obtained
+from a source it trusts.
+
 The release keeps the lock as `suppliedReviewedSet`, with the id and the lock's digest,
 and its own configuration and lock are unchanged: every evaluation of it is still given
 those and nothing else. `packs covers` is not asked again at each attempt. Its answer
@@ -304,7 +314,8 @@ Runtime it pinned; an attempt of a release whose lock is no longer its digest's 
 without being evaluated. Its runs that say `reviewed: true` are served with
 `reviewedSetOrigin: "supplied"` ([above](#what-a-runs-reviewed-claim-means)). Under
 manual admission the option is refused as 409 `manual_profile_unsupported`, since the
-executor admits no `packs covers`. Without the option a release is checked as before,
+executor admits no `packs covers`. A `reviewedSet` written `null` is refused as 400
+`invalid_request`. Without the option a release is checked as before,
 and runs on an earlier Runtime as before.
 
 With `"requireSuppliedReviewedSet": true` on the boot line, creating a job from, or

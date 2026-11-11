@@ -188,24 +188,30 @@ type runResponse struct {
 }
 
 // servedRun is r as the run routes serve it, where release is the release r
-// names, read when r makes the reviewed claim (Service.servedRun).
+// names, read when r makes the reviewed claim (Service.servedRun). Its claim
+// rests on a supplied lock only while the release still holds the lock's
+// bytes its digest names.
 func servedRun(r Run, release Release) runResponse {
 	out := runResponse{storedRun: served(r), ReviewedSetOrigin: reviewedSetOrigin(r)}
-	if out.ReviewedSetOrigin != "" && release.SuppliedReviewedSet != nil {
+	if out.ReviewedSetOrigin != "" && heldToSuppliedReviewedSet(release) {
 		out.ReviewedSetOrigin, out.SuppliedLockDigest = reviewedSetOriginSupplied, release.SuppliedReviewedSet.LockDigest
 	}
 	return out
 }
 
 // servedRun is r as the run routes serve it. The release r names is read only
-// when r makes the reviewed claim, and one that cannot be read refuses the
-// answer rather than serve the claim as resting on the release's own lock.
+// when r makes the reviewed claim. One that cannot be read, or whose supplied
+// lock is no longer the bytes its digest names, refuses the answer rather than
+// serve the claim as resting on either lock.
 func (s *Service) servedRun(r Run) (runResponse, error) {
 	var release Release
 	if reviewedSetOrigin(r) != "" {
 		var err error
 		if release, err = s.release(r.ReleaseID); err != nil {
 			return runResponse{}, err
+		}
+		if release.SuppliedReviewedSet != nil && !heldToSuppliedReviewedSet(release) {
+			return runResponse{}, errors.New("release reviewed-set lock digest mismatch")
 		}
 	}
 	return servedRun(r, release), nil

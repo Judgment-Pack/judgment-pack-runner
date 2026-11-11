@@ -70,6 +70,11 @@ func decodeInput(w http.ResponseWriter, r *http.Request, dst any) error {
 	case *Input:
 		src, path = d.Source, []string{"source", "mapping"}
 	case *PreviewRequest:
+		// A reviewedSet written null is a malformed body, and is not read
+		// as a release check without one (reviewed_set.go).
+		if d.ReviewedSet == nil && namedAt(raw, "reviewedSet") {
+			return &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
+		}
 		src, path = d.Input.Source, []string{"input", "source", "mapping"}
 	case *RecordDelivery:
 		src, path = d.Event.Input.Source, []string{"event", "input", "source", "mapping"}
