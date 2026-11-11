@@ -217,7 +217,8 @@ release, with its lock and any supplied reviewed set.
 
 A project's `requireComparableFacts` (Runtime ADR-0046) does not reach a run either.
 A release check can ask for it with `"requireComparableFacts": true` in
-`POST /v1/previews`. Runner then generates
+`POST /v1/previews`, where it is `true` or `false`; written `null`, the check is refused
+as 400 `invalid_request`. Runner then generates
 
 ```json
 {"configVersion":"5","packs":{"target":{"path":"pack.json"}},"audit":{"dir":"audit"},"requireComparableFacts":true}
