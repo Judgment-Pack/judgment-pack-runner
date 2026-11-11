@@ -699,8 +699,12 @@ real-time timer. The computer must be awake and Desk running.
 
 Overlap defaults to **Skip this occurrence**; **Queue this occurrence** uses a
 bounded queue. Up to 100 occurrences can await admission, alongside the existing
-bounded run queue. Queue expiry is explicit, from 1 minute to 24 hours, and is
-checked again before evaluation. Pausing does not cancel previously accepted work.
+bounded run queue. The limit is the store's, shared by every trigger. A schedule, a
+file change or a cloud signal that finds it reached has no sender to answer, and is
+recorded `skipped`, reason `queue-full`; an event delivery is refused instead, with
+429 `queue_full` ([below](#event-delivery)). Queue expiry is explicit, from 1 minute
+to 24 hours, and is checked again before evaluation. Pausing does not cancel
+previously accepted work.
 Execution still uses the single durable worker. No automatic evaluation retry is
 introduced. A previously running invocation becomes interrupted after a crash;
 its audit may already exist and it is never replayed automatically.
@@ -759,7 +763,18 @@ the original occurrence, even if paused or aged since acceptance. A different
 payload with the same ID returns 409. Rotation revokes old credentials even for
 retries. New deliveries to a paused trigger return 409 without acceptance.
 A 202 acknowledges the occurrence, not a completed decision: inspect its state,
-including `skipped` for overlap or queue limits. No input is exposed in the receipt.
+including `skipped` for overlap. No input is exposed in the receipt.
+
+While 100 occurrences are pending in the store (`accepted`, `preparing` or
+`waiting`, of any trigger), a new delivery is refused with 429 `queue_full`
+(`retryable: true`) and nothing is admitted. Its ID stays unused: send the same
+bytes again later, and they are admitted once the queue has room, as long as
+`occurredAt` is no more than five minutes old. After that the same bytes are
+refused with 422 `event_expired`, as any delivery with an old timestamp is. An
+ID that an earlier Runner version recorded as `skipped` with reason
+`queue-full` still answers with that recorded occurrence. The
+answer carries no `Retry-After` header. The refusal is journaled as
+`admission.refused`, once a minute for alike refusals; no occurrence is recorded.
 
 Direct Runner callers need the private owner bearer plus `X-Trigger-Token`.
 Desk's scoped route refuses browser Origin headers and does not forward arbitrary
