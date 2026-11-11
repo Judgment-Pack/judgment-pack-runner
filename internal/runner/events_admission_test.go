@@ -222,6 +222,10 @@ func TestEveryAdmissionRefusalIsJournaledOnce(t *testing.T) {
 			w.s.cfg.RequireTestedReleases = true
 			return `{"name":"x","releaseId":"` + otherRelease(w, "not-run").ID + `","reviewed":true}`
 		})},
+		{"create-job: a release not checked with requireComparableFacts where it is required", 409, &want{"create-job", "release_comparable_facts_required", "installation"}, create(func(w *coverWorld) string {
+			w.s.cfg.RequireComparableFacts = true
+			return `{"name":"x","releaseId":"` + otherRelease(w, "not-run").ID + `","reviewed":true}`
+		})},
 		{"create-job: an invalid trigger", 422, &want{"create-job", "invalid_trigger", "installation"}, create(func(w *coverWorld) string {
 			c := eventTriggerConfig()
 			c.Name = ""

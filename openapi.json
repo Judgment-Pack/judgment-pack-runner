@@ -1607,7 +1607,7 @@
             "description": "The immutable receipt for the completed job revision."
           },
           "409": {
-            "description": "Stale review, active automation, pending work, failed tests or invalid artifact version."
+            "description": "Stale review, active automation, pending work, failed tests or invalid artifact version; on an installation booted with requireComparableFacts, a release not checked with it (release_comparable_facts_required)."
           }
         }
       }
@@ -2522,6 +2522,10 @@
           },
           "testSource": {
             "$ref": "#/components/schemas/TestSource"
+          },
+          "requireComparableFacts": {
+            "type": "boolean",
+            "description": "Check the release with the Runtime's requireComparableFacts (runtime ADR-0046). The configuration Runner generates for the release is then {\"configVersion\":\"5\",\"packs\":{\"target\":{\"path\":\"pack.json\"}},\"audit\":{\"dir\":\"audit\"},\"requireComparableFacts\":true} in place of the configVersion 3 one, and its Runtime refuses every evaluation of the release, the sample's rehearsal included, in which a fact some comparison of the pack reads is present and of a JSON type that comparison can never match (JPS-FACTS-COMPARABLE-REQUIRED): such a sample fails the check as 422 preview_failed, and such a run fails. Saved tests run under a configuration of their own, which does not set it. Runner first asks the pinned Runtime, through packs schema --format json, whether it lists configVersion 5 among supportedConfigVersions (Runtime 0.25.0 and later do). An answer that does not say so, or cannot be read, is refused as 422 comparable_facts_unsupported before the Runtime is given the configuration, and no release is saved. Refused under manual admission as 409 manual_profile_unsupported. Omitted or false, the release has the configVersion 3 configuration every earlier release has."
           }
         },
         "required": [
@@ -2554,7 +2558,7 @@
           "reviewed"
         ],
         "additionalProperties": false,
-        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. An installation booted with requireTestedReleases refuses a new job from a not-run release with 409 release_untested; repeating the creation of an existing job still returns it. Coverage never gates. Reusing an immutable release and name is idempotent. A new job from a release that names a profile set aside when Runner opened its store is refused as 422 input_profile_set_aside; repeating the creation of a job made before still returns it. A release, job or run that names a selected profile (admitSelectedProfile) is refused as 422 input_profile_selected: a selected profile is bound by selected preparation alone."
+        "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. An installation booted with requireTestedReleases refuses a new job from a not-run release with 409 release_untested; repeating the creation of an existing job still returns it. An installation booted with requireComparableFacts refuses a new job from a release not checked with it, one whose config is not byte for byte the configuration Runner generates with it, with 409 release_comparable_facts_required; repeating the creation of an existing job still returns it, and its runs keep running. Coverage never gates. Reusing an immutable release and name is idempotent. A new job from a release that names a profile set aside when Runner opened its store is refused as 422 input_profile_set_aside; repeating the creation of a job made before still returns it. A release, job or run that names a selected profile (admitSelectedProfile) is refused as 422 input_profile_selected: a selected profile is bound by selected preparation alone."
       },
       "Job": {
         "type": "object",
@@ -2709,6 +2713,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "config": {
+            "type": "string",
+            "description": "The configuration Runner generated for the release, byte for byte, which every evaluation of it is given: {\"configVersion\":\"3\",\"packs\":{\"target\":{\"path\":\"pack.json\"}},\"audit\":{\"dir\":\"audit\"}}, or the configVersion 5 one with requireComparableFacts for a release checked with it (PreviewRequest.requireComparableFacts). No project's jpack.json reaches a run."
+          },
+          "lock": {
+            "type": "string",
+            "description": "The release's own reviewed-set lock: what the pinned Runtime's packs lock wrote over the release's configuration and pack when the release was checked (runtime ADR-0019), which every evaluation of the release is given. It shows only that the pack has not changed since the release was made, not that a project reviewed the pack or that a project's lock names it."
           }
         }
       },
@@ -2840,6 +2852,12 @@
               }
             },
             "additionalProperties": false
+          },
+          "reviewedSetOrigin": {
+            "enum": [
+              "release"
+            ],
+            "description": "Whose reviewed set the reviewed claim of this run's result or audit record is about, present when either says reviewed is true. release: the release's own lock (Release.lock), the only reviewed set a run is given. Its reviewed: true shows only that the pack the run applied is byte for byte the pack the release froze. Read off the run each time GET /runs/{run} or POST /jobs/{job}/runs serves it, so a run completed before Runner said it is served with it too; not stored, and not in run lists, briefs or verification exports, which carry the release and its lock."
           }
         }
       },

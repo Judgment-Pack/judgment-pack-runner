@@ -103,6 +103,9 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	if s.cfg.RequireTestedReleases && next.Tests == "not-run" {
 		return Job{}, &apiError{409, "release_untested", "This installation requires passing saved tests before upgrading a job."}
 	}
+	if s.cfg.RequireComparableFacts && !releaseRefusesIncomparableFacts(next) {
+		return Job{}, errUpgradeComparableFactsRequired
+	}
 	if old.PackDigest != next.PackDigest {
 		if err = s.checkUpgradeVersion(ctx, old.PackVersion, next.PackVersion); err != nil {
 			return Job{}, err

@@ -88,7 +88,7 @@ Desk resumes queued work and marks previously running work interrupted. A shut d
 computer does not execute jobs. This is not a hosted scheduler or a Vercel function.
 
 The executable receives one bounded JSON boot line on stdin with `dir`, `runtime`,
-`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, `requireTestedReleases` ([below](#release-readiness)), an absolute `signingKey`
+`workspace`, `owner`, and a random `token`, with optional trusted `inputProfiles` for v2, an absolute `inputRoot` for file automation, `requireTestedReleases` ([below](#release-readiness)), `requireComparableFacts` ([below](#comparable-facts)), an absolute `signingKey`
 and the `signingPublicKey` it is expected to have
 ([below](#verified-mapping-v2-runner-and-desk)). Its paths are valid UTF-8 with no
 NUL ([below](#paths-are-utf-8)). It binds an ephemeral IPv4 loopback port,
@@ -129,8 +129,9 @@ identities, and the store-schema migration.
 
 1. Open **Jobs → Create job**, or **Packs → More → Create job**.
 2. Choose a saved pack and enter sample facts, with optional evidence availability.
-3. Select **Check release**. Runtime validates the exact pack, creates its reviewed-set
-   lock, evaluates the sample as rehearsal, and runs its saved test expectations.
+3. Select **Check release**. Runtime validates the exact pack, creates the release's own
+   reviewed-set lock ([below](#what-a-runs-reviewed-claim-means)), evaluates the sample as
+   rehearsal, and runs its saved test expectations.
 4. Review the fixed release, test report and advisory coverage, then create the job.
    Failed/incomplete tests block creation; releases without tests require explicit
    review as untested, or are refused where the installation requires tested releases.
@@ -186,6 +187,61 @@ changed inputs require a new review. Once admitted, the job stays bound to its
 frozen release regardless of later edits. API callers supply their own matrix;
 Runner does not claim that a caller-supplied suite exhausts a project's tests.
 Job and run briefs include retained release test evidence when generated on demand.
+
+## What a run's reviewed claim means
+
+A release is a frozen pack, not a project. Runner generates the configuration its
+Runtime reads, and the pinned Runtime's `packs lock` writes the reviewed-set lock over
+that configuration and the pack when the release is checked. Every evaluation of the
+release is given that configuration and lock and nothing else: no project's
+`jpack.json` or `jpack.lock.json` reaches a run. So `reviewed: true` and `reviewedSet`
+in a run's result and audit record show only that the pack the run applied is byte for
+byte the pack the release froze, that it has not changed since the release was made.
+They show neither that a project reviewed the pack nor that a project's lock names it,
+and Runner does not hold a release to a reviewed set made outside it.
+
+`GET /v1/runs/{run}` and `POST /v1/jobs/{job}/runs` say so beside the claim:
+`"reviewedSetOrigin": "release"` when the run's result or record says `reviewed: true`,
+and nothing when neither does. The member is read off the run each time it is served,
+so runs completed before it are served with it too. Run lists, briefs and verification
+exports do not carry it; an export carries the release, and the release its lock.
+
+## Comparable facts
+
+A project's `requireComparableFacts` (Runtime ADR-0046) does not reach a run either.
+A release check can ask for it with `"requireComparableFacts": true` in
+`POST /v1/previews`. Runner then generates
+
+```json
+{"configVersion":"5","packs":{"target":{"path":"pack.json"}},"audit":{"dir":"audit"},"requireComparableFacts":true}
+```
+
+in place of the configVersion 3 configuration, and its Runtime refuses every
+evaluation of the release, the sample's rehearsal included, in which a fact some
+comparison of the pack reads is present and of a JSON type that comparison can never
+match (`JPS-FACTS-COMPARABLE-REQUIRED`). Such a sample fails the check as
+`preview_failed`, and such a run fails, with the Runtime's refusal in its attempt
+diagnostics. Saved tests run under a configuration of their own, which does not set
+it, as the Runtime leaves its test surfaces unrefused.
+
+configVersion 5 needs Runtime 0.25.0 or later. Runner first asks the pinned Runtime,
+with `packs schema --format json`, whether it lists `"5"` among its
+`supportedConfigVersions`. An answer that does not, or that cannot be read, refuses the
+check as 422 `comparable_facts_unsupported` before the Runtime is given the
+configuration, and no release is saved. Under manual admission the option is refused
+as 409 `manual_profile_unsupported`. Without the option a release has the configVersion
+3 configuration every earlier release has, and runs on an earlier Runtime as before.
+
+With `"requireComparableFacts": true` on the boot line, creating a job from, or
+upgrading a job to, a release not checked with it, one whose configuration is not that
+one byte for byte, returns 409 `release_comparable_facts_required`. As with
+`requireTestedReleases`, only the creation or upgrade is refused: repeating the
+creation of a job made before returns that job, and its runs keep running. The member
+is `true` or `false`; `null` or a second spelling of its name refuses the boot. A Runner
+before this one ignores the member and applies no gate, so a host that relies on it pins
+a Runner that has it. Manual
+admission refuses the option on a release check, so an installation booted with both
+creates no job from a release it checks.
 
 ## File inputs and connected sources
 

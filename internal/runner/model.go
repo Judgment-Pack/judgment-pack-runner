@@ -27,6 +27,12 @@ type PreviewRequest struct {
 	Input      Input       `json:"input"`
 	Matrix     string      `json:"matrix,omitempty"`
 	TestSource *TestSource `json:"testSource,omitempty"`
+	// RequireComparableFacts asks for a release whose generated configuration
+	// sets the Runtime's requireComparableFacts (runtime ADR-0046), so that
+	// its Runtime refuses an evaluation, a rehearsal included, in which a fact
+	// some comparison of the pack reads is present and of a type that
+	// comparison can never match (comparable_facts.go).
+	RequireComparableFacts bool `json:"requireComparableFacts,omitempty"`
 }
 type Release struct {
 	Dialect         *DialectIdentity `json:"dialect,omitempty"`
@@ -148,6 +154,47 @@ type storedRun struct {
 
 func served(r Run) storedRun {
 	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing, Binding: r.Binding}
+}
+
+// reviewedSetOriginRelease is the only reviewedSetOrigin a run has: the
+// release's own lock.
+const reviewedSetOriginRelease = "release"
+
+// runResponse is a run as the run routes serve it: as the store keeps it
+// (storedRun), and, beside the reviewed claim its result and audit record
+// make, whose reviewed set that claim is about. The store does not keep
+// ReviewedSetOrigin: it is read off the run each time it is served, so a run
+// completed before Runner said it is served with it too. Run lists, briefs and
+// verification exports do not carry it; an export carries the release, whose
+// lock is that reviewed set.
+type runResponse struct {
+	storedRun
+	ReviewedSetOrigin string `json:"reviewedSetOrigin,omitempty"`
+}
+
+func servedRun(r Run) runResponse {
+	return runResponse{storedRun: served(r), ReviewedSetOrigin: reviewedSetOrigin(r)}
+}
+
+// reviewedSetOrigin is whose reviewed set the reviewed claim of a run's result
+// or audit record is about: release, when either says reviewed is true, and
+// none when neither makes the claim.
+//
+// Every operational evaluation Runner starts is given the release's own
+// configuration and lock, and nothing else, in a directory made for it alone
+// (evaluateWithInvoker, manualLaunchMaterial). Runner generated that lock when
+// the release was checked, over the pack the request gave it (preview). So a
+// Runtime's reviewed: true says only that the pack the run applied is byte for
+// byte the pack the release froze: it has not changed since the release was
+// made. It does not say that any project reviewed the pack, or that a
+// project's reviewed set names it.
+func reviewedSetOrigin(r Run) string {
+	for _, raw := range []json.RawMessage{r.Result, r.Audit} {
+		if bytes.Equal(member(raw, "reviewed"), []byte("true")) {
+			return reviewedSetOriginRelease
+		}
+	}
+	return ""
 }
 func runText(r Run) string {
 	if r.manual == nil {

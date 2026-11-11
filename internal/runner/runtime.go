@@ -195,7 +195,10 @@ func invokeStarting(ctx context.Context, bin, dir, label string, env []string, s
 	return b, nil
 }
 func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, error) {
-	if s.cfg.ExecutorAdmission != nil && inputConversion(req.Input) != nil {
+	// Under manual admission the executor starts only the Runtime utilities it
+	// admits, among which the packs schema answer requireComparableFacts asks
+	// for is not (comparable_facts.go).
+	if s.cfg.ExecutorAdmission != nil && (inputConversion(req.Input) != nil || req.RequireComparableFacts) {
 		return Release{}, manualUnsupported()
 	}
 	limits, admissionErr := runtimeConversionLimits(ctx, s.runtime, s.cfg.Dir, inputConversion(req.Input), s.startRuntime)
@@ -245,10 +248,16 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 			r.InputProfiles = profilesUsed(mapping, s.inputProfiles())
 		}
 	}
-	r.Config = `{"configVersion":"3","packs":{"target":{"path":"pack.json"}},"audit":{"dir":"audit"}}`
+	r.Config = releaseConfig(req.RequireComparableFacts)
 	dir := filepath.Join(s.cfg.Dir, "releases", r.ID)
 	if err := privateDir(dir); err != nil {
 		return r, err
+	}
+	// Before the Runtime is given a configuration it may not read.
+	if req.RequireComparableFacts {
+		if err := s.runtimeReadsComparableFacts(ctx, dir); err != nil {
+			return r, err
+		}
 	}
 	for name, b := range map[string][]byte{"pack.json": []byte(r.Pack), "jpack.json": []byte(r.Config)} {
 		if err := saveFile(filepath.Join(dir, name), b, 0600); err != nil {

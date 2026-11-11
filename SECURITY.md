@@ -129,6 +129,15 @@ passed, and requires explicit review as untested. A release whose tests ran and 
 An installation can refuse untested releases too, with `requireTestedReleases` on its boot line; it
 is off by default, and a job made before it was on keeps running.
 
+**A run's `reviewed: true` is about the release's own lock.** Every evaluation of a release is given
+the configuration and reviewed-set lock Runner generated when the release was checked, and no
+project's. The claim shows only that the pack the run applied has not changed since the release was
+made, and the run says so with `reviewedSetOrigin: "release"`. It shows neither that a project
+reviewed the pack nor that a project's lock names it; Runner does not hold a release to a lock made
+outside it. A project's `requireComparableFacts` likewise reaches a run only when its release was
+checked with it, and an installation can require that with `requireComparableFacts` on its boot
+line.
+
 **Storage is local files.** Job artifacts, input snapshots and records are kept on the local
 filesystem, with SQLite holding the queue and records. The source worker's database contains
 requests and proof secrets. Anyone who can read those files can read their contents, so protect the
