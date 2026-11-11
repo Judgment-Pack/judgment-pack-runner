@@ -129,8 +129,9 @@ identities, and the store-schema migration.
 
 1. Open **Jobs → Create job**, or **Packs → More → Create job**.
 2. Choose a saved pack and enter sample facts, with optional evidence availability.
-3. Select **Check release**. Runtime validates the exact pack, creates its reviewed-set
-   lock, evaluates the sample as rehearsal, and runs its saved test expectations.
+3. Select **Check release**. Runtime validates the exact pack, creates the release's own
+   reviewed-set lock ([below](#what-a-runs-reviewed-claim-means)), evaluates the sample as
+   rehearsal, and runs its saved test expectations.
 4. Review the fixed release, test report and advisory coverage, then create the job.
    Failed/incomplete tests block creation; releases without tests require explicit
    review as untested, or are refused where the installation requires tested releases.
@@ -186,6 +187,24 @@ changed inputs require a new review. Once admitted, the job stays bound to its
 frozen release regardless of later edits. API callers supply their own matrix;
 Runner does not claim that a caller-supplied suite exhausts a project's tests.
 Job and run briefs include retained release test evidence when generated on demand.
+
+## What a run's reviewed claim means
+
+A release is a frozen pack, not a project. Runner generates the configuration its
+Runtime reads, and the pinned Runtime's `packs lock` writes the reviewed-set lock over
+that configuration and the pack when the release is checked. Every evaluation of the
+release is given that configuration and lock and nothing else: no project's
+`jpack.json` or `jpack.lock.json` reaches a run. So `reviewed: true` and `reviewedSet`
+in a run's result and audit record show only that the pack the run applied is byte for
+byte the pack the release froze, that it has not changed since the release was made.
+They show neither that a project reviewed the pack nor that a project's lock names it,
+and Runner does not hold a release to a reviewed set made outside it.
+
+`GET /v1/runs/{run}` and `POST /v1/jobs/{job}/runs` say so beside the claim:
+`"reviewedSetOrigin": "release"` when the run's result or record says `reviewed: true`,
+and nothing when neither does. The member is read off the run each time it is served,
+so runs completed before it are served with it too. Run lists, briefs and verification
+exports do not carry it; an export carries the release, and the release its lock.
 
 ## File inputs and connected sources
 
