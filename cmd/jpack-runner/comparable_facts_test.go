@@ -40,7 +40,8 @@ func TestBootRequireComparableFactsRefusesAmbiguousSpellings(t *testing.T) {
 		"a number":                  `,"requireComparableFacts":1`,
 		"a case variant alone":      `,"RequireComparableFacts":true`,
 		"a case variant downgrade":  `,"requireComparableFacts":true,"REQUIRECOMPARABLEFACTS":false`,
-		"an escaped duplicate":      `,"requireComparableFacts":true,"requireComparableFacts":false`,
+		"an exact duplicate":        `,"requireComparableFacts":true,"requireComparableFacts":false`,
+		"an escaped duplicate":      `,"requireComparableFacts":true,"requireComparable\u0046acts":false`,
 		"a case variant of a false": `,"requireComparableFacts":false,"requirecomparablefacts":true`,
 	} {
 		t.Run(name, func(t *testing.T) {

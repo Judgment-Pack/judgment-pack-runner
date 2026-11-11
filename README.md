@@ -237,7 +237,9 @@ upgrading a job to, a release not checked with it, one whose configuration is no
 one byte for byte, returns 409 `release_comparable_facts_required`. As with
 `requireTestedReleases`, only the creation or upgrade is refused: repeating the
 creation of a job made before returns that job, and its runs keep running. The member
-is `true` or `false`; `null` or a second spelling of its name refuses the boot. Manual
+is `true` or `false`; `null` or a second spelling of its name refuses the boot. A Runner
+before this one ignores the member and applies no gate, so a host that relies on it pins
+a Runner that has it. Manual
 admission refuses the option on a release check, so an installation booted with both
 creates no job from a release it checks.
 
