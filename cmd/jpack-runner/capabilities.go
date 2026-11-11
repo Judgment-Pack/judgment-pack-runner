@@ -43,9 +43,9 @@ func printManualCapabilities(stdout io.Writer) error {
 }
 
 // bootRequirements are the boot members that are true or false and gate what
-// becomes a job: requireComparableFacts and requireSuppliedReviewedSet
-// (runner #210).
-var bootRequirements = []string{"requireComparableFacts", "requireSuppliedReviewedSet"}
+// becomes a job: requireTestedReleases, and requireComparableFacts and
+// requireSuppliedReviewedSet (runner #210).
+var bootRequirements = []string{"requireTestedReleases", "requireComparableFacts", "requireSuppliedReviewedSet"}
 
 // checkBootCapabilities runs before runner.Open: even a rejected requirement
 // must not create state, pin a Runtime, recover a queue, or start workers.

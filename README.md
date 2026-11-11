@@ -181,6 +181,7 @@ on the boot line, creating a job from a `not-run` release returns 409 `release_u
 a refusal of its own beside `release_not_ready`. The setting is off by default, and then
 nothing changes. It refuses the creation of a job only: repeating the creation of a job
 made before the setting was on returns that job, as before, and the job keeps running.
+The member is `true` or `false`; `null` or a second spelling of its name refuses the boot.
 
 Desk rereads the pack and saved cases before checking and again before creation;
 changed inputs require a new review. Once admitted, the job stays bound to its
