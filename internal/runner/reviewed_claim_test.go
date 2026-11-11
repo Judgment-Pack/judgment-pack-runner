@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -12,8 +13,8 @@ import (
 // Runner #210: whose reviewed set a run's reviewed claim is about.
 
 const (
-	// configWithout is the configuration every release is given, written out
-	// by hand.
+	// configWithout is the configuration every release checked without
+	// requireComparableFacts has, written out by hand.
 	configWithout = `{"configVersion":"3","packs":{"target":{"path":"pack.json"}},"audit":{"dir":"audit"}}`
 	// checkLock is what the fake Runtime's packs lock writes: the release's
 	// own lock.
@@ -21,12 +22,12 @@ const (
 )
 
 // checkRuntime is a script that answers a whole release check of the journal
-// pack, and its operational runs, as the Runtime does: spec validate; packs
-// lock, which writes checkLock; and experimental evaluate, a rehearsal or not,
-// an operational one with its audit record. Each invocation writes a line to
-// log first: its arguments, then the jpack.json and the jpack.lock.json it was
-// given, or none.
-func checkRuntime(t *testing.T, log string) string {
+// pack, and its operational runs, as the Runtime does: packs schema with
+// schema, exiting schemaExit; spec validate; packs lock, which writes
+// checkLock; and experimental evaluate, a rehearsal or not, an operational one
+// with its audit record. Each invocation writes a line to log first: its
+// arguments, then the jpack.json and the jpack.lock.json it was given, or none.
+func checkRuntime(t *testing.T, schema string, schemaExit int, log string) string {
 	t.Helper()
 	answer := func(rehearsal string) string {
 		return `{"outputVersion":"2","status":"evaluated","packId":"journal","packVersion":"1.0.0","evaluatorSpecVersion":"0.2.0-draft","rehearsal":` + rehearsal + `,"disposition":` + journalDisposition + `}`
@@ -41,6 +42,9 @@ if [ -f jpack.json ]; then config=$(cat jpack.json); fi
 if [ -f jpack.lock.json ]; then lock=$(cat jpack.lock.json); fi
 printf '%s | %s | %s\n' "$*" "$config" "$lock" >> '` + log + `'
 case "$1 $2" in
+'packs schema')
+	printf '%s\n' '` + schema + `'
+	exit ` + strconv.Itoa(schemaExit) + ` ;;
 'spec validate')
 	printf '%s\n' '{"outputVersion":"2","status":"valid"}' ;;
 'packs lock')
@@ -66,13 +70,19 @@ esac
 	return path
 }
 
-// checkService opens a journal store whose own Runtime is checkRuntime, and
-// returns it with the Runtime's log.
+// checkService opens a journal store whose own Runtime is checkRuntime,
+// reading every configVersion, and returns it with the Runtime's log.
 func checkService(t *testing.T) (*Service, string) {
+	return checkServiceAnswering(t, schemaReadsFive, 0)
+}
+
+// checkServiceAnswering is checkService, whose Runtime answers packs schema
+// with schema and exits schemaExit.
+func checkServiceAnswering(t *testing.T, schema string, schemaExit int) (*Service, string) {
 	t.Helper()
 	cfg := journalConfig(t)
 	log := filepath.Join(t.TempDir(), "invocations.log")
-	cfg.Runtime = checkRuntime(t, log)
+	cfg.Runtime = checkRuntime(t, schema, schemaExit, log)
 	s := openJournal(t, cfg)
 	t.Cleanup(func() { s.Close() })
 	return s, log

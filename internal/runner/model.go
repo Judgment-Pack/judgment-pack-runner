@@ -27,6 +27,12 @@ type PreviewRequest struct {
 	Input      Input       `json:"input"`
 	Matrix     string      `json:"matrix,omitempty"`
 	TestSource *TestSource `json:"testSource,omitempty"`
+	// RequireComparableFacts asks for a release whose generated configuration
+	// sets the Runtime's requireComparableFacts (runtime ADR-0046), so that
+	// its Runtime refuses an evaluation, a rehearsal included, in which a fact
+	// some comparison of the pack reads is present and of a type that
+	// comparison can never match (comparable_facts.go).
+	RequireComparableFacts bool `json:"requireComparableFacts,omitempty"`
 }
 type Release struct {
 	Dialect         *DialectIdentity `json:"dialect,omitempty"`

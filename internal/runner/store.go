@@ -30,6 +30,11 @@ type Config struct {
 	// tests never ran. Off by default, when an explicitly reviewed untested
 	// release can become a job.
 	RequireTestedReleases bool
+	// RequireComparableFacts refuses to create a job from, or upgrade a job
+	// to, a release whose configuration does not set the Runtime's
+	// requireComparableFacts (comparable_facts.go). Off by default. A job made
+	// before is returned as it was and keeps running.
+	RequireComparableFacts bool
 	// SigningKey is the absolute path of an Ed25519 seed, held outside the
 	// state directory, that each operational evaluation's Runtime signs its
 	// audit record with (runtime ADR-0047 §2b). Runner reads it once, at
@@ -356,6 +361,9 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	// as any repeated creation is, and keeps running.
 	if s.cfg.RequireTestedReleases && r.Tests == "not-run" {
 		return Job{}, &apiError{409, "release_untested", "This installation creates jobs only from releases whose saved tests ran and passed. Save tests for this pack, then check a new release."}
+	}
+	if s.cfg.RequireComparableFacts && !releaseRefusesIncomparableFacts(r) {
+		return Job{}, errJobComparableFactsRequired
 	}
 	// Likewise, a release that names a profile set aside since it was made
 	// makes no new job; a job made from it before is returned as it was.
