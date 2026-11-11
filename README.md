@@ -283,7 +283,8 @@ check, and no release is saved:
   code, which begins `JPS-LOCK-` or `JPS-RESOURCE-LOCK-`, such as `JPS-LOCK-JSON`,
   `JPS-LOCK-SHAPE`, `JPS-LOCK-VERSION` or `JPS-RESOURCE-LOCK-BYTE-LIMIT`;
 - 500 `store_error` when the Runtime refuses with any other code, such as one about the
-  pack file Runner wrote: that is Runner's fault, not the lock's;
+  pack file Runner wrote, or does not answer at all, because it could not start or did
+  not exit within its 30 seconds: that is Runner's fault, not the lock's;
 - 422 `reviewed_set_unsupported` for anything else, among it the answer of a Runtime
   before 0.41.0, which has no `packs covers`.
 

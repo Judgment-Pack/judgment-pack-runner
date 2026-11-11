@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Runner #210: a release check held to a reviewed-set lock made outside
@@ -359,6 +361,55 @@ func TestReviewedSetRefusalNotAboutTheLockIsRunnersFault(t *testing.T) {
 				t.Fatal("a failed check saved a release:", n)
 			}
 			if got := takeLog(t, log); !strings.HasPrefix(got, coversCall+" | ") || strings.Contains(got, "spec validate") {
+				t.Fatalf("the Runtime was invoked\n%s", got)
+			}
+		})
+	}
+}
+
+// A packs covers invocation that did not exit gave no answer to read: the
+// Runtime could not start, was killed, or was still running at the deadline,
+// whatever it wrote before. That is Runner's own fault, answered as a release
+// check's packs lock that did not exit is (500 store_error), and never as a
+// Runtime without packs covers. No release is saved, and nothing else is asked
+// of the pack.
+func TestReviewedSetCoversThatDidNotExitIsRunnersFault(t *testing.T) {
+	want := `{"error":{"code":"store_error","message":"The local runner could not complete this request.","retryable":false}}` + "\n"
+	for _, c := range []struct {
+		name, covers string
+		deadline     time.Duration
+	}{
+		{"a Runtime that could not start", "", 0},
+		{"a Runtime killed after it wrote that the lock covers the pack", "printf '%s' '" + covered + "'; kill -9 $$", 0},
+		{"a Runtime still running at the deadline", "exec sleep 60", 2 * time.Second},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := journalConfig(t)
+			log := filepath.Join(t.TempDir(), "invocations.log")
+			// journalConfig's Runtime is a text file, which cannot start.
+			if c.covers != "" {
+				cfg.Runtime = filepath.Join(t.TempDir(), "covers-runtime")
+				script := "#!/bin/sh\nPATH=/usr/bin:/bin\nexport PATH\nprintf '%s\\n' \"$*\" >> '" + log + "'\ncase \"$1 $2\" in\n'packs covers') " + c.covers + " ;;\nesac\nexit 9\n"
+				must(t, os.WriteFile(cfg.Runtime, []byte(script), 0700))
+			}
+			s := openJournal(t, cfg)
+			t.Cleanup(s.Close)
+			req := httptest.NewRequest("POST", "/v1/previews", strings.NewReader(reviewedRequest(&ReviewedSetRequest{Lock: suppliedLock, ID: "journal"})))
+			req.Header.Set("Authorization", "Bearer "+journalBearer)
+			if c.deadline > 0 {
+				ctx, cancel := context.WithTimeout(context.Background(), c.deadline)
+				defer cancel()
+				req = req.WithContext(ctx)
+			}
+			res := httptest.NewRecorder()
+			s.Handler(journalBearer).ServeHTTP(res, req)
+			if res.Code != 500 || res.Body.String() != want {
+				t.Fatalf("answered %d %s", res.Code, res.Body.String())
+			}
+			if n := releasesHeld(t, s); n != 0 {
+				t.Fatal("a failed check saved a release:", n)
+			}
+			if got := takeLog(t, log); c.covers != "" && got != coversCall+"\n" {
 				t.Fatalf("the Runtime was invoked\n%s", got)
 			}
 		})

@@ -46,6 +46,7 @@ The answer is data, read to at most 64 KiB, and nothing is taken for a yes:
 | exit 1, status `invalid`, findings whose names are of the decision id form, about the id, pack and lock Runner gave | 422 `pack_not_in_reviewed_set`, naming the findings |
 | status `error` at exit 1 or 4, or `unsupported` at exit 2, whose first diagnostic code is of the `JPS-` form and begins `JPS-LOCK-` or `JPS-RESOURCE-LOCK-` | 422 `invalid_reviewed_set`, naming the code |
 | the same, with any other code of the `JPS-` form, such as `JPS-INPUT-READ` about the pack file Runner wrote | 500 `store_error`: Runner's fault, not the lock's |
+| no answer, because the Runtime could not start or did not exit within its 30 seconds | 500 `store_error`: Runner's fault, as for `packs lock` |
 | anything else, among it every answer whose `command` is not `packs covers` | 422 `reviewed_set_unsupported` |
 
 A refusal carries only the code or finding names, which are held to their forms and to

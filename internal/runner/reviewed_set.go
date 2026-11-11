@@ -45,6 +45,10 @@ import (
 //   - the same refusal with any other code, such as one about the pack file
 //     Runner wrote: Runner's own fault, not the caller's lock, answered as
 //     any other failure of the request is (500 store_error);
+//   - no answer, from a Runtime that did not exit because it could not start
+//     or was stopped (at its 30-second deadline, or killed): Runner's fault
+//     too, answered as 500 store_error as a release check's packs lock is,
+//     and never taken for a Runtime without the verb;
 //   - any other answer: refused as reviewed_set_unsupported.
 //
 // A Runtime before 0.41.0 has no packs covers and answers as packs does, with
@@ -155,6 +159,10 @@ func (s *Service) coveredBy(ctx context.Context, dir string, r Release, set Revi
 	out, err := s.invoke(ctx, s.runtime, dir, "covers", "packs", "covers", "--lock", reviewedSetFile, "--id", set.ID, "--pack", "pack.json", "--format", "json")
 	var ran *invocationError
 	if err != nil && !errors.As(err, &ran) {
+		return nil, err
+	}
+	// A Runtime that did not exit gave no answer to read.
+	if exitStatus(err) == -1 {
 		return nil, err
 	}
 	kept := &SuppliedReviewedSet{ID: set.ID, Lock: set.Lock, LockDigest: digest([]byte(set.Lock))}
