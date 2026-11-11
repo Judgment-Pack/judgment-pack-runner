@@ -12,6 +12,7 @@ retained='^(TestColumn|TestSelectedLeaf)'
 run_unit() {
   JPACK_TEST_BIN="$bin/jpack" \
   JPACK_RETAINED_TEST_BIN="$bin/jpack-retained" \
+  JPACK_COVERS_TEST_BIN="$bin/jpack-covers" \
   JPACK_EARLIER_TEST_BIN="$bin/jpack-earlier" \
   JPACK_GATEWAY_TEST_BIN="$bin/gateway" \
   JPACK_MCP_ADAPTER_TEST_BIN="$bin/adapter-mcp" \

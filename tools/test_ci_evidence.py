@@ -134,7 +134,7 @@ from pathlib import Path
 args = sys.argv[1:]
 with Path(os.environ['UNIT_SELECTION_TRACE']).open('a') as output:
     output.write(json.dumps({'args': args, 'env': {key: os.environ.get(key) for key in (
-        'JPACK_TEST_BIN', 'JPACK_RETAINED_TEST_BIN', 'JPACK_EARLIER_TEST_BIN',
+        'JPACK_TEST_BIN', 'JPACK_RETAINED_TEST_BIN', 'JPACK_COVERS_TEST_BIN', 'JPACK_EARLIER_TEST_BIN',
         'JPACK_GATEWAY_TEST_BIN', 'JPACK_MCP_ADAPTER_TEST_BIN', 'JPACK_OLD_RUNNER_TEST_BIN')}}) + '\n')
 number = len(Path(os.environ['UNIT_SELECTION_TRACE']).read_text().splitlines())
 if str(number) == os.environ.get('UNIT_SELECTION_FAIL_CALL'):
@@ -296,6 +296,7 @@ class Checks(unittest.TestCase):
                 matches -= {name for name in names if selected(args[args.index('-skip') + 1], name)}
             groups.append(matches)
             for key, binary in {'JPACK_TEST_BIN': 'jpack', 'JPACK_RETAINED_TEST_BIN': 'jpack-retained',
+                                'JPACK_COVERS_TEST_BIN': 'jpack-covers',
                                 'JPACK_EARLIER_TEST_BIN': 'jpack-earlier', 'JPACK_GATEWAY_TEST_BIN': 'gateway',
                                 'JPACK_MCP_ADAPTER_TEST_BIN': 'adapter-mcp', 'JPACK_OLD_RUNNER_TEST_BIN': 'jpack-runner-old'}.items():
                 self.assertEqual(call['env'][key], str(ROOT / '.ci/bin' / binary), key)

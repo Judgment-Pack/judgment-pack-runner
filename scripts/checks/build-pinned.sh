@@ -47,6 +47,18 @@ fetch_pin judgment-pack-runtime 09206e743cdf410d7b5ee970f1c9d09ca7c015ca "$root/
 fetch_pin judgment-pack-runtime 12793d2dd24d18549567ac422711a2b3c1489f04 "$root/.ci/runtime-retained"
 (cd "$root/.ci/runtime-retained" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.39.0" -o "$bin/jpack-retained" ./cmd/jpack)
 
+# The first Runtime with `packs covers` (runtime ADR-0072): published v0.41.0
+# (the signed tag's commit). A release check held to a supplied reviewed set
+# asks it whether the lock covers the pack (#210), and every other reviewedSet
+# test answers with a script, so
+# TestSuppliedReviewedSetAgreesWithTheRuntimesPacksCovers holds Runner's
+# reading of the verb's answers to the Runtime's own: a lock that covers the
+# pack, one with no entry for it and one that is not JSON. The tested Runtime
+# above has no such verb. A pin moved to a Runtime without it would skip the
+# test, and the step after the tests fails if it does not pass.
+fetch_pin judgment-pack-runtime 6a210acea89c4c71dadf5cf3d024f6f09434d5e7 "$root/.ci/runtime-covers"
+(cd "$root/.ci/runtime-covers" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.41.0" -o "$bin/jpack-covers" ./cmd/jpack)
+
 # Test-only old companion: its current-store refusal is part of the
 # explicit manual-store preparation contract, not a release dependency.
 fetch_pin judgment-pack-runner 1cc6b29885b344716a970cd21fefeaca0a4edaeb "$root/.ci/runner-old"
