@@ -155,9 +155,13 @@ func serve(stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// A release check can run validation, lock, rehearsal and saved tests, each
-	// with a 30-second subprocess deadline. Allow the bounded sequence to finish.
-	server := &http.Server{Handler: service.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 135 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	// A release check can run up to seven Runtime invocations, each with a
+	// 30-second subprocess deadline: packs schema (requireComparableFacts),
+	// packs covers (reviewedSet), validation, lock, packs list (a dialect
+	// mapping's coverage), rehearsal and saved tests; and, for a selected
+	// conversion, two dialect contract reads of 10 seconds each. Allow the
+	// bounded sequence, 230 seconds, to finish, with 15 to spare.
+	server := &http.Server{Handler: service.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 245 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	defer server.Close()
 	if err = json.NewEncoder(stdout).Encode(map[string]string{"url": "http://" + listener.Addr().String(), "protocol": "jobs/1"}); err != nil {
 		return err
