@@ -78,7 +78,43 @@ func (s *Service) checkMappingCoverage(ctx context.Context, r Release, dir strin
 	if json.Unmarshal(b, &inv) != nil || inv.Version != "2" || len(inv.Packs) != 1 || inv.Packs[0].ID != "target" || inv.Packs[0].PackID != r.PackID || inv.Packs[0].Paths == nil || inv.Packs[0].Evidence == nil || inv.Packs[0].Detail != "" {
 		return nil, errors.New("unsupported mapping coverage inventory")
 	}
-	return mappingCoverage(*r.InputMapping, inv.Packs[0].Paths, inv.Packs[0].Evidence)
+	warnings, e := mappingCoverage(*r.InputMapping, inv.Packs[0].Paths, inv.Packs[0].Evidence)
+	if e != nil {
+		return nil, e
+	}
+	if derivedNoFact(r.Sample.Preparation) {
+		warnings = append(warnings, sampleDerivedNoFact)
+	}
+	return warnings, nil
+}
+
+// sampleDerivedNoFact is the review warning of a release whose sample, as its
+// mapping was run on it, derived no fact (#212). It is a warning and not a
+// refusal: a skipped source or a source claimed unknown is a legitimate part
+// of a release, and the sample is one record, not every record.
+const sampleDerivedNoFact = "The sample derived no fact: the release's sample shows nothing of how the mapping turns a record into facts."
+
+// derivedNoFact says whether a preparation has fact targets and derived none
+// of them. Every source's every fact target, and the case's, is in the
+// lineage whether or not it came out (prepareV2Mode's merge), so a mapping
+// with only evidence targets has no fact entry and is not one. A dialect
+// release's sample always carries its preparation (normalizeV2); one without
+// is refused by the preview that follows (evaluate), not warned here.
+func derivedNoFact(p *Preparation) bool {
+	if p == nil {
+		return false
+	}
+	targets := false
+	for _, l := range p.Lineage {
+		if l.Kind != "fact" {
+			continue
+		}
+		if l.Present {
+			return false
+		}
+		targets = true
+	}
+	return targets
 }
 func mappingCoverage(m InputMapping, paths, requirements []string) ([]string, error) {
 	targets := []string{}
