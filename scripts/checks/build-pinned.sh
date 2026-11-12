@@ -59,6 +59,20 @@ fetch_pin judgment-pack-runtime 12793d2dd24d18549567ac422711a2b3c1489f04 "$root/
 fetch_pin judgment-pack-runtime 6a210acea89c4c71dadf5cf3d024f6f09434d5e7 "$root/.ci/runtime-covers"
 (cd "$root/.ci/runtime-covers" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.41.0" -o "$bin/jpack-covers" ./cmd/jpack)
 
+# The first Runtime that reads and evaluates Core 0.5.0 (Spec v0.5.0:
+# annotations and value sets; runtime ADR-0077): published v0.44.0 (the
+# signed tag's commit). Its version answer lists 0.5.0 among its
+# supportedSpecVersions and as an evaluator capability with no stage, which
+# Runner asks for before it gives a Runtime a 0.5.0 pack (#232), so
+# TestOrdinaryCore050RealRuntimeSideBySide runs 0.2.0-draft, 0.3.0 and 0.5.0
+# side by side through it. The pins above stay where they are: the tested
+# Runtime and the retained-column companion evaluate Core 0.3.0 at most, and
+# TestCore050RefusedByARealRuntimeThatDoesNotSayItEvaluatesIt needs them to.
+# A pin moved to a Runtime that does not say it evaluates 0.5.0 fails the
+# test, and the step after the tests fails if it does not pass.
+fetch_pin judgment-pack-runtime 8955c9f3eb1faaf52378c292329f2b476d528d94 "$root/.ci/runtime-core050"
+(cd "$root/.ci/runtime-core050" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.44.0" -o "$bin/jpack-core050" ./cmd/jpack)
+
 # Test-only old companion: its current-store refusal is part of the
 # explicit manual-store preparation contract, not a release dependency.
 fetch_pin judgment-pack-runner 1cc6b29885b344716a970cd21fefeaca0a4edaeb "$root/.ci/runner-old"

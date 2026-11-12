@@ -2510,7 +2510,8 @@
         "properties": {
           "pack": {
             "type": "string",
-            "maxLength": 1048576
+            "maxLength": 1048576,
+            "description": "The pack's JSON text. The Core version it declares as specVersion selects its evaluator, exactly: 0.2.0-draft, 0.3.0 or 0.5.0 on an ordinary release check, and 0.2.0-draft or 0.3.0 on the selected retained-column path, which refuses 0.5.0 by name. Any other version is refused as 422 invalid_pack before anything is written. For a pack that declares 0.5.0, Runner first asks the pinned Runtime, through version --format json, whether it lists 0.5.0 among its supportedSpecVersions and as an evaluator capability with no stage whose supportedProfiles lists base (Runtime 0.44.0 and later do). An answer that does not say so, that has a duplicated member or a member named as one of these but for case, or that cannot be read, is refused as 422 runtime_core_unsupported before the Runtime is given the pack, and no release is saved."
           },
           "input": {
             "$ref": "#/components/schemas/Input"

@@ -109,15 +109,35 @@ func columnRoleRealRuntimeFirstSaveSignedExports(t *testing.T, core string) {
 		document["specVersion"] = "0.3.0"
 		pack = encode(document)
 	}
-	body := encode(PreviewRequest{Pack: string(pack), Input: producer.input})
-	body = bytes.Replace(body, encode(rawCase), rawCase, 1)
 	sampleResponse := producer.input.Source.Sources["desk"].Response
-	body = bytes.Replace(body, encode(sampleResponse), sampleResponse, 1)
-	req := httptest.NewRequest("POST", "/v1/retained-column/1/previews", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer lifecycle")
-	req.Header.Set("JPack-Conversion-Contract", selectedHeader(selectedContract()))
-	w := httptest.NewRecorder()
-	s.Handler("lifecycle").ServeHTTP(w, req)
+	selectedPreview := func(pack []byte) *httptest.ResponseRecorder {
+		body := encode(PreviewRequest{Pack: string(pack), Input: producer.input})
+		body = bytes.Replace(body, encode(rawCase), rawCase, 1)
+		body = bytes.Replace(body, encode(sampleResponse), sampleResponse, 1)
+		req := httptest.NewRequest("POST", "/v1/retained-column/1/previews", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer lifecycle")
+		req.Header.Set("JPack-Conversion-Contract", selectedHeader(selectedContract()))
+		w := httptest.NewRecorder()
+		s.Handler("lifecycle").ServeHTTP(w, req)
+		return w
+	}
+	// The selected path evaluates Core 0.2.0-draft and 0.3.0 only: a pack
+	// that declares 0.5.0, which ordinary runs evaluate (#232), is refused by
+	// name, and no release is saved.
+	if core == "0.3.0" {
+		released, e := os.ReadFile("testdata/triage-0.5.0.pack.json")
+		if e != nil {
+			t.Fatal(e)
+		}
+		refusal := `{"error":{"code":"invalid_pack","message":"The selected retained-column path evaluates packs that declare specVersion 0.2.0-draft or 0.3.0, the Core its companion (Spec v0.3.0) is written against; this pack declares \"0.5.0\", which this runner evaluates on ordinary runs only.","retryable":false}}` + "\n"
+		if w := selectedPreview(released); w.Code != 422 || w.Body.String() != refusal {
+			t.Fatalf("selected Core 0.5.0 preview: %d %.1000s", w.Code, w.Body.String())
+		}
+		if n := releasesHeld(t, s); n != 0 {
+			t.Fatal("a refused selected preview saved a release:", n)
+		}
+	}
+	w := selectedPreview(pack)
 	if w.Code != 201 {
 		t.Fatalf("actual selected release preview: %d %.1000s", w.Code, w.Body.String())
 	}
@@ -211,7 +231,7 @@ func columnRoleRealRuntimeFirstSaveSignedExports(t *testing.T, core string) {
 		t.Fatal("selected source status custody changed", e)
 	}
 	// Admit the exact recovered occurrence input through the public run adapter.
-	req = httptest.NewRequest("POST", "/v1/retained-column/1/jobs/"+job.ID+"/runs", bytes.NewReader(encode(*occurrence.Input)))
+	req := httptest.NewRequest("POST", "/v1/retained-column/1/jobs/"+job.ID+"/runs", bytes.NewReader(encode(*occurrence.Input)))
 	req.Header.Set("Authorization", "Bearer lifecycle")
 	req.Header.Set("JPack-Conversion-Contract", selectedHeader(selectedContract()))
 	req.Header.Set("Idempotency-Key", "selected-first-save")

@@ -212,7 +212,7 @@ const verificationCoverage = "Every retained result disposition must match the a
 	"input, chain and checkpoint checks bind only what their documented scope states. The Core version " +
 	"a run's record names, as run.result.evaluatorSpecVersion and as the audit record's " +
 	"evaluatorSpecVersion, each where present, must be the specVersion the release's pack declares, " +
-	"0.2.0-draft or 0.3.0, which selected its evaluator; a difference fails with evaluator-spec-mismatch."
+	"0.2.0-draft, 0.3.0 or 0.5.0, which selected its evaluator; a difference fails with evaluator-spec-mismatch."
 
 func verifyRun(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("verify-run", flag.ContinueOnError)

@@ -942,8 +942,8 @@ independently, shows. Separate release-digest, input, chain and checkpoint
 checks bind only what their documented scope states. The Core version a run's
 record names, as run.result.evaluatorSpecVersion and as the audit record's
 evaluatorSpecVersion, each where present, must be the specVersion the release's
-pack declares, 0.2.0-draft or 0.3.0, which selected its evaluator; a difference
-fails with evaluator-spec-mismatch.
+pack declares, 0.2.0-draft, 0.3.0 or 0.5.0, which selected its evaluator; a
+difference fails with evaluator-spec-mismatch.
 
 The audit-disposition mismatch exits 1. Where the preparation verified, the
 report is the one a verified export has, with the status
