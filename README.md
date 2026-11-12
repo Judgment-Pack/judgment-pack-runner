@@ -144,13 +144,21 @@ executable. A job's only revision in this pilot is revision 1. Later edits to a 
 cannot change an existing job. Create and review a new job for changed policy.
 The evaluator is selected by the Core version the pack declares as `specVersion`, exactly:
 Runtime's **experimental JPS 0.2.0-draft** contract or its Core 0.3.0 contract, outputVersion 2,
-on ordinary runs and on the exact selected retained-column path (Spec v0.3.0) alike. Core 0.3.0
-needs a pinned Runtime that evaluates it, such as v0.39.0. A 0.2.0-draft pack is never upgraded:
-Runner gives the Runtime the release's pack unchanged, refuses an answer that names another
-Core version, and binds responses, release tests and replay to the retained pack's version.
-Each run's result and audit record name the version (`evaluatorSpecVersion`), and `verify-run`
-refuses a record that names another one than the release's pack declares. A pack that declares
-any other version is refused by name. The manual profile retains 0.2.0-draft. This package does
+on ordinary runs and on the exact selected retained-column path (Spec v0.3.0) alike, and its
+Core 0.5.0 contract (Spec v0.5.0: annotations and value sets) on ordinary runs only. Core 0.3.0
+needs a pinned Runtime that evaluates it, such as v0.39.0. Core 0.5.0 needs one that says so in
+its own `version --format json` answer, by listing 0.5.0 among its `supportedSpecVersions` and
+as an evaluator capability with no `stage`, as v0.44.0 and later do. Runner asks before the
+Runtime is given the pack. An answer that does not say so, or that cannot be read, refuses the
+check as 422 `runtime_core_unsupported`, and no release is saved. A Runtime that does not read
+0.5.0 therefore never reports such a pack as invalid. The selected path refuses a 0.5.0 pack by
+name, as 422 `invalid_pack`: the companion it installs is written against Core 0.3.0. No pack is
+ever upgraded: Runner gives the Runtime the release's pack unchanged, refuses an answer that
+names another Core version, and binds responses, release tests and replay to the retained pack's
+version. Each run's result and audit record name the version (`evaluatorSpecVersion`), and
+`verify-run` refuses a record that names another one than the release's pack declares. A pack
+that declares any other version is refused by name, the unreleased working selector
+`0.4.0-draft` and `0.4.0` among them. The manual profile retains 0.2.0-draft. This package does
 not expand Runtime's conformance claim or approve external action.
 
 For manual inputs and version 1 file mappings, evidence is a caller-declared map of requirement IDs to `present`, `absent`, or

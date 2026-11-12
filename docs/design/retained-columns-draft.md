@@ -168,7 +168,10 @@ unsupported. Runtime document validation alone does not establish complete Runne
 Selected releases additionally admit Runtime's existing Core `0.3.0` Base evaluator,
 while preserving selected and ordinary `0.2.0-draft`. Since #188 ordinary admission
 admits Core `0.3.0` too, through the same evaluator selection: the retained pack's
-declared `specVersion`. Manual admission is unchanged. Evaluation and replay require the evaluator version from that same
+declared `specVersion`. Since #232 ordinary admission admits Core `0.5.0` as well; selected
+releases do not, since the installed companion is written against Core `0.3.0`, and a
+selected preview of a pack that declares `0.5.0` is refused by name as `invalid_pack`. The
+selected refusal of every other version is unchanged. Manual admission is unchanged. Evaluation and replay require the evaluator version from that same
 retained release pack; mismatched or unknown reports refuse.
 
 Published synthetic preparation fixtures exercise preparation consistency with a

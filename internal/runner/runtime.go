@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -240,7 +241,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		SpecVersion string `json:"specVersion"`
 	}
 	if json.Unmarshal([]byte(req.Pack), &doc) != nil || !supportedEvaluatorSpec(doc.SpecVersion, inputConversion(req.Input)) {
-		return Release{}, bad("invalid_pack", unsupportedEvaluatorSpec(doc.SpecVersion))
+		return Release{}, bad("invalid_pack", unsupportedEvaluatorSpec(doc.SpecVersion, inputConversion(req.Input)))
 	}
 	r := Release{SchemaVersion: "1", ID: id("release_"), Pack: req.Pack, PackDigest: digest([]byte(req.Pack)), PackID: doc.ID, PackVersion: doc.Version, Title: doc.Title, RuntimeDigest: s.runtimeDigest, CreatedAt: now(), Sample: req.Input, Tests: "not-run"}
 	if req.Input.Source != nil {
@@ -257,6 +258,13 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 	dir := filepath.Join(s.cfg.Dir, "releases", r.ID)
 	if err := privateDir(dir); err != nil {
 		return r, err
+	}
+	// Before the Runtime is given a pack it may not read: a pack that declares
+	// Core 0.5.0 is checked only by a Runtime that says it evaluates it.
+	if doc.SpecVersion == core050 {
+		if err := s.runtimeEvaluatesCore050(ctx, dir); err != nil {
+			return r, err
+		}
 	}
 	// Before the Runtime is given a configuration it may not read.
 	if req.RequireComparableFacts {
@@ -396,26 +404,90 @@ func evaluateWith(ctx context.Context, bin string, r Release, input Input, dir s
 // The evaluator a release is run under is the Core version its pack declares,
 // exactly: specVersion selects it, and nothing else does. Runner admits the
 // pinned Runtime's experimental 0.2.0-draft contract and its Core 0.3.0
-// contract, on ordinary and selected retained-column runs alike (#188). A pack
-// is never evaluated under another version than the one it declares: a
-// 0.2.0-draft pack is not upgraded, and the Runtime's answer must name the
-// declared version (evaluatorSpecMatches). A selected run admits 0.3.0 only
-// under the installed selection, as it did before ordinary runs did.
+// contract, on ordinary and selected retained-column runs alike (#188), and
+// its Core 0.5.0 contract on ordinary runs only (#232). A pack is never
+// evaluated under another version than the one it declares: a 0.2.0-draft or
+// 0.3.0 pack is not upgraded, and the Runtime's answer must name the declared
+// version (evaluatorSpecMatches). A selected run admits 0.3.0 only under the
+// installed selection, as it did before ordinary runs did, and never 0.5.0:
+// the retained-column companion it installs (Spec v0.3.0) is written against
+// Core 0.3.0. Every other version, the unreleased working selector
+// 0.4.0-draft and 0.4.0 among them, is refused.
 func supportedEvaluatorSpec(version string, selection *ConversionContract) bool {
 	switch version {
 	case "0.2.0-draft":
 		return true
 	case "0.3.0":
 		return selection == nil || selection.validate("document-validation", "preview", "preparation") == nil
+	case core050:
+		return selection == nil
 	}
 	return false
 }
 
+// core050 is the Core version Spec v0.5.0 released, with annotations and
+// value sets. It is evaluated only by a Runtime whose own version answer says
+// so (runtimeEvaluatesCore050).
+const core050 = "0.5.0"
+
+// selectedCore050Refusal is the refusal of a pack that declares Core 0.5.0 on
+// the selected retained-column path, which evaluates 0.2.0-draft and 0.3.0
+// only.
+const selectedCore050Refusal = `The selected retained-column path evaluates packs that declare specVersion 0.2.0-draft or 0.3.0, the Core its companion (Spec v0.3.0) is written against; this pack declares "0.5.0", which this runner evaluates on ordinary runs only.`
+
+// errCore050Unsupported refuses a release check of a pack that declares Core
+// 0.5.0 on a pinned Runtime that does not say it evaluates it. It is what the
+// Runtime lacks, not a defect of the pack.
+var errCore050Unsupported = bad("runtime_core_unsupported", `This pack declares specVersion "0.5.0", and the pinned Runtime does not say that it reads and evaluates it: its version answer must list 0.5.0 among its supportedSpecVersions and as an evaluator capability that is not staged. Runtime 0.44.0 and later do. Pin such a Runtime, or check a pack that declares 0.2.0-draft or 0.3.0.`)
+
+// runtimeEvaluatesCore050 asks the pinned Runtime, invoked in dir, whether it
+// reads and evaluates Core 0.5.0. Its own version answer reports the two
+// separately: it must list 0.5.0 among the document versions it reads
+// (supportedSpecVersions), which its spec validate checks the pack against,
+// and an evaluator capability whose specVersion is exactly 0.5.0 and that is
+// not staged (a stage member, as Runtime 0.43.0 wrote for its unreleased
+// 0.4.0-draft selector), which its evaluations and packs test run under. An
+// answer that cannot be read, or that does not list both, refuses; neither is
+// taken for a yes. It is asked before the Runtime is given the
+// pack, so a Runtime that does not read 0.5.0 never reports the pack as
+// invalid. A pack that declares 0.2.0-draft or 0.3.0 is not asked about: its
+// release check is the one it had.
+func (s *Service) runtimeEvaluatesCore050(ctx context.Context, dir string) error {
+	out, err := s.invoke(ctx, s.runtime, dir, "evaluator-capabilities", "version", "--format", "json")
+	var answer struct {
+		OutputVersion string   `json:"outputVersion"`
+		Command       string   `json:"command"`
+		Status        string   `json:"status"`
+		Documents     []string `json:"supportedSpecVersions"`
+		Capabilities  []struct {
+			SpecVersion string          `json:"specVersion"`
+			Stage       json.RawMessage `json:"stage"`
+		} `json:"evaluatorCapabilities"`
+	}
+	if err != nil || json.Unmarshal(out, &answer) != nil || answer.OutputVersion != "2" || answer.Command != "version" || answer.Status != "valid" || !slices.Contains(answer.Documents, core050) {
+		return errCore050Unsupported
+	}
+	for _, c := range answer.Capabilities {
+		if c.SpecVersion == core050 && c.Stage == nil {
+			return nil
+		}
+	}
+	return errCore050Unsupported
+}
+
 // unsupportedEvaluatorSpec is the refusal of a pack whose declared Core
-// version Runner does not evaluate: it names the version the pack declares,
-// when that is a short string, and the versions Runner evaluates.
-func unsupportedEvaluatorSpec(declared string) string {
-	const supported = "This runner evaluates packs that declare specVersion 0.2.0-draft or 0.3.0"
+// version Runner does not evaluate on the path the release check asks for: it
+// names the version the pack declares, when that is a short string, and the
+// versions Runner evaluates there. The selected retained-column path keeps the
+// refusal it had for every version but 0.5.0, which it refuses by name.
+func unsupportedEvaluatorSpec(declared string, selection *ConversionContract) string {
+	supported := "This runner evaluates packs that declare specVersion 0.2.0-draft, 0.3.0 or 0.5.0"
+	if selection != nil {
+		if declared == core050 {
+			return selectedCore050Refusal
+		}
+		supported = "This runner evaluates packs that declare specVersion 0.2.0-draft or 0.3.0"
+	}
 	switch {
 	case declared == "":
 		return supported + "; this pack declares none."
