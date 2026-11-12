@@ -153,7 +153,9 @@ and later do. Runner asks before the Runtime is given the pack, and reads the an
 duplicated member, or a member named as one of these but for case, is not read as a yes. An
 answer that does not say so, or that cannot be read, refuses the check as 422
 `runtime_core_unsupported`, and no release is saved. A Runtime that does not read 0.5.0
-therefore never reports such a pack as invalid. The selected path refuses a 0.5.0 pack by
+therefore never reports such a pack as invalid. In a workflow stage whose pack declares a Core
+other than 0.2.0-draft, a Core evaluation error is recorded as an interrupted attempt; this is
+tracked in #234. The selected path refuses a 0.5.0 pack by
 name, as 422 `invalid_pack`: the companion it installs is written against Core 0.3.0. No pack is
 ever upgraded: Runner gives the Runtime the release's pack unchanged, refuses an answer that
 names another Core version, and binds responses, release tests and replay to the retained pack's
