@@ -148,10 +148,12 @@ on ordinary runs and on the exact selected retained-column path (Spec v0.3.0) al
 Core 0.5.0 contract (Spec v0.5.0: annotations and value sets) on ordinary runs only. Core 0.3.0
 needs a pinned Runtime that evaluates it, such as v0.39.0. Core 0.5.0 needs one that says so in
 its own `version --format json` answer, by listing 0.5.0 among its `supportedSpecVersions` and
-as an evaluator capability with no `stage`, as v0.44.0 and later do. Runner asks before the
-Runtime is given the pack. An answer that does not say so, or that cannot be read, refuses the
-check as 422 `runtime_core_unsupported`, and no release is saved. A Runtime that does not read
-0.5.0 therefore never reports such a pack as invalid. The selected path refuses a 0.5.0 pack by
+as an evaluator capability with no `stage` whose `supportedProfiles` lists `base`, as v0.44.0
+and later do. Runner asks before the Runtime is given the pack, and reads the answer exactly: a
+duplicated member, or a member named as one of these but for case, is not read as a yes. An
+answer that does not say so, or that cannot be read, refuses the check as 422
+`runtime_core_unsupported`, and no release is saved. A Runtime that does not read 0.5.0
+therefore never reports such a pack as invalid. The selected path refuses a 0.5.0 pack by
 name, as 422 `invalid_pack`: the companion it installs is written against Core 0.3.0. No pack is
 ever upgraded: Runner gives the Runtime the release's pack unchanged, refuses an answer that
 names another Core version, and binds responses, release tests and replay to the retained pack's

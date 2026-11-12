@@ -432,7 +432,7 @@ const (
 	versionReadsCore030  = `{"evaluatorCapabilities":[{"specVersion":"0.2.0-draft"},{"specVersion":"0.3.0","supportedProfiles":["base"]}],"outputVersion":"2","tool":{"name":"jpack","version":"0.41.0"},"command":"version","status":"valid","supportedSpecVersions":["0.1.0-draft","0.2.0-draft","0.3.0"],"artifactProvenance":"immutable-git-ref"}`
 	core050JournalPack   = `{"id":"journal","version":"1.0.0","title":"Journal","specVersion":"0.5.0"}`
 	core030JournalPack   = `{"id":"journal","version":"1.0.0","title":"Journal","specVersion":"0.3.0"}`
-	core050Unsupported   = `{"error":{"code":"runtime_core_unsupported","message":"This pack declares specVersion \"0.5.0\", and the pinned Runtime does not say that it reads and evaluates it: its version answer must list 0.5.0 among its supportedSpecVersions and as an evaluator capability that is not staged. Runtime 0.44.0 and later do. Pin such a Runtime, or check a pack that declares 0.2.0-draft or 0.3.0.","retryable":false}}` + "\n"
+	core050Unsupported   = `{"error":{"code":"runtime_core_unsupported","message":"This pack declares specVersion \"0.5.0\", and the pinned Runtime does not say that it reads and evaluates it: its version answer must list 0.5.0 among its supportedSpecVersions and as an evaluator capability that is not staged and supports the base profile. Runtime 0.44.0 and later do. Pin such a Runtime, or check a pack that declares 0.2.0-draft or 0.3.0.","retryable":false}}` + "\n"
 	core050AskedNoPack   = "version --format json | none\n"
 	core050ReleaseAnswer = `{"outputVersion":"2","status":"evaluated","packId":"journal","packVersion":"1.0.0","evaluatorSpecVersion":"%s","rehearsal":true,"disposition":` + journalDisposition + `}`
 )
@@ -519,6 +519,30 @@ func TestCore050CheckedOnlyByARuntimeThatSaysItEvaluatesIt(t *testing.T) {
 		{"an answer that is not valid", strings.Replace(versionReadsCore050, `"status":"valid"`, `"status":"invalid"`, 1), 0},
 		{"an answer that is not JSON", `usage: jpack version`, 0},
 		{"an empty answer", ``, 2},
+		// Read exactly (#233 review): a duplicated member is refused in
+		// either order, and a member named as a read one but for case is not
+		// read as it.
+		{"document versions duplicated, the listing last", strings.Replace(versionReadsCore050, documents, `"supportedSpecVersions":["0.3.0"],`+documents, 1), 0},
+		{"document versions duplicated, the listing first", strings.Replace(versionReadsCore050, documents, documents+`,"supportedSpecVersions":["0.3.0"]`, 1), 0},
+		{"evaluator capabilities duplicated, the 0.5.0 one last", strings.Replace(versionReadsCore050, `{"evaluatorCapabilities":[`, `{"evaluatorCapabilities":[],"evaluatorCapabilities":[`, 1), 0},
+		{"evaluator capabilities duplicated, the 0.5.0 one first", strings.Replace(versionReadsCore050, `"outputVersion":"2"`, `"outputVersion":"2","evaluatorCapabilities":[]`, 1), 0},
+		{"a duplicated status, valid last", strings.Replace(versionReadsCore050, `"status":"valid"`, `"status":"invalid","status":"valid"`, 1), 0},
+		{"a duplicated status, valid first", strings.Replace(versionReadsCore050, `"status":"valid"`, `"status":"valid","status":"invalid"`, 1), 0},
+		{"an evaluator whose specVersion is duplicated, 0.5.0 last", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.3.0","specVersion":"0.5.0","supportedProfiles":["base"]}`, 1), 0},
+		{"an evaluator whose specVersion is duplicated, 0.5.0 first", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","specVersion":"0.3.0","supportedProfiles":["base"]}`, 1), 0},
+		{"an evaluator whose profiles are duplicated, base last", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","supportedProfiles":[],"supportedProfiles":["base"]}`, 1), 0},
+		{"an evaluator whose specVersion is named SpecVersion", strings.Replace(versionReadsCore050, entry, `{"SpecVersion":"0.5.0","supportedProfiles":["base"]}`, 1), 0},
+		{"an evaluator whose stage is named Stage", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","supportedProfiles":["base"],"Stage":"staged-unreleased"}`, 1), 0},
+		{"an evaluator whose profiles are named SupportedProfiles", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","SupportedProfiles":["base"]}`, 1), 0},
+		{"document versions named SupportedSpecVersions", strings.Replace(versionReadsCore050, documents, `"SupportedSpecVersions":["0.1.0-draft","0.2.0-draft","0.3.0","0.5.0"]`, 1), 0},
+		{"evaluator capabilities named EvaluatorCapabilities", strings.Replace(versionReadsCore050, `"evaluatorCapabilities":`, `"EvaluatorCapabilities":`, 1), 0},
+		{"a status named Status beside an invalid one", strings.Replace(versionReadsCore050, `"status":"valid"`, `"status":"invalid","Status":"valid"`, 1), 0},
+		// The 0.5.0 evaluator must list the base profile (#233 review).
+		{"a 0.5.0 evaluator with no profiles", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0"}`, 1), 0},
+		{"a 0.5.0 evaluator with an empty list of profiles", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","supportedProfiles":[]}`, 1), 0},
+		{"a 0.5.0 evaluator whose profiles do not list base", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","supportedProfiles":["extended"]}`, 1), 0},
+		{"a 0.5.0 evaluator whose profiles list Base", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","supportedProfiles":["Base"]}`, 1), 0},
+		{"a 0.5.0 evaluator whose profiles are not a list", strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","supportedProfiles":"base"}`, 1), 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if c.answer == versionReadsCore050 && c.exit == 0 {
@@ -559,11 +583,31 @@ func TestCore050CheckedOnlyByARuntimeThatSaysItEvaluatesIt(t *testing.T) {
 	if got := takeLog(t, log); !strings.HasPrefix(got, core050AskedNoPack+"spec validate pack.json --format json | "+core050JournalPack+"\n") || strings.Count(got, "version --format json") != 1 {
 		t.Fatalf("the Runtime was not asked first, and once\n%s", got)
 	}
+	// Members a later Runtime adds beside the ones read, at the top and in
+	// an evaluator, are not read, and the answer still says it.
+	for name, answer := range map[string]string{
+		"a member added at the top":             strings.Replace(versionReadsCore050, `"outputVersion":"2"`, `"outputVersion":"2","futureMember":{"nested":[1,"0.4.0-draft"]}`, 1),
+		"a member added in the 0.5.0 evaluator": strings.Replace(versionReadsCore050, entry, `{"specVersion":"0.5.0","supportedProfiles":["base","extended"],"futureMember":true}`, 1),
+		"a member added in another evaluator":   strings.Replace(versionReadsCore050, `{"specVersion":"0.2.0-draft"}`, `{"specVersion":"0.2.0-draft","futureMember":null}`, 1),
+		"the answer's members in another order": `{"status":"valid","command":"version","supportedSpecVersions":["0.5.0"],"outputVersion":"2","evaluatorCapabilities":[{"supportedProfiles":["base"],"specVersion":"0.5.0"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, log := versionService(t, answer, 0)
+			res := serve(t, s, "POST", "/v1/previews", previewOf(core050JournalPack), nil)
+			if res.Code != 201 || releasesHeld(t, s) != 1 {
+				t.Fatalf("answered %d %s", res.Code, res.Body.String())
+			}
+			if got := takeLog(t, log); !strings.HasPrefix(got, core050AskedNoPack+"spec validate ") {
+				t.Fatalf("the Runtime was not asked first\n%s", got)
+			}
+		})
+	}
 }
 
 // saysItEvaluatesCore050 reads a Runtime's own version answer, as this test
 // reads it and not as Runner does: whether it lists Core 0.5.0 among its
-// documents and as an evaluator capability with no stage.
+// documents and as an evaluator capability with no stage that lists the base
+// profile.
 func saysItEvaluatesCore050(t *testing.T, bin string) bool {
 	t.Helper()
 	dir := t.TempDir()
@@ -586,7 +630,8 @@ func saysItEvaluatesCore050(t *testing.T, bin string) bool {
 		documents = documents || v == "0.5.0"
 	}
 	for _, c := range answer.Capabilities {
-		if _, staged := c["stage"]; c["specVersion"] == "0.5.0" && !staged {
+		profiles, _ := c["supportedProfiles"].([]any)
+		if _, staged := c["stage"]; c["specVersion"] == "0.5.0" && !staged && slices.Contains(profiles, any("base")) {
 			return documents
 		}
 	}

@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 )
@@ -438,41 +437,81 @@ const selectedCore050Refusal = `The selected retained-column path evaluates pack
 // errCore050Unsupported refuses a release check of a pack that declares Core
 // 0.5.0 on a pinned Runtime that does not say it evaluates it. It is what the
 // Runtime lacks, not a defect of the pack.
-var errCore050Unsupported = bad("runtime_core_unsupported", `This pack declares specVersion "0.5.0", and the pinned Runtime does not say that it reads and evaluates it: its version answer must list 0.5.0 among its supportedSpecVersions and as an evaluator capability that is not staged. Runtime 0.44.0 and later do. Pin such a Runtime, or check a pack that declares 0.2.0-draft or 0.3.0.`)
+var errCore050Unsupported = bad("runtime_core_unsupported", `This pack declares specVersion "0.5.0", and the pinned Runtime does not say that it reads and evaluates it: its version answer must list 0.5.0 among its supportedSpecVersions and as an evaluator capability that is not staged and supports the base profile. Runtime 0.44.0 and later do. Pin such a Runtime, or check a pack that declares 0.2.0-draft or 0.3.0.`)
 
 // runtimeEvaluatesCore050 asks the pinned Runtime, invoked in dir, whether it
 // reads and evaluates Core 0.5.0. Its own version answer reports the two
 // separately: it must list 0.5.0 among the document versions it reads
 // (supportedSpecVersions), which its spec validate checks the pack against,
-// and an evaluator capability whose specVersion is exactly 0.5.0 and that is
-// not staged (a stage member, as Runtime 0.43.0 wrote for its unreleased
-// 0.4.0-draft selector), which its evaluations and packs test run under. An
-// answer that cannot be read, or that does not list both, refuses; neither is
-// taken for a yes. It is asked before the Runtime is given the
+// and an evaluator capability whose specVersion is exactly 0.5.0, that is not
+// staged (a stage member, as Runtime 0.43.0 wrote for its unreleased
+// 0.4.0-draft selector) and whose supportedProfiles lists base, the profile
+// Runner's packs are read under, which its evaluations and packs test run
+// under. An answer that cannot be read, or that does not list both, refuses;
+// neither is taken for a yes. The answer is read exactly: one with a
+// duplicated member, or with a member whose name is one of these but for
+// case, refuses, since a reader that keeps another of the two, or that
+// matches names without case, could read a yes in it. Members the answer
+// adds beside these are not read. It is asked before the Runtime is given the
 // pack, so a Runtime that does not read 0.5.0 never reports the pack as
 // invalid. A pack that declares 0.2.0-draft or 0.3.0 is not asked about: its
 // release check is the one it had.
 func (s *Service) runtimeEvaluatesCore050(ctx context.Context, dir string) error {
 	out, err := s.invoke(ctx, s.runtime, dir, "evaluator-capabilities", "version", "--format", "json")
-	var answer struct {
-		OutputVersion string   `json:"outputVersion"`
-		Command       string   `json:"command"`
-		Status        string   `json:"status"`
-		Documents     []string `json:"supportedSpecVersions"`
-		Capabilities  []struct {
-			SpecVersion string          `json:"specVersion"`
-			Stage       json.RawMessage `json:"stage"`
-		} `json:"evaluatorCapabilities"`
-	}
-	if err != nil || json.Unmarshal(out, &answer) != nil || answer.OutputVersion != "2" || answer.Command != "version" || answer.Status != "valid" || !slices.Contains(answer.Documents, core050) {
+	if err != nil {
 		return errCore050Unsupported
 	}
-	for _, c := range answer.Capabilities {
-		if c.SpecVersion == core050 && c.Stage == nil {
-			return nil
+	tree, err := readInputJSONDepth(out, 64)
+	if err != nil {
+		return errCore050Unsupported
+	}
+	answer, ok := versionMembers(tree, "outputVersion", "command", "status", "supportedSpecVersions", "evaluatorCapabilities")
+	if !ok || answer["outputVersion"] != "2" || answer["command"] != "version" || answer["status"] != "valid" || !listsString(answer["supportedSpecVersions"], core050) {
+		return errCore050Unsupported
+	}
+	capabilities, _ := answer["evaluatorCapabilities"].([]any)
+	admitted := false
+	for _, entry := range capabilities {
+		capability, ok := versionMembers(entry, "specVersion", "stage", "supportedProfiles")
+		if !ok {
+			return errCore050Unsupported
+		}
+		_, staged := capability["stage"]
+		admitted = admitted || capability["specVersion"] == core050 && !staged && listsString(capability["supportedProfiles"], "base")
+	}
+	if !admitted {
+		return errCore050Unsupported
+	}
+	return nil
+}
+
+// versionMembers is v, a decoded JSON object, when none of its members is
+// named as one of names but for case.
+func versionMembers(v any, names ...string) (map[string]any, bool) {
+	object, ok := v.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	for member := range object {
+		for _, name := range names {
+			if member != name && strings.EqualFold(member, name) {
+				return nil, false
+			}
 		}
 	}
-	return errCore050Unsupported
+	return object, true
+}
+
+// listsString says whether v, a decoded JSON value, is an array that has the
+// string want among its items.
+func listsString(v any, want string) bool {
+	list, _ := v.([]any)
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 // unsupportedEvaluatorSpec is the refusal of a pack whose declared Core
