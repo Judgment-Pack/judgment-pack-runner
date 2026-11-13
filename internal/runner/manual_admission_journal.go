@@ -42,19 +42,23 @@ func (s *Service) retainManualAttempt(run Run, q ManualStartRequest) error {
 	if run.manual == nil || run.manual.resource == nil || run.manual.registration == nil || q.Resource != *run.manual.resource || q.Registration != *run.manual.registration {
 		return errManualProtocol
 	}
+	if s.manual == nil {
+		return errManualProtocol
+	}
 	record := manualAttemptJournal{Version: 1, State: "reserved", Request: q}
-	_, err := s.db.Exec("INSERT INTO manual_attempts(run_id,intent_id,record) VALUES(?,?,?)", run.ID, q.IntentID, string(encode(record)))
-	return err
+	return s.manual.createManualAttempt(run.ID, q.IntentID, string(encode(record)))
 }
 func (s *Service) retainManualStart(runID string, q ManualStartRequest, receipt ManualStartResult) error {
 	before := manualAttemptJournal{Version: 1, State: "reserved", Request: q}
 	after := manualAttemptJournal{Version: 1, State: receipt.Decision, Request: q, Receipt: &receipt}
-	result, err := s.db.Exec("UPDATE manual_attempts SET record=? WHERE run_id=? AND record=?", string(encode(after)), runID, string(encode(before)))
+	if s.manual == nil {
+		return errManualProtocol
+	}
+	n, err := s.manual.replaceManualAttempt(runID, string(encode(before)), string(encode(after)))
 	if err != nil {
 		return err
 	}
-	n, err := result.RowsAffected()
-	if err != nil || n != 1 {
+	if n != 1 {
 		return errManualProtocol
 	}
 	return nil
@@ -68,8 +72,10 @@ func (s *Service) governedEvaluation(ctx context.Context, run Run, r Release) (r
 		return nil, nil, nil, nil, errManualProtocol
 	}
 	// Existing local attempt history is a replay barrier, never permission.
-	var held int
-	if e := s.db.QueryRow("SELECT count(*) FROM manual_attempts WHERE run_id=? OR intent_id=?", run.ID, run.manual.intentID).Scan(&held); e != nil || held != 0 {
+	if s.manual == nil {
+		return nil, nil, nil, nil, errManualProtocol
+	}
+	if held, e := s.manual.manualCount(askRunAttempts, run.ID, run.manual.intentID); e != nil || held != 0 {
 		return nil, nil, nil, nil, errManualProtocol
 	}
 	signing := signingInputs{}

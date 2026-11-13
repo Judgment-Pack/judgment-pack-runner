@@ -34,7 +34,7 @@ func TestManualGovernedActualRuntimeHasNoAuthorityFD(t *testing.T) {
 	executorMust(t, err)
 	o := ExecutorOwnership{f.root, f.identity.Workspace, cfg.Workspace, f.identity.RootDevice, f.identity.RootInode, f.identity.FileDevice, f.identity.FileInode}
 	s.cfg.ExecutorOwnership = &o
-	_, err = s.db.Exec(manualJournalSchema)
+	_, err = sqliteDB(s).Exec(manualJournalSchema)
 	executorMust(t, err)
 	syscall.ForkLock.RLock()
 	pair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)

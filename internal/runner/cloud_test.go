@@ -109,7 +109,7 @@ func TestCloudPausedUnboundAndAdmissionFailure(t *testing.T) {
 		t.Fatal("acknowledged without admission")
 	}
 	s.unhealthy.Store(false)
-	_, e := s.db.Exec("DROP TABLE occurrences")
+	_, e := sqliteDB(s).Exec("DROP TABLE occurrences")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -246,7 +246,7 @@ func TestGoogleRelayToDurableRunnerWithoutBrowser(t *testing.T) {
 	var acknowledged atomic.Int32
 	inbox := &memoryCloud{deliveries: make(chan []cloudgoogle.Delivery, 1), ack: func() error {
 		var n int
-		if e := s.db.QueryRow("SELECT count(*) FROM occurrences").Scan(&n); e != nil {
+		if e := sqliteDB(s).QueryRow("SELECT count(*) FROM occurrences").Scan(&n); e != nil {
 			return e
 		}
 		if n != 1 {

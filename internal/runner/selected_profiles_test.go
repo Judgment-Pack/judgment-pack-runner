@@ -318,7 +318,7 @@ func TestSelectedProfilesReachNoJobReleaseOrRun(t *testing.T) {
 	// Preparation persisted nothing: no release, job or run.
 	for _, table := range []string{"releases", "jobs", "runs"} {
 		var n int
-		if err := s.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil || n != 0 {
+		if err := sqliteDB(s).QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil || n != 0 {
 			t.Fatal(table, n, err)
 		}
 	}
@@ -434,7 +434,7 @@ func TestSelectedProfilesStoredRowAtOpen(t *testing.T) {
 	}
 	put := func(row string) {
 		t.Helper()
-		if _, err := s.db.Exec("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", selectedProfilesKey, row); err != nil {
+		if _, err := sqliteDB(s).Exec("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", selectedProfilesKey, row); err != nil {
 			t.Fatal(err)
 		}
 		s.Close()
@@ -572,7 +572,7 @@ func refusedCode(e error) string {
 func storeRows(t *testing.T, s *Service) map[string][]string {
 	t.Helper()
 	tables := []string{"sqlite_master"}
-	names, err := s.db.Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	names, err := sqliteDB(s).Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,7 +588,7 @@ func storeRows(t *testing.T, s *Service) map[string][]string {
 	}
 	all := map[string][]string{}
 	for _, table := range tables {
-		rows, err := s.db.Query(`SELECT * FROM "` + table + `"`)
+		rows, err := sqliteDB(s).Query(`SELECT * FROM "` + table + `"`)
 		if err != nil {
 			t.Fatal(table, err)
 		}

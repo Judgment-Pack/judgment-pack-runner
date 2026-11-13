@@ -66,7 +66,7 @@ func notMappedStore(t *testing.T, v notMappedVector, export []byte) *Service {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = s.db.Exec("INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)", entry.Sequence, entry.Run, line); e != nil {
+		if _, e = sqliteDB(s).Exec("INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)", entry.Sequence, entry.Run, line); e != nil {
 			t.Fatal(e)
 		}
 	}

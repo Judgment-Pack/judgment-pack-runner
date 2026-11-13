@@ -308,7 +308,7 @@ func errorClassesHeld(t *testing.T, s *Service, cfg Config) map[string][]string 
 	t.Helper()
 	seen := map[string][]string{}
 	for _, table := range []string{"runs", "occurrences"} {
-		rows, e := s.db.Query("SELECT id, json_extract(record,'$.errorClass'), state FROM " + table + " WHERE json_extract(record,'$.errorClass') IS NOT NULL")
+		rows, e := sqliteDB(s).Query("SELECT id, json_extract(record,'$.errorClass'), state FROM " + table + " WHERE json_extract(record,'$.errorClass') IS NOT NULL")
 		must(t, e)
 		for rows.Next() {
 			var id, class, state string
@@ -360,7 +360,7 @@ func TestEachErrorClassIsProduced(t *testing.T) {
 	must(t, e)
 	r, _, e := w.s.submit(j.ID, "internal", journalInput())
 	must(t, e)
-	_, e = w.s.db.Exec("UPDATE releases SET record='{' WHERE id=?", release.ID)
+	_, e = sqliteDB(w.s).Exec("UPDATE releases SET record='{' WHERE id=?", release.ID)
 	must(t, e)
 	// Runs the steps left queued are served first, in the queue's order.
 	for i := 0; i < 10; i++ {
@@ -476,9 +476,9 @@ func (w *resultsWorld) end(t *testing.T, j Job, state, disposition, class, reaso
 // version without them.
 func (w *resultsWorld) old(t *testing.T, r Run) {
 	t.Helper()
-	_, e := w.s.db.Exec("UPDATE runs SET record=json_remove(record,'$.counts','$.errorClass') WHERE id=?", r.ID)
+	_, e := sqliteDB(w.s).Exec("UPDATE runs SET record=json_remove(record,'$.counts','$.errorClass') WHERE id=?", r.ID)
 	must(t, e)
-	_, e = w.s.db.Exec("UPDATE events SET detail=json_remove(detail,'$.counts','$.errorClass','$.disposition'), entry_version=CASE WHEN json_extract(detail,'$.scope') IS NOT NULL THEN '3' ELSE '1' END WHERE json_extract(concerns,'$.run')=?", r.ID)
+	_, e = sqliteDB(w.s).Exec("UPDATE events SET detail=json_remove(detail,'$.counts','$.errorClass','$.disposition'), entry_version=CASE WHEN json_extract(detail,'$.scope') IS NOT NULL THEN '3' ELSE '1' END WHERE json_extract(concerns,'$.run')=?", r.ID)
 	must(t, e)
 }
 
@@ -830,7 +830,7 @@ func TestAnEntryBesideTheResultsIsWrittenAsBefore(t *testing.T) {
 	w.end(t, w.a, "completed", journalDisposition, "", "")
 	w.end(t, w.c, "failed", "", classEvaluation, "")
 	w.end(t, w.c, "interrupted", "", "", "")
-	rows, e := w.s.db.Query("SELECT entry_version, kind, coalesce(from_state,'-'), coalesce(to_state,'-'), coalesce(reason,''), detail FROM events ORDER BY sequence")
+	rows, e := sqliteDB(w.s).Query("SELECT entry_version, kind, coalesce(from_state,'-'), coalesce(to_state,'-'), coalesce(reason,''), detail FROM events ORDER BY sequence")
 	must(t, e)
 	defer rows.Close()
 	var got []string
@@ -910,7 +910,7 @@ func TestARetriedRunHoldsNoResultUntilItEnds(t *testing.T) {
 		}
 	}
 	var record string
-	must(t, w.s.db.QueryRow("SELECT record FROM runs WHERE id=?", r.ID).Scan(&record))
+	must(t, sqliteDB(w.s).QueryRow("SELECT record FROM runs WHERE id=?", r.ID).Scan(&record))
 	if strings.Contains(record, `"counts"`) || strings.Contains(record, `"errorClass"`) {
 		t.Fatalf("a retried run's record holds %s", record)
 	}
@@ -1042,7 +1042,7 @@ func TestAFailureBeforeTheRuntimeEvaluatesIsInternal(t *testing.T) {
 		j, e := s.createJob(name, release.ID)
 		must(t, e)
 		if c.packDigest != "" {
-			_, e = s.db.Exec("UPDATE releases SET record=json_set(record,'$.packDigest',?) WHERE id=?", c.packDigest, release.ID)
+			_, e = sqliteDB(s).Exec("UPDATE releases SET record=json_set(record,'$.packDigest',?) WHERE id=?", c.packDigest, release.ID)
 			must(t, e)
 		}
 		run, _, e := s.submit(j.ID, "run", journalInput())

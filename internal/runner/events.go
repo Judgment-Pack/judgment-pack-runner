@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -59,11 +58,6 @@ const (
 	// written again.
 	refusalWindow = 60 * time.Second
 )
-
-const eventsSchema = `CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, entry_version TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL, by_actor TEXT NOT NULL, concerns TEXT NOT NULL, revision INTEGER, from_state TEXT, to_state TEXT, reason TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '{}', job_id TEXT NOT NULL DEFAULT '', release_id TEXT NOT NULL DEFAULT '', refusal TEXT NOT NULL DEFAULT '');
- CREATE INDEX IF NOT EXISTS events_job ON events(job_id,sequence);
- CREATE INDEX IF NOT EXISTS events_release ON events(release_id,sequence);
- CREATE INDEX IF NOT EXISTS events_refusal ON events(refusal,sequence) WHERE refusal<>'';`
 
 // eventKinds are the kinds of entry Runner writes, in the record's order.
 var eventKinds = []string{
@@ -253,18 +247,6 @@ func boundedReason(reason string) string {
 	return reason[:cut]
 }
 
-// appendEvent writes a change's entry inside a sqlite kind's transaction, and
-// returns its sequence.
-func appendEvent(tx *sql.Tx, c change) (int64, error) {
-	e := journalRowOf(c)
-	res, err := tx.Exec("INSERT INTO events(entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail,job_id,release_id,refusal) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		e.version, e.kind, e.at, e.by, e.concerns, e.revision, e.from, e.to, e.reason, e.detail, e.job, e.release, e.refusal)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
 // journalRowOf is a change's entry as every kind keeps it: its entry version,
 // its time (now, unless the change has one), and its actor, concerns and
 // detail encoded.
@@ -272,15 +254,15 @@ func journalRowOf(c change) journalRow {
 	if c.at == "" {
 		c.at = now()
 	}
-	var revision sql.NullInt64
-	var from, to sql.NullString
+	var revision nullInt
+	var from, to nullText
 	if c.revision > 0 {
-		revision = sql.NullInt64{Int64: int64(c.revision), Valid: true}
+		revision = nullInt{value: int64(c.revision), held: true}
 	}
 	if c.states {
-		to = sql.NullString{String: c.to, Valid: true}
+		to = nullText{value: c.to, held: true}
 		if c.from != "" {
-			from = sql.NullString{String: c.from, Valid: true}
+			from = nullText{value: c.from, held: true}
 		}
 	}
 	version := EventEntryVersion
@@ -729,32 +711,21 @@ func (s *Service) eventPageFor(r eventRequest, f journalFilter) (EventPage, erro
 	return eventPageFrom(s.store, r.after, f)
 }
 
-const eventColumns = "sequence,entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail"
-
-// scanJournalRow reads one entry's sequence and row from a row of
-// eventColumns, not yet decoded.
-func scanJournalRow(rows *sql.Rows) (int64, journalRow, error) {
-	var sequence int64
-	var e journalRow
-	err := rows.Scan(&sequence, &e.version, &e.kind, &e.at, &e.by, &e.concerns, &e.revision, &e.from, &e.to, &e.reason, &e.detail)
-	return sequence, e, err
-}
-
 // event is the entry a row holds at sequence, as the routes serve it.
 func (row journalRow) event(sequence int64) (Event, error) {
 	e := Event{Sequence: sequence, EntryVersion: row.version, Kind: row.kind, At: row.at, Reason: row.reason}
 	if err := errors.Join(json.Unmarshal([]byte(row.by), &e.By), json.Unmarshal([]byte(row.concerns), &e.Concerns), json.Unmarshal([]byte(row.detail), &e.EventDetail)); err != nil {
 		return e, err
 	}
-	if row.revision.Valid {
-		v := int(row.revision.Int64)
+	if row.revision.held {
+		v := int(row.revision.value)
 		e.Revision = &v
 	}
-	if row.to.Valid {
-		e.To = encode(row.to.String)
+	if row.to.held {
+		e.To = encode(row.to.value)
 		e.From = json.RawMessage("null")
-		if row.from.Valid {
-			e.From = encode(row.from.String)
+		if row.from.held {
+			e.From = encode(row.from.value)
 		}
 	}
 	return e, nil

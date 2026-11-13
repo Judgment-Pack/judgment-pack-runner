@@ -21,7 +21,7 @@ func TestWorkspaceRelocationPreservesRecordsAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var original string
-	if err = service.db.QueryRow("SELECT record FROM jobs WHERE id=?", job.ID).Scan(&original); err != nil {
+	if err = sqliteDB(service).QueryRow("SELECT record FROM jobs WHERE id=?", job.ID).Scan(&original); err != nil {
 		t.Fatal(err)
 	}
 	next := filepath.Join(relocationTempDir(t), "moved-project")
@@ -58,11 +58,11 @@ func TestWorkspaceRelocationPreservesRecordsAndIsIdempotent(t *testing.T) {
 	}
 	defer again.Close()
 	var saved string
-	if err = again.db.QueryRow("SELECT record FROM jobs WHERE id=?", job.ID).Scan(&saved); err != nil || saved != original {
+	if err = sqliteDB(again).QueryRow("SELECT record FROM jobs WHERE id=?", job.ID).Scan(&saved); err != nil || saved != original {
 		t.Fatal("retained job bytes changed", err)
 	}
 	var history int
-	if err = again.db.QueryRow("SELECT COUNT(*) FROM metadata WHERE key=?", "inputRootRelocation:"+request.ID).Scan(&history); err != nil || history != 1 {
+	if err = sqliteDB(again).QueryRow("SELECT COUNT(*) FROM metadata WHERE key=?", "inputRootRelocation:"+request.ID).Scan(&history); err != nil || history != 1 {
 		t.Fatal("history lost or duplicated", err)
 	}
 }
@@ -77,7 +77,7 @@ func TestWorkspaceRelocationRefusesRunningAndQueuedWork(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = service.db.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record)VALUES('run_test','job_test','test','key','digest',?,'{}')", state)
+			_, err = sqliteDB(service).Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record)VALUES('run_test','job_test','test','key','digest',?,'{}')", state)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,9 +101,9 @@ func TestWorkspaceRelocationRefusesPendingSourcesAndTriggers(t *testing.T) {
 				t.Fatal(err)
 			}
 			if state == "unpaused-trigger" {
-				_, err = service.db.Exec(`INSERT INTO triggers(id,job_id,record) VALUES('trigger_test','job_test','{"paused":false}')`)
+				_, err = sqliteDB(service).Exec(`INSERT INTO triggers(id,job_id,record) VALUES('trigger_test','job_test','{"paused":false}')`)
 			} else {
-				_, err = service.db.Exec(`INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES('occ_test','job_test','trigger_test','identity','digest',?,'{}')`, state)
+				_, err = sqliteDB(service).Exec(`INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES('occ_test','job_test','trigger_test','identity','digest',?,'{}')`, state)
 			}
 			if err != nil {
 				t.Fatal(err)

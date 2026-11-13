@@ -35,7 +35,7 @@ func TestManualQueuedRunListsKeepPrivatePreimages(t *testing.T) {
 		t.Fatal(err)
 	}
 	var before string
-	if err := s.db.QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&before); err != nil {
+	if err := sqliteDB(s).QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(before, `"manualAdmission"`) {
@@ -73,7 +73,7 @@ func TestManualQueuedRunListsKeepPrivatePreimages(t *testing.T) {
 		})
 	}
 	var after string
-	if err := s.db.QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&after); err != nil {
+	if err := sqliteDB(s).QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
 	if after != before {

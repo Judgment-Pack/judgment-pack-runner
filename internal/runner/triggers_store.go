@@ -8,16 +8,6 @@ import (
 	"time"
 )
 
-const triggerSchema = `
- CREATE TABLE IF NOT EXISTS triggers(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,job_id TEXT NOT NULL,record TEXT NOT NULL,key_hash TEXT NOT NULL DEFAULT '',observed TEXT NOT NULL DEFAULT '',pending TEXT NOT NULL DEFAULT '',pending_at TEXT NOT NULL DEFAULT '');
- CREATE TABLE IF NOT EXISTS trigger_revisions(trigger_id TEXT NOT NULL,revision INTEGER NOT NULL,record TEXT NOT NULL,PRIMARY KEY(trigger_id,revision));
- CREATE TABLE IF NOT EXISTS occurrences(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,job_id TEXT NOT NULL,trigger_id TEXT NOT NULL,identity TEXT NOT NULL,payload_digest TEXT NOT NULL,state TEXT NOT NULL,record TEXT NOT NULL,UNIQUE(trigger_id,identity));
- CREATE TABLE IF NOT EXISTS occurrence_keys(occurrence_id TEXT PRIMARY KEY,key_hash TEXT NOT NULL);
- CREATE INDEX IF NOT EXISTS occurrences_state ON occurrences(state,seq);
- CREATE INDEX IF NOT EXISTS triggers_job ON triggers(job_id);
- CREATE INDEX IF NOT EXISTS occurrences_job ON occurrences(job_id,seq);
- CREATE UNIQUE INDEX IF NOT EXISTS triggers_cloud_binding ON triggers(json_extract(record,'$.config.cloud.connection'),json_extract(record,'$.config.cloud.job')) WHERE json_extract(record,'$.config.kind')='cloud';`
-
 func (s *Service) trigger(id string) (Trigger, string, error) { return s.store.trigger(id) }
 func (s *Service) writeTrigger(t Trigger, hash string, history bool) error {
 	return s.store.update(func(tx runTx) error { return tx.putTrigger(t, hash, history) })

@@ -96,7 +96,7 @@ func TestACompletionWithoutTheRecordsBytesIsNotRecorded(t *testing.T) {
 	s := placeholderStore(t)
 	run, record := syntheticRun(0)
 	running := Run{ID: run, State: "running"}
-	if _, e := s.db.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,'job','caller','key','digest','running',?)", run, string(encode(running))); e != nil {
+	if _, e := sqliteDB(s).Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,'job','caller','key','digest','running',?)", run, string(encode(running))); e != nil {
 		t.Fatal(e)
 	}
 	for name, kept := range map[string][]byte{
@@ -162,7 +162,7 @@ func TestAFailedAppendRecordsNoCompletion(t *testing.T) {
 	if done := waitRun(t, s, first.ID); done.State != "completed" {
 		t.Fatal(done.State, done.Problem)
 	}
-	if _, e = s.db.Exec(`CREATE TRIGGER refuse_entry BEFORE INSERT ON run_chain BEGIN SELECT RAISE(ABORT, 'the test refuses this entry'); END`); e != nil {
+	if _, e = sqliteDB(s).Exec(`CREATE TRIGGER refuse_entry BEFORE INSERT ON run_chain BEGIN SELECT RAISE(ABORT, 'the test refuses this entry'); END`); e != nil {
 		t.Fatal(e)
 	}
 	refused, _, e := s.submit(job.ID, "refused", sample())
@@ -183,7 +183,7 @@ func TestAFailedAppendRecordsNoCompletion(t *testing.T) {
 	if !s.unhealthy.Load() {
 		t.Fatal("the runner does not say it is unhealthy")
 	}
-	if _, e = s.db.Exec("DROP TRIGGER refuse_entry"); e != nil {
+	if _, e = sqliteDB(s).Exec("DROP TRIGGER refuse_entry"); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()

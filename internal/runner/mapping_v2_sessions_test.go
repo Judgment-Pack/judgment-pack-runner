@@ -291,7 +291,7 @@ func TestDurablePreparationOfTwoSourcesIsEvaluated(t *testing.T) {
 	s, _, o, f := preparationFixture(t)
 	r, _ := s.release(o.ReleaseID)
 	r.InputMapping.Sources = append(r.InputMapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: f.p.ID, ProfileDigest: profileHash(f.p), MaxAge: 300, Arguments: []byte(`{"tool":"lookup","arguments":{}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{}, Evidence: []EvidenceMapping{}}}})
-	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID); e != nil {
+	if _, e := sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID); e != nil {
 		t.Fatal(e)
 	}
 	f.mu.Lock()

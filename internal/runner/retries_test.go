@@ -100,7 +100,7 @@ func newRetryWorldOf(t *testing.T, cfg Config, release func(*testing.T, *Service
 	s.cfg = cfg
 	r.InputMapping = &input.Source.Mapping
 	r.InputProfiles = []InputProfile{p}
-	_, e = s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID)
+	_, e = sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID)
 	must(t, e)
 	c := constantTrigger(time.Now())
 	c.Input = &AutomaticInput{Kind: "mapped-sources", Case: input.Source.Case}
@@ -135,7 +135,7 @@ func (w *retryWorld) advance(d time.Duration) { *w.clock = w.clock.Add(d) }
 // occurrenceEntries are the journal entries about the world's occurrence.
 func occurrenceEntries(t *testing.T, s *Service, id string) []Event {
 	t.Helper()
-	rows, e := s.db.Query("SELECT entry_version,kind,detail FROM events WHERE json_extract(concerns,'$.occurrence')=? ORDER BY sequence", id)
+	rows, e := sqliteDB(s).Query("SELECT entry_version,kind,detail FROM events WHERE json_extract(concerns,'$.occurrence')=? ORDER BY sequence", id)
 	must(t, e)
 	defer rows.Close()
 	var out []Event
@@ -387,7 +387,7 @@ func TestWithoutAPolicyAThrottledAcquisitionFailsAsBefore(t *testing.T) {
 		t.Fatalf("%+v", o)
 	}
 	var raw string
-	must(t, w.s.db.QueryRow("SELECT record FROM occurrences WHERE id=?", o.ID).Scan(&raw))
+	must(t, sqliteDB(w.s).QueryRow("SELECT record FROM occurrences WHERE id=?", o.ID).Scan(&raw))
 	if strings.Contains(raw, `"attempts"`) || strings.Contains(raw, `"nextAttemptAt"`) {
 		t.Fatal(raw)
 	}
@@ -395,7 +395,7 @@ func TestWithoutAPolicyAThrottledAcquisitionFailsAsBefore(t *testing.T) {
 	if w.step(t); w.calls.Load() != 1 {
 		t.Fatal("attempted again")
 	}
-	if schema := storeSchemaOf(t, w.s.db); schema != storeSchema {
+	if schema := storeSchemaOf(t, sqliteDB(w.s)); schema != storeSchema {
 		t.Fatalf("schema %s", schema)
 	}
 }
@@ -526,14 +526,14 @@ func TestAJobIsCreatedWithARetryPolicyInForm(t *testing.T) {
 	if got := create(release, `,"retry":{"maxAttempts":2,"backoffSeconds":5,"maxBackoffSeconds":5,"jitter":1}`); got.Code != 400 {
 		t.Fatalf("an unknown member: %d %s", got.Code, got.Body)
 	}
-	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != storeSchema {
 		t.Fatalf("refused policies raised the schema to %s", schema)
 	}
 	// One attempt is the default: the job is made as without a policy.
 	if got := create(journalRelease(t, s, runtime).ID, `,"retry":{"maxAttempts":1,"backoffSeconds":5,"maxBackoffSeconds":60}`); got.Code != 201 || strings.Contains(got.Body.String(), `"retry"`) {
 		t.Fatalf("the default policy: %d %s", got.Code, got.Body)
 	}
-	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != storeSchema {
 		t.Fatalf("the default policy raised the schema to %s", schema)
 	}
 	policy := `,"retry":{"maxAttempts":3,"backoffSeconds":5,"maxBackoffSeconds":60}`
@@ -549,13 +549,13 @@ func TestAJobIsCreatedWithARetryPolicyInForm(t *testing.T) {
 			t.Fatalf("%q: %d %s", other, got.Code, got.Body)
 		}
 	}
-	if schema := storeSchemaOf(t, s.db); schema != retryStoreSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != retryStoreSchema {
 		t.Fatalf("schema %s", schema)
 	}
 	// A store at 6 takes a scoped job, and stays at 6.
 	_, e := s.createJobBy(requester{}, "Scoped", journalRelease(t, s, runtime).ID, "scope-a", nil)
 	must(t, e)
-	if schema := storeSchemaOf(t, s.db); schema != retryStoreSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != retryStoreSchema {
 		t.Fatalf("schema %s", schema)
 	}
 	s.Close()
@@ -581,7 +581,7 @@ func TestAJobIsCreatedWithARetryPolicyInForm(t *testing.T) {
 		t.Fatalf("%+v", upgraded)
 	}
 	var revisions, carrying int
-	must(t, s.db.QueryRow("SELECT count(*), count(CASE WHEN json_extract(record,'$.retry.maxAttempts')=3 THEN 1 END) FROM job_revisions WHERE job_id=?", j.ID).Scan(&revisions, &carrying))
+	must(t, sqliteDB(s).QueryRow("SELECT count(*), count(CASE WHEN json_extract(record,'$.retry.maxAttempts')=3 THEN 1 END) FROM job_revisions WHERE job_id=?", j.ID).Scan(&revisions, &carrying))
 	if revisions == 0 || carrying != revisions {
 		t.Fatalf("revisions %d, carrying the policy %d", revisions, carrying)
 	}
@@ -596,7 +596,7 @@ func TestARetryStoreIsRelocated(t *testing.T) {
 	must(t, e)
 	j, e := s.createJobWith(requester{}, "Retrying", journalRelease(t, s, s.runtimeDigest).ID, "", nil, &RetryPolicy{2, 5, 5})
 	must(t, e)
-	if schema := storeSchemaOf(t, s.db); schema != retryStoreSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != retryStoreSchema {
 		t.Fatalf("schema %s", schema)
 	}
 	s.Close()
@@ -612,8 +612,8 @@ func TestARetryStoreIsRelocated(t *testing.T) {
 	defer s.Close()
 	held, e := s.job(j.ID)
 	must(t, e)
-	if held.Retry == nil || *held.Retry != (RetryPolicy{2, 5, 5}) || storeSchemaOf(t, s.db) != retryStoreSchema {
-		t.Fatalf("%+v under schema %s", held, storeSchemaOf(t, s.db))
+	if held.Retry == nil || *held.Retry != (RetryPolicy{2, 5, 5}) || storeSchemaOf(t, sqliteDB(s)) != retryStoreSchema {
+		t.Fatalf("%+v under schema %s", held, storeSchemaOf(t, sqliteDB(s)))
 	}
 }
 
@@ -686,11 +686,11 @@ func TestAnInterruptedRunIsRetriedKeepingItsFirstAttempt(t *testing.T) {
 			t.Fatalf("%d entries after %d", journalLength(t, s), before)
 		}
 		var version, kind, from, by, detail string
-		must(t, s.db.QueryRow("SELECT entry_version,kind,from_state,by_actor,detail FROM events WHERE json_extract(concerns,'$.run')=? ORDER BY sequence DESC LIMIT 1 OFFSET 1", r.ID).Scan(&version, &kind, &from, &by, &detail))
+		must(t, sqliteDB(s).QueryRow("SELECT entry_version,kind,from_state,by_actor,detail FROM events WHERE json_extract(concerns,'$.run')=? ORDER BY sequence DESC LIMIT 1 OFFSET 1", r.ID).Scan(&version, &kind, &from, &by, &detail))
 		if version != attemptEntryVersion || kind != "run.queued" || from != "interrupted" || !strings.Contains(by, `"installation"`) || !strings.Contains(detail, `"attempt":{"number":1,`) {
 			t.Fatal(version, kind, from, by, detail)
 		}
-		if schema := storeSchemaOf(t, s.db); schema != retryStoreSchema {
+		if schema := storeSchemaOf(t, sqliteDB(s)); schema != retryStoreSchema {
 			t.Fatalf("schema %s", schema)
 		}
 		// The original request's key returns the run as it now is.
@@ -752,7 +752,7 @@ func TestAnEventDeliveredAgainAfterARetryQueuesNothing(t *testing.T) {
 		t.Fatalf("%d %s", got.Code, got.Body)
 	}
 	runs := func() (n int) {
-		must(t, s.db.QueryRow("SELECT count(*) FROM runs").Scan(&n))
+		must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM runs").Scan(&n))
 		return n
 	}
 	for _, dispatch := range []bool{false, true} {
@@ -791,7 +791,7 @@ func TestARetryIsRefusedForARunNotInterrupted(t *testing.T) {
 		}
 		// Refusals of one run with one code in a minute are one entry.
 		var n int
-		must(t, s.db.QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(detail,'$.request')='retry-run' AND json_extract(detail,'$.code')=? AND json_extract(concerns,'$.run')=?", code, run.ID).Scan(&n))
+		must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(detail,'$.request')='retry-run' AND json_extract(detail,'$.code')=? AND json_extract(concerns,'$.run')=?", code, run.ID).Scan(&n))
 		if n != 1 || journalLength(t, s) > before+1 {
 			t.Fatalf("the refusal was journaled %d times", n)
 		}
@@ -838,7 +838,7 @@ func TestARetryIsRefusedForARunNotInterrupted(t *testing.T) {
 		}
 	}
 	var malformed int
-	must(t, s.db.QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(detail,'$.request')='retry-run' AND json_extract(detail,'$.code')='invalid_request' AND json_extract(concerns,'$.run')=?", r.ID).Scan(&malformed))
+	must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(detail,'$.request')='retry-run' AND json_extract(detail,'$.code')='invalid_request' AND json_extract(concerns,'$.run')=?", r.ID).Scan(&malformed))
 	if malformed != 1 {
 		t.Fatal("malformed retries journaled:", malformed)
 	}
@@ -856,7 +856,7 @@ func refusedAsAudited(t *testing.T, s *Service, r Run, attempt string) {
 		t.Fatalf("%d %s", got.Code, got.Body)
 	}
 	var n int
-	must(t, s.db.QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(detail,'$.request')='retry-run' AND json_extract(detail,'$.code')='run_not_retryable' AND json_extract(concerns,'$.run')=?", r.ID).Scan(&n))
+	must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(detail,'$.request')='retry-run' AND json_extract(detail,'$.code')='run_not_retryable' AND json_extract(concerns,'$.run')=?", r.ID).Scan(&n))
 	if n != 1 {
 		t.Fatal("refusals journaled:", n)
 	}
@@ -919,7 +919,7 @@ func TestARetryIsRefusedAfterAFinishThatFailed(t *testing.T) {
 	left := done
 	left.State, left.FinishedAt, left.Audit, left.AuditBytes, left.AuditSignatures = "running", "", nil, nil, nil
 	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(left, anyState); return e }))
-	_, e = s.db.Exec("DELETE FROM run_chain WHERE run=?", r.ID)
+	_, e = sqliteDB(s).Exec("DELETE FROM run_chain WHERE run=?", r.ID)
 	must(t, e)
 	s.Close()
 	s = openJournal(t, cfg)
@@ -961,7 +961,7 @@ func TestARetryNamesTheRunUnderItsScope(t *testing.T) {
 		t.Fatalf("%d %s", got.Code, got.Body)
 	}
 	var version string
-	must(t, s.db.QueryRow("SELECT entry_version FROM events WHERE kind='run.queued' AND from_state='interrupted'").Scan(&version))
+	must(t, sqliteDB(s).QueryRow("SELECT entry_version FROM events WHERE kind='run.queued' AND from_state='interrupted'").Scan(&version))
 	if version != attemptEntryVersion {
 		t.Fatal(version)
 	}
@@ -995,17 +995,17 @@ func TestARecordWithoutARetryIsWrittenAsBefore(t *testing.T) {
 	s := runJournalSteps(t, cfg, false).s
 	for table, column := range map[string]string{"jobs": "record", "job_creations": "record", "job_revisions": "record", "occurrences": "record", "runs": "record", "events": "detail"} {
 		var n, held int
-		if e := s.db.QueryRow("SELECT count(*), count(CASE WHEN instr("+column+",'\"retry\"')>0 OR instr("+column+",'\"attempts\"')>0 OR instr("+column+",'\"nextAttemptAt\"')>0 OR instr("+column+",'\"attempt\":{')>0 THEN 1 END) FROM "+table).Scan(&n, &held); e != nil {
+		if e := sqliteDB(s).QueryRow("SELECT count(*), count(CASE WHEN instr("+column+",'\"retry\"')>0 OR instr("+column+",'\"attempts\"')>0 OR instr("+column+",'\"nextAttemptAt\"')>0 OR instr("+column+",'\"attempt\":{')>0 THEN 1 END) FROM "+table).Scan(&n, &held); e != nil {
 			t.Fatal(e)
 		}
 		if n == 0 || held != 0 {
 			t.Errorf("%s: %d of %d rows hold a retry member", table, held, n)
 		}
 	}
-	if versions := entryVersionsBesideResults(t, s.db); versions != "1" {
+	if versions := entryVersionsBesideResults(t, sqliteDB(s)); versions != "1" {
 		t.Fatalf("entry versions %q", versions)
 	}
-	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != storeSchema {
 		t.Fatalf("schema %s", schema)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,13 +73,14 @@ type Service struct {
 	automationMu           sync.Mutex
 	automationDone         chan struct{}
 	cfg                    Config
-	db                     *sql.DB
 	runtime, runtimeDigest string
 
 	// store keeps the queue, releases, inputs and run records
-	// (store_contract.go). db is the sqlite kind's database handle, for the
-	// state the contract does not cover yet (store_sqlite.go).
-	store runStore
+	// (store_contract.go). manual is the manual-admission state the sqlite
+	// kind keeps beside them (store_sqlite_manual.go), nil with a kind that
+	// keeps none.
+	store  runStore
+	manual manualState
 	// executor is fixed at Open and remains non-nil after Close.
 	executor *ExecutorLease
 	// authority is the immutable original inherited channel/session. It never
@@ -218,7 +218,7 @@ func Open(cfg Config) (_ *Service, err error) {
 	}()
 	// The boot line's directory reaches the store only through the store
 	// kind's constructor, which takes the store's lock, then runs afterLock,
-	// then opens the database, and applies the schema after opened.
+	// then opens the database, and applies the schema after manual.
 	s.store, err = openStore(defaultStoreKind, storeOpening{
 		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot,
 		migrate: cfg.ExecutorAdmission == nil,
@@ -232,8 +232,8 @@ func Open(cfg Config) (_ *Service, err error) {
 			s.attempts, err = openHeldRoot(filepath.Join(cfg.Dir, "attempts"))
 			return err
 		},
-		opened: func(db *sql.DB) error {
-			s.db = db
+		manual: func(m manualState) error {
+			s.manual = m
 			if cfg.ExecutorAdmission != nil {
 				return s.validateManualStore()
 			}
@@ -242,6 +242,12 @@ func Open(cfg Config) (_ *Service, err error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Manual admission stays on the sqlite kind (store-postgresql.md, D4): a
+	// kind that keeps no manual-admission state never checked the store, and
+	// is refused.
+	if cfg.ExecutorAdmission != nil && s.manual == nil {
+		return nil, errManualProtocol
 	}
 	if err = s.loadRegisteredProfiles(); err != nil {
 		return nil, err

@@ -92,7 +92,7 @@ func preparationFixture(t *testing.T) (*Service, Config, Occurrence, *asyncFixtu
 	s.cfg = cfg
 	r.InputMapping = &input.Source.Mapping
 	r.InputProfiles = []InputProfile{p}
-	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID); e != nil {
+	if _, e := sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID); e != nil {
 		t.Fatal(e)
 	}
 	c := constantTrigger(time.Now())
@@ -256,7 +256,7 @@ func TestDurablePreparationCompletedSourcesSurviveRestart(t *testing.T) {
 	s, cfg, o, f := preparationFixture(t)
 	r, _ := s.release(o.ReleaseID)
 	r.InputMapping.Sources = append(r.InputMapping.Sources, MappingSource{Name: "detail", Kind: "operation", Profile: f.p.ID, ProfileDigest: profileHash(f.p), MaxAge: 300, Arguments: []byte(`{"tool":"lookup","arguments":{}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/detail", Source: "/detail"}}, Evidence: []EvidenceMapping{}}}})
-	s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID)
+	sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID)
 	f.mu.Lock()
 	f.ready = true
 	f.mu.Unlock()
@@ -294,7 +294,7 @@ func TestDurablePreparationOtherOccurrencesProgressWhileWaiting(t *testing.T) {
 	other.State = "accepted"
 	other.Preparation = nil
 	// A second durable occurrence can advance while the first retains no worker.
-	if _, e := s.db.Exec("INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES(?,?,?,?,?,?,?)", other.ID, other.JobID, other.TriggerID, "second", "", other.State, string(encode(other))); e != nil {
+	if _, e := sqliteDB(s).Exec("INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES(?,?,?,?,?,?,?)", other.ID, other.JobID, other.TriggerID, "second", "", other.State, string(encode(other))); e != nil {
 		t.Fatal(e)
 	}
 	if e := s.prepareOccurrence(context.Background()); e != nil {
@@ -323,7 +323,7 @@ func TestAutomaticRunRechecksFreshnessAfterQueue(t *testing.T) {
 		t.Fatal(e)
 	}
 	run := Run{SchemaVersion: "1", ID: id("run_"), JobID: o.JobID, ReleaseID: o.ReleaseID, State: "queued", Input: input, CreatedAt: at.Format(time.RFC3339), Trigger: &TriggerOrigin{OccurrenceID: o.ID, TriggerID: o.TriggerID, ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339)}}
-	if _, e = s.db.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record)VALUES(?,?,?,?,?,?,?)", run.ID, run.JobID, "test", "old", digest(encode(input)), "queued", string(encode(run))); e != nil {
+	if _, e = sqliteDB(s).Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record)VALUES(?,?,?,?,?,?,?)", run.ID, run.JobID, "test", "old", digest(encode(input)), "queued", string(encode(run))); e != nil {
 		t.Fatal(e)
 	}
 	s.Close()

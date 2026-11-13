@@ -204,7 +204,7 @@ func waitForRunState(t *testing.T, s *Service, id, state string) Run {
 
 func refuse(t *testing.T, s *Service, statement string) {
 	t.Helper()
-	if _, e := s.db.Exec(statement); e != nil {
+	if _, e := sqliteDB(s).Exec(statement); e != nil {
 		t.Fatal(e)
 	}
 }
@@ -976,7 +976,7 @@ func TestAStoreFromBeforeTheJournalServesWhenItBeganAndNothingInvented(t *testin
 		t.Fatalf("the journal does not say what the store held when it began: %+v", entries[0])
 	}
 	var schema string
-	must(t, s.db.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema))
+	must(t, sqliteDB(s).QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema))
 	if schema != storeSchema {
 		t.Fatal("the schema is", schema)
 	}
@@ -1021,7 +1021,7 @@ func TestNoEntryHoldsASecret(t *testing.T) {
 		}
 		after = page.Next
 	}
-	rows, e := w.s.db.Query("SELECT * FROM events")
+	rows, e := sqliteDB(w.s).Query("SELECT * FROM events")
 	must(t, e)
 	columns, e := rows.Columns()
 	must(t, e)

@@ -72,7 +72,7 @@ func constantTrigger(at time.Time) TriggerConfig {
 func countRows(t *testing.T, s *Service, table string) int {
 	t.Helper()
 	var n int
-	if e := s.db.QueryRow("SELECT count(*) FROM " + table).Scan(&n); e != nil {
+	if e := sqliteDB(s).QueryRow("SELECT count(*) FROM " + table).Scan(&n); e != nil {
 		t.Fatal(e)
 	}
 	return n
@@ -80,7 +80,7 @@ func countRows(t *testing.T, s *Service, table string) int {
 func latestOccurrence(t *testing.T, s *Service) Occurrence {
 	t.Helper()
 	var raw string
-	if e := s.db.QueryRow("SELECT record FROM occurrences ORDER BY seq DESC LIMIT 1").Scan(&raw); e != nil {
+	if e := sqliteDB(s).QueryRow("SELECT record FROM occurrences ORDER BY seq DESC LIMIT 1").Scan(&raw); e != nil {
 		t.Fatal(e)
 	}
 	var o Occurrence
@@ -161,11 +161,11 @@ func TestSchedulePausedMissedAndReconciliation(t *testing.T) {
 		t.Fatal("lost run")
 	}
 	var linked string
-	if e = again.db.QueryRow("SELECT json_extract(record,'$.runId') FROM occurrences WHERE id=?", o.ID).Scan(&linked); e != nil || linked != done.ID {
+	if e = sqliteDB(again).QueryRow("SELECT json_extract(record,'$.runId') FROM occurrences WHERE id=?", o.ID).Scan(&linked); e != nil || linked != done.ID {
 		t.Fatal("admission not reconciled", e, linked)
 	}
 	var n int
-	again.db.QueryRow("SELECT count(*) FROM runs WHERE idem=?", o.ID).Scan(&n)
+	sqliteDB(again).QueryRow("SELECT count(*) FROM runs WHERE idem=?", o.ID).Scan(&n)
 	if n != 1 {
 		t.Fatal("duplicate evaluation", n)
 	}
@@ -285,7 +285,7 @@ func TestFileChangeStableFreshAndBounded(t *testing.T) {
 func TestInitialTriggerAtomicAndExpiry(t *testing.T) {
 	s, _, _, r := automaticFixture(t)
 	r.ID = "rel_fixture_other"
-	s.db.Exec("INSERT INTO releases VALUES(?,?)", r.ID, string(encode(r)))
+	sqliteDB(s).Exec("INSERT INTO releases VALUES(?,?)", r.ID, string(encode(r)))
 	c := constantTrigger(time.Now())
 	bad := c
 	bad.Schedule = &Schedule{Kind: "bad"}
@@ -561,7 +561,7 @@ func TestEventTokenReadsOnlyItsOwnOccurrence(t *testing.T) {
 	if code != 404 || !strings.Contains(notFound, `"occurrence_not_found"`) {
 		t.Fatal(code, notFound)
 	}
-	if _, e = s.db.Exec("DELETE FROM occurrence_keys WHERE occurrence_id=?", first.ID); e != nil {
+	if _, e = sqliteDB(s).Exec("DELETE FROM occurrence_keys WHERE occurrence_id=?", first.ID); e != nil {
 		t.Fatal(e)
 	}
 	for name, c := range map[string][3]string{

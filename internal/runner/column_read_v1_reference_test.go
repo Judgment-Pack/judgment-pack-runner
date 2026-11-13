@@ -284,7 +284,7 @@ func TestColumnReferenceAutomaticFirstSaveRestart(t *testing.T) {
 	mapping.Profile = "base"
 	mapping.Case.Facts = append(mapping.Case.Facts, FactMapping{Target: "/ref", Source: "/retained", Conversion: json.RawMessage(`{"contractVersion":"1","column":"A","kind":"text"}`)})
 	release.InputMapping = &mapping
-	if _, e = s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(release)), release.ID); e != nil {
+	if _, e = sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(release)), release.ID); e != nil {
 		t.Fatal(e)
 	}
 	raw := []byte("{\n \"id\":7, \"retained\": { \"contractVersion\":\"1\", \"origin\":\"asserted\", \"values\":{\"A\":\" \\t\"}, \"research\":null }\n}")

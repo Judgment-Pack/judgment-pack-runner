@@ -24,7 +24,7 @@ type chainRow struct {
 // chainRows reads the store's chain of runs, in sequence order.
 func chainRows(t *testing.T, s *Service) []chainRow {
 	t.Helper()
-	rows, e := s.db.Query("SELECT sequence,run,line FROM run_chain ORDER BY sequence")
+	rows, e := sqliteDB(s).Query("SELECT sequence,run,line FROM run_chain ORDER BY sequence")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -282,7 +282,7 @@ func syntheticRun(i int) (string, []byte) {
 
 // appendEntry appends one entry in a transaction of its own.
 func appendEntry(s *Service, run string, record []byte) error {
-	tx, e := s.db.Begin()
+	tx, e := sqliteDB(s).Begin()
 	if e != nil {
 		return e
 	}
@@ -328,7 +328,7 @@ func TestConcurrentAppendsNeitherRepeatNorSkip(t *testing.T) {
 	// the store refuses a second row at a sequence, and one before the first,
 	// whatever writes it.
 	for _, sequence := range []int64{1, 0} {
-		if _, e := s.db.Exec("INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)", sequence, "run_"+strings.Repeat("f", 32), []byte("{}")); e == nil {
+		if _, e := sqliteDB(s).Exec("INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)", sequence, "run_"+strings.Repeat("f", 32), []byte("{}")); e == nil {
 			t.Fatal("the store holds a row at sequence", sequence)
 		}
 	}
@@ -339,7 +339,7 @@ func TestTheChainIsServedWhole(t *testing.T) {
 	s := placeholderStore(t)
 	var lines [][]byte
 	// One transaction, so the store syncs once: what is tested is the reading.
-	tx, e := s.db.Begin()
+	tx, e := sqliteDB(s).Begin()
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -371,7 +371,7 @@ func TestRunnerRefusesAnEntryItDidNotWrite(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := placeholderStore(t)
-			if _, e := s.db.Exec("INSERT INTO run_chain(sequence,run,line) VALUES (1,'run_x',?)", []byte(line)); e != nil {
+			if _, e := sqliteDB(s).Exec("INSERT INTO run_chain(sequence,run,line) VALUES (1,'run_x',?)", []byte(line)); e != nil {
 				t.Fatal(e)
 			}
 			run, record := syntheticRun(1)
@@ -399,7 +399,7 @@ func TestTheChainLinksToTheStoredBytes(t *testing.T) {
 	trail := strings.Repeat("a", 32)
 	first, record := syntheticRun(0)
 	spelled := []byte(`{ "entryVersion" : "1", "trail" : "` + trail + `", "sequence" : 1, "previous" : "` + emptyDigest + `", "kind" : "run", "run" : "` + first + `", "auditDigest" : "` + digest(record) + `" }`)
-	if _, e := s.db.Exec("INSERT INTO run_chain(sequence,run,line) VALUES (1,?,?)", first, spelled); e != nil {
+	if _, e := sqliteDB(s).Exec("INSERT INTO run_chain(sequence,run,line) VALUES (1,?,?)", first, spelled); e != nil {
 		t.Fatal(e)
 	}
 	next, record := syntheticRun(1)
@@ -668,7 +668,7 @@ func TestTheEntryIsCheckedWithAndWithoutAHeldCheckpoint(t *testing.T) {
 func rewriteChain(t *testing.T, s *Service, removed int64) {
 	t.Helper()
 	rows := chainRows(t, s)
-	if _, e := s.db.Exec("DELETE FROM run_chain"); e != nil {
+	if _, e := sqliteDB(s).Exec("DELETE FROM run_chain"); e != nil {
 		t.Fatal(e)
 	}
 	previous := emptyDigest
@@ -683,7 +683,7 @@ func rewriteChain(t *testing.T, s *Service, removed int64) {
 		}
 		sequence++
 		line := entryLine(e.Trail, sequence, previous, e.Run, e.AuditDigest)
-		if _, err = s.db.Exec("INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)", sequence, e.Run, line); err != nil {
+		if _, err = sqliteDB(s).Exec("INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)", sequence, e.Run, line); err != nil {
 			t.Fatal(err)
 		}
 		previous = digest(line)
@@ -697,7 +697,7 @@ func rewriteChain(t *testing.T, s *Service, removed int64) {
 func TestADeletedRunShows(t *testing.T) {
 	t.Run("the run removed, its entry kept", func(t *testing.T) {
 		c := chainedFixture(t, 1, 0)
-		if _, e := c.s.db.Exec("DELETE FROM runs WHERE id=?", c.run); e != nil {
+		if _, e := sqliteDB(c.s).Exec("DELETE FROM runs WHERE id=?", c.run); e != nil {
 			t.Fatal(e)
 		}
 		h := c.s.Handler("test")
@@ -714,7 +714,7 @@ func TestADeletedRunShows(t *testing.T) {
 	t.Run("an entry removed", func(t *testing.T) {
 		c := chainedFixture(t, 2, 1)
 		v := c.verified(t)
-		if _, e := c.s.db.Exec("DELETE FROM run_chain WHERE sequence=2"); e != nil {
+		if _, e := sqliteDB(c.s).Exec("DELETE FROM run_chain WHERE sequence=2"); e != nil {
 			t.Fatal(e)
 		}
 		r, e := v.CheckRunChain(bytes.NewReader(chainOf(t, c.s)), nil)
@@ -748,7 +748,7 @@ func TestADeletedRunShows(t *testing.T) {
 		c := chainedFixture(t, 0, 2)
 		head := c.checkpointAt(t, 3)
 		v := c.verified(t)
-		if _, e := c.s.db.Exec("DELETE FROM run_chain WHERE sequence>1"); e != nil {
+		if _, e := sqliteDB(c.s).Exec("DELETE FROM run_chain WHERE sequence>1"); e != nil {
 			t.Fatal(e)
 		}
 		chain := chainOf(t, c.s)
@@ -1055,7 +1055,7 @@ func TestVersion4IsHeldToVersion2sLimitBesideItsMembers(t *testing.T) {
 // A stored entry that does not read as one is not exported, nor passed over.
 func TestAnEntryThatDoesNotReadIsNotExported(t *testing.T) {
 	c := chainedFixture(t, 0, 0)
-	if _, e := c.s.db.Exec("UPDATE run_chain SET line=? WHERE run=?", []byte(`{"edited":true}`), c.run); e != nil {
+	if _, e := sqliteDB(c.s).Exec("UPDATE run_chain SET line=? WHERE run=?", []byte(`{"edited":true}`), c.run); e != nil {
 		t.Fatal(e)
 	}
 	get(t, c.s.Handler("test"), "/v1/runs/"+c.run+"/verification?version=4", 500)

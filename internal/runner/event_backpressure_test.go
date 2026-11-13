@@ -65,7 +65,7 @@ func makeRoom(t *testing.T, s *Service, queued []Occurrence) {
 func pendingOccurrences(t *testing.T, s *Service) int {
 	t.Helper()
 	var n int
-	must(t, s.db.QueryRow("SELECT count(*) FROM occurrences WHERE state IN ('accepted','preparing','waiting')").Scan(&n))
+	must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM occurrences WHERE state IN ('accepted','preparing','waiting')").Scan(&n))
 	return n
 }
 
@@ -219,7 +219,7 @@ func TestConcurrentSendersAtAFullQueueNeverPassTheLimitNorLoseAnID(t *testing.T)
 		admittedOnce(id, pair)
 	}
 	var held int
-	must(t, s.w.s.db.QueryRow("SELECT count(*) FROM occurrences WHERE trigger_id=? AND identity LIKE 'event:burst-%'", s.tr.ID).Scan(&held))
+	must(t, sqliteDB(s.w.s).QueryRow("SELECT count(*) FROM occurrences WHERE trigger_id=? AND identity LIKE 'event:burst-%'", s.tr.ID).Scan(&held))
 	if held != events || pendingOccurrences(t, s.w.s) != events {
 		t.Fatal("after the queue had room", held, pendingOccurrences(t, s.w.s))
 	}

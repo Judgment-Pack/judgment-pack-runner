@@ -13,11 +13,6 @@ import (
 	"time"
 )
 
-const jobRevisionSchema = `CREATE TABLE job_creations (release_id TEXT PRIMARY KEY, record TEXT NOT NULL);
- CREATE TABLE job_revisions (job_id TEXT NOT NULL, revision INTEGER NOT NULL, release_id TEXT UNIQUE NOT NULL, record TEXT NOT NULL, request_digest TEXT NOT NULL DEFAULT '', PRIMARY KEY(job_id,revision));
- INSERT INTO job_creations SELECT release_id,record FROM jobs;
- INSERT INTO job_revisions(job_id,revision,release_id,record) SELECT id,json_extract(record,'$.revision'),release_id,record FROM jobs;`
-
 type UpgradeJobRequest struct {
 	ReleaseID     string `json:"releaseId"`
 	BaseReleaseID string `json:"baseReleaseId"`

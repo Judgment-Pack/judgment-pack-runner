@@ -196,20 +196,20 @@ func TestRegisteredProfilesCannotBlockChecksInTransaction(t *testing.T) {
 	s := openJournal(t, journalConfig(t))
 	defer s.Close()
 	p, _ := testProfile(t)
-	tx, err := s.db.Begin()
+	tx, err := sqliteDB(s).Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	waitingBefore := s.db.Stats().WaitCount
+	waitingBefore := sqliteDB(s).Stats().WaitCount
 	done := make(chan error, 1)
 	go func() { _, err := s.registerInputProfile(p); done <- err }()
 	// The registration is waiting for the sole connection held by the upgrade.
 	deadline := time.Now().Add(time.Second)
-	for s.db.Stats().WaitCount == waitingBefore && time.Now().Before(deadline) {
+	for sqliteDB(s).Stats().WaitCount == waitingBefore && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if s.db.Stats().WaitCount == waitingBefore {
+	if sqliteDB(s).Stats().WaitCount == waitingBefore {
 		t.Fatal("registration did not reach the blocked write")
 	}
 	checked := make(chan []InputProfile, 1)
