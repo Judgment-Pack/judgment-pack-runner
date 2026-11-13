@@ -111,7 +111,7 @@ The policy is fixed at creation, kept by every upgrade (an upgrade keeps the
 job's record; its body takes no `retry`), and is part of the creation's
 replay: a repeated creation from the same release must name the same policy,
 or none, or it is refused `409` `release_already_used`. A Runner held to the
-manual-admission gate refuses a policy (`manual_unsupported`), as it refuses a
+manual-admission gate refuses a policy (`manual_profile_unsupported`), as it refuses a
 trigger. `GET /v1/status` lists the capability `retries`.
 
 **Retried failures, a closed list.** An attempt is retried only when its
@@ -246,7 +246,7 @@ Answers:
   attempts.
 - `409` `attempt_mismatch` for an *n* that is neither the run's attempt nor
   one already retried.
-- `429` `queue_full`, `503` `dispatcher_stopped`, and `manual_unsupported`
+- `429` `queue_full`, `503` `dispatcher_stopped`, and `manual_profile_unsupported`
   under the manual-admission gate, as for any run queued.
 
 **An attempt that left an audit record is not evaluated again.** An
@@ -286,7 +286,9 @@ bound of 10 attempts does.
 Following the journal's rule that a member added later raises `entryVersion`,
 **an entry that carries `detail.attempt` has `entryVersion` `"4"`**, whatever
 its `by` and scope (an entry of `"4"` may hold a caller and a scope as well).
-Every other entry keeps its version. The kind `occurrence.retry-scheduled` is
+An entry without it keeps its version, unless it holds a member a later
+release added ([run results](run-results.md) gives the entry of a run's end
+`"5"`): the [activity journal](activity-journal.md) states the whole rule. The kind `occurrence.retry-scheduled` is
 new; `run.queued` from `interrupted` is the existing kind with a `from`.
 
 A refused retry names its run in `concerns`, and the refusal's coalescing key

@@ -266,7 +266,8 @@ subject, is the requester of what the request creates:
   record delivery, `occurrence.cancelled`, `occurrence.reconciled`, `run.queued` and
   `admission.refused`. An event delivery's occurrence stays the trigger
   credential's. Such an entry has `entryVersion` `"2"`, since it holds members
-  an entry of version `"1"` never does; every other entry keeps `"1"`.
+  an entry of version `"1"` never does. An entry that holds a member a later
+  release added has that release's version instead ("3" to "5"): the [activity journal](activity-journal.md) states the whole rule.
 - **Refusals** are coalesced per caller: an identical refusal within a minute
   is one entry for one caller, and a separate entry for another.
 - **A job and a trigger** gain no member. A job's `owner` stays the
@@ -274,7 +275,8 @@ subject, is the requester of what the request creates:
   is named by the journal entry of that change.
 
 Without `identity` every record and entry is as it was: `requestedBy` the
-owner, the `installation` actor, `entryVersion` `"1"`.
+owner, the `installation` actor, and no entry of `entryVersion` `"2"`. (Later
+releases give some entries a higher version whatever the actor: the [activity journal](activity-journal.md) states the whole rule.)
 
 A caller is not a person, and the journal still records no review
 ([activity journal](activity-journal.md), answer 2): a subject names what the

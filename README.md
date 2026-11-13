@@ -177,7 +177,8 @@ do everything the owner bearer may, and Runner keeps no token.
 **Who is recorded.** A caller's run has `<issuer>#<subject>` as `requestedBy`,
 as in `https://issuer.example#ops-service` (an issuer holds no `#`), and its
 `Idempotency-Key` is held per issuer and subject. The journal names the caller as
-`{"kind":"caller","issuer":"…","subject":"…"}` in an entry of `entryVersion` `"2"`.
+`{"kind":"caller","issuer":"…","subject":"…"}` in an entry of `entryVersion` `"2"`
+or later.
 Without `identity`, every record is as a companion writes it.
 
 **Scope identifiers.** `POST /v1/jobs` takes an optional `scope`, an opaque label
@@ -185,7 +186,9 @@ of 1 to 128 bytes of UTF-8 with no control, invisible, private-use, unassigned o
 noncharacter code point (the gateway's rule for its own scope identifier), fixed
 on the job for as long as it exists. The job's triggers, occurrences, runs and
 journal entries carry it as `scope`; an entry that carries it has `entryVersion`
-`"3"`. Every request that names the job or one of its records names the scope in
+`"3"` or later. An entry's version is the highest its members call for, `"1"` to
+`"5"`, and the entry of a run's end is `"5"` in every store
+([activity journal](docs/design/activity-journal.md)). Every request that names the job or one of its records names the scope in
 the query parameter `scope`, and a request that names a record under another
 scope, under none for a record under one, or under one for a record under none, is
 answered as the same request for a record the store does not hold. Any other route

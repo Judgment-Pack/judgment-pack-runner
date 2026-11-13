@@ -73,7 +73,7 @@ the same release, which returns the job it made, must name the same scope as
 well as the same name and trigger, or it is refused `409`
 `release_already_used`, as one naming another name is. A Runner held to the
 manual-admission gate refuses a scope, as it refuses a trigger
-(`manual_unsupported`). `GET /v1/status` lists the capability
+(`manual_profile_unsupported`). `GET /v1/status` lists the capability
 `scope-identifiers`, so that a client can tell a Runner that takes one from one
 that would refuse the member as unknown.
 
@@ -173,8 +173,10 @@ job carries none: Runner's own, a preview, and a refused creation, whose job
 does not exist. Following the journal's rule that a member added later raises
 `entryVersion` ([activity journal](activity-journal.md), section 5), **an
 entry that carries a scope has `entryVersion` `"3"`**, a caller's or not,
-since an entry of `"1"` or `"2"` never holds the member. Every other entry
-keeps the version it had: `"1"`, or `"2"` for a caller's.
+since an entry of `"1"` or `"2"` never holds the member. An entry
+without a scope keeps the version it had: `"1"`, or `"2"` for a caller's. (An
+entry that holds a member a later release added, with a scope or without, has
+that release's version, `"4"` or `"5"`: the [activity journal](activity-journal.md) states the whole rule.)
 
 ## 5. Listings
 
@@ -218,7 +220,8 @@ Runner refuses a store at a schema not its own, so it refuses such a store
 from then on. **Going back** from a store that holds a scoped job needs a copy
 of the store from before that job was created; a store that holds none is
 opened by an earlier Runner as before. A store at `"5"` cannot be prepared for
-the manual-admission gate, whose preparation takes only a store at `"3"`.
+the manual-admission gate, whose preparation takes only a store at `"3"`; nor
+can a store at `"6"` ([retries](retries.md)).
 
 ## 7. Idempotency and the caller
 
