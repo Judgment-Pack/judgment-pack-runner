@@ -43,7 +43,8 @@ const (
 	EventEntryVersion = "1"
 	// callerEntryVersion is the shape of an entry whose by is a caller, whose
 	// members issuer and subject an entry of EventEntryVersion never holds.
-	// Every other entry keeps EventEntryVersion.
+	// An entry with no member a later version added keeps EventEntryVersion
+	// (docs/design/activity-journal.md states the whole rule).
 	callerEntryVersion = "2"
 	// scopedEntryVersion is the shape of an entry about a job created under a
 	// scope identifier, whose member scope an entry of an earlier version
