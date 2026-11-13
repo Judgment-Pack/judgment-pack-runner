@@ -249,6 +249,11 @@ func (k *sqliteStore) migrate() error {
 // every other process out (docs/design/store-postgresql.md, section 2).
 func (k *sqliteStore) heldTo(storeScope) runStore { return k }
 
+// missingAttemptHoldsNoAudit is yes: the attempt directories are kept in the
+// state directory beside the database, and one that does not exist was never
+// written (D11).
+func (k *sqliteStore) missingAttemptHoldsNoAudit() bool { return true }
+
 // close closes the database, then gives the lock up.
 func (k *sqliteStore) close() error {
 	err := k.db.Close()

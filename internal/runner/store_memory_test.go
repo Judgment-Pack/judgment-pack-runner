@@ -130,6 +130,10 @@ func (m *memoryStore) heldTo(sc storeScope) runStore {
 	return &memoryStore{memoryHeld: m.memoryHeld, scope: sc}
 }
 
+// missingAttemptHoldsNoAudit is no, as the second kind's: the in-memory kind
+// holds no attempt directory of its own (D11).
+func (m *memoryStore) missingAttemptHoldsNoAudit() bool { return false }
+
 // errOtherScope is the cause of the in-memory kind's faultRefused for a
 // record written under a scope its transaction is not held to: a row
 // policy's check.

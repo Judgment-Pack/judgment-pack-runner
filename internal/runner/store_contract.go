@@ -321,6 +321,14 @@ type runStore interface {
 	// (storeScope). A kind that holds no policy of its own, the sqlite kind,
 	// returns the store as it is: its one process holds every scope.
 	heldTo(sc storeScope) runStore
+	// missingAttemptHoldsNoAudit says whether the retry check
+	// (attemptsHoldNoAudit) may take an attempt directory that does not exist
+	// to hold no audit record (docs/design/store-postgresql.md, D11). The
+	// sqlite kind says yes: its state directory holds every attempt's
+	// directory, kept with its database. A kind whose store outlives the
+	// host's disk says no, and the check takes a missing directory to be
+	// unknown, as it takes one it cannot read.
+	missingAttemptHoldsNoAudit() bool
 	// update runs fn in one transaction and keeps what it wrote only if fn
 	// returns nil and the commit succeeds. Transactions are serializable: one
 	// sees every write of each that committed before it began, and none of
