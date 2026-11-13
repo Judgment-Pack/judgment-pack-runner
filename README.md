@@ -13,7 +13,9 @@ remain on the local filesystem, with SQLite holding the queue and records.
 schedules, stable JSON file changes, authenticated events, Google Cloud Scheduler
 delivery and unattended Gateway operation mappings. AWS/Azure adapters, external
 actions, graph execution, shared-user permissions and AI agent loops are not implemented. Closing a browser does not stop work;
-Desk and its runner companion must stay running on the host.
+Desk and its runner companion must stay running on the host. Runner can also run on its own, as a
+long-running [service](#service-mode) whose control API holds every request to the owner bearer or
+to a caller's signed identity token.
 
 ## Repository responsibilities
 
@@ -76,6 +78,7 @@ The program's commands:
 | Command | What it does |
 | --- | --- |
 | none | Desk's companion: reads one boot line on stdin and serves `jobs/1`, as the next paragraphs say |
+| `serve --config <path>` | service mode: serves `jobs/1` from a private configuration file until it is stopped ([below](#service-mode)) |
 | `version` | names the release the program was built from |
 | `verify-run` | verifies a run's export offline ([below](#verified-mapping-v2-runner-and-desk)) |
 | `verify-preparation` | verifies one preparation offline, an Exchange fixture's among them, with no run ([below](#verified-mapping-v2-runner-and-desk)) |
@@ -96,7 +99,8 @@ prints `{"protocol":"jobs/1","url":"http://127.0.0.1:..."}`, and stays alive unt
 stdin closes. The bearer is never printed, passed in argv, read from a project file,
 or sent to the browser. Desk selects the workspace and stable installation owner.
 Direct browser origins are refused by the control API. Desk's API uses its existing
-bearer and origin guards. The pilot has one local owner, not delegated machine roles.
+bearer and origin guards. The pilot has one local owner, not delegated machine roles;
+in [service mode](#service-mode) the callers an identity lists share that owner's authority.
 
 
 A trusted host can explicitly enroll a workspace for
@@ -115,6 +119,70 @@ without admission support retain ownership-only version 2 with
 [manual gate](docs/design/manual-admission-gate.md) requires retained enrollment,
 matching boot and execution demands, and fresh anchored authority admission.
 A probe response alone grants no permission.
+
+## Service mode
+
+`jpack-runner serve --config <path>` runs Runner as a long-running service, not a
+host's companion. It reads no stdin and runs until it is sent an interrupt or a
+termination signal. The companion, started with no argument, is unchanged. The
+[design note](docs/design/service-mode.md) has every rule.
+
+Its configuration is one file at an absolute path, held to the signing key's rules:
+no symbolic link anywhere in its path, one regular file with one name, owned by
+Runner's user, which neither its group nor others may read or write, at most 128 KiB,
+outside the state directory. It is one JSON object holding the boot line's members
+(`executorOwnership` and `executorAdmission` excepted: they bind Runner to a host that
+starts it), and:
+
+- `listen`, required: an IP address and a port, written as Runner prints it, such
+  as `127.0.0.1:8470`. No name, `localhost` included, and no port 0: a service is
+  found at the port its operator chose.
+- `token`, the owner bearer, when there is no `identity`.
+- `identity`, optional: `issuer` (with no `#`), `audience`, the `subjects` whose
+  requests Runner takes (case is significant; no format character and no white
+  space at either end), and `keys`, the absolute path of the issuer's JSON Web Key Set file (RSA of
+  2048 bits or more, EC P-256 or Ed25519; no private member), read once at start. Others may read that
+  file; no one but its owner, Runner's user or root, may write it.
+- `acceptOtherHostsOverPlainHTTP`, optional, `true` or `false`.
+
+```json
+{"dir":"/srv/jobs/state","runtime":"/srv/jobs/bin/jpack","workspace":"ops","owner":"ops-installation","listen":"127.0.0.1:8470",
+ "identity":{"issuer":"https://issuer.example","audience":"runner-control","subjects":["ops-service","build-bot"],"keys":"/srv/jobs/issuer-keys.json"}}
+```
+
+When it is ready it prints the companion's readiness line,
+`{"protocol":"jobs/1","url":"http://127.0.0.1:8470"}`. A configuration Runner
+refuses is refused before anything is opened, with a sentence that names the member
+and never a path or a value, `listen` included.
+
+**Other hosts.** A loopback `listen` (`127.0.0.0/8` or `::1`) is taken. Any other
+address is taken only with both an `identity` and `acceptOtherHostsOverPlainHTTP:
+true`; either alone is refused. **Runner terminates no TLS**: it speaks plain HTTP,
+so off loopback, unless TLS terminates in front of it, a token can be read on the
+network between and replayed until it expires, and every request and answer read.
+Runner limits neither request rate nor connections; what is in front of it should.
+
+**Identity.** With `identity`, every request on the control API holds
+`Authorization: Bearer <token>`, a JWT from the configured issuer, naming the
+configured audience and a listed subject, signed with `RS256`, `ES256` or `EdDSA` by
+a key of the file (the key decides the algorithm, so `none` is refused), with an
+`exp` and an optional `nbf`, each held with 30 seconds' leeway, at most 8,192 bytes.
+The token replaces the owner bearer: a configuration with `identity` takes no
+`token`. A refusal is `401` with `WWW-Authenticate: Bearer` and its reason, which
+repeats nothing of the token. A trigger key is unchanged: a direct event delivery
+holds an identity token and `X-Trigger-Token`. What is checked is the token, not
+who holds it: a subject is the issuer's name for a caller, every listed subject may
+do everything the owner bearer may, and Runner keeps no token.
+
+**Who is recorded.** A caller's run has `<issuer>#<subject>` as `requestedBy`,
+as in `https://issuer.example#ops-service` (an issuer holds no `#`), and its
+`Idempotency-Key` is held per issuer and subject. The journal names the caller as
+`{"kind":"caller","issuer":"…","subject":"…"}` in an entry of `entryVersion` `"2"`.
+Without `identity`, every record is as a companion writes it.
+
+**Health.** `GET /v1/health` answers without a credential, `200 {"healthy":true}` or
+`503 {"healthy":false}`, and says nothing else. `GET /v1/status` keeps its
+credential. A companion serves no health route.
 
 ## Upgrading a job
 
@@ -616,8 +684,8 @@ curl --fail-with-body "$DESK_URL/api/operations/jobs/$JOB_ID/runs" \
 `input.json` contains `{"facts": {...}}` and optionally `"evidence": {...}`.
 A new acceptance returns 202 only after its queue row and idempotency binding commit.
 A repeated key with the same input returns 200 and the original run; a different
-input returns 409. Keys are scoped to job and authenticated installation owner and
-retained with history. Repeating job creation with the same reviewed preview and name
+input returns 409. Keys are scoped to job and requester (the installation owner, or a
+caller's issuer and subject in [service mode](#service-mode)) and retained with history. Repeating job creation with the same reviewed preview and name
 returns the existing job. Changing inputs invalidates the UI's preview approval.
 
 Lists return at most 50 records, newest first, with `next` as the next `after` cursor
@@ -881,7 +949,8 @@ ID that an earlier Runner version recorded as `skipped` with reason
 answer carries no `Retry-After` header. The refusal is journaled as
 `admission.refused`, once a minute for alike refusals; no occurrence is recorded.
 
-Direct Runner callers need the private owner bearer plus `X-Trigger-Token`.
+Direct Runner callers need the private owner bearer plus `X-Trigger-Token` (in
+[service mode](#service-mode) with an identity, an identity token in place of the bearer).
 Desk's scoped route refuses browser Origin headers and does not forward arbitrary
 paths. It does not provide public ingress, cloud credentials, or a tunnel. Google Cloud uses an authenticated relay and an outbound pull subscription.
 Future AWS/Azure adapters can reuse the same occurrence admission boundary.
@@ -913,8 +982,8 @@ for an occurrence it did not create gets 404 `occurrence_not_found`, the same an
 as for an occurrence that does not exist. Occurrences accepted before this read
 existed have no recorded credential and cannot be read with a token.
 
-Direct Runner callers need the private owner bearer plus `X-Trigger-Token`, as for
-delivery. Desk does not expose this read yet.
+Direct Runner callers need the private owner bearer, or a service's identity token, plus
+`X-Trigger-Token`, as for delivery. Desk does not expose this read yet.
 
 There are at most 128 configured triggers per local store. Trigger revisions and
 occurrences are retained in `runs.sqlite`; backups must include the entire stopped

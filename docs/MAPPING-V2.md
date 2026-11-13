@@ -2088,8 +2088,8 @@ GET /v1/events?after=<sequence>&job=<job>
 }
 ```
 
-Every entry has `sequence`, `entryVersion` (`"1"`), `kind`, `at`, `by` and
-`concerns`. `revision` is the trigger revision, where an entry concerns a
+Every entry has `sequence`, `entryVersion` (`"1"`, or `"2"` for an entry whose
+`by` is a caller), `kind`, `at`, `by` and `concerns`. `revision` is the trigger revision, where an entry concerns a
 trigger. `from` and `to` are the record's state before and after, for
 triggers (`paused` or `enabled`), occurrences and runs; `from` is null when the
 change created the record. `reason` is the reason or problem text the record
@@ -2104,6 +2104,11 @@ with every member its kind can carry. `at` is Runner's clock: order is
 - `installation`: a request with the owner bearer, which Desk holds. `owner`
   is the boot line's owner, the installation's name, as a run's `requestedBy`
   is.
+- `caller`: in [service mode](design/service-mode.md) with an identity, a
+  request whose identity token Runner checked: `issuer` and `subject` are the
+  token's `iss` and `sub`, never the token. A subject is the issuer's name for
+  a caller, not a person. The runs the caller submits have
+  `<issuer>#<subject>` as `requestedBy`: an issuer holds no `#`.
 - `trigger`: Runner acting for a trigger at a revision: a schedule falling due,
   a watched file changing, a cloud signal arriving.
 - `trigger-credential`: an event delivery whose `X-Trigger-Token` was the

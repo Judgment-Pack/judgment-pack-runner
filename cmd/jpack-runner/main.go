@@ -1,5 +1,8 @@
 // jpack-runner is a local, single-owner companion. Boot authority is delivered
 // over stdin, never project files, URLs, arguments, or browser-provided config.
+// In service mode (`jpack-runner serve --config`, service.go) it is a
+// long-running service instead, whose configuration is one private file the
+// operator holds.
 package main
 
 import (
@@ -31,6 +34,8 @@ func runnerCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	switch {
 	case len(args) == 0:
 		err = serve(stdin, stdout, stderr)
+	case args[0] == "serve":
+		err = serveCommand(args[1:], stdout, stderr)
 	case args[0] == "capabilities":
 		err = printCapabilities(args[1:], stdout)
 	case args[0] == "version":
@@ -82,9 +87,34 @@ func prepareManualStore(stdin io.Reader, stdout io.Writer) int {
 	return 0
 }
 
+// bootLine is the boot line's members that encoding/json decodes. The members
+// requiredCapabilities, executorOwnership and executorAdmission are read on
+// their own (capabilities.go, executor_ownership.go).
+type bootLine struct {
+	Dir                string                     `json:"dir"`
+	Runtime            string                     `json:"runtime"`
+	Workspace          string                     `json:"workspace"`
+	Owner              string                     `json:"owner"`
+	Token              string                     `json:"token"`
+	CloudConnections   []runner.CloudConnection   `json:"cloudConnections,omitempty"`
+	GatewayConnections []runner.GatewayConnection `json:"gatewayConnections,omitempty"`
+	InputRoot          string                     `json:"inputRoot,omitempty"`
+	InputProfiles      []runner.InputProfile      `json:"inputProfiles,omitempty"`
+	RequireTested      bool                       `json:"requireTestedReleases,omitempty"`
+	RequireComparable  bool                       `json:"requireComparableFacts,omitempty"`
+	RequireSupplied    bool                       `json:"requireSuppliedReviewedSet,omitempty"`
+	SigningKey         string                     `json:"signingKey,omitempty"`
+	SigningPublicKey   string                     `json:"signingPublicKey,omitempty"`
+}
+
 // bootConfig reads the boot line: the service's configuration and the
 // bearer.
-func bootConfig(line []byte) (runner.Config, string, error) {
+func bootConfig(line []byte) (runner.Config, string, error) { return bootMembers(line, true) }
+
+// bootMembers reads boot members, from the boot line or a service
+// configuration (service.go): the service's configuration and the bearer,
+// which must be at least 32 characters when tokenRequired.
+func bootMembers(line []byte, tokenRequired bool) (runner.Config, string, error) {
 	// The paths are refused, never normalized, before the line is decoded.
 	if err := runner.CheckBootLinePaths(line); err != nil {
 		return runner.Config{}, "", err
@@ -92,23 +122,8 @@ func bootConfig(line []byte) (runner.Config, string, error) {
 	if err := checkBootCapabilities(line); err != nil {
 		return runner.Config{}, "", err
 	}
-	var boot struct {
-		Dir                string                     `json:"dir"`
-		Runtime            string                     `json:"runtime"`
-		Workspace          string                     `json:"workspace"`
-		Owner              string                     `json:"owner"`
-		Token              string                     `json:"token"`
-		CloudConnections   []runner.CloudConnection   `json:"cloudConnections,omitempty"`
-		GatewayConnections []runner.GatewayConnection `json:"gatewayConnections,omitempty"`
-		InputRoot          string                     `json:"inputRoot,omitempty"`
-		InputProfiles      []runner.InputProfile      `json:"inputProfiles,omitempty"`
-		RequireTested      bool                       `json:"requireTestedReleases,omitempty"`
-		RequireComparable  bool                       `json:"requireComparableFacts,omitempty"`
-		RequireSupplied    bool                       `json:"requireSuppliedReviewedSet,omitempty"`
-		SigningKey         string                     `json:"signingKey,omitempty"`
-		SigningPublicKey   string                     `json:"signingPublicKey,omitempty"`
-	}
-	if json.Unmarshal(line, &boot) != nil || len(boot.Token) < 32 {
+	var boot bootLine
+	if json.Unmarshal(line, &boot) != nil || tokenRequired && len(boot.Token) < 32 {
 		return runner.Config{}, "", fmt.Errorf("invalid boot configuration")
 	}
 	ownership, err := bootExecutorOwnership(line, boot.Workspace)
@@ -155,13 +170,7 @@ func serve(stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// A release check can run up to seven Runtime invocations, each with a
-	// 30-second subprocess deadline: packs schema (requireComparableFacts),
-	// packs covers (reviewedSet), validation, lock, packs list (a dialect
-	// mapping's coverage), rehearsal and saved tests; and, for a selected
-	// conversion, two dialect contract reads of 10 seconds each. Allow the
-	// bounded sequence, 230 seconds, to finish, with 15 to spare.
-	server := &http.Server{Handler: service.Handler(token), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 245 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := controlServer(service.Handler(token))
 	defer server.Close()
 	if err = json.NewEncoder(stdout).Encode(map[string]string{"url": "http://" + listener.Addr().String(), "protocol": "jobs/1"}); err != nil {
 		return err
@@ -184,6 +193,16 @@ func serve(stdin io.Reader, stdout, stderr io.Writer) error {
 	defer cancel()
 	server.Shutdown(shutdown)
 	return nil
+}
+
+// controlServer serves the control API. A release check can run up to seven
+// Runtime invocations, each with a 30-second subprocess deadline: packs schema
+// (requireComparableFacts), packs covers (reviewedSet), validation, lock,
+// packs list (a dialect mapping's coverage), rehearsal and saved tests; and,
+// for a selected conversion, two dialect contract reads of 10 seconds each.
+// Allow the bounded sequence, 230 seconds, to finish, with 15 to spare.
+func controlServer(handler http.Handler) *http.Server {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 245 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 }
 
 const verificationCoverage = "Every retained result disposition must match the audit record, independently of --runtime; a " +

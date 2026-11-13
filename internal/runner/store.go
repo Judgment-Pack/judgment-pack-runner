@@ -313,6 +313,12 @@ func (s *Service) createJob(name, releaseID string) (Job, error) {
 	return s.createJobConfigured(name, releaseID, nil)
 }
 func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) (Job, error) {
+	return s.createJobBy(requester{}, name, releaseID, c)
+}
+
+// createJobBy is createJobConfigured, for a request by: the journal names by
+// as the creator of the job and of its first trigger.
+func (s *Service) createJobBy(by requester, name, releaseID string, c *TriggerConfig) (Job, error) {
 	if s.cfg.ExecutorAdmission != nil && c != nil {
 		return Job{}, manualUnsupported()
 	}
@@ -408,11 +414,11 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 	if err = recordInitialJob(tx, j); err != nil {
 		return Job{}, err
 	}
-	if _, err = appendEvent(tx, change{kind: "job.created", by: s.installation(), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}}); err != nil {
+	if _, err = appendEvent(tx, change{kind: "job.created", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}}); err != nil {
 		return Job{}, err
 	}
 	if c != nil {
-		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.installation(), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: j.InitialTriggerID}, revision: 1, states: true, to: "paused", detail: EventDetail{PreviousRevision: revisionValue(0), TriggerKind: c.Kind}}); err != nil {
+		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: j.InitialTriggerID}, revision: 1, states: true, to: "paused", detail: EventDetail{PreviousRevision: revisionValue(0), TriggerKind: c.Kind}}); err != nil {
 			return Job{}, err
 		}
 	}
@@ -425,6 +431,14 @@ func (s *Service) submitInternal(jobID, key string, input Input, origin *Trigger
 	return s.submitInternalIntent(jobID, key, input, origin, nil)
 }
 func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *TriggerOrigin, manual *manualIntentInput) (Run, bool, error) {
+	return s.submitBy(requester{}, jobID, key, input, origin, manual)
+}
+
+// submitBy is submitInternalIntent, for a request by. A run a trigger
+// starts (origin) is the trigger's whoever by is; any other is by's: its
+// requestedBy, the scope its idempotency key is held in, and its first
+// entry's actor.
+func (s *Service) submitBy(by requester, jobID, key string, input Input, origin *TriggerOrigin, manual *manualIntentInput) (Run, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		if origin != nil || input.Source != nil || input.Preparation != nil || manual == nil || manual.key != key || !bytes.Equal(input.Facts, []byte(manual.facts)) || !bytes.Equal(input.Evidence, []byte(manual.evidence)) {
 			return Run{}, false, manualUnsupported()
@@ -437,7 +451,7 @@ func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *T
 	} else if manual != nil {
 		return Run{}, false, errManualInactive
 	}
-	caller := s.cfg.Owner
+	caller := s.requestedBy(by)
 	if origin != nil {
 		caller = "trigger:" + origin.TriggerID
 	}
@@ -562,11 +576,11 @@ func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *T
 		if err = tx.createRun(r, caller, key, hash); err != nil {
 			return err
 		}
-		by := s.installation()
+		actor := s.actor(by)
 		if origin != nil {
-			by = triggerActor(origin.TriggerID, origin.TriggerRevision)
+			actor = triggerActor(origin.TriggerID, origin.TriggerRevision)
 		}
-		_, err = tx.appendJournal(runChange(r, "", by, EventDetail{}))
+		_, err = tx.appendJournal(runChange(r, "", actor, EventDetail{}))
 		return err
 	})
 	if replayed {

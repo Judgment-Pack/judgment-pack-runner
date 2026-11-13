@@ -430,7 +430,7 @@ func (s *Service) cancelOccurrence(ctx context.Context, id string) (Occurrence, 
 			}
 			o.Reason = "Cancelled locally. Provider cancellation is best effort; late results will not be evaluated."
 			o.PendingInput = nil
-			e = s.changeOccurrence(o, "", s.installation())
+			e = s.changeOccurrence(o, "", s.actor(requesterFrom(ctx)))
 		}
 	}
 	s.automationMu.Unlock()
@@ -443,6 +443,11 @@ func (s *Service) cancelOccurrence(ctx context.Context, id string) (Occurrence, 
 // Reconciliation reuses the original operation IDs. It never starts a new
 // attempt or extends the deadline, and is explicitly requested by the owner.
 func (s *Service) reconcileOccurrence(id string) (Occurrence, error) {
+	return s.reconcileOccurrenceBy(requester{}, id)
+}
+
+// reconcileOccurrenceBy is reconcileOccurrence, requested by by.
+func (s *Service) reconcileOccurrenceBy(by requester, id string) (Occurrence, error) {
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	o, e := s.occurrence(id)
@@ -462,5 +467,5 @@ func (s *Service) reconcileOccurrence(id string) (Occurrence, error) {
 	o.State = "waiting"
 	o.Reason = ""
 	o.Preparation.NextCheck = ""
-	return o, s.changeOccurrence(o, "", s.installation())
+	return o, s.changeOccurrence(o, "", s.actor(by))
 }

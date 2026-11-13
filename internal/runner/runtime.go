@@ -316,7 +316,7 @@ func (s *Service) preview(ctx context.Context, req PreviewRequest) (Release, err
 		r.TestEvidence = s.checkReleaseTests(ctx, r, req.Matrix, req.TestSource, filepath.Join(dir, "tests"))
 		r.Tests = r.TestEvidence.Status
 	}
-	return r, s.saveRelease(r)
+	return r, s.saveReleaseBy(requesterFrom(ctx), r)
 }
 func (s *Service) evaluate(ctx context.Context, r Release, input Input, dir string, rehearsal bool) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
 	if !rehearsal && s.cfg.ExecutorAdmission != nil {

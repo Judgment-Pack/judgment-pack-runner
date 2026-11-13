@@ -81,7 +81,9 @@ by the read.
 
 - `sequence`: the entry's place in the journal, from 1, and the cursor
   (section 4).
-- `entryVersion`: `"1"`, a string, as the chain of runs writes its own.
+- `entryVersion`: `"1"`, a string, as the chain of runs writes its own. (Later,
+  with [service mode](service-mode.md): `"2"` for an entry whose `by` is a
+  caller, whose members an entry of `"1"` never holds.)
 - `kind`: one of the kinds below.
 - `at`: when Runner wrote the entry, by its own clock, in the form of every
   time Runner records (`model.go:109`). Order is `sequence`, never `at`.
@@ -133,11 +135,18 @@ is copied only from a record that serves it.
   Runner discarded (`cloud.go:99-134`).
 - `{"kind": "runner"}`: Runner itself: its dispatcher, its automation, its
   start and its stop.
+- Later, with [service mode](service-mode.md):
+  `{"kind": "caller", "issuer": "<iss>", "subject": "<sub>"}`, a request on the
+  control API of a Runner configured with an identity, whose identity token
+  Runner checked. It takes the place of `installation` on such a Runner, which
+  takes no owner bearer.
 
 **A person, never, today.** No request names one, and one bearer authorises
 every request. A person can be recorded only once a request carries an identity
 that Runner has a reason to believe. Until then `by` has no kind for a person,
-and Desk must not present `installation` as one (question 2).
+and Desk must not present `installation` as one (question 2). A `caller`
+(above) is not one either: its subject is the issuer's name for whatever it
+signed a token for, which Runner cannot relate to a person.
 
 A request without the owner bearer, or from a browser origin, is refused
 before any route (`http.go:222-235`) and is not journaled: it can come from any
@@ -146,7 +155,8 @@ local process.
 ### The kinds
 
 In the `By` column, `credential` is `trigger-credential` and `cloud` is
-`cloud-connection`. Pending is accepted, preparing or waiting. A dash: the kind
+`cloud-connection`. On a Runner with an identity, `caller` stands where
+`installation` does. Pending is accepted, preparing or waiting. A dash: the kind
 concerns no record with a state.
 
 | Kind | From | To | By |

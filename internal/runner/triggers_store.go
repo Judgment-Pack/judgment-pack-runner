@@ -62,6 +62,11 @@ func (s *Service) writeTrigger(t Trigger, hash string, history bool) error {
 	return tx.Commit()
 }
 func (s *Service) configureTrigger(jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
+	return s.configureTriggerBy(requester{}, jobID, triggerID, revision, c)
+}
+
+// configureTriggerBy is configureTrigger, requested by by.
+func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, manualUnsupported()
 	}
@@ -139,12 +144,17 @@ func (s *Service) configureTrigger(jobID, triggerID string, revision int, c Trig
 	if e = saveTrigger(tx, t, hash, true); e != nil {
 		return t, e
 	}
-	if _, e = appendEvent(tx, change{kind: "trigger.configured", by: s.installation(), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}}); e != nil {
+	if _, e = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}}); e != nil {
 		return t, e
 	}
 	return t, tx.Commit()
 }
 func (s *Service) setTriggerState(triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
+	return s.setTriggerStateBy(requester{}, triggerID, revision, paused, reviewed)
+}
+
+// setTriggerStateBy is setTriggerState, requested by by.
+func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, "", manualUnsupported()
 	}
@@ -236,7 +246,7 @@ func (s *Service) setTriggerState(triggerID string, revision int, paused, review
 		kind = "trigger.resumed"
 		detail.NextAt = t.NextAt
 	}
-	e = s.writeTriggerChange(t, hash, change{kind: kind, by: s.installation(), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: triggerState(t.Paused), detail: detail})
+	e = s.writeTriggerChange(t, hash, change{kind: kind, by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: triggerState(t.Paused), detail: detail})
 	return t, secret, e
 }
 
@@ -260,6 +270,11 @@ func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
 	return tx.Commit()
 }
 func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, string, error) {
+	return s.rotateTriggerKeyBy(requester{}, triggerID, revision)
+}
+
+// rotateTriggerKeyBy is rotateTriggerKey, requested by by.
+func (s *Service) rotateTriggerKeyBy(by requester, triggerID string, revision int) (Trigger, string, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, "", manualUnsupported()
 	}
@@ -290,7 +305,7 @@ func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, str
 	issued := t.Revision
 	t.keyRevision = &issued
 	state := triggerState(t.Paused)
-	e = s.writeTriggerChange(t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.installation(), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{PreviousRevision: revisionValue(t.Revision - 1)}})
+	e = s.writeTriggerChange(t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{PreviousRevision: revisionValue(t.Revision - 1)}})
 	return t, secret, e
 }
 func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
@@ -317,13 +332,19 @@ func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrenc
 }
 
 func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occurrence, bool, error) {
-	return s.admitBoundEvent(t, hash, event, "")
+	return s.admitBoundEvent(t, hash, event, "", requester{})
 }
 
 // deliverRecord is called only by the authenticated local control API. The caller
 // persists the complete envelope before delivery; old timestamps are allowed, but
 // source freshness and queue expiry still apply at admission/execution.
 func (s *Service) deliverRecord(triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
+	return s.deliverRecordBy(requester{}, triggerID, releaseID, event)
+}
+
+// deliverRecordBy is deliverRecord, for a delivery by: the occurrence it
+// admits is published by by.
+func (s *Service) deliverRecordBy(by requester, triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Occurrence{}, false, manualUnsupported()
 	}
@@ -336,10 +357,12 @@ func (s *Service) deliverRecord(triggerID, releaseID string, event EventDelivery
 	if releaseID == "" {
 		return Occurrence{}, false, bad("release_required", "Bind this delivery to its reviewed release.")
 	}
-	return s.admitBoundEvent(t, "", event, releaseID)
+	return s.admitBoundEvent(t, "", event, releaseID, by)
 }
 
-func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, expectedRelease string) (Occurrence, bool, error) {
+// admitBoundEvent admits an event delivery: one bound to expectedRelease, a
+// record delivery, is published by by.
+func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, expectedRelease string, by requester) (Occurrence, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Occurrence{}, false, manualUnsupported()
 	}
@@ -411,7 +434,7 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 	defer tx.Rollback()
 	var publisher *EventActor
 	if expectedRelease != "" {
-		actor := s.installation()
+		actor := s.actor(by)
 		publisher = &actor
 	}
 	if e = s.admitOccurrenceAs(tx, t, &o, "event:"+event.ID, payload, publisher); e != nil {
