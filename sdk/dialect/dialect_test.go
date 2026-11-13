@@ -569,6 +569,37 @@ func TestTheParameterDigest(t *testing.T) {
 	}
 }
 
+// Bytes, Facts and Evidence each return a copy: writing over one leaves the
+// preparation, its Digest and the next call's bytes as they were.
+func TestAPreparationsBytesAreCopies(t *testing.T) {
+	d, err := dialect.Read(specFile(t, "case-rule-no-sources", "dialect.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := d.Prepare(specFile(t, "case-rule-no-sources", "case.json"), instant(t, "2026-11-12T18:05:00Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := p.Digest()
+	for name, get := range map[string]func() []byte{"Bytes": p.Bytes, "Facts": p.Facts, "Evidence": p.Evidence} {
+		want := append([]byte(nil), get()...)
+		got := get()
+		if len(got) == 0 {
+			t.Fatalf("%s is empty", name)
+		}
+		for i := range got {
+			got[i] = 'x'
+		}
+		if again := get(); !bytes.Equal(again, want) {
+			t.Errorf("%s: writing over the returned bytes changed the preparation's", name)
+		}
+	}
+	sum := sha256.Sum256(p.Bytes())
+	if p.Digest() != digest || digest != "sha256:"+hex.EncodeToString(sum[:]) {
+		t.Errorf("the digest is out of step with Bytes: %s", digest)
+	}
+}
+
 // A key identifier that holds a plain digest of the preparation, the
 // SHA-256 of ParameterText or of Bytes, in any of the forms its characters
 // can spell, is refused: it would carry in clear beside the keyed digest

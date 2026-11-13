@@ -1,6 +1,7 @@
 package dialect
 
 import (
+	"bytes"
 	"encoding/json"
 	"runtime"
 	"sort"
@@ -24,20 +25,23 @@ type Preparation struct {
 
 // Bytes is the preparation in the canonical form spec/dialect.md §9.5
 // gives it: its members sorted, its number literals kept, and &, <, >,
-// U+2028 and U+2029 escaped. The caller must not modify it.
-func (p *Preparation) Bytes() []byte { return p.bytes }
+// U+2028 and U+2029 escaped. Each call returns a new copy, which the
+// caller may modify: the preparation, and its Digest, are unchanged.
+func (p *Preparation) Bytes() []byte { return bytes.Clone(p.bytes) }
 
 // Digest is the SHA-256 of Bytes, written sha256:<hex>, which a record's
 // binding of the preparation names.
 func (p *Preparation) Digest() string { return p.digest }
 
 // Facts is the facts document the preparation writes, every present fact
-// target's value at its target, in the canonical form of §9.5.
-func (p *Preparation) Facts() []byte { return p.facts }
+// target's value at its target, in the canonical form of §9.5. Each call
+// returns a new copy.
+func (p *Preparation) Facts() []byte { return bytes.Clone(p.facts) }
 
 // Evidence is the evidence document it writes, each present requirement's
-// availability, in the canonical form of §9.5.
-func (p *Preparation) Evidence() []byte { return p.evidence }
+// availability, in the canonical form of §9.5. Each call returns a new
+// copy.
+func (p *Preparation) Evidence() []byte { return bytes.Clone(p.evidence) }
 
 // Prepare computes the preparation of one case through the dialect at the
 // instant at, truncated to the second, which is its verifiedAt and the
@@ -195,13 +199,13 @@ func (d *Dialect) Prepare(caseDocument []byte, at time.Time) (*Preparation, erro
 		"formatVersion": Format, "verifiedAt": verifiedAt, "mappingDigest": d.digest, "verification": verification,
 		"cites": []any{}, "lineage": lineage, "outcomes": []any{outcome},
 	}
-	bytes, err := json.Marshal(document)
+	text, err := json.Marshal(document)
 	if err != nil {
 		return nil, refuse(CodeReadFailed, err.Error())
 	}
 	factBytes, _ := json.Marshal(facts)
 	evidenceBytes, _ := json.Marshal(evidence)
-	return &Preparation{bytes: bytes, digest: digestOf(bytes), facts: factBytes, evidence: evidenceBytes, parameters: given}, nil
+	return &Preparation{bytes: text, digest: digestOf(text), facts: factBytes, evidence: evidenceBytes, parameters: given}, nil
 }
 
 func claimDocument(c dialect4.Claim) map[string]any {
