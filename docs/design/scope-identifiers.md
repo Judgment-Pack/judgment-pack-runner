@@ -65,7 +65,9 @@ the same release, which returns the job it made, must name the same scope as
 well as the same name and trigger, or it is refused `409`
 `release_already_used`, as one naming another name is. A Runner held to the
 manual-admission gate refuses a scope, as it refuses a trigger
-(`manual_unsupported`).
+(`manual_unsupported`). `GET /v1/status` lists the capability
+`scope-identifiers`, so that a client can tell a Runner that takes one from one
+that would refuse the member as unknown.
 
 **A job's scope cannot be changed or dropped.** No request member sets it
 after creation: an upgrade's body holds no `scope` (one that names it is

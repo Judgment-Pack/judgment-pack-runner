@@ -317,8 +317,9 @@ notes say so.
 
 ## 10. Not in this change
 
-- Scope identifiers (#237), retries (#238), counts on run records (#239), any
-  storage change, more than one Runner per store, and metrics.
+- Scope identifiers (#237, since built: [scope identifiers](scope-identifiers.md)),
+  retries (#238), counts on run records (#239), any storage change, more than
+  one Runner per store, and metrics.
 - Permissions that differ between subjects.
 - Desk in front of a service with `identity`: Desk's proxy holds the owner
   bearer, and nothing in this change makes it carry an identity token.

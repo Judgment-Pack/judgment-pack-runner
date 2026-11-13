@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -377,6 +378,9 @@ func TestAScopeFiltersTheStoreWideListingsExactly(t *testing.T) {
 	cfg := journalConfig(t)
 	s := openJournal(t, cfg)
 	defer s.Close()
+	if got := serve(t, s, "GET", "/v1/status", "", nil); !strings.Contains(got.Body.String(), `"scope-identifiers"`) {
+		t.Fatalf("the capability is not listed: %s", got.Body)
+	}
 	runtime := completingRuntime(t, cfg.Dir)
 	jobs, runs := map[string]string{}, map[string]string{}
 	for _, scope := range []string{"scope-a", "scope-ab", "Scope-A", ""} {
@@ -517,11 +521,20 @@ func TestEveryRecordAndEntryOfAScopedJobCarriesItsScope(t *testing.T) {
 	cfg := journalConfig(t)
 	w := runScopedJournalSteps(t, cfg, "scope-a", true)
 	s := w.s
+	// An upgrade rewrites a job's triggers, and a cloud signal bound to a
+	// trigger can be refused: the scenario makes neither.
+	first := journalRelease(t, s, s.runtimeDigest)
+	c := eventTriggerConfig()
+	j, e := w.createJob("Upgraded with a trigger", first.ID, &c)
+	must(t, e)
+	next := journalRelease(t, s, s.runtimeDigest)
+	_, e = s.upgradeJob(context.Background(), j.ID, UpgradeJobRequest{ReleaseID: next.ID, BaseReleaseID: first.ID, BaseRevision: 1, Reviewed: true})
+	must(t, e)
 	tr, _ := storedTrigger(t, s, w.event.ID)
 	s.refusedCloudSignal("scheduler", &tr, "A cloud signal named a paused trigger.")
 	entries := journalEntries(t, cfg)
-	if len(entries) == 0 || entries[len(entries)-1].Request != "cloud-signal" {
-		t.Fatalf("the cloud signal's refusal is not journaled: %+v", entries[len(entries)-1])
+	if got := kindsOf(entries[len(entries)-7:]); !slices.Equal(got, []string{"release.previewed", "job.created", "trigger.configured", "release.previewed", "job.upgraded", "trigger.configured", "admission.refused"}) || entries[len(entries)-1].Request != "cloud-signal" {
+		t.Fatalf("the upgrade and the refusal wrote %v", got)
 	}
 	for _, e := range entries {
 		if e.Concerns.Job != "" && (e.Scope != "scope-a" || e.EntryVersion != scopedEntryVersion) {

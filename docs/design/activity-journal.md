@@ -83,7 +83,10 @@ by the read.
   (section 4).
 - `entryVersion`: `"1"`, a string, as the chain of runs writes its own. (Later,
   with [service mode](service-mode.md): `"2"` for an entry whose `by` is a
-  caller, whose members an entry of `"1"` never holds.)
+  caller, whose members an entry of `"1"` never holds. Later again, with
+  [scope identifiers](scope-identifiers.md): `"3"` for an entry about a job
+  created under a scope identifier, whatever its `by`, which holds the member
+  `scope` an entry of `"1"` or `"2"` never holds.)
 - `kind`: one of the kinds below.
 - `at`: when Runner wrote the entry, by its own clock, in the form of every
   time Runner records (`model.go:109`). Order is `sequence`, never `at`.
