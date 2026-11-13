@@ -165,8 +165,10 @@ which takes the lock (`runner.lock`) and opens the database (`runs.sqlite`), and
 `sqlitePreparedStore`, which checks that a manual-admission store was prepared. The rest of the
 Runner keeps the queue, releases, inputs and run records through the contract. Opening keeps its
 order: the lock; the Runner's working directories (`storeOpening.afterLock`); the database with
-one connection; the manual-admission store's check (`storeOpening.opened`); the pragmas and the
-schema; the store's identity (workspace, owner, input root); the migration.
+one connection; the manual-admission state handed to the Runner, and its check of a
+manual-admission store (`storeOpening.manual`); the pragmas and the schema; the store's identity
+(workspace, owner, input root); the migration. Under manual admission, `openStore` refuses a kind
+that hands over no manual-admission state, which would leave the store unchecked.
 
 The directory is also the Runner's working directory for what is not the store: the files a
 Runtime process runs on and writes (`releases/`, `attempts/`, `runtimes/`,
@@ -180,21 +182,33 @@ The kind itself: the exclusive process lock (`flock` on `runner.lock`), WAL, `sy
 the busy timeout, one connection, the schema and its migration, and the store's identity in
 `metadata`.
 
-The state the contract does not cover yet, kept in the same database and reached through the
-database handle the kind gives the Runner at opening: workflow executions and their artifacts; the manual-admission journal; `metadata` beside the
-store's identity, its schema and the profile rows (the manual-admission demand, the relocation
-history); and every entry written with the state above. With #244, the journal's reads,
-refusals, profile rows, briefs, triggers, occurrences, and jobs as they are made and revised are
-the contract's (section 9.5).
+The kind gives the Runner no database handle. What the contract does not cover is kept in the
+kind's files, each statement as the Runner made it, and reached through types of the kind's own:
 
-The statements left on `runs`, `releases` and `jobs` outside the contract, found by searching the
-package for those tables: manual admission (`manual_admission_activation.go`,
-`manual_execution_binding.go`, `manual_store_prepare.go`). The job and run listings are the
-contract's with #244 (section 9.5).
+- The manual-admission state (`store_sqlite_manual.go`): the manual-admission journal
+  (`manual_attempts`), the demand and schema in `metadata`, and the reads manual admission checks
+  a store and a job by. The kind hands it to the Runner at opening as a `manualState`; it is the
+  sqlite kind's alone ([store-postgresql.md](store-postgresql.md), D4), and a Runner under manual
+  admission on a kind that hands over none is refused (section 5).
+- The programs that open the kind's database themselves, offline, each under the store's lock or
+  the executor lease: workspace relocation (`relocate.go`, the history in `metadata`) and manual
+  store preparation, its own process, through a held directory and its private file system layer
+  (`store_sqlite_manual_process_unix.go`). Both open the database through the kind
+  (`openSQLiteRelocation`, `openSQLiteManualPreparation`) and ask it the counts they ask.
+- The workflow store (`store_sqlite_workflows.go`: `workflow_executions`, `workflow_artifacts`).
+  It stays outside the contract: no route reaches it, its tables are made only where it is
+  opened, and the second kind has none. It moves behind the contract when a route reaches it.
+- The source worker's database (`store_sqlite_sources.go`: `sources.sqlite`). It stays outside
+  the contract: it is not the Runner's store but the worker's own, in its own directory and
+  process, under its own lock, as caller custody beside the Gateway. A second kind for it would be
+  a second worker store, not a Runner's.
 
-Programs and modes that hold the SQLite files themselves: manual store preparation, its own
-process opening `runs.sqlite` through a held directory; offline workspace relocation
-(`relocate.go`); and the source worker's own store (`sources.sqlite`).
+`TestNoStatementOutsideTheSQLiteKind` holds this, read from the module's source and not from a
+list: outside the files `store_sqlite*.go` of `internal/runner`, no file imports `database/sql` or
+a sqlite package, or holds statement text in a string, and no file of the package selects a member
+the kind declares over `database/sql` or names a function, variable or type it declares over it.
+With #244, the journal's reads, refusals, profile rows, briefs, triggers, occurrences, jobs as they
+are made and revised, and the job and run listings are the contract's (section 9.5).
 
 ## 7. The in-memory kind and the conformance suite
 
@@ -269,6 +283,10 @@ both kinds' cases to have run and passed.
   run's attempt changed between them, or whose run read before it failed, is answered
   `409 attempt_mismatch`, as a retry of an attempt no longer held is, where it checked the
   directory of the attempt it read inside. No statement or row changes.
+- With #244: a Runner configured for manual admission is refused at opening with the manual
+  protocol error when its store's kind hands over no manual-admission state. The sqlite kind
+  hands it over, so no Runner today meets it. The errors of manual admission, its preparation
+  and relocation keep their text and their answers; the database's errors now carry a fault.
 
 ## 9. Everything a Runner keeps
 
@@ -291,8 +309,8 @@ Runner.
 |---|---|---|---|---|---|
 | The store's identity and schema | `metadata` (`workspace`, `owner`, `inputRoot`, `schema`) | Opening and migration (`store_sqlite.go:161`, `:241`); the scoped and the retry schema raised at a job's creation (`raiseSchema`; at v0.31.0 `scope.go:278`, `retries.go:33`) | Identity and migration: the kind's own at opening. The raises: yes (`raiseSchema`) | No | No: `schema` is raised |
 | The profile registry and the selected profiles | `metadata` (`registered-input-profiles-v1`, `selected-input-profiles-v1`) | The registry routes (`profile_registry.go:231`, `selected_profiles.go:238`) | Yes (`profileRow`, `putProfileRow`) | No | No: replaced |
-| The manual-admission demand | `metadata` (`manualExecutionDemand`; schema `4`) | Manual store preparation, its own program (`manual_store_prepare.go:229`) | No | No | No |
-| The relocation history | `metadata` (a history key) | Offline relocation (`relocate.go:152`) | No | No | No |
+| The manual-admission demand | `metadata` (`manualExecutionDemand`; schema `4`) | Manual store preparation, its own program (at v0.31.0 `manual_store_prepare.go:229`; now `prepareManual`) | No: the sqlite kind's offline programs (section 6) | No | No |
+| The relocation history | `metadata` (a history key) | Offline relocation (at v0.31.0 `relocate.go:152`; now `relocate`) | No: the sqlite kind's offline programs (section 6) | No | No |
 | Briefs | `briefs` (`subject`, `record`) | The brief routes, upsert (`briefs.go:106`) | Yes (`brief`, `putBrief`) | No: the subject (`job:<id>`, `run:<id>`) carries it | No: replaced |
 | Releases | `releases` | A preview (`createRelease`) | Yes | No | Yes |
 | Jobs | `jobs` (`seq`, `id`, `release_id`, `record`) | Creation (`createJob`; at v0.31.0 `store.go:422`); revision (`reviseJob`; `job_revisions.go:189`) | Yes | Yes: `record.scope` | No: revised in place |
@@ -306,12 +324,12 @@ Runner.
 | Idempotency keys | `runs` (`job_id`, `caller`, `idem`, `request_digest`) | `createRun` | Yes | Through the run | Yes: a key is never bound again |
 | The chain of runs | `run_chain` | `createEntry` | Yes | No | Yes |
 | The journal | `events` | `appendEvent` (`events.go:284`): through `appendJournal` for runs, releases, jobs, triggers, occurrences, admission refusals (`journalRefusal`) and the Runner's start and stop; directly only for the journal's first entry at opening | Yes; every read through `journalPage` | Yes: `detail.scope` when the job has one | Yes |
-| The manual-admission journal | `manual_attempts` | Manual mode (`manual_admission_journal.go:46`, `:52`) | No | No | No: an attempt is updated |
-| Workflow executions | `workflow_executions`, `workflow_artifacts` | `workflow_store.go`, reached by no route; its tables are made only where it is opened | No | No | No |
+| The manual-admission journal | `manual_attempts` | Manual mode (at v0.31.0 `manual_admission_journal.go:46`, `:52`; now `createManualAttempt`, `replaceManualAttempt`) | No: the sqlite kind's manual-admission state (section 6) | No | No: an attempt is updated |
+| Workflow executions | `workflow_executions`, `workflow_artifacts` | `store_sqlite_workflows.go` (at v0.31.0 `workflow_store.go`), reached by no route; its tables are made only where it is opened | No (section 6) | No | No |
 
 `sqlite_sequence` is SQLite's own. The source worker keeps a second database, `sources.sqlite`
 (`worker_metadata`, `source_operations`), in its own process under its own lock
-(`source_worker.go`).
+(`source_worker.go`, its statements in `store_sqlite_sources.go`; section 6).
 
 ### 9.2 Files under the state directory
 
@@ -355,7 +373,8 @@ failed commit.
 ### 9.5 What #244 puts behind the contract
 
 Each operation keeps the statement it replaces, moved into the sqlite kind
-(`store_sqlite.go`, `store_sqlite_triggers.go`, `store_sqlite_jobs.go`, `store_sqlite_lists.go`);
+(`store_sqlite.go`, `store_sqlite_triggers.go`, `store_sqlite_jobs.go`, `store_sqlite_lists.go`,
+`store_sqlite_journal.go`, `store_sqlite_schema.go`);
 the in-memory kind implements it; and `store_conformance_widened_test.go`,
 `store_conformance_triggers_test.go`, `store_conformance_jobs_test.go` and
 `store_conformance_lists_test.go` hold the cases every kind runs.

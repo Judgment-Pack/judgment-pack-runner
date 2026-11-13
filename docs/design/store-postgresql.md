@@ -30,7 +30,9 @@ out of argv and the environment, and keeps the single-owner local pilot as it is
 ## 2. The contract it implements
 
 Everything a Runner keeps goes through the contract (store-interface.md, section 9.5), but manual
-admission (D4), which only the sqlite kind keeps. The kind implements each operation with one statement or one transaction, as the
+admission (D4), which only the sqlite kind keeps, with the offline programs that open the sqlite
+kind's database (relocation, manual store preparation), the workflow store, which no route
+reaches, and the source worker's own database (store-interface.md, section 6). The kind implements each operation with one statement or one transaction, as the
 sqlite kind does, with these differences:
 
 - **Serializable transactions that retry.** `update(fn)` runs at `SERIALIZABLE` and runs `fn` again
@@ -173,6 +175,8 @@ columns and keys, and these changes:
 
 **D4. Manual admission.** (a) It stays on the sqlite kind: a Runner configured with the
 manual-admission gate refuses the second kind at start. (b) Its journal and preparation are ported.
+The refusal is the store opening's, for any kind that hands over no manual-admission state
+(`openStore`; `TestManualAdmissionStaysOnTheSQLiteKind`), so the second kind needs none of its own.
 Manual admission holds a host's executor lease and a prepared database file; (a) keeps it where it
 is single-host by design.
 
@@ -559,7 +563,10 @@ leave SQLite's statements and rows as they are; the kind is written only after t
 
 1. D2's rule: the closures of section 2 that broke it, and the twice mode, with the conformance
    suite and the Service's flows under it. This is the gate. (Built, #244's second slice.)
-2. The job and run listings (`list.go`) behind the contract. (Built, #244's second slice.)
+2. The job and run listings (`list.go`) behind the contract, and every statement left outside it
+   moved into the sqlite kind's files, the Service holding no database handle; the build fails on
+   a statement or a `database/sql` value outside them (`TestNoStatementOutsideTheSQLiteKind`).
+   (Built, #244's second slice.)
 3. The contract's scope for a transaction or a read (section 2); the claim's token, `putRun`'s
    expected claim and `renewClaim` (D3); and the retry check's question to the kind, whether a
    missing attempt directory may be taken to hold no audit record (D11: yes for the sqlite kind,
@@ -584,7 +591,9 @@ for it in this issue.
   trigger limit and the cloud binding are checked outside the write's transaction under it
   (`triggers_store.go:67`, `:77`). #245 must give `putTrigger` an expected revision, as `putRun`
   has an expected state, and move both checks into the write's transaction, which D9's rows do for
-  the second kind.
+  the second kind. #244 leaves it so: a trigger's record revision does not change with every
+  write (a tick, the file cursor and the pending state change none), so an expected
+  revision needs a row version the sqlite kind's schema does not have.
 - The profile rows are written whole from the process's copies (`storedProfiles` and the selected
   profiles, under `profilesMu`: `profile_registry.go:222-232`, `selected_profiles.go:236`), and a
   job's creation reads those copies (section 2). #245 must version the rows and read them in the
