@@ -10,6 +10,7 @@ package runner
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -445,6 +446,43 @@ var storeCases = []storeCase{
 			t.Fatalf("the kept attempt is not held: %+v", again.Attempts)
 		}
 		wantFault(t, w.st.update(func(tx runTx) error { return tx.raiseSchema("7") }), faultRefused, "a schema the kind does not know")
+	}},
+	{"a finished run keeps its counts and its error class", func(t *testing.T, k storeKindUnderTest) {
+		// The counts and the class are members of the run's record
+		// (run_results.go): a kind keeps them as it keeps the record, and a
+		// run not finished holds neither.
+		w := newStoreWorld(t, k)
+		for _, id := range []string{"run_a", "run_b", "run_c"} {
+			_, err := w.enqueue(id, id)
+			must(t, err)
+		}
+		done, _, err := claim(w.st)
+		must(t, err)
+		done.State, done.FinishedAt, done.AuditBytes = "completed", now(), []byte(`{"recordVersion":"1"}`)
+		done.Result = json.RawMessage(`{"outputVersion":"2","disposition":{"kind":"outcome","outcomeId":"proceed"}}`)
+		must(t, finishRunIn(w.st, done))
+		failed, _, err := claim(w.st)
+		must(t, err)
+		failed.State, failed.FinishedAt, failed.Problem, failed.ErrorClass = "failed", now(), "Failed.", classEvaluation
+		must(t, finishRunIn(w.st, failed))
+		for id, want := range map[string]string{
+			"run_a": `"" {"decisions":1,"byKind":{"outcome":1},"byOutcome":{"proceed":1}}`,
+			"run_b": `"evaluation" {"decisions":0,"byKind":{},"byOutcome":{}}`,
+			"run_c": `"" null`,
+		} {
+			held, err := w.st.run(id)
+			if got := fmt.Sprintf("%q %s", held.ErrorClass, encode(held.Counts)); err != nil || got != want {
+				t.Errorf("%s holds %s (%v), want %s", id, got, err, want)
+			}
+			if err := w.st.update(func(tx runTx) error {
+				if in, err := tx.run(id); err != nil || in.ErrorClass != held.ErrorClass || string(encode(in.Counts)) != string(encode(held.Counts)) {
+					t.Errorf("%s in a transaction holds %q %s (%v)", id, in.ErrorClass, encode(in.Counts), err)
+				}
+				return errKeepNothing
+			}); !errors.Is(err, errKeepNothing) {
+				t.Fatal(err)
+			}
+		}
 	}},
 	{"a transaction that fails keeps nothing", func(t *testing.T, k storeKindUnderTest) {
 		w := newStoreWorld(t, k)

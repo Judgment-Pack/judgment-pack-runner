@@ -208,10 +208,21 @@ const maxOutcomeFilter = 256
 
 var errInvalidResultFilter = &apiError{400, "invalid_filter", "Name an outcome of 1 to 256 bytes without control characters, an error class of the documented list, or a journal kind, each at most 10 times."}
 
-// readResultFilter reads the run filters from q, and the journal's kind when
-// kinds is set. An empty, malformed or unknown value, or one named more than
-// maxFilterValues times, is invalid_filter.
-func readResultFilter(q url.Values, kinds bool) (resultFilter, error) {
+// readResultFilter reads the run filters from a raw query, and the journal's
+// kind when kinds is set. An empty, malformed or unknown value, or one named
+// more than maxFilterValues times, is invalid_filter; so is a piece of a query
+// that does not parse whose name is one of the filters, which is refused
+// rather than dropped, so that a filter is never read as none.
+func readResultFilter(raw string, kinds bool) (resultFilter, error) {
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		for _, piece := range strings.FieldsFunc(raw, func(c rune) bool { return c == '&' || c == ';' }) {
+			key, _, _ := strings.Cut(piece, "=")
+			if k, e := url.QueryUnescape(key); e == nil && (k == "outcome" || k == "errorClass" || kinds && k == "kind") {
+				return resultFilter{}, errInvalidResultFilter
+			}
+		}
+	}
 	f := resultFilter{Outcomes: q["outcome"], Classes: q["errorClass"]}
 	if kinds {
 		f.Kinds = q["kind"]

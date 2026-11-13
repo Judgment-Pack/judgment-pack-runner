@@ -747,7 +747,7 @@ func eventQuery(raw string) (eventRequest, error) {
 	}
 	r.backward = r.tail || hasBefore
 	r.job = q.Get("job")
-	if r.results, err = readResultFilter(q, true); err != nil {
+	if r.results, err = readResultFilter(raw, true); err != nil {
 		return r, err
 	}
 	return r, nil

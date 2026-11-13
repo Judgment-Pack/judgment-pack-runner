@@ -83,7 +83,7 @@ that ends `failed` or `expired`, from now on carries `errorClass`, one of:
 | Class | Meaning | Produced by |
 |---|---|---|
 | `source` | a source acquisition through a Gateway connection failed: no answer, a refusal, an answer over its limit, a receipt for another session | an occurrence whose acquisition failed with `gateway_unavailable`, `gateway_refused`, `gateway_response_too_large` or `gateway_receipt_mismatch` |
-| `preparation` | the input could not be read or prepared, or no longer passes its checks | an occurrence whose input could not be read or prepared for another reason; a run whose input failed its check again at dispatch; a run whose submission was refused for its input; `prepared-by-earlier-runner` |
+| `preparation` | the input could not be read or prepared, or no longer passes its checks | an occurrence whose input could not be read or prepared for another reason; an occurrence whose run Runner refused to queue for its input (an answer below 500); a run whose input failed its check again at dispatch; `prepared-by-earlier-runner` |
 | `evaluation` | the Runtime's evaluation failed, or what it wrote did not pass Runner's checks | a run whose evaluation failed |
 | `configuration` | what the work was set up with changed or is not installed | `profile-set-aside`; a run whose release's profiles failed their check at dispatch; an occurrence whose job's release changed before admission; an occurrence whose acquisition named a connection no longer installed (`gateway_connection_required`) |
 | `limit` | a time or count bound ended the work | `queue-expired` (a run or an occurrence), `attempt-limit-reached`, `retry-wait-too-long`, a durable preparation's source wait expiring |
@@ -127,7 +127,7 @@ keeps its version and its bytes.
 
 ## 5. Filters
 
-`GET /v1/runs`, `GET /v1/jobs/{job}/runs` (and its retained-column form) take:
+`GET /v1/runs` and `GET /v1/jobs/{job}/runs` take:
 
 - `outcome=<outcomeId>`: the completed runs whose disposition is of kind
   `outcome` with exactly that `outcomeId`, compared byte for byte. Repeated, a
@@ -140,9 +140,12 @@ keeps its version and its bytes.
 `GET /v1/events` and `GET /v1/jobs/{job}/events` take the same two filters,
 over the entries that carry the member (`disposition.outcomeId`, for an entry
 whose `disposition.kind` is `outcome`; `errorClass`), and `kind=<kind>`, the
-entries of that kind, repeated for any of them. With any of the three, the
-store-wide route with `job` serves only the matching entries of the job, not
-Runner's own, which carry none of the members.
+entries of that kind, repeated for any of them. The store-wide route with
+`job` serves, as before, the job's entries and Runner's own
+(`journal.began`, `runner.started`, `runner.stopped`), of those the ones the
+filters keep: Runner's own carry no disposition and no class, so an `outcome`
+or `errorClass` filter leaves them out, and a `kind` filter keeps them when it
+names their kind.
 
 A filter combines with every other filter of its route (`q`, `state`,
 `review`, `scope`, the job of the route, `job`, the cursors) by AND, and is
@@ -156,7 +159,11 @@ an entry's place in the order does not depend on the filter. Values:
 - an `errorClass` outside the closed list, a `kind` outside the journal's
   kinds, an `outcome` out of form, or any of them given more than 10 times, is
   `400` `invalid_filter`, as a malformed `state` is; on `GET /v1/jobs` either
-  run filter is `400` `invalid_filter`, as `state` is.
+  run filter is `400` `invalid_filter`, as `state` is;
+- a piece of the query that does not decode (`outcome=%zz`, a `;`) and names
+  one of the filters is `400` `invalid_filter`, not dropped, so that a filter
+  is never read as none (the runs listings read the rest of their query
+  leniently, as before; the journal refuses any query that does not decode).
 
 **Scope.** The filters read the same rows as the scope filter, and AND with
 it: a listing under a scope never shows another scope's runs or entries, with

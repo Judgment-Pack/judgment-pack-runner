@@ -2687,36 +2687,6 @@
               "$ref": "#/components/schemas/ScopeIdentifier"
             },
             "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
-          },
-          {
-            "name": "outcome",
-            "in": "query",
-            "style": "form",
-            "explode": true,
-            "schema": {
-              "type": "array",
-              "maxItems": 10,
-              "items": {
-                "type": "string",
-                "minLength": 1,
-                "description": "1 to 256 bytes of UTF-8 with no control character (maxLength counts characters, so none is stated)."
-              }
-            },
-            "description": "Only completed runs whose disposition is of kind outcome with exactly this outcomeId, compared byte for byte; repeated, any of them. A run with no disposition or another kind matches none; a run completed before counts were kept is matched by its result's disposition. Combined with every other filter by AND, before pagination. A well-formed outcome no run has answers an empty page; one out of form, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
-          },
-          {
-            "name": "errorClass",
-            "in": "query",
-            "style": "form",
-            "explode": true,
-            "schema": {
-              "type": "array",
-              "maxItems": 10,
-              "items": {
-                "$ref": "#/components/schemas/ErrorClass"
-              }
-            },
-            "description": "Only runs of this error class; repeated, any of them. A run that ended before Runner kept a class matches none. Combined with every other filter by AND, before pagination. A class outside the list, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
           }
         ],
         "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. "

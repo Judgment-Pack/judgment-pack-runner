@@ -479,7 +479,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string)
 		return
 	}
 	// The outcomes and error classes named, any of each (run_results.go).
-	if filter.Results, err = readResultFilter(r.URL.Query(), false); err != nil || (kind == "jobs" && !filter.Results.empty()) {
+	if filter.Results, err = readResultFilter(r.URL.RawQuery, false); err != nil || (kind == "jobs" && !filter.Results.empty()) {
 		failure(w, errInvalidResultFilter)
 		return
 	}
