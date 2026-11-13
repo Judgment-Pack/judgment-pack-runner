@@ -17,6 +17,7 @@ import (
 // input from a stub gateway, over a connection that is not durable, and an
 // occurrence of it accepted with its pending input. The gateway answers its
 // nth acquisition call with answer(n): a status, and a Retry-After or none.
+// The mapping acquires one operation source, and then each of more, in turn.
 // The Service's clock is *clock.
 type retryWorld struct {
 	s     *Service
@@ -26,9 +27,12 @@ type retryWorld struct {
 	clock *time.Time
 }
 
-func newRetryWorld(t *testing.T, policy *RetryPolicy, answer func(n int) (int, string)) *retryWorld {
+func newRetryWorld(t *testing.T, policy *RetryPolicy, answer func(n int) (int, string), more ...string) *retryWorld {
 	t.Helper()
 	input, p, key, _ := v2Fixture(t)
+	for _, name := range more {
+		input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: name, Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"of":"` + name + `"}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/" + name, Source: "/" + name}}, Evidence: []EvidenceMapping{}}}})
+	}
 	calls := new(atomic.Int32)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/seal" {
@@ -249,6 +253,25 @@ func TestAFailureOffTheListIsNotRetried(t *testing.T) {
 	}
 	if _, retried := transient(&gatewayAnswer{err: bad("gateway_refused", "refused"), status: 503}); !retried {
 		t.Fatal("a 503 is not retried")
+	}
+}
+
+// A throttled call after an earlier call of the same attempt answered is not
+// retried: attempting again would call the first call's source again.
+func TestAThrottledCallAfterAnAnsweredOneIsNotRetried(t *testing.T) {
+	w := newRetryWorld(t, &RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}, func(n int) (int, string) {
+		if n == 1 {
+			return 200, ""
+		}
+		return 429, "1"
+	}, "detail")
+	o := w.step(t)
+	if w.calls.Load() != 2 || o.State != "failed" || len(o.Attempts) != 1 || o.Attempts[0].Outcome != "failed" || o.Attempts[0].Status != 429 || o.NextAttemptAt != "" {
+		t.Fatalf("%d calls: %+v", w.calls.Load(), o)
+	}
+	w.advance(time.Minute)
+	if o = w.step(t); w.calls.Load() != 2 || o.State != "failed" {
+		t.Fatalf("%d calls: %+v", w.calls.Load(), o)
 	}
 }
 
@@ -680,6 +703,10 @@ func TestARetryIsRefusedForARunNotInterrupted(t *testing.T) {
 		func(r *Run) { r.State = "failed" },
 		func(r *Run) { r.State, r.Audit, r.AuditBytes = "interrupted", nil, []byte(`{"audit":1}`) },
 		func(r *Run) { r.State, r.Audit, r.AuditBytes, r.Attempt = "interrupted", nil, nil, maxRetryAttempts },
+		func(r *Run) {
+			r.State, r.Audit, r.AuditBytes, r.Attempt = "interrupted", nil, nil, 1
+			r.Trigger = &TriggerOrigin{OccurrenceID: "occ_x", TriggerID: "trg_x", TriggerRevision: 1, Kind: "event", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)}
+		},
 	} {
 		next := r
 		held(&next)
