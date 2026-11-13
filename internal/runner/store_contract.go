@@ -14,8 +14,11 @@ package runner
 // for one.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // storeFault is the kind of failure a storage operation met. A caller
@@ -95,6 +98,39 @@ var errKeepNothing = errors.New("store: the transaction keeps nothing")
 // anyState is putRun's expected state when a writer changes a run whatever
 // state the store holds it in.
 const anyState = ""
+
+// runClaim is a dispatcher's claim of a run (docs/design/store-postgresql.md,
+// D3): a token new for each claim, and the attempt claimed. A kind that keeps
+// no lock against other dispatchers fences every write the claimant makes by
+// it, and holds the claim for claimLease by its own clock, renewed by
+// renewClaim. The zero value is no claim.
+type runClaim struct {
+	token   string
+	attempt int
+}
+
+// claimLease is how long a claim is held, by the store's clock, from the
+// claim or its last renewal; claimRenewal is how often its holder renews it.
+const (
+	claimLease   = 60 * time.Second
+	claimRenewal = 15 * time.Second
+)
+
+// newRunClaim is a claim of attempt with a new token of 16 random bytes.
+func newRunClaim(attempt int) (runClaim, error) {
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		return runClaim{}, err
+	}
+	return runClaim{token: hex.EncodeToString(token), attempt: attempt}, nil
+}
+
+// runExpected is what putRun must find held before it writes: the run's state,
+// or anyState, and the claim the writer holds, or none.
+type runExpected struct {
+	state string
+	claim runClaim
+}
 
 // heldRequest is a run as the queue holds it under its request key: its id,
 // the digest of the request that made it, and its record, read when asked,
@@ -405,12 +441,25 @@ type runTx interface {
 	// putBrief writes the brief history held for subject, whatever it held.
 	putBrief(subject string, record []byte) error
 	// putRun writes r's state and record over the run held under r.ID, and
-	// returns the state it held before. With expected other than anyState,
-	// the run must be held in that state, or nothing is written and the
-	// fault is faultConflict: the versioned update by which a queued run is
-	// claimed once, and by which an interrupted run is queued again by a
-	// retry (retries.go). faultAbsent when no run is held under r.ID.
-	putRun(r Run, expected string) (string, error)
+	// returns the state it held before. With expected.state other than
+	// anyState, the run must be held in that state, or nothing is written and
+	// the fault is faultConflict: the versioned update by which a queued run
+	// is claimed once, and by which an interrupted run is queued again by a
+	// retry (retries.go). With expected.claim, the run must also be held under
+	// that claim, its lease not run out by the store's clock, or nothing is
+	// written and the fault is faultConflict: a claimant's write after its
+	// claim was lost. faultAbsent when no run is held under r.ID.
+	//
+	// After the write the run is held under r.claim: a claim other than the
+	// one held starts its lease, the one held keeps it, and none clears it, as
+	// an interruption does. The sqlite kind takes the claim and ignores it:
+	// its lock keeps every other dispatcher out, and is the fence.
+	putRun(r Run, expected runExpected) (string, error)
+	// renewClaim holds the run's claim for another claimLease from now, by the
+	// store's clock, if the run is held running under claim and its lease has
+	// not run out; otherwise it writes nothing and the fault is
+	// faultConflict. The sqlite kind ignores it, as it ignores the claim.
+	renewClaim(run string, claim runClaim) error
 	// runningRuns are the runs held running, in the order they were queued.
 	runningRuns() ([]Run, error)
 	// lastEntry is the sequence and line of the chain's last entry, or

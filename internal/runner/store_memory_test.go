@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // errNotHeld is the cause of the in-memory kind's faultAbsent.
@@ -25,6 +26,11 @@ type memoryRun struct {
 	seq                                  int64
 	id, job, caller, idem, digest, state string
 	record                               []byte
+	// claim is the claim the run is held under, its lease held until
+	// leaseUntil by the store's clock (D3): the second kind's claim_id,
+	// claim_attempt and lease_until.
+	claim      runClaim
+	leaseUntil time.Time
 }
 
 type memoryEntry struct {
@@ -85,6 +91,20 @@ type memoryHeld struct {
 	// failCommit, when set, is the cause every commit fails with: the
 	// kind's durability seam.
 	failCommit error
+	// ahead is how far the store's clock runs ahead of the process's: the
+	// clock a claim's lease is held by, as the second kind's is the
+	// database's now(), which no Runner's clock is compared with (D3).
+	ahead time.Duration
+}
+
+// storeNow is the store's clock.
+func (m *memoryHeld) storeNow() time.Time { return time.Now().Add(m.ahead) }
+
+// passTime moves the store's clock d ahead, and not the process's.
+func (m *memoryStore) passTime(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ahead += d
 }
 
 // memoryStore is the in-memory kind: a view of a store, held to a scope
@@ -204,7 +224,7 @@ func (m *memoryStore) update(fn func(runTx) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	next := m.state.clone()
-	if err := fn(&memoryTx{memoryReads{&next, m.scope}}); err != nil {
+	if err := fn(&memoryTx{memoryReads: memoryReads{&next, m.scope}, now: m.storeNow()}); err != nil {
 		return err
 	}
 	if m.failCommit != nil {
@@ -359,7 +379,13 @@ func (r memoryReads) entrySequence(run string) (int64, error) {
 }
 
 // memoryTx is one transaction of the in-memory kind, over its copy.
-type memoryTx struct{ memoryReads }
+// memoryTx is a transaction: its reads, and the store's clock as it read at
+// the transaction's start, as the database's now() reads in each of its
+// statements.
+type memoryTx struct {
+	memoryReads
+	now time.Time
+}
 
 // activeRuns counts every scope's runs: the queue's limit is the
 // installation's (D9).
@@ -390,7 +416,7 @@ func (t *memoryTx) createRun(r Run, caller, key, requestDigest string) error {
 	return nil
 }
 
-func (t *memoryTx) putRun(r Run, expected string) (string, error) {
+func (t *memoryTx) putRun(r Run, expected runExpected) (string, error) {
 	if e := validateStoredRun(r); e != nil {
 		return "", e
 	}
@@ -403,13 +429,57 @@ func (t *memoryTx) putRun(r Run, expected string) (string, error) {
 			return held.state, err
 		}
 		from := held.state
-		if expected != anyState && from != expected {
+		if expected.state != anyState && from != expected.state {
 			return from, storeFailure(faultConflict, "run", errors.New("the run is held in another state"))
+		}
+		if err := t.holdsClaim(*held, expected.claim); err != nil {
+			return from, err
+		}
+		switch r.claim {
+		case runClaim{}:
+			held.claim, held.leaseUntil = runClaim{}, time.Time{}
+		case held.claim:
+		default:
+			held.claim, held.leaseUntil = r.claim, t.now.Add(claimLease)
 		}
 		held.state, held.record = r.State, []byte(runText(r))
 		return from, nil
 	}
 	return "", storeFailure(faultAbsent, "run", errNotHeld)
+}
+
+// holdsClaim says whether held is held under claim, its lease not run out by
+// the store's clock, as the second kind's statement says it: claim_id and
+// claim_attempt equal, and lease_until > now(). No claim expected holds.
+func (t *memoryTx) holdsClaim(held memoryRun, claim runClaim) error {
+	if claim == (runClaim{}) {
+		return nil
+	}
+	if held.claim != claim {
+		return storeFailure(faultConflict, "run", errors.New("the run is held under another claim"))
+	}
+	if !t.now.Before(held.leaseUntil) {
+		return storeFailure(faultConflict, "run", errors.New("the run's claim ran out"))
+	}
+	return nil
+}
+
+func (t *memoryTx) renewClaim(run string, claim runClaim) error {
+	for i := range t.s.runs {
+		held := &t.s.runs[i]
+		if held.id != run || !t.sees(held.record) {
+			continue
+		}
+		if held.state != "running" || claim == (runClaim{}) {
+			return storeFailure(faultConflict, "run", errors.New("the run is not held running under a claim"))
+		}
+		if err := t.holdsClaim(*held, claim); err != nil {
+			return err
+		}
+		held.leaseUntil = t.now.Add(claimLease)
+		return nil
+	}
+	return storeFailure(faultConflict, "run", errNotHeld)
 }
 
 // raiseSchema raises as the sqlite kind does: a new store is at storeSchema

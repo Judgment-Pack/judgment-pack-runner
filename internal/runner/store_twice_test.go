@@ -452,7 +452,7 @@ func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(audit, "evaluations.jsonl"), []byte(`{"decision":"x"}`+"\n"), 0600); err != nil {
 				return err
 			}
-			return st.update(func(tx runTx) error { _, err := tx.putRun(later, anyState); return err })
+			return st.update(func(tx runTx) error { _, err := tx.putRun(later, runExpected{}); return err })
 		})
 		got := serve(t, s, "POST", "/v1/runs/"+r.ID+"/retry", `{"attempt":2}`, nil)
 		if got.Code != 409 || !strings.Contains(got.Body.String(), "attempt_mismatch") {
@@ -470,7 +470,7 @@ func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
 		s, cfg, r := interruptedRun(t, "", false)
 		running := r
 		running.State, running.FinishedAt, running.InterruptedAt, running.Problem = "running", "", "", ""
-		must(t, underlying(s.store).update(func(tx runTx) error { _, err := tx.putRun(running, anyState); return err }))
+		must(t, underlying(s.store).update(func(tx runTx) error { _, err := tx.putRun(running, runExpected{}); return err }))
 		record.betweenRuns(t, "(*Service).retryRunBy", func(st runStore) error {
 			audit := filepath.Join(cfg.Dir, "attempts", r.ID, "audit")
 			if err := os.MkdirAll(audit, 0700); err != nil {
@@ -479,7 +479,7 @@ func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(audit, "evaluations.jsonl"), []byte(`{"decision":"x"}`+"\n"), 0600); err != nil {
 				return err
 			}
-			return st.update(func(tx runTx) error { _, err := tx.putRun(r, anyState); return err })
+			return st.update(func(tx runTx) error { _, err := tx.putRun(r, runExpected{}); return err })
 		})
 		got := serve(t, s, "POST", "/v1/runs/"+r.ID+"/retry", `{"attempt":1}`, nil)
 		if got.Code != 409 || !strings.Contains(got.Body.String(), "run_not_retryable") {

@@ -387,7 +387,8 @@ func (t *sqliteTx) createRun(r Run, caller, key, requestDigest string) error {
 	return sqliteFault("run", err, true)
 }
 
-func (t *sqliteTx) putRun(r Run, expected string) (string, error) {
+func (t *sqliteTx) putRun(r Run, want runExpected) (string, error) {
+	expected := want.state
 	if e := validateStoredRun(r); e != nil {
 		return "", e
 	}
@@ -403,6 +404,10 @@ func (t *sqliteTx) putRun(r Run, expected string) (string, error) {
 	}
 	return from, nil
 }
+
+// renewClaim renews nothing: the kind holds no lease, its lock keeping every
+// other dispatcher out (putRun).
+func (t *sqliteTx) renewClaim(string, runClaim) error { return nil }
 
 func (t *sqliteTx) runningRuns() ([]Run, error) {
 	var runs []Run

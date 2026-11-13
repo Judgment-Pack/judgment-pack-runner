@@ -694,6 +694,12 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	// A run's first attempt is 1; a run a caller retried makes the next
 	// (retries.go).
 	r.Attempt++
+	// The claim's token fences every write this dispatcher makes of the run
+	// (D3); it is made before the claim's transaction, which reads only the
+	// store.
+	if r.claim, err = newRunClaim(r.Attempt); err != nil {
+		return true, err
+	}
 	if err = s.changeRun(r); err != nil {
 		return true, err
 	}

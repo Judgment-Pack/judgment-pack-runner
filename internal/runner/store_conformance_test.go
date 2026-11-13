@@ -44,6 +44,12 @@ type storeKindUnderTest struct {
 	// and writes that scope's records alone. The sqlite kind holds none, its
 	// one process holding every scope.
 	holdsScopes bool
+	// fencesClaims says the kind fences a claimant's writes by its claim and
+	// the claim's lease (D3), and passTime moves its clock, not the
+	// process's. The sqlite kind takes a claim and ignores it, its lock
+	// being the fence.
+	fencesClaims bool
+	passTime     func(st runStore, d time.Duration)
 	// own are the kind's own cases.
 	own []storeCase
 }
@@ -118,24 +124,28 @@ func storeKindsUnderTest() []storeKindUnderTest {
 			own: sqliteOwnCases,
 		},
 		{
-			name:        "memory",
-			holdsScopes: true,
-			open:        func(t *testing.T) runStore { return newMemoryStore() },
-			seedJob:     func(t *testing.T, st runStore, j Job) { memoryOf(st).seedJob(j) },
-			schema:      func(t *testing.T, st runStore) string { return memoryOf(st).heldSchema() },
-			failCommits: func(st runStore, err error) { memoryOf(st).failCommits(err) },
-			spoil:       func(t *testing.T, st runStore, run string) { memoryOf(st).spoilRun(run) },
+			name:         "memory",
+			holdsScopes:  true,
+			fencesClaims: true,
+			passTime:     func(st runStore, d time.Duration) { memoryOf(st).passTime(d) },
+			open:         func(t *testing.T) runStore { return newMemoryStore() },
+			seedJob:      func(t *testing.T, st runStore, j Job) { memoryOf(st).seedJob(j) },
+			schema:       func(t *testing.T, st runStore) string { return memoryOf(st).heldSchema() },
+			failCommits:  func(st runStore, err error) { memoryOf(st).failCommits(err) },
+			spoil:        func(t *testing.T, st runStore, run string) { memoryOf(st).spoilRun(run) },
 		},
 		// The in-memory kind under the twice mode (store_twice_test.go):
 		// every transaction's fn run twice, the first run thrown away.
 		{
-			name:        "twice",
-			holdsScopes: true,
-			open:        func(t *testing.T) runStore { return &twiceStore{runStore: newMemoryStore(), record: newTwiceRecord()} },
-			seedJob:     func(t *testing.T, st runStore, j Job) { memoryOf(st).seedJob(j) },
-			schema:      func(t *testing.T, st runStore) string { return memoryOf(st).heldSchema() },
-			failCommits: func(st runStore, err error) { memoryOf(st).failCommits(err) },
-			spoil:       func(t *testing.T, st runStore, run string) { memoryOf(st).spoilRun(run) },
+			name:         "twice",
+			holdsScopes:  true,
+			fencesClaims: true,
+			passTime:     func(st runStore, d time.Duration) { memoryOf(st).passTime(d) },
+			open:         func(t *testing.T) runStore { return &twiceStore{runStore: newMemoryStore(), record: newTwiceRecord()} },
+			seedJob:      func(t *testing.T, st runStore, j Job) { memoryOf(st).seedJob(j) },
+			schema:       func(t *testing.T, st runStore) string { return memoryOf(st).heldSchema() },
+			failCommits:  func(st runStore, err error) { memoryOf(st).failCommits(err) },
+			spoil:        func(t *testing.T, st runStore, run string) { memoryOf(st).spoilRun(run) },
 		},
 	}
 }
@@ -147,7 +157,7 @@ func memoryOf(st runStore) *memoryStore { return underlying(st).(*memoryStore) }
 func TestStoreKindsConform(t *testing.T) {
 	for _, k := range storeKindsUnderTest() {
 		t.Run(k.name, func(t *testing.T) {
-			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, k.own) {
+			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, claimStoreCases, k.own) {
 				t.Run(c.name, func(t *testing.T) { c.run(t, k) })
 			}
 		})
@@ -189,9 +199,9 @@ func (w storeWorld) enqueue(id, key string) (Run, error) {
 	})
 }
 
-// claim claims the oldest queued run as the dispatcher does, and retries
-// when another claimer took the run it read: it returns the run it claimed,
-// or false when none is queued. A claim that conflicts without end is an
+// claim claims the oldest queued run as the dispatcher does, under a claim of
+// its own, and retries when another claimer took the run it read: it returns
+// the run it claimed, carrying its claim, or false when none is queued. A claim that conflicts without end is an
 // error: each conflict is another claimer's success, and they are bounded.
 func claim(st runStore) (Run, bool, error) {
 	for range 10000 {
@@ -202,7 +212,11 @@ func claim(st runStore) (Run, bool, error) {
 		if err != nil {
 			return Run{}, false, err
 		}
-		r.State, r.StartedAt, r.Attempt = "running", now(), 1
+		r.State, r.StartedAt = "running", now()
+		r.Attempt++
+		if r.claim, err = newRunClaim(r.Attempt); err != nil {
+			return Run{}, false, err
+		}
 		switch err = changeQueuedRun(st, r); faultOf(err) {
 		case "":
 			return r, err == nil, err
@@ -291,12 +305,14 @@ var storeCases = []storeCase{
 			return nil
 		}))
 		var claimed []string
+		claims := map[string]runClaim{}
 		for range order {
 			r, ok, err := claim(w.st)
 			if err != nil || !ok {
 				t.Fatal("no run claimed:", ok, err)
 			}
 			claimed = append(claimed, r.ID)
+			claims[r.ID] = r.claim
 		}
 		if !slices.Equal(claimed, order) {
 			t.Fatal("claimed in the order", claimed, "not", order)
@@ -306,7 +322,7 @@ var storeCases = []storeCase{
 		// The runs left running are read in the order they were queued, as a
 		// restart reads them, after one ended.
 		done := w.queuedRun(order[2])
-		done.State = "failed"
+		done.State, done.Attempt, done.claim = "failed", 1, claims[order[2]]
 		must(t, finishRunIn(w.st, done))
 		must(t, w.st.update(func(tx runTx) error {
 			running, err := tx.runningRuns()
@@ -445,7 +461,7 @@ var storeCases = []storeCase{
 				if err := tx.raiseSchema(retryStoreSchema); err != nil {
 					return err
 				}
-				_, err := tx.putRun(next, "interrupted")
+				_, err := tx.putRun(next, runExpected{state: "interrupted"})
 				return err
 			})
 		}
@@ -698,7 +714,7 @@ var storeCases = []storeCase{
 			t.Fatal("an empty chain's page:", len(page), last, err)
 		}
 		wantFault(t, st.update(func(tx runTx) error {
-			_, err := tx.putRun(Run{ID: "run_none", State: "running"}, anyState)
+			_, err := tx.putRun(Run{ID: "run_none", State: "running"}, runExpected{})
 			return err
 		}), faultAbsent, "a run never queued, changed")
 		wantFault(t, st.update(func(tx runTx) error {

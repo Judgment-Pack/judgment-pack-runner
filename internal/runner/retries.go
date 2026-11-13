@@ -401,7 +401,7 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 		if err = tx.raiseSchema(retryStoreSchema); err != nil {
 			return err
 		}
-		if err = recordRun(tx, next, "interrupted", s.actor(by), EventDetail{Attempt: &kept}); err != nil {
+		if err = recordRun(tx, next, runExpected{state: "interrupted"}, s.actor(by), EventDetail{Attempt: &kept}); err != nil {
 			return err
 		}
 		result = next

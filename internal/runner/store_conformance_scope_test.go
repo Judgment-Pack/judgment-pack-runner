@@ -170,14 +170,14 @@ var scopeStoreCases = []storeCase{
 		moved := other
 		moved.State, moved.StartedAt, moved.Attempt = "running", now(), 1
 		wantFault(t, held.update(func(tx runTx) error {
-			_, err := tx.putRun(moved, "queued")
+			_, err := tx.putRun(moved, runExpected{state: "queued"})
 			return err
 		}), faultAbsent, "a run of scope b changed held to scope a")
 		// A record of the scope may not be written into another.
 		mine := w.runs["a"]
 		mine.Scope = "b"
 		wantFault(t, held.update(func(tx runTx) error {
-			_, err := tx.putRun(mine, "queued")
+			_, err := tx.putRun(mine, runExpected{state: "queued"})
 			return err
 		}), faultRefused, "a run of scope a moved to scope b")
 		// An entry about another scope's job is refused.
@@ -207,7 +207,7 @@ var scopeStoreCases = []storeCase{
 		mine = w.runs["a"]
 		mine.State, mine.StartedAt, mine.Attempt = "running", now(), 1
 		must(t, held.update(func(tx runTx) error {
-			_, err := tx.putRun(mine, "queued")
+			_, err := tx.putRun(mine, runExpected{state: "queued"})
 			return err
 		}))
 	}},
