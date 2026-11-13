@@ -847,3 +847,83 @@ func TestARetriedRunHoldsNoResultUntilItEnds(t *testing.T) {
 		t.Fatalf("the retry's entry: %+v", last)
 	}
 }
+
+// The API document names what a run, an occurrence and a run in a listing
+// are served with, and the filters each listing takes, as Runner serves and
+// reads them.
+func TestRunResultsAreDocumented(t *testing.T) {
+	doc := readOpenAPI(t)
+	decoded := func(body []byte) map[string]any {
+		var v map[string]any
+		d := json.NewDecoder(strings.NewReader(string(body)))
+		d.UseNumber()
+		must(t, d.Decode(&v))
+		return v
+	}
+	held := func(schema, what string, v map[string]any, members ...string) {
+		properties := doc.schema(schema)["properties"].(map[string]any)
+		for _, m := range members {
+			p, documented := properties[m].(map[string]any)
+			if _, served := v[m]; !served || !documented {
+				t.Errorf("%s: %s served %v, documented %v", what, m, served, documented)
+				continue
+			}
+			if problems := doc.check(what+"/"+m, p, v[m]); len(problems) != 0 {
+				t.Errorf("%v", problems)
+			}
+		}
+	}
+	w := newResultsWorld(t)
+	completed := w.end(t, w.c, "completed", journalDisposition, "", "")
+	failed := w.end(t, w.c, "failed", "", classEvaluation, "")
+	held("Run", "a completed run", decoded(serve(t, w.s, "GET", "/v1/runs/"+completed.ID, "", nil).Body.Bytes()), "counts")
+	held("Run", "a failed run", decoded(serve(t, w.s, "GET", "/v1/runs/"+failed.ID, "", nil).Body.Bytes()), "counts", "errorClass")
+	_, _, items := listedRuns(t, w.s, "/v1/runs?errorClass=evaluation")
+	held("Run", "a listed run", decoded(encode(items[0])), "counts", "errorClass")
+
+	source := acquiringWorld(t, nil, func(int) (int, string) { return 400, "" })
+	o := source.step(t)
+	rec := serve(t, source.s, "GET", "/v1/jobs/"+o.JobID+"/occurrences", "", nil)
+	var listed struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if must(t, json.Unmarshal(rec.Body.Bytes(), &listed)); rec.Code != 200 || len(listed.Items) != 1 {
+		t.Fatalf("the occurrences are served %d %s", rec.Code, rec.Body.String())
+	}
+	held("Occurrence", "a failed occurrence", decoded(listed.Items[0]), "errorClass")
+
+	paths := doc["paths"].(map[string]any)
+	for path, names := range map[string][]string{
+		"/runs":              {"outcome", "errorClass"},
+		"/jobs/{job}/runs":   {"outcome", "errorClass"},
+		"/events":            {"outcome", "errorClass", "kind"},
+		"/jobs/{job}/events": {"outcome", "errorClass", "kind"},
+	} {
+		parameters := map[string]map[string]any{}
+		for _, p := range paths[path].(map[string]any)["get"].(map[string]any)["parameters"].([]any) {
+			if p, ok := p.(map[string]any); ok && p["name"] != nil {
+				parameters[p["name"].(string)] = p
+			}
+		}
+		for _, name := range names {
+			p := parameters[name]
+			if p == nil || p["in"] != "query" || p["explode"] != true {
+				t.Errorf("GET %s: the parameter %s is %v", path, name, p)
+				continue
+			}
+			schema := p["schema"].(map[string]any)
+			if n, _ := schema["maxItems"].(json.Number).Int64(); n != maxFilterValues {
+				t.Errorf("GET %s: %s is bounded at %d", path, name, n)
+			}
+			items := schema["items"].(map[string]any)
+			for _, value := range map[string][]string{"errorClass": errorClasses, "kind": eventKinds}[name] {
+				if problems := doc.check(path+"/"+name, items, value); len(problems) != 0 {
+					t.Errorf("%v", problems)
+				}
+			}
+			if name != "outcome" && len(doc.check(path+"/"+name, items, "not-one")) == 0 {
+				t.Errorf("GET %s: %s takes a value Runner refuses", path, name)
+			}
+		}
+	}
+}
