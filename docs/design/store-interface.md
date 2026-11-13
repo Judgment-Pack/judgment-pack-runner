@@ -395,4 +395,3 @@ a scoped job and a job with a retry policy, reads every table's rows with `typeo
 `quote()`, and compares them with `testdata/store-rows-v0.31.0.txt`, which the same test wrote
 in a checkout of v0.31.0. Ids, times, digests, keys, signatures and the state directory become
 placeholders numbered by first appearance; every other byte is compared as it is.
-
