@@ -42,7 +42,9 @@ A run's end has, until this change, a state, its times, a sentence
 `prepared-by-earlier-runner`). An occurrence's end has a state and a `reason`
 that is a code for some ends (`queue-expired`, `attempt-limit-reached`,
 `retry-wait-too-long`, and the skips `missed`, `latest-after-missed`,
-`trigger-paused`, `queue-full`, `overlap`) and a sentence for the others.
+`trigger-paused`, `queue-full`, `overlap`) and a sentence for the others. An
+attempt a retry kept has a reason code too (`runner-stopped`,
+`runner-restarted`).
 
 ## 2. Counts
 
@@ -87,7 +89,7 @@ that ends `failed` or `expired`, from now on carries `errorClass`, one of:
 | `evaluation` | the Runtime's evaluation failed, or what it wrote did not pass Runner's checks | a run whose evaluation failed |
 | `configuration` | what the work was set up with changed or is not installed | `profile-set-aside`; a run whose release's profiles failed their check at dispatch; an occurrence whose job's release changed before admission; an occurrence whose acquisition named a connection no longer installed (`gateway_connection_required`) |
 | `limit` | a time or count bound ended the work | `queue-expired` (a run or an occurrence), `attempt-limit-reached`, `retry-wait-too-long`, a durable preparation's source wait expiring |
-| `interrupted` | Runner stopped or restarted during the work | a run interrupted at a stop or found at a restart; an acquisition found at a restart |
+| `interrupted` | Runner stopped or restarted during the work | a run interrupted at a stop or found at a restart; an acquisition found at a restart; `runner-stopped` and `runner-restarted`, the reasons of an attempt a retry kept (`retries.md`) |
 | `internal` | Runner's own fault | `binding-refused` (a binding the Runtime refused is Runner's defect); a run whose release could not be read at dispatch; an occurrence whose submission Runner could not make (an answer of 500 or more) |
 
 The list is closed: a class is added only with a change of this record, and a
