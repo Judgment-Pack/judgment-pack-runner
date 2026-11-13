@@ -110,7 +110,8 @@ func TestDurablePreparationRealGatewayMCPAndRunnerRestart(t *testing.T) {
 	o := newOccurrence(trigger, job, time.Now())
 	o.PendingInput = config.Input
 	if e = s.store.update(func(tx runTx) error {
-		return s.admitOccurrence(tx, trigger, &o, "real-mcp", "")
+		_, err := s.admitOccurrence(tx, trigger, o, "real-mcp", "")
+		return err
 	}); e != nil {
 		t.Fatal(e)
 	}

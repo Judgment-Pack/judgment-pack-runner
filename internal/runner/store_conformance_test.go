@@ -115,13 +115,26 @@ func storeKindsUnderTest() []storeKindUnderTest {
 		{
 			name:        "memory",
 			open:        func(t *testing.T) runStore { return newMemoryStore() },
-			seedJob:     func(t *testing.T, st runStore, j Job) { st.(*memoryStore).seedJob(j) },
-			schema:      func(t *testing.T, st runStore) string { return st.(*memoryStore).heldSchema() },
-			failCommits: func(st runStore, err error) { st.(*memoryStore).failCommits(err) },
-			spoil:       func(t *testing.T, st runStore, run string) { st.(*memoryStore).spoilRun(run) },
+			seedJob:     func(t *testing.T, st runStore, j Job) { memoryOf(st).seedJob(j) },
+			schema:      func(t *testing.T, st runStore) string { return memoryOf(st).heldSchema() },
+			failCommits: func(st runStore, err error) { memoryOf(st).failCommits(err) },
+			spoil:       func(t *testing.T, st runStore, run string) { memoryOf(st).spoilRun(run) },
+		},
+		// The in-memory kind under the twice mode (store_twice_test.go):
+		// every transaction's fn run twice, the first run thrown away.
+		{
+			name:        "twice",
+			open:        func(t *testing.T) runStore { return &twiceStore{runStore: newMemoryStore(), record: newTwiceRecord()} },
+			seedJob:     func(t *testing.T, st runStore, j Job) { memoryOf(st).seedJob(j) },
+			schema:      func(t *testing.T, st runStore) string { return memoryOf(st).heldSchema() },
+			failCommits: func(st runStore, err error) { memoryOf(st).failCommits(err) },
+			spoil:       func(t *testing.T, st runStore, run string) { memoryOf(st).spoilRun(run) },
 		},
 	}
 }
+
+// memoryOf is the in-memory kind st is, or runs on under the twice mode.
+func memoryOf(st runStore) *memoryStore { return underlying(st).(*memoryStore) }
 
 // TestStoreKindsConform runs the conformance suite against every kind.
 func TestStoreKindsConform(t *testing.T) {

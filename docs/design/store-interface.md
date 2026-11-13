@@ -263,6 +263,15 @@ both kinds' cases to have run and passed.
   revision reads the job in its own transaction, so none meets it. A job's creation whose
   release made a job before, and whose record does not decode, answers no job beside its error,
   where it answered the part that decoded. Neither changes a statement or a row.
+- With #244, every transaction's function reads only the store, its arguments and the clock, and
+  keeps what it makes only once it ends, so that a kind may run it again
+  ([store-postgresql.md](store-postgresql.md), section 2). What a transaction read elsewhere is
+  now read before it: a retry's audit check of the attempt's directory, a job's creation's and
+  an upgrade's profiles set aside or selected, and an upgrade's check of a gateway mapping. Each
+  answers as it did when nothing changes between that read and the transaction. A retry whose
+  run's attempt changed between them, or whose run read before it failed, is answered
+  `409 attempt_mismatch`, as a retry of an attempt no longer held is, where it checked the
+  directory of the attempt it read inside. No statement or row changes.
 
 ## 9. Everything a Runner keeps
 

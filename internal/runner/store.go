@@ -352,6 +352,11 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 			return Job{}, err
 		}
 	}
+	// Whether the release names a profile set aside, or a selected profile, is
+	// process state a registration writes: it is read once, here, and its
+	// answer given inside the transaction, which reads only the store
+	// (docs/design/store-postgresql.md, D2).
+	setAside := s.refuseSetAsideMapping(r.InputMapping)
 	var made Job
 	err = s.store.update(func(tx runTx) error {
 		stored, err := tx.jobCreation(releaseID)
@@ -385,8 +390,8 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 		}
 		// Likewise, a release that names a profile set aside since it was made
 		// makes no new job; a job made from it before is returned as it was.
-		if err = s.refuseSetAsideMapping(r.InputMapping); err != nil {
-			return err
+		if setAside != nil {
+			return setAside
 		}
 		if err = admitJobPack(tx, r); err != nil {
 			return err
@@ -595,18 +600,21 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 		if count >= queueLimit {
 			return &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 		}
-		r = Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller, Scope: j.Scope}
-		if err = tx.createRun(r, caller, key, hash); err != nil {
+		queued := Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller, Scope: j.Scope}
+		if err = tx.createRun(queued, caller, key, hash); err != nil {
 			return err
 		}
 		actor := s.actor(by)
 		if origin != nil {
 			actor = triggerActor(origin.TriggerID, origin.TriggerRevision)
 		}
-		_, err = tx.appendJournal(runChange(r, "", actor, EventDetail{}))
-		return err
+		if _, err = tx.appendJournal(runChange(queued, "", actor, EventDetail{})); err != nil {
+			return err
+		}
+		r = queued
+		return nil
 	})
-	if replayed {
+	if replayed && errors.Is(err, errKeepNothing) {
 		return r, true, replayErr
 	}
 	if err != nil {

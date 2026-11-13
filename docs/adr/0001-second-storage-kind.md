@@ -66,7 +66,7 @@ it is built.
   held to the same semantics.
 - Bad, because a transaction function retried on serialization failure must start from copies of
   its inputs and read nothing but the store, its arguments and the clock, a rule every future
-  transaction keeps; three do not yet, and are changed before the kind is written.
+  transaction keeps; the closures that did not were changed, and a gate runs every one twice.
 - Bad, because the second kind's writes serialize, one transaction at a time, as SQLite's do.
 - Bad, because an interrupted run whose attempt directories the host does not hold cannot be
   retried; its caller submits a new run.

@@ -174,11 +174,15 @@ func storedTrigger(t *testing.T, s *Service, id string) (Trigger, string) {
 
 func admit(t *testing.T, s *Service, tr Trigger, o *Occurrence, identity string) {
 	t.Helper()
+	var admitted Occurrence
 	if e := s.store.update(func(tx runTx) error {
-		return s.admitOccurrence(tx, tr, o, identity, "")
+		a, err := s.admitOccurrence(tx, tr, *o, identity, "")
+		admitted = a
+		return err
 	}); e != nil {
 		t.Fatal(e)
 	}
+	*o = admitted
 }
 
 func waitForRunState(t *testing.T, s *Service, id, state string) Run {

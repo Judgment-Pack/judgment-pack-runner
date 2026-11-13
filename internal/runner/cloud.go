@@ -166,7 +166,8 @@ func (s *Service) receiveCloud(c CloudConnection, d cloudgoogle.Delivery) (bool,
 		o.PendingInput = t.Config.Input
 	}
 	e = s.store.update(func(tx runTx) error {
-		return s.admitOccurrence(tx, t, &o, identity, digest(encode(signal)))
+		_, err := s.admitOccurrence(tx, t, o, identity, digest(encode(signal)))
+		return err
 	})
 	return e == nil, e
 }

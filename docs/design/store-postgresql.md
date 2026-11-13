@@ -59,40 +59,57 @@ run been its first. So:
 2. `fn` reads the store, its arguments and the clock, and nothing else: no file, no network, no
    process state another goroutine writes.
 
-These break it today. Each is changed, and tested on the sqlite and in-memory kinds, before the
-kind is written (section 11):
+These broke it, and were changed before the kind is written (section 11), each with a case that
+makes, between the two runs of the twice mode below, the change that shows it
+(`TestAClosureRunAgainDecidesFromTheStore`):
 
-- `admitOccurrenceAs` (`triggers_store.go:467-505`) writes through its `*Occurrence`: a full queue
-  or an overlap sets it `skipped` and drops its `Input` and `PendingInput` (`:477-488`). Its
-  callers' closures capture the occurrence: `scheduleTick` (`triggers_dispatch.go:133`),
-  `fileTick` (`:206`), `receiveCloud` (`cloud.go:168`) and `admitBoundEvent`
-  (`triggers_store.go:387`). Run again after the queue drained, it admits the occurrence skipped,
-  its input gone, or answers an event `429 queue_full` with room in the queue. It is to work on a
-  copy and return it, each caller assigning it after `update`.
-- `retryRunBy` (`retries.go:325-376`) reads the attempt directories inside `fn`
-  (`attemptsHoldNoAudit`, `:343`). The check is to be made before the transaction, on the run as
-  read then, and its answer returned inside `fn` where it is made now, after the replay and the
-  state checks; a run whose attempt inside `fn` is not the one checked is refused with
+- `admitOccurrenceAs` (`triggers_store.go`) wrote through its `*Occurrence`: a full queue or an
+  overlap set it `skipped` and dropped its `Input` and `PendingInput`. Its callers' closures
+  captured the occurrence: `scheduleTick` and `fileTick` (`triggers_dispatch.go`), `receiveCloud`
+  (`cloud.go`) and `admitBoundEvent` (`triggers_store.go`). Run again after the queue drained or
+  the overlap ended, it admitted the occurrence skipped, its input gone. It now works on a copy and
+  returns the occurrence it recorded; no caller's closure assigns it before its end.
+- `admitBoundEvent` kept a full queue's refusal in a captured variable and answered it after
+  `update`, though a later run had committed the occurrence: an event admitted was answered
+  `429 queue_full`. The refusal is now `fn`'s own answer.
+- `retryRunBy` (`retries.go`) read the attempt directories inside `fn` (`attemptsHoldNoAudit`).
+  The check is made before the transaction, on the run as read then, and its answer returned
+  inside `fn` where it was made, after the replay and the state checks; a run whose attempt inside
+  `fn` is not the one checked, or that the read before did not find, is refused with
   `attempt_mismatch`, so that the check and the write concern one attempt.
-- `createJobWith` (`store.go:388`) reads the profiles set aside and the selected profiles
+- `createJobWith` (`store.go`) read the profiles set aside and the selected profiles
   (`refuseSetAsideMapping`), process state a registration writes under `profilesMu`. The refusal
-  is to be worked out before the transaction and returned inside it at the same place, after the
+  is worked out before the transaction and returned inside it at the same place, after the
   repeated creation's check, so that a job made before its profile was set aside is still returned
   as it was.
-- The chain's append in `finishRunIn` (`run_chain.go:145-196`): D14.
+- `upgradeJob` (`job_revisions.go`) assigned the revised job to its input `j`, which `fn` reads:
+  run after a commit that failed, it met its own revision and answered `409 job_changed`. And it
+  checked each trigger with `validateTrigger`, whose `validateGatewayMapping` reads the registered
+  and selected profiles. The revised job is now a variable of its own, assigned at the end;
+  `validateGatewayMapping`'s answer is read before the transaction, and each trigger `fn` reads is
+  checked against it (`checkTrigger`), refused as before with `trigger_upgrade_incompatible`.
+- `submitBy` (`store.go`) answered a replay when any run of `fn` had found one: it now answers one
+  only when the kept run did, and assigns its new run at its end.
 
-Assignments that every run of `fn` makes again, and that the caller reads only when `update`
-succeeds or answers `errKeepNothing` (`submitInternal`'s run, `upgradeJob`'s job, `retryRunBy`'s
-result, the prior state `configureTriggerBy` and `writeTriggerChange` read), keep the rule's
-purpose and stay as they are.
+Closures that assigned a captured variable on every run before reading it, and so kept the rule's
+purpose, now also assign only at their end: `configureTriggerBy`'s prior state,
+`writeTriggerChange`'s entry, `briefHandler`'s history and `retryRunBy`'s result. The chain's
+append in `finishRunIn` (`run_chain.go`) reads the head inside `fn` and keeps the rule; two
+finishers meeting at the head is D14.
 
-**The gate.** The in-memory kind gains a mode in which `update` runs `fn` on a copy, throws the
-copy and `fn`'s error away as a serialization failure would, and runs `fn` again on a fresh copy,
-keeping that run; a test may give it a change to commit between the two runs. The conformance
-suite and the Service tests run under the mode, and each break above has a case that commits a
-change between the runs (the queue drained, an attempt directory written, another finisher's
-entry), since a function that carries its first run's decision into its second gives the same
-writes when nothing changed between them. The kind is not written until they pass.
+**The gate.** A kind's twice mode (`store_twice_test.go`) runs `fn` inside a transaction, throws
+its writes and its answer away as a serialization failure would, makes the change a test set
+between the two runs if any, and runs `fn` again in a transaction of its own, keeping that run.
+The conformance suite runs the in-memory kind under the mode as a third kind, `twice`, which
+`unit-tests.sh` requires to run and pass beside `sqlite` and `memory`. The Service's flows run the
+sqlite kind under it, since a Service opens no other: `TestEveryTransactionIsSafeToRunTwice` runs
+the journal's every change of state, an upgrade, a retry, a brief, the registered profiles,
+finishes at once and the cases below under it, and fails when a function of the package's source
+that calls a store's `update`, found by the call and not listed, did not run there. Each break
+above has a case that makes a change between the runs (the queue drained or the overlap ended, an
+attempt directory changed, a profile selected or registered, another finisher's entry), since a
+function that carries its first run's decision into its second gives the same writes when nothing
+changed between them. The kind is not written until they pass.
 
 **D3. The claim's fence without a lock.** The sqlite kind's lock means that, at start, no other
 dispatcher is running, so a restart ends every run left running. A kind without a process-wide
@@ -523,7 +540,7 @@ The decisions' own tests, on the same container:
 
 | Decision | Test |
 |---|---|
-| D2 | The in-memory kind's twice mode (section 2), under the conformance suite and the Service tests, before the kind is written. |
+| D2 | The twice mode (section 2): `TestStoreKindsConform/twice`, `TestEveryTransactionIsSafeToRunTwice` and `TestAClosureRunAgainDecidesFromTheStore`, before the kind is written. |
 | D3 | `TestPostgreSQLFencesEveryClaimantWriteByItsToken`: a finish or a renewal with a lease run out, or with another claim's token, writes nothing; a run interrupted and retried is not overwritten by its first claimant; the comparison is with the database's time. |
 | D5 | `TestPostgreSQLKeepsARecordHoldingANullCharacter`: a run whose input holds `\u0000` in a string member is kept and read back byte for byte, its scope column filled, and every translated `json_extract` selects it as SQLite does. |
 | D9 | `TestPostgreSQLHoldsEachRuleAcrossScopes`: each row of D9's table, the record held in one scope and the request held to another, answers as the sqlite kind does; after every conformance case each of `counts` equals its count read on the worker login. |
@@ -541,8 +558,8 @@ Beside them, the kind runs `TestStoreKindsConform` with the sqlite and in-memory
 In this order. The first four change the Runner, are tested on the sqlite and in-memory kinds, and
 leave SQLite's statements and rows as they are; the kind is written only after them.
 
-1. D2's rule: the three closures of section 2 that break it, and the in-memory kind's twice mode,
-   with the conformance suite and the Service tests under it. This is the gate.
+1. D2's rule: the closures of section 2 that broke it, and the twice mode, with the conformance
+   suite and the Service's flows under it. This is the gate. (Built, #244's second slice.)
 2. The job and run listings (`list.go`) behind the contract.
 3. The contract's scope for a transaction or a read (section 2); the claim's token, `putRun`'s
    expected claim and `renewClaim` (D3); and the retry check's question to the kind, whether a

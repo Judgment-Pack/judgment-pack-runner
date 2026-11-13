@@ -105,7 +105,8 @@ func preparationFixture(t *testing.T) (*Service, Config, Occurrence, *asyncFixtu
 	o := newOccurrence(tr, j, time.Now())
 	o.PendingInput = c.Input
 	if e = s.store.update(func(tx runTx) error {
-		return s.admitOccurrence(tx, tr, &o, "fixture", "")
+		_, err := s.admitOccurrence(tx, tr, o, "fixture", "")
+		return err
 	}); e != nil {
 		t.Fatal(e)
 	}
@@ -355,9 +356,11 @@ func TestUncertainPreparationBlocksSkipOverlap(t *testing.T) {
 	}
 	next := newOccurrence(tr, job, time.Now())
 	if e = s.store.update(func(tx runTx) error {
-		if err := s.admitOccurrence(tx, tr, &next, "uncertain-overlap", ""); err != nil {
+		a, err := s.admitOccurrence(tx, tr, next, "uncertain-overlap", "")
+		if err != nil {
 			return err
 		}
+		next = a
 		return errKeepNothing
 	}); !errors.Is(e, errKeepNothing) {
 		t.Fatal(e)

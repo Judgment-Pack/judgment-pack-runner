@@ -308,6 +308,8 @@ const (
 
 var errRunNotRetryable = &apiError{409, "run_not_retryable", "Only an interrupted run can be retried."}
 
+var errAttemptMismatch = &apiError{409, "attempt_mismatch", "This run's attempt is not the one named. Read the run again."}
+
 // retryRunBy queues an interrupted run again, for by: the same run, with its
 // interrupted attempt kept in its attempts (docs/design/retries.md, section
 // 6). attempt is the run's attempt as the caller read it. It returns the run
@@ -319,6 +321,15 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 	}
 	if s.unhealthy.Load() {
 		return Run{}, false, &apiError{503, "dispatcher_stopped", "The dispatcher stopped after a storage error. Restart Desk after checking the runner storage."}
+	}
+	// The attempt directories are read before the transaction, which reads
+	// only the store (docs/design/store-postgresql.md, D2), on the run as read
+	// then; the answer is given inside it, where the check was made, for the
+	// attempt checked and no other.
+	checked, readErr := s.store.run(runID)
+	var trail error
+	if readErr == nil {
+		trail = s.attemptsHoldNoAudit(checked)
 	}
 	var result Run
 	repeated := false
@@ -332,7 +343,7 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 			return errKeepNothing
 		}
 		if attempt != r.Attempt {
-			return &apiError{409, "attempt_mismatch", "This run's attempt is not the one named. Read the run again."}
+			return errAttemptMismatch
 		}
 		if r.State != "interrupted" {
 			return errRunNotRetryable
@@ -340,8 +351,13 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 		if len(r.Audit) > 0 || len(r.AuditBytes) > 0 {
 			return errAuditKept
 		}
-		if err = s.attemptsHoldNoAudit(r); err != nil {
-			return err
+		// The directories checked are another attempt's, or were not read:
+		// the run changed since the caller read it.
+		if readErr != nil || checked.Attempt != r.Attempt {
+			return errAttemptMismatch
+		}
+		if trail != nil {
+			return trail
 		}
 		if r.Attempt >= maxRetryAttempts {
 			return &apiError{409, "run_not_retryable", "This run has made its 10 attempts."}
@@ -371,8 +387,11 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 		if err = tx.raiseSchema(retryStoreSchema); err != nil {
 			return err
 		}
+		if err = recordRun(tx, next, "interrupted", s.actor(by), EventDetail{Attempt: &kept}); err != nil {
+			return err
+		}
 		result = next
-		return recordRun(tx, next, "interrupted", s.actor(by), EventDetail{Attempt: &kept})
+		return nil
 	})
 	if repeated && errors.Is(err, errKeepNothing) {
 		return result, true, nil

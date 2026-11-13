@@ -245,7 +245,8 @@ Answers:
   for a run of a trigger whose `expiresAt` has passed; and for a run at 10
   attempts.
 - `409` `attempt_mismatch` for an *n* that is neither the run's attempt nor
-  one already retried.
+  one already retried, and for a run whose attempt changed between the read
+  of its attempt directories and the re-queue (below).
 - `429` `queue_full`, `503` `dispatcher_stopped`, and `manual_profile_unsupported`
   under the manual-admission gate, as for any run queued.
 
@@ -262,7 +263,13 @@ run's record holds an audit record, when any such file holds one byte or
 more, or when any such path cannot be read as absent or as a regular file (a
 failure to read it, a directory, a link, or no attempts root): Runner fails
 closed rather than evaluate a run twice. An absent or empty file passes. The
-checks and the re-queue are one store transaction (`store-interface.md`).
+directories are read just before the store transaction, on the run as read
+then, since a transaction reads only the store (`store-postgresql.md`, D2);
+the other checks and the re-queue are one store transaction
+(`store-interface.md`), which gives the directories' answer where it checked
+them before, after the replay and state checks, and refuses `409`
+`attempt_mismatch` a run whose attempt is no longer the one whose
+directories were read.
 
 A refused retry of a run the store holds is journaled `admission.refused`
 with `request` `retry-run`. A retry made is journaled `run.queued`, from

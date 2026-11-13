@@ -131,7 +131,7 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 		t.NextAt = next.Format(time.RFC3339Nano)
 	}
 	return s.store.update(func(tx runTx) error {
-		if err := s.admitOccurrence(tx, t, &o, identity, digest(encode(t.Config))); err != nil {
+		if _, err := s.admitOccurrence(tx, t, o, identity, digest(encode(t.Config))); err != nil {
 			return err
 		}
 		return tx.putTrigger(t, hash, false)
@@ -204,7 +204,7 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	t.pendingAt = ""
 	t.Problem = ""
 	return s.store.update(func(tx runTx) error {
-		if err := s.admitOccurrence(tx, t, &o, identity, changed); err != nil {
+		if _, err := s.admitOccurrence(tx, t, o, identity, changed); err != nil {
 			return err
 		}
 		return tx.putTrigger(t, hash, false)

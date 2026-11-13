@@ -159,7 +159,8 @@ func columnRoleRealRuntimeFirstSaveSignedExports(t *testing.T, core string) {
 	occurrence := newOccurrence(trigger, job, time.Now())
 	occurrence.PendingInput = triggerConfig.Input
 	if e = s.store.update(func(tx runTx) error {
-		return s.admitOccurrence(tx, trigger, &occurrence, "fixture", "")
+		_, err := s.admitOccurrence(tx, trigger, occurrence, "fixture", "")
+		return err
 	}); e != nil {
 		t.Fatal(e)
 	}

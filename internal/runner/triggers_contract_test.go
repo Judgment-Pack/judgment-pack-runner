@@ -42,7 +42,7 @@ func TestALegacyPreparationPassesByAnOccurrenceNoLongerAccepted(t *testing.T) {
 	// Its queue time has passed: read as accepted, it would be expired.
 	o := newOccurrence(tr, j, time.Now().Add(-2*time.Hour))
 	o.State = "submitted"
-	must(t, s.store.update(func(tx runTx) error { return s.admitOccurrence(tx, tr, &o, "submitted-first", "") }))
+	must(t, s.store.update(func(tx runTx) error { _, err := s.admitOccurrence(tx, tr, o, "submitted-first", ""); return err }))
 	if e = s.prepareLegacyOccurrence(context.Background(), o.ID); e != nil {
 		t.Fatal(e)
 	}

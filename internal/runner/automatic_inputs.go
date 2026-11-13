@@ -238,6 +238,18 @@ func (s *Service) automaticInputSeed(c *AutomaticInput, r Release, snapshots map
 	return input, nil
 }
 func (s *Service) validateTrigger(c *TriggerConfig, r Release, at time.Time) error {
+	var gateway error
+	if c.Input != nil && c.Input.Kind == "mapped-sources" {
+		gateway = s.validateGatewayMapping(r)
+	}
+	return s.checkTrigger(c, r, at, gateway)
+}
+
+// checkTrigger is validateTrigger, with gateway the answer of
+// validateGatewayMapping for r, read by the caller: a mapped-sources input is
+// refused with it, where validateTrigger reads it. Inside a transaction, which
+// reads only the store, the caller reads it before.
+func (s *Service) checkTrigger(c *TriggerConfig, r Release, at time.Time, gateway error) error {
 	if c.PreparationSeconds == 0 && c.Input != nil && c.Input.Kind == "mapped-sources" && s.durableMapping(r) {
 		c.PreparationSeconds = 3600
 	}
@@ -254,10 +266,8 @@ func (s *Service) validateTrigger(c *TriggerConfig, r Release, at time.Time) err
 	if c.Kind != "cloud" && c.Cloud != nil {
 		return bad("invalid_trigger", "Cloud bindings require a cloud trigger.")
 	}
-	if c.Input != nil && c.Input.Kind == "mapped-sources" {
-		if e := s.validateGatewayMapping(r); e != nil {
-			return e
-		}
+	if c.Input != nil && c.Input.Kind == "mapped-sources" && gateway != nil {
+		return gateway
 	}
 	switch c.Kind {
 	case "cloud":
