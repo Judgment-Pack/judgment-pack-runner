@@ -1976,12 +1976,15 @@ does, for a run's export.
 
 `jpack-runner verify-preparation --capabilities` prints, alone, one closed
 object for a caller to check before it calls: the command's version
-(`"version":2`), the release it was built from (`runner`), the dialect versions
-(`[2,3]`) and named formats (`"2.0.0"`, `"3.0.0"`), the source kinds and shapes
+(`"version":3`), the release it was built from (`runner`), the dialect versions
+(`[2,3]`) and named formats (`"2.0.0"`, `"3.0.0"`, `"4.0.0"`), the source kinds and shapes
 it reads, the instant it recomputes at, its report's form, results, binding,
 refusal and finding codes and exit statuses, its preconditions
 (`"preconditions":["preparation-digest"]`, each `couldNotRun` when it fails),
 and the bounds it holds the documents to.
+
+Interface version 3 adds the proposed dialect format `"4.0.0"` to `formatVersions`
+([below](#proposed-dialect-format-400)); nothing else changes.
 
 Interface version 2 adds the explicit `--conversion-contract BASE64URL` flag and
 `conversionContracts`, the exact installed retained-column Base declaration.
@@ -2297,3 +2300,50 @@ The three staged identity fixture sets vendored under
 file hashes, canonical bytes and recomputed preparations are checked separately
 from the unchanged published historical corpus. Tests also exercise named
 preview, execution, restart, idempotent replay and offline verification.
+
+## Proposed dialect format 4.0.0
+
+The Spec's v0.5.2 proposes dialect format `4.0.0` (`spec/dialect.md` §2.2): a
+case's own rule, after its copy; rule version `2.0.0`, with the parameter types
+`decimal`, `string-list` and `address-range-list`, the conditions
+`compareParam`, `inParam` and `aheadWithin`, and the derived values `duration`,
+`distance` and `speed`; and a preparation with `formatVersion` in place of
+`version`, the case outcome's `rule` and each rule target's `derivation`.
+Runner reads it in two places only:
+
+- `jpack-runner verify-preparation`, over fixtures, with sources or without.
+  Runner's own preparer reads each construct the format adds through
+  `internal/dialect4` and the rest as format `3.0.0`'s. Its capabilities
+  (interface version 3) name `"4.0.0"` among `formatVersions`.
+- the `sdk/dialect` Go package, which prepares a dialect of the format that
+  names no source, in process ([its page](sdk-dialect.md)).
+
+Every other path refuses a dialect of format `4.0.0` with
+`dialect_format_not_admitted` (HTTP 422): a release, a job, a preview, a
+delivery or a workflow on one. Its message names what it waits for: the Spec's
+workflow and recording schemas do not admit the format yet (spec issue #324),
+so no record could name a preparation of it. The service's capabilities do not
+name `dialect-format-4.0.0`.
+
+What this release does not read of the format is refused by name:
+
+- the `extended` profile, `profile-unsupported`, until the Spec decides its
+  literal bound (spec issue #324). The `base` profile's bounds (§2.2.7) are
+  held: at most 16 derived values, a literal of at most 8192 bytes, and a list
+  parameter of at most 1024 elements, each of at most 1024 bytes, measured
+  before its type. A `decimal` is at most 128 characters as part of its type
+  (§2.2.2): one longer is `parameter-invalid`, and Core §4.1's 256-character
+  row does not apply to it.
+- a binding document (`--binding`) with a dialect of format `4.0.0`,
+  `capability-unsupported`.
+- a retained-column leaf in a copy of format `4.0.0`, `input-malformed`: that
+  leaf is format `3.0.0`'s.
+
+A dialect of format `3.0.0` or earlier prepares byte for byte as before.
+
+Runner reads the proposed format `4.0.0` and agrees with the Spec's staged
+vectors at v0.5.2 (`vectors/dialect-format-4`): both end-to-end vectors and all
+167 rows. Its reading is by the same maintainer as the Spec's reference reader,
+not an independent implementation, and no conformance claim is made of it.
+[The design note](design/dialect-format-4.md) gives the row results, what is
+bound where, and what the Spec leaves open.
