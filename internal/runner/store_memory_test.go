@@ -147,9 +147,13 @@ func (m *memoryStore) entrySequence(run string) (int64, error) {
 func (m *memoryStore) run(id string) (Run, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for _, r := range m.state.runs {
-		if r.id == id {
-			return decodeHeld("run", r.record)
+	return m.reads().run(id)
+}
+
+func (r memoryReads) run(id string) (Run, error) {
+	for _, held := range r.s.runs {
+		if held.id == id {
+			return decodeHeld("run", held.record)
 		}
 	}
 	return Run{}, storeFailure(faultAbsent, "run", errNotHeld)

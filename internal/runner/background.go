@@ -229,7 +229,7 @@ func automaticCall(ctx context.Context, target string, body []byte, limit int64)
 	if res.StatusCode != 200 {
 		// The status and Retry-After are kept for a job's retry policy
 		// (retries.go); the error is the one it always was.
-		return nil, &gatewayAnswer{err: bad("gateway_refused", "The Gateway refused the operation. Check the installed connection and provider access."), status: res.StatusCode, retryAfter: res.Header.Get("Retry-After")}
+		return nil, &gatewayAnswer{err: bad("gateway_refused", "The Gateway refused the operation. Check the installed connection and provider access."), status: res.StatusCode, retryAfter: res.Header.Get("Retry-After"), own: gatewayRefusal(res.Header.Get("Content-Type"), raw)}
 	}
 	return raw, nil
 }

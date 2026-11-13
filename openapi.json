@@ -828,7 +828,7 @@
             }
           },
           "default": {
-            "description": "Refused: 400 invalid_request; 404 not_found; 409 run_not_retryable, for a run in any state but interrupted, an interrupted run whose record holds an audit record, a trigger run whose queue deadline has passed, or a run at 10 attempts; 409 attempt_mismatch, for an attempt that is neither the run's nor one already retried; 429 queue_full; 503 dispatcher_stopped.",
+            "description": "Refused: 400 invalid_request; 404 not_found; 409 run_not_retryable, for a run in any state but interrupted, an interrupted run whose record holds an audit record or one of whose attempt directories holds a non-empty audit/evaluations.jsonl or one that cannot be read, a trigger run whose queue deadline has passed, or a run at 10 attempts; 409 attempt_mismatch, for an attempt that is neither the run's nor one already retried; 429 queue_full; 503 dispatcher_stopped.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2956,7 +2956,7 @@
           },
           "retry": {
             "$ref": "#/components/schemas/RetryPolicy",
-            "description": "The job's retry policy. Absent, the job makes one attempt. Written null, out of form or out of bounds, or under a name that only folds to retry or to one of its members, the creation is refused (422 invalid_retry_policy). A repeated creation from the same release must name the same policy, or none. Refused under the manual-admission gate (manual_unsupported)."
+            "description": "The job's retry policy. Absent, the job makes one attempt; a policy of maxAttempts 1 is that default, and the job is created as without one (no retry member, the store's schema unchanged). A retry that is not an object, a member that is not a whole number, a duplicate member, or a member no policy takes is refused by the body's strict reading (400 invalid_request). Written null, missing a member, out of bounds, or under a name that only folds to retry or to one of its members, the creation is refused (422 invalid_retry_policy). A policy is accepted on any job, since a job's triggers and release can change after it is created, and acts only on occurrences that acquire their input over a Gateway connection that is not durable: on any other job it has no effect, and with maxAttempts above 1 it still raises the store to schema 6. A repeated creation from the same release must name the same policy, or none. Refused under the manual-admission gate (manual_unsupported)."
           }
         },
         "required": [
@@ -2974,7 +2974,7 @@
       },
       "RetryPolicy": {
         "type": "object",
-        "description": "A job's retry policy, fixed when the job is created (docs/design/retries.md). It governs the source acquisition of the job's occurrences over a Gateway connection that is not durable: an attempt whose call the gateway answered 429 or 503, with no earlier call of the attempt answered, is made again after min(backoffSeconds × 2^(n−1), maxBackoffSeconds) seconds and no sooner than the answer's Retry-After, up to maxAttempts attempts. A wait past 3600 seconds or the occurrence's expiresAt fails the occurrence (retry-wait-too-long) rather than be shortened. Nothing else is retried. Absent, a job makes one attempt.",
+        "description": "A job's retry policy, fixed when the job is created (docs/design/retries.md). It governs the source acquisition of the job's occurrences over a Gateway connection that is not durable, and has no effect on a job's runs or on any other acquisition. An attempt whose call the gateway answered 429 or 503 in its own form (Content-Type application/json and a JSON object whose error member is a string), with no earlier call of the attempt answered, is made again after min(backoffSeconds × 2^(n−1), maxBackoffSeconds) seconds and no sooner than the answer's Retry-After, up to maxAttempts attempts. A wait past 3600 seconds or the occurrence's expiresAt fails the occurrence (retry-wait-too-long) rather than be shortened. Nothing else is retried: an answer of those statuses in any other form, such as a proxy's page, is uncertain and fails the occurrence. Absent, a job makes one attempt.",
         "required": [
           "maxAttempts",
           "backoffSeconds",
@@ -3398,7 +3398,7 @@
               "$ref": "#/components/schemas/Attempt"
             },
             "maxItems": 9,
-            "description": "The run's attempts before its current one, each kept, interrupted, when a caller retried the run. Absent for a run never retried. Served with the run and in run lists; not in verification exports, nor in the run's entry in the chain of runs."
+            "description": "The run's attempts before its current one, each kept, interrupted, when a caller retried the run. Absent for a run never retried. Served with the run; not in run lists, verification exports, nor the run's entry in the chain of runs."
           }
         }
       },

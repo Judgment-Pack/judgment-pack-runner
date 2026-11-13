@@ -56,7 +56,8 @@ Runner now reads the status and `Retry-After` of a gateway answer that is not
 200 (section 4), and keeps the error and its sentence as they were, so that an
 occurrence of a job without a policy fails exactly as before. Against today's
 gateway that means a throttled source is a `400` and is **not** retried; a
-closed gateway admission or a reached delegation limit (`503`) is. For a source's
+closed gateway admission or a reached delegation limit (`503`, in the
+gateway's own form, section 3) is. For a source's
 throttling to be retried, the gateway would answer it as `429` (or `503`)
 with `Retry-After`, rather than `400` with the wait in text. That is a gateway
 change, not made here.
@@ -76,10 +77,31 @@ change, not made here.
 | `maxBackoffSeconds` | `backoffSeconds` to 3600: the longest back-off |
 
 All three members are required, as written (a member whose name only folds to
-one of them is refused, as `scope`'s are), and no other member is taken. A
-policy out of form or bounds, or `retry` written `null`, is refused `422`
-`invalid_retry_policy`, and the refusal is journaled as any refused creation
-is. Without the member the job has no policy: **one attempt, as today**.
+one of them is refused, as `scope`'s are), and no other member is taken. Two
+codes refuse a policy, and each refusal is journaled as any refused creation
+is:
+
+- `400` `invalid_request`, from the strict reading of the whole body, for a
+  `retry` that is not an object, a member that is not a whole number (`2.5`,
+  `2.0`, `1e1`, a string), a duplicate member, or a member no policy takes;
+- `422` `invalid_retry_policy` for a policy that reads but is out of form or
+  bounds: a missing member, a member whose name only folds to one, a value
+  out of its bounds, or `retry` written `null`.
+
+Without the member the job has no policy: **one attempt, as today**. A policy
+of `maxAttempts` 1 is that same default, whatever its back-off: the job is
+created as without a policy, holds no `retry`, and does not raise the store
+(section 8).
+
+**Where a policy has no effect.** A policy is accepted on any job, and with
+`maxAttempts` above 1 it raises the store whether or not it can act. It acts
+only on an occurrence that acquires its input over a Gateway connection that
+is not durable (section 1): it has no effect on a job's runs, on an
+occurrence of a trigger whose input is constant, a file or the event, or on
+an acquisition over a durable connection. Runner does not refuse it on a job
+of that shape, because nothing about a job decides this at creation: its
+triggers are added and reconfigured after it is created, and an upgrade
+changes its release and so its mapping and connections.
 
 The back-off is deterministic: the wait before attempt *n* + 1 is
 `min(backoffSeconds × 2^(n−1), maxBackoffSeconds)`. There is no jitter: one
@@ -100,9 +122,18 @@ failing call was answered by the gateway with:
 | `429` | `gateway_refused`, `status` 429 | the call was refused for its rate, not served |
 | `503` | `gateway_refused`, `status` 503 | the call was refused as unavailable, not served |
 
-and no earlier call of the same attempt had answered (a mapping with several
-operation sources acquires them in turn; repeating the attempt after one
-answered would call that source again).
+in **the gateway's own form**: `Content-Type` `application/json` and a body
+that is a JSON object whose `error` member is a string, as every refusal the
+gateway writes is; and no earlier call of the same attempt had answered (a
+mapping with several operation sources acquires them in turn; repeating the
+attempt after one answered would call that source again).
+
+The form matters because something in front of the gateway, a proxy or a
+platform's front end, answers `503` of its own, and may do so after it
+forwarded the call (the gateway reset or its instance failed mid-request).
+Such an answer, a page of text or HTML or anything else that does not read as
+the gateway's refusal, is uncertain, as no answer is: it is recorded `failed`
+with `gateway_refused` and its status, and not retried.
 
 Nothing else is retried: no answer at all (a transport failure or a timeout,
 `gateway_unavailable`: the call may have reached its source, and the existing
@@ -121,7 +152,10 @@ delta-seconds (`120`) or as an HTTP-date (`Wed, 21 Oct 2026 07:28:00 GMT`,
 read by `http.ParseTime`). The next attempt waits for the longer of the
 back-off and that wait. A value that is neither form, negative, or that names
 a time already past, is ignored: the back-off alone applies. An HTTP-date is
-measured from the moment Runner read the answer.
+measured from the moment Runner read the answer. A wait above the cap, in
+either form, is held as the cap plus one second before any arithmetic, so a
+date far ahead (year 9999) or a value of many digits is recorded as
+`retryAfterSeconds` 3601 and never overflows.
 
 **The cap is 3600 seconds, and Runner fails rather than clamps.** A wait
 longer than that, or a next attempt that would fall at or after the
@@ -207,13 +241,28 @@ Answers:
   already retried (its record is in `attempts`): a repeated request changes
   nothing.
 - `409` `run_not_retryable` for a run in any state but `interrupted`; for an
-  interrupted run whose record holds an audit record (its evaluation may have
-  completed); for a run of a trigger whose `expiresAt` has passed; and for a
-  run at 10 attempts.
+  interrupted run whose attempt may have completed its evaluation (below);
+  for a run of a trigger whose `expiresAt` has passed; and for a run at 10
+  attempts.
 - `409` `attempt_mismatch` for an *n* that is neither the run's attempt nor
   one already retried.
 - `429` `queue_full`, `503` `dispatcher_stopped`, and `manual_unsupported`
   under the manual-admission gate, as for any run queued.
+
+**An attempt that left an audit record is not evaluated again.** An
+interrupted run's record rarely holds its audit record: a run found running at
+a restart never had its end recorded, a finish whose store write failed
+stopped the dispatcher after the Runtime wrote its trail, and a stop can end
+the Runtime after it wrote the trail but before Runner read it. So the check
+reads, for **every** attempt of the run, 1 to the run's `attempt`, its
+directory's `audit/evaluations.jsonl` through the attempts root (a path
+that would leave the root is not read), without following a link in the
+file's own place. The retry is refused `409` `run_not_retryable` when the
+run's record holds an audit record, when any such file holds one byte or
+more, or when any such path cannot be read as absent or as a regular file (a
+failure to read it, a directory, a link, or no attempts root): Runner fails
+closed rather than evaluate a run twice. An absent or empty file passes. The
+checks and the re-queue are one store transaction (`store-interface.md`).
 
 A refused retry of a run the store holds is journaled `admission.refused`
 with `request` `retry-run`. A retry made is journaled `run.queued`, from
@@ -255,8 +304,8 @@ the retry tests instead.
 
 No table or column is added. A job's `retry`, an occurrence's `attempts` and
 `nextAttemptAt`, and a run's `attempts` are members of the records the store
-keeps. The run's `attempts` is kept and served with the run, as
-`interruptedAt` is, and is not part of a verification export, whose readers
+keeps. The run's `attempts` is kept and served with the run, though not in
+run lists, and is not part of a verification export, whose readers
 decode strictly, nor of the run's entry in the chain of runs.
 
 **A store's first job with a policy, or its first explicit retry, raises its

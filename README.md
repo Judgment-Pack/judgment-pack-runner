@@ -202,12 +202,15 @@ A store without one stays at schema `"3"`, byte for byte
 and kept by every upgrade: `maxAttempts` (1 to 10), `backoffSeconds` (1 to 3600)
 and `maxBackoffSeconds` (`backoffSeconds` to 3600). It governs the source
 acquisition of the job's occurrences over a Gateway connection that is not
-durable. An attempt whose call the gateway answered `429` or `503`, with no earlier
-call of the attempt answered, is made again after
+durable, and has no effect on any other job (a policy of `maxAttempts` 1 is the
+default, and the job is created without one). An attempt whose call the gateway
+answered `429` or `503` in its own JSON error form, with no earlier call of the
+attempt answered, is made again after
 `min(backoffSeconds × 2^(n−1), maxBackoffSeconds)` seconds and no sooner than the
 answer's `Retry-After` (delta-seconds or an HTTP-date; a malformed one is
 ignored). Nothing else is retried: no answer at all, any other status (the gateway
-answers a source that failed, throttled or not, `400`), and every evaluation
+answers a source that failed, throttled or not, `400`), an answer of those statuses
+in another form (a proxy's page may follow a call that ran), and every evaluation
 failure, refusal and configuration problem. Each attempt is recorded in the
 occurrence's `attempts` and journaled (`occurrence.retry-scheduled`, and
 `entryVersion` `"4"` for an entry that holds `attempt`); the waiting occurrence
@@ -769,7 +772,9 @@ its stop lies in. Inspect the retained stdout and stderr, which
 choosing a new submission. There is no exactly-once claim, automatic recovery
 reconciliation, or automatic retry of a possibly evaluated invocation: an
 interrupted run is attempted again only when a caller asks
-(`POST /v1/runs/{run}/retry`), and one whose record holds an audit record is not. External
+(`POST /v1/runs/{run}/retry`), and not when its record holds an audit record or
+any of its attempt directories holds a non-empty `audit/evaluations.jsonl` or one
+that cannot be read. External
 actions are not enabled.
 
 ## State and backups

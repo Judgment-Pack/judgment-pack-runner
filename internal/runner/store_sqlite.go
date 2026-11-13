@@ -323,16 +323,16 @@ func (r sqliteReads) entrySequence(run string) (int64, error) {
 	return sequence, nil
 }
 
-func (k *sqliteStore) run(id string) (Run, error) {
+func (r sqliteReads) run(id string) (Run, error) {
 	var b []byte
-	if err := k.db.QueryRow("SELECT record FROM runs WHERE id=?", id).Scan(&b); err != nil {
+	if err := r.q.QueryRow("SELECT record FROM runs WHERE id=?", id).Scan(&b); err != nil {
 		return Run{}, sqliteFault("run", err, false)
 	}
-	r, err := decodeRun(b)
+	run, err := decodeRun(b)
 	if err != nil {
-		return r, storeFailure(faultUnreadable, "run", err)
+		return run, storeFailure(faultUnreadable, "run", err)
 	}
-	return r, nil
+	return run, nil
 }
 
 func (k *sqliteStore) oldestQueued() (Run, error) {

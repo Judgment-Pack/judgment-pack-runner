@@ -118,6 +118,10 @@ type storeReads interface {
 	// entrySequence is the sequence of a run's entry in the installation's
 	// chain of runs, or faultAbsent.
 	entrySequence(run string) (int64, error)
+	// run is the run held under id, or faultAbsent. Inside a transaction it
+	// is the run as the transaction holds it, so that a retry's checks and
+	// its write see one record (retries.go).
+	run(id string) (Run, error)
 }
 
 // runStore is the Runner's durable state for the queue, releases, inputs and
@@ -132,8 +136,6 @@ type runStore interface {
 	// the store outside its transaction: a kind may wait for the transaction
 	// to end first.
 	update(fn func(runTx) error) error
-	// run is the run held under id, or faultAbsent.
-	run(id string) (Run, error)
 	// oldestQueued is the queued run queued first, or faultAbsent when none
 	// is queued: the queue is served in the order runs were queued.
 	oldestQueued() (Run, error)

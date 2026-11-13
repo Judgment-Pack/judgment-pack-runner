@@ -48,9 +48,22 @@ func newRetryWorld(t *testing.T, policy *RetryPolicy, answer func(n int) (int, s
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if status, after := answer(n); status != 200 {
+			// An answer "proxy:<Retry-After>" is one something in front of
+			// the gateway made, not in the gateway's form.
+			foreign, ok := strings.CutPrefix(after, "proxy:")
+			if ok {
+				after = foreign
+			}
 			if after != "" {
 				w.Header().Set("Retry-After", after)
 			}
+			if ok {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(status)
+				w.Write([]byte(`<html><body>Service Unavailable</body></html>`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
 			w.Write([]byte(`{"error":"not now"}`))
 			return
@@ -241,16 +254,16 @@ func TestARetryWaitPastTheCapOrTheDeadlineFails(t *testing.T) {
 
 	// The cap holds on its own, before a deadline far past it.
 	far := Occurrence{Attempts: []Attempt{{Number: 1}}}
-	if again, reason := closeAttempt(&far, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), status: 429, retryAfter: "3601"}, time.Now().Add(24*time.Hour), time.Now(), false); again || reason != occurrenceWaitTooLong {
+	if again, reason := closeAttempt(&far, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), own: true, status: 429, retryAfter: "3601"}, time.Now().Add(24*time.Hour), time.Now(), false); again || reason != occurrenceWaitTooLong {
 		t.Fatalf("a wait past the cap: %v %q", again, reason)
 	}
-	if again, _ := closeAttempt(&far, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), status: 429, retryAfter: "3600"}, time.Now().Add(24*time.Hour), time.Now(), false); !again {
+	if again, _ := closeAttempt(&far, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), own: true, status: 429, retryAfter: "3600"}, time.Now().Add(24*time.Hour), time.Now(), false); !again {
 		t.Fatal("a wait at the cap is not taken")
 	}
 
 	expiry := time.Now().Add(10 * time.Second)
 	held := Occurrence{Attempts: []Attempt{{Number: 1}}}
-	if again, reason := closeAttempt(&held, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 10, MaxBackoffSeconds: 10}, &gatewayAnswer{err: bad("gateway_refused", "refused"), status: 503}, expiry, expiry.Add(-10*time.Second), false); again || reason != occurrenceWaitTooLong {
+	if again, reason := closeAttempt(&held, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 10, MaxBackoffSeconds: 10}, &gatewayAnswer{err: bad("gateway_refused", "refused"), own: true, status: 503}, expiry, expiry.Add(-10*time.Second), false); again || reason != occurrenceWaitTooLong {
 		t.Fatalf("a wait to the deadline: %v %q", again, reason)
 	}
 }
@@ -268,18 +281,35 @@ func TestAFailureOffTheListIsNotRetried(t *testing.T) {
 	}
 	for _, failure := range []error{
 		bad("gateway_unavailable", "Gateway acquisition failed or timed out. It was not retried."),
-		&gatewayAnswer{err: bad("gateway_refused", "refused"), status: 503, afterAcquisition: true},
+		&gatewayAnswer{err: bad("gateway_refused", "refused"), own: true, status: 503, afterAcquisition: true},
 	} {
 		if _, retried := transient(failure); retried {
 			t.Fatalf("%v is retried", failure)
 		}
 	}
-	if _, retried := transient(&gatewayAnswer{err: bad("gateway_refused", "refused"), status: 503}); !retried {
+	if _, retried := transient(&gatewayAnswer{err: bad("gateway_refused", "refused"), own: true, status: 503}); !retried {
 		t.Fatal("a 503 is not retried")
+	}
+	// Nor is a 429 or a 503 not in the gateway's own form, nor one whose
+	// form is near it.
+	for _, answer := range []struct{ contentType, body string }{
+		{"text/html", `<html>Service Unavailable</html>`},
+		{"text/plain", `{"error":"not now"}`},
+		{"application/json", `{"message":"not now"}`},
+		{"application/json", `{"error":{"code":1}}`},
+		{"application/json", `["error"]`},
+		{"", `{"error":"not now"}`},
+	} {
+		if gatewayRefusal(answer.contentType, []byte(answer.body)) {
+			t.Fatalf("%+v is the gateway's own", answer)
+		}
+	}
+	if !gatewayRefusal("application/json; charset=utf-8", []byte(`{"error":"not now","refusal":"busy"}`)) {
+		t.Fatal("the gateway's own refusal is not read as its own")
 	}
 	// Nor is an attempt cut short by its deadline or a stop, whatever it met.
 	cut := Occurrence{Attempts: []Attempt{{Number: 1}}}
-	if again, reason := closeAttempt(&cut, RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), status: 503}, time.Now().Add(time.Hour), time.Now(), true); again || reason != "" || cut.Attempts[0].Outcome != "failed" {
+	if again, reason := closeAttempt(&cut, RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), own: true, status: 503}, time.Now().Add(time.Hour), time.Now(), true); again || reason != "" || cut.Attempts[0].Outcome != "failed" {
 		t.Fatalf("a cut attempt: %v %q %+v", again, reason, cut.Attempts[0])
 	}
 }
@@ -328,6 +358,21 @@ func TestAThrottledCallAfterAnAnsweredOneIsNotRetried(t *testing.T) {
 	}
 	w.advance(time.Minute)
 	if o = w.step(t); w.calls.Load() != 2 || o.State != "failed" {
+		t.Fatalf("%d calls: %+v", w.calls.Load(), o)
+	}
+}
+
+// A 503 that something in front of the gateway answered, not in the
+// gateway's own form, may follow a call the gateway forwarded: it is not
+// retried.
+func TestA503NotInTheGatewaysFormIsNotRetried(t *testing.T) {
+	w := newRetryWorld(t, &RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}, func(int) (int, string) { return 503, "proxy:1" })
+	o := w.step(t)
+	if w.calls.Load() != 1 || o.State != "failed" || len(o.Attempts) != 1 || o.Attempts[0].Outcome != "failed" || o.Attempts[0].Status != 503 || o.NextAttemptAt != "" {
+		t.Fatalf("%d calls: %+v", w.calls.Load(), o)
+	}
+	w.advance(time.Minute)
+	if o = w.step(t); w.calls.Load() != 1 {
 		t.Fatalf("%d calls: %+v", w.calls.Load(), o)
 	}
 }
@@ -426,6 +471,7 @@ func TestRetryAfterReadsBothForms(t *testing.T) {
 		{"Wednesday, 21-Oct-26 07:29:30 GMT", 90 * time.Second, true},
 		{"Wed Oct 21 07:29:30 2026", 90 * time.Second, true},
 		{"Wed, 21 Oct 2026 07:27:00 GMT", 0, false},
+		{"Fri, 31 Dec 9999 23:59:59 GMT", retryWaitCap + time.Second, true},
 		{"", 0, false},
 		{"-5", 0, false},
 		{"1.5", 0, false},
@@ -481,6 +527,13 @@ func TestAJobIsCreatedWithARetryPolicyInForm(t *testing.T) {
 	}
 	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
 		t.Fatalf("refused policies raised the schema to %s", schema)
+	}
+	// One attempt is the default: the job is made as without a policy.
+	if got := create(journalRelease(t, s, runtime).ID, `,"retry":{"maxAttempts":1,"backoffSeconds":5,"maxBackoffSeconds":60}`); got.Code != 201 || strings.Contains(got.Body.String(), `"retry"`) {
+		t.Fatalf("the default policy: %d %s", got.Code, got.Body)
+	}
+	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
+		t.Fatalf("the default policy raised the schema to %s", schema)
 	}
 	policy := `,"retry":{"maxAttempts":3,"backoffSeconds":5,"maxBackoffSeconds":60}`
 	made := create(release, policy)
@@ -790,6 +843,100 @@ func TestARetryIsRefusedForARunNotInterrupted(t *testing.T) {
 	}
 	if got := serve(t, s, "POST", "/v1/runs/run_unheld/retry", `{"attempt":1}`, nil); got.Code != 404 {
 		t.Fatalf("%d %s", got.Code, got.Body)
+	}
+}
+
+// refusedAsAudited asserts that a retry of r is refused run_not_retryable,
+// journaled once for the run, and changes nothing.
+func refusedAsAudited(t *testing.T, s *Service, r Run, attempt string) {
+	t.Helper()
+	got := serve(t, s, "POST", "/v1/runs/"+r.ID+"/retry", `{"attempt":`+attempt+`}`, nil)
+	if got.Code != 409 || !strings.Contains(got.Body.String(), "run_not_retryable") || !strings.Contains(got.Body.String(), "audit record") {
+		t.Fatalf("%d %s", got.Code, got.Body)
+	}
+	var n int
+	must(t, s.db.QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(detail,'$.request')='retry-run' AND json_extract(detail,'$.code')='run_not_retryable' AND json_extract(concerns,'$.run')=?", r.ID).Scan(&n))
+	if n != 1 {
+		t.Fatal("refusals journaled:", n)
+	}
+	held, e := s.run(r.ID)
+	must(t, e)
+	if runText(held) != runText(r) {
+		t.Fatal("a refused retry changed the run")
+	}
+}
+
+// A run found running at a restart has no audit record in its record, but
+// its attempt's Runtime may have written one: a trail with any content in
+// any of its attempts' directories, or a directory whose state cannot be
+// read, refuses the retry. An empty trail, or none, does not.
+func TestARetryIsRefusedWhenAnAttemptLeftAnAuditTrail(t *testing.T) {
+	s, cfg, r := interruptedRun(t, "", false)
+	audit := filepath.Join(cfg.Dir, "attempts", r.ID, "audit")
+	must(t, os.MkdirAll(audit, 0700))
+	trail := filepath.Join(audit, "evaluations.jsonl")
+	must(t, os.WriteFile(trail, []byte(`{"decision":"x"}`+"\n"), 0600))
+	refusedAsAudited(t, s, r, "1")
+	// A later attempt's retry reads the earlier attempts' directories too.
+	later := r
+	later.Attempt, later.Attempts = 2, []Attempt{{Number: 1, Outcome: "interrupted", Reason: runAttemptRestarted}}
+	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(later, anyState); return e }))
+	refusedAsAudited(t, s, later, "2")
+	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(r, anyState); return e }))
+	// A directory whose state cannot be read is taken to hold one.
+	must(t, os.RemoveAll(audit))
+	must(t, os.WriteFile(audit, []byte("not a directory"), 0600))
+	refusedAsAudited(t, s, r, "1")
+	must(t, os.Remove(audit))
+	must(t, os.MkdirAll(audit, 0700))
+	must(t, os.WriteFile(trail, nil, 0600))
+	if got := serve(t, s, "POST", "/v1/runs/"+r.ID+"/retry", `{"attempt":1}`, nil); got.Code != 202 {
+		t.Fatalf("an empty trail: %d %s", got.Code, got.Body)
+	}
+}
+
+// An evaluation that completed while its end was not recorded (a failed
+// finish stops the dispatcher, and the run reads interrupted at the next
+// start) left its audit trail: the run is not evaluated again.
+func TestARetryIsRefusedAfterAFinishThatFailed(t *testing.T) {
+	cfg := journalConfig(t)
+	s := openJournal(t, cfg)
+	runtime := completingRuntime(t, cfg.Dir)
+	j, e := s.createJob("Finished", journalRelease(t, s, runtime).ID)
+	must(t, e)
+	r, _, e := s.submit(j.ID, "first", journalInput())
+	must(t, e)
+	_, e = s.dispatchNext(context.Background())
+	must(t, e)
+	done, e := s.run(r.ID)
+	must(t, e)
+	if done.State != "completed" {
+		t.Fatalf("%+v", done)
+	}
+	// The record as a failed finish leaves it: running, without its audit
+	// record or its entry in the chain of runs.
+	left := done
+	left.State, left.FinishedAt, left.Audit, left.AuditBytes, left.AuditSignatures = "running", "", nil, nil, nil
+	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(left, anyState); return e }))
+	_, e = s.db.Exec("DELETE FROM run_chain WHERE run=?", r.ID)
+	must(t, e)
+	s.Close()
+	s = openJournal(t, cfg)
+	defer s.Close()
+	interrupted, e := s.run(r.ID)
+	must(t, e)
+	if interrupted.State != "interrupted" || len(interrupted.Audit) > 0 || len(interrupted.AuditBytes) > 0 {
+		t.Fatalf("%+v", interrupted)
+	}
+	if _, e = os.Stat(filepath.Join(cfg.Dir, "attempts", r.ID, "audit", "evaluations.jsonl")); e != nil {
+		t.Fatal("the first attempt's trail: ", e)
+	}
+	refusedAsAudited(t, s, interrupted, "1")
+	if _, e = s.dispatchNext(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = os.Stat(filepath.Join(cfg.Dir, "attempts", r.ID+".2")); !os.IsNotExist(e) {
+		t.Fatal("a second attempt was evaluated:", e)
 	}
 }
 
