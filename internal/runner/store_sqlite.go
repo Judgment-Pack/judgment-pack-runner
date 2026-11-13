@@ -206,9 +206,11 @@ func (k *sqliteStore) migrate() error {
 		return err
 	}
 	switch schema {
-	case storeSchema, scopedStoreSchema:
+	case storeSchema, scopedStoreSchema, retryStoreSchema:
 		// A store that holds a job under a scope identifier was raised from
-		// storeSchema by the job's creation (scope.go), and needs nothing.
+		// storeSchema by the job's creation (scope.go), and one that holds a
+		// retry policy or a retried run by its first (retries.go); neither
+		// needs anything.
 		return nil
 	case "", "1", "2":
 	default:
@@ -444,4 +446,11 @@ func (t *sqliteTx) createRelease(r Release) error {
 func (t *sqliteTx) appendJournal(c change) (int64, error) {
 	sequence, err := appendEvent(t.tx, c)
 	return sequence, sqliteFault("journal", err, true)
+}
+
+func (t *sqliteTx) raiseSchema(schema string) error {
+	if schema != retryStoreSchema {
+		return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))
+	}
+	return sqliteFault("schema", raiseRetrySchema(t.tx), true)
 }

@@ -60,14 +60,17 @@ type Config struct {
 	disableDispatcher bool
 }
 type Service struct {
-	profilesMu             sync.RWMutex
-	registeredProfiles     atomic.Pointer[[]InputProfile]
-	unhealthy              atomic.Bool
-	background             sync.WaitGroup
-	cloudMu                sync.Mutex
-	cloudProblems          map[string]string
-	cloudFactory           func(context.Context, CloudConnection) (cloudTransport, error)
-	preparing              map[string]bool
+	profilesMu         sync.RWMutex
+	registeredProfiles atomic.Pointer[[]InputProfile]
+	unhealthy          atomic.Bool
+	background         sync.WaitGroup
+	cloudMu            sync.Mutex
+	cloudProblems      map[string]string
+	cloudFactory       func(context.Context, CloudConnection) (cloudTransport, error)
+	preparing          map[string]bool
+	// clock is the time retries are decided by (Service.instant): nil is
+	// time.Now. Tests move it rather than sleep.
+	clock                  func() time.Time
 	automationMu           sync.Mutex
 	automationDone         chan struct{}
 	cfg                    Config
@@ -321,7 +324,13 @@ func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) 
 // creator of the job and of its first trigger. The scope is fixed on the job
 // here and nowhere else, and a repeated creation must name the same one.
 func (s *Service) createJobBy(by requester, name, releaseID, scope string, c *TriggerConfig) (Job, error) {
-	if s.cfg.ExecutorAdmission != nil && (c != nil || scope != "") {
+	return s.createJobWith(by, name, releaseID, scope, c, nil)
+}
+
+// createJobWith is createJobBy, for a job with the retry policy retry, or
+// none when it is nil (retries.go).
+func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *TriggerConfig, retry *RetryPolicy) (Job, error) {
+	if s.cfg.ExecutorAdmission != nil && (c != nil || scope != "" || retry != nil) {
 		return Job{}, manualUnsupported()
 	}
 	s.automationMu.Lock()
@@ -355,7 +364,7 @@ func (s *Service) createJobBy(by requester, name, releaseID, scope string, c *Tr
 		if err = json.Unmarshal(held, &stored); err != nil {
 			return stored, err
 		}
-		if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope {
+		if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope || !sameRetryPolicy(stored.Retry, retry) {
 			return Job{}, &apiError{409, "release_already_used", "This preview already created a different job. Preview again to create another job."}
 		}
 		return stored, nil
@@ -389,7 +398,7 @@ func (s *Service) createJobBy(by requester, name, releaseID, scope string, c *Tr
 	if err = admitJobPack(tx, r); err != nil {
 		return Job{}, err
 	}
-	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest, Scope: scope}
+	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest, Scope: scope, Retry: retry}
 	if c != nil {
 		var count int
 		if err = tx.QueryRow("SELECT count(*) FROM triggers").Scan(&count); err != nil {
@@ -420,6 +429,12 @@ func (s *Service) createJobBy(by requester, name, releaseID, scope string, c *Tr
 	// same transaction, so that no earlier Runner opens it (scope.go).
 	if j.Scope != "" {
 		if err = raiseScopedSchema(tx); err != nil {
+			return Job{}, err
+		}
+	}
+	// Likewise its first job with a retry policy (retries.go).
+	if j.Retry != nil {
+		if err = raiseRetrySchema(tx); err != nil {
 			return Job{}, err
 		}
 	}
@@ -669,7 +684,9 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	}
 	r.State = "running"
 	r.StartedAt = now()
-	r.Attempt = 1
+	// A run's first attempt is 1; a run a caller retried makes the next
+	// (retries.go).
+	r.Attempt++
 	if err = s.changeRun(r); err != nil {
 		return true, err
 	}
@@ -688,7 +705,7 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 		if s.cfg.ExecutorAdmission != nil {
 			r.Result, trail, signatures, binding, err = s.governedEvaluation(ctx, r, release)
 		} else {
-			r.Result, trail, signatures, binding, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", r.ID), false)
+			r.Result, trail, signatures, binding, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", attemptDirectory(r)), false)
 		}
 		// A sidecar that could not be read, with a signing key, fails the
 		// record's signing and not the run (evaluateWith).

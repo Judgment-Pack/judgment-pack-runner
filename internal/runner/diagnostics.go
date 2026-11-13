@@ -197,13 +197,14 @@ func (s *Service) diagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, &apiError{409, "run_not_finished", "A run's diagnostics are served once it has finished."})
 		return
 	}
-	// A run's directory is named by its id, one path element.
+	// A run's directory is named by its id, one path element, and a later
+	// attempt's by its id and number (attemptDirectory): the latest is read.
 	var head []byte
 	var size int64
 	if run.ID == "" || run.ID == "." || run.ID == ".." || filepath.Base(run.ID) != run.ID {
 		err = errNotRetained
 	} else {
-		head, size, err = s.readStream(run.ID, stream, maxDiagnostics)
+		head, size, err = s.readStream(attemptDirectory(run), stream, maxDiagnostics)
 	}
 	if errors.Is(err, errNotRetained) {
 		// Only what the store records: a missing file says nothing of

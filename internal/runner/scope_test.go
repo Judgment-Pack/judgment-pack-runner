@@ -166,6 +166,7 @@ func scopeRoutes() []scopeRoute {
 		{"GET /v1/runs/{run}/briefs", false, get(func(r scopedRecords) string { return "/v1/runs/" + r.run + "/briefs" })},
 		{"POST /v1/runs/{run}/briefs", false, post(func(r scopedRecords) string { return "/v1/runs/" + r.run + "/briefs" }, `{}`)},
 		{"GET /v1/runs/{run}/diagnostics", false, get(func(r scopedRecords) string { return "/v1/runs/" + r.run + "/diagnostics" })},
+		{"POST /v1/runs/{run}/retry", false, post(func(r scopedRecords) string { return "/v1/runs/" + r.run + "/retry" }, `{"attempt":0}`)},
 		{"GET /v1/runs/{run}/verification", false, get(func(r scopedRecords) string { return "/v1/runs/" + r.run + "/verification" })},
 		{"GET /v1/triggers/{trigger}/deliveries/{event}", true, get(func(r scopedRecords) string { return "/v1/triggers/" + r.trigger + "/deliveries/first" })},
 		{"POST /v1/triggers/{trigger}/deliveries", false, post(func(r scopedRecords) string { return "/v1/triggers/" + r.trigger + "/deliveries" }, string(encode(RecordDelivery{ReleaseID: "release_x", Event: delivery("record")})))},

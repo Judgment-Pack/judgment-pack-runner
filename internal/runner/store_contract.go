@@ -160,7 +160,8 @@ type runTx interface {
 	// returns the state it held before. With expected other than anyState,
 	// the run must be held in that state, or nothing is written and the
 	// fault is faultConflict: the versioned update by which a queued run is
-	// claimed once. faultAbsent when no run is held under r.ID.
+	// claimed once, and by which an interrupted run is queued again by a
+	// retry (retries.go). faultAbsent when no run is held under r.ID.
 	putRun(r Run, expected string) (string, error)
 	// runningRuns are the runs held running, in the order they were queued.
 	runningRuns() ([]Run, error)
@@ -176,6 +177,12 @@ type runTx interface {
 	// appendJournal appends a change's entry to the journal of job activity,
 	// and returns its sequence; entries are only ever appended.
 	appendJournal(c change) (int64, error)
+	// raiseSchema marks the store as holding records that only a Runner
+	// that knows schema keeps, so that no earlier Runner opens it: the
+	// sqlite kind raises its schema (retryStoreSchema is the one raised
+	// through the contract). faultRefused for a schema the kind does not
+	// know.
+	raiseSchema(schema string) error
 }
 
 // storeOpening is what the Runner gives a kind's constructor.

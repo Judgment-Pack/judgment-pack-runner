@@ -81,6 +81,10 @@ type Job struct {
 	// fixed for as long as the job exists. A job created under none has
 	// none, and encodes as every job did before.
 	Scope string `json:"scope,omitempty"`
+	// Retry is the retry policy the job was created with (retries.go),
+	// fixed for as long as the job exists. A job created without one makes
+	// one attempt, and encodes as every job did before.
+	Retry *RetryPolicy `json:"retry,omitempty"`
 }
 type Run struct {
 	manual        *manualIntentInput `json:"-"` // private exact-byte storage; never exported as authority
@@ -153,6 +157,11 @@ type Run struct {
 	// a verification export, whose readers decode strictly. A run of a job
 	// created under none has none.
 	Scope string `json:"-"`
+	// Attempts are the run's attempts before its current one, each kept when
+	// a caller retried the run after it was interrupted (retries.go). Kept
+	// and served as InterruptedAt is, and not part of a verification export.
+	// A run never retried has none.
+	Attempts []Attempt `json:"-"`
 }
 
 // runQueueExpired is the Reason of an automatic run whose queue time ran out
@@ -170,10 +179,11 @@ type storedRun struct {
 	Signing       *RunSigning `json:"signing,omitempty"`
 	Binding       *RunBinding `json:"binding,omitempty"`
 	Scope         string      `json:"scope,omitempty"`
+	Attempts      []Attempt   `json:"attempts,omitempty"`
 }
 
 func served(r Run) storedRun {
-	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing, Binding: r.Binding, Scope: r.Scope}
+	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing, Binding: r.Binding, Scope: r.Scope, Attempts: r.Attempts}
 }
 
 // The reviewedSetOrigin values. release: the release's own lock. supplied:
@@ -277,7 +287,7 @@ func decodeRun(b []byte) (Run, error) {
 		}
 		held.Run.Input = held.Run.manual.input()
 	}
-	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing, held.Run.Binding, held.Run.Scope = held.InterruptedAt, held.Reason, held.Signing, held.Binding, held.Scope
+	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing, held.Run.Binding, held.Run.Scope, held.Run.Attempts = held.InterruptedAt, held.Reason, held.Signing, held.Binding, held.Scope, held.Attempts
 	if e == nil {
 		e = validateStoredRun(held.Run)
 	}

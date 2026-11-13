@@ -132,6 +132,13 @@ func (s *Service) acquireAutomatic(parent context.Context, input Input) (Input, 
 		}
 		value, err := s.acquirePlannedOperation(ctx, *next)
 		if err != nil {
+			// A failure after a call that answered is not retried as the
+			// whole acquisition: it would call that call's source again.
+			if answer, ok := err.(*gatewayAnswer); ok && step > 0 {
+				held := *answer
+				held.afterAcquisition = true
+				err = &held
+			}
 			return input, err
 		}
 		input.Source.Sources[next.Name] = value
@@ -220,7 +227,9 @@ func automaticCall(ctx context.Context, target string, body []byte, limit int64)
 		return nil, bad("gateway_response_too_large", "The Gateway response exceeded its limit.")
 	}
 	if res.StatusCode != 200 {
-		return nil, bad("gateway_refused", "The Gateway refused the operation. Check the installed connection and provider access.")
+		// The status and Retry-After are kept for a job's retry policy
+		// (retries.go); the error is the one it always was.
+		return nil, &gatewayAnswer{err: bad("gateway_refused", "The Gateway refused the operation. Check the installed connection and provider access."), status: res.StatusCode, retryAfter: res.Header.Get("Retry-After")}
 	}
 	return raw, nil
 }
@@ -284,11 +293,24 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		s.automationMu.Unlock()
 		return e
 	}
-	if !time.Now().Before(expiry) {
+	if !s.instant().Before(expiry) {
 		o.State = "expired"
 		o.Reason = "queue-expired"
 		o.PendingInput = nil
+		o.NextAttemptAt = ""
 		e = s.saveOccurrence(o)
+		s.automationMu.Unlock()
+		return e
+	}
+	// An occurrence waiting for its next attempt is not attempted before
+	// its time (retries.go).
+	waiting, e := waitingForAttempt(o, s.instant())
+	if e != nil || waiting {
+		s.automationMu.Unlock()
+		return e
+	}
+	policy, e := s.jobRetryPolicy(o.JobID)
+	if e != nil {
 		s.automationMu.Unlock()
 		return e
 	}
@@ -298,6 +320,9 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		return e
 	}
 	o.State = "preparing"
+	if policy != nil {
+		openAttempt(&o, s.instant())
+	}
 	e = s.saveOccurrence(o)
 	s.automationMu.Unlock()
 	if e != nil {
@@ -305,14 +330,29 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	}
 	bounded, stop := context.WithDeadline(ctx, expiry)
 	input, acquisitionError := s.automaticInputContext(bounded, o.PendingInput, release, nil)
+	cut := bounded.Err() != nil
 	stop()
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
+	at := s.instant()
+	ending := ""
+	if policy != nil {
+		var scheduled bool
+		if scheduled, ending = closeAttempt(&o, *policy, acquisitionError, expiry, at, cut); scheduled {
+			// Another attempt is scheduled: the occurrence waits for it
+			// with its pending input.
+			o.State = "accepted"
+			return s.saveOccurrence(o)
+		}
+	}
 	o.PendingInput = nil
 	if acquisitionError != nil {
 		o.State = "failed"
 		o.Reason = acquisitionError.Error()
-	} else if !time.Now().Before(expiry) {
+		if ending != "" {
+			o.Reason = ending
+		}
+	} else if !at.Before(expiry) {
 		o.State = "expired"
 		o.Reason = "queue-expired"
 	} else {

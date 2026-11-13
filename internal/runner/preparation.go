@@ -113,6 +113,16 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 		if s.preparing[o.ID] {
 			continue
 		}
+		// One waiting for its next attempt is passed by until its time
+		// (retries.go).
+		waiting, err := waitingForAttempt(o, s.instant())
+		if err != nil {
+			e = err
+			break
+		}
+		if waiting {
+			continue
+		}
 		if o.Preparation != nil && o.Preparation.NextCheck != "" {
 			next, err := time.Parse(time.RFC3339Nano, o.Preparation.NextCheck)
 			if err != nil {

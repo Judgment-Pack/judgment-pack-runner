@@ -100,7 +100,7 @@ func RelocateWorkspace(request RelocateRequest) (RelocateResult, error) {
 		}
 	}
 	var schema string
-	if err = tx.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema); err != nil || schema != "1" && schema != "2" && schema != storeSchema && schema != scopedStoreSchema {
+	if err = tx.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema); err != nil || schema != "1" && schema != "2" && schema != storeSchema && schema != scopedStoreSchema && schema != retryStoreSchema {
 		return result, errors.New("unsupported workspace schema")
 	}
 	historyKey := "inputRootRelocation:" + request.ID

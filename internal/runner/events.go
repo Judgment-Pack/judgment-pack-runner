@@ -69,7 +69,7 @@ var eventKinds = []string{
 	"trigger.configured", "trigger.paused", "trigger.resumed", "trigger.key-rotated",
 	"occurrence.received", "occurrence.skipped", "occurrence.preparing", "occurrence.ready",
 	"occurrence.submitted", "occurrence.failed", "occurrence.expired", "occurrence.needs-attention",
-	"occurrence.cancelled", "occurrence.reconciled",
+	"occurrence.cancelled", "occurrence.reconciled", "occurrence.retry-scheduled",
 	"run.queued", "run.started", "run.expired", "run.completed", "run.failed", "run.interrupted",
 	"release.previewed", "job.created", "job.upgraded", "admission.refused",
 	"journal.began", "runner.started", "runner.stopped",
@@ -154,6 +154,11 @@ type EventDetail struct {
 	CoalescedSeconds int                `json:"coalescedSeconds,omitempty"`
 	Held             *EventHeld         `json:"held,omitempty"`
 	Version          string             `json:"version,omitempty"`
+	// Attempt is the attempt a change closed or kept (retries.go):
+	// occurrence.retry-scheduled, an occurrence's end after attempts, and
+	// run.queued from interrupted. An entry that holds it has
+	// attemptEntryVersion.
+	Attempt *Attempt `json:"attempt,omitempty"`
 }
 
 // EventInterruption is an interruption's own time: the moment Runner saw the
@@ -262,6 +267,9 @@ func appendEvent(tx *sql.Tx, c change) (int64, error) {
 	if c.detail.Scope != "" {
 		version = scopedEntryVersion
 	}
+	if c.detail.Attempt != nil {
+		version = attemptEntryVersion
+	}
 	res, err := tx.Exec("INSERT INTO events(entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail,job_id,release_id,refusal) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 		version, c.kind, c.at, string(encode(c.by)), string(encode(c.concerns)), revision, from, to, boundedReason(c.reason), string(encode(c.detail)), c.concerns.Job, c.concerns.Release, c.refusal)
 	if err != nil {
@@ -318,6 +326,16 @@ func runChange(r Run, from string, by EventActor, detail EventDetail) change {
 
 func occurrenceChange(o Occurrence, from string, by EventActor) change {
 	c := change{kind: occurrenceEventKind(from, o.State), by: by, concerns: EventConcerns{Job: o.JobID, Release: o.ReleaseID, Trigger: o.TriggerID, Occurrence: o.ID, Run: o.RunID}, revision: o.TriggerRevision, states: true, from: from, to: o.State, reason: o.Reason}
+	// An attempt that closed with this change, for a job with a retry
+	// policy: the occurrence waits for its next (retries.go), or ends.
+	if n := len(o.Attempts); n > 0 && from == "preparing" && o.Attempts[n-1].Outcome != "" {
+		closed := o.Attempts[n-1]
+		c.detail.Attempt = &closed
+		if o.State == "accepted" && o.NextAttemptAt != "" {
+			c.kind = "occurrence.retry-scheduled"
+			c.detail.NextAt = o.NextAttemptAt
+		}
+	}
 	switch {
 	case from == "":
 		c.detail = EventDetail{OccurrenceKind: o.Kind, ScheduledAt: o.ScheduledAt, MissedFrom: o.MissedFrom, MissedThrough: o.MissedThrough, ExpiresAt: o.ExpiresAt}
@@ -467,6 +485,11 @@ func restartOccurrences(tx *sql.Tx, started int64) (err error) {
 		o.State = "failed"
 		o.Reason = "Source acquisition was interrupted. It was not repeated automatically."
 		o.PendingInput = nil
+		// An attempt of a job with a retry policy is closed, interrupted:
+		// it is not retried (retries.go). Runner did not see it stop.
+		if n := len(o.Attempts); n > 0 && o.Attempts[n-1].Outcome == "" {
+			o.Attempts[n-1].Outcome = "interrupted"
+		}
 		if err = recordOccurrence(tx, o, "", runnerActor, &EventInterruption{LastKnownRunning: since, Restart: started}); err != nil {
 			return err
 		}
@@ -549,6 +572,11 @@ func (s *Service) journalRefusal(c change) {
 	// installation's, whose keys are as they always were.
 	if c.by.Kind == "caller" {
 		key = append(key, c.by.Issuer, c.by.Subject)
+	}
+	// A refused retry names its run (retries.go): one run's refusal is kept
+	// apart from another's. Every other refusal names none, and keeps its key.
+	if c.concerns.Run != "" {
+		key = append(key, "run", c.concerns.Run)
 	}
 	c.refusal = strings.Join(key, "\x00")
 	tx, err := s.db.Begin()
