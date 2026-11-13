@@ -9,11 +9,10 @@ package runner
 //
 // The kind also keeps the state the contract does not cover yet, in the same
 // database (docs/design/store-interface.md, section 9): jobs as they are made
-// and revised, triggers, occurrences, workflow executions, the
-// manual-admission journal and the rest of the store's metadata. The Runner
-// reaches that state through the database handle the kind gives it at opening
-// (storeOpening.opened), and, inside a contract transaction, through
-// sqliteTxOf.
+// and revised, workflow executions, the manual-admission journal and the rest
+// of the store's metadata. The Runner reaches that state through the database
+// handle the kind gives it at opening (storeOpening.opened). Triggers and
+// occurrences are the contract's (store_sqlite_triggers.go).
 
 import (
 	"database/sql"
@@ -267,16 +266,6 @@ func (k *sqliteStore) update(fn func(runTx) error) error {
 		return storeFailure(faultDurability, "commit", err)
 	}
 	return nil
-}
-
-// sqliteTxOf is the SQL transaction under a sqlite kind's transaction, for
-// the state outside the contract that the Runner changes in the same
-// transaction as the contract's (a restart's occurrences).
-func sqliteTxOf(tx runTx) (*sql.Tx, error) {
-	if t, ok := tx.(*sqliteTx); ok {
-		return t.tx, nil
-	}
-	return nil, storeFailure(faultRefused, "sqlite", errors.New("the state outside the store contract is kept only by the sqlite kind"))
 }
 
 func (r sqliteReads) release(id string) (Release, error) {

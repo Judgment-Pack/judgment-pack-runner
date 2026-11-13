@@ -133,6 +133,21 @@ type storeReads interface {
 	// brief is the brief history held for subject, as it was written, or
 	// faultAbsent.
 	brief(subject string) ([]byte, error)
+	// trigger is the trigger held under id, with its file observer's cursor
+	// and the revision its delivery key was issued at, and the digest of
+	// that key ("" for none), or faultAbsent.
+	trigger(id string) (Trigger, string, error)
+	// triggerCount counts the triggers held.
+	triggerCount() (int, error)
+	// cloudBindings counts the triggers other than except whose cloud
+	// binding names connection and job.
+	cloudBindings(except, connection, job string) (int, error)
+	// occurrence is the occurrence held under id, or faultAbsent.
+	occurrence(id string) (Occurrence, error)
+	// identifiedOccurrence is the occurrence trigger admitted under identity
+	// (its event, schedule time, file change or signal), with the digest of
+	// the payload it was admitted with, or faultAbsent.
+	identifiedOccurrence(trigger, identity string) (Occurrence, string, error)
 }
 
 // scopeCarriers are the kinds of record that carry a scope identifier, by
@@ -216,6 +231,34 @@ type runStore interface {
 	// chainPage is up to limit entry lines with a sequence after after, in
 	// order of sequence, and the sequence of the last (after when none).
 	chainPage(after int64, limit int) ([][]byte, int64, error)
+	// enabledTriggers are the ids of the triggers held not paused, in the
+	// order they were made.
+	enabledTriggers() ([]string, error)
+	// readyOccurrence is the accepted occurrence admitted first that has no
+	// input left to prepare, or faultAbsent.
+	readyOccurrence() (Occurrence, error)
+	// preparableOccurrences gives each, in the order they were admitted,
+	// the occurrences accepted with input left to prepare and those waiting,
+	// until each returns true or an error, which it returns. each must not
+	// call the store.
+	preparableOccurrences(each func(Occurrence) (bool, error)) error
+	// cloudBoundTrigger is the id of a trigger whose cloud binding names
+	// connection and job, or faultAbsent.
+	cloudBoundTrigger(connection, job string) (string, error)
+	// jobTriggers are a job's triggers, in the order they were made, each
+	// saying whether it holds a delivery key.
+	jobTriggers(job string) ([]Trigger, error)
+	// occurrencePage is up to limit of a job's occurrences admitted before
+	// the order before, newest first, and with preparations only those that
+	// hold a preparation and are not submitted; and, when the job has
+	// another beyond them, which is not decoded, the order of the last one
+	// read, the next page's before, and 0 otherwise.
+	occurrencePage(job string, before int64, preparations bool, limit int) ([]Occurrence, int64, error)
+	// keyedOccurrence is the occurrence held under id, admitted by trigger
+	// and bound to the delivery key whose digest is hash, while that key is
+	// the trigger's, or faultAbsent: one read, so that a key rotated after
+	// its caller checked it still refuses (eventResult).
+	keyedOccurrence(id, trigger, hash string) (Occurrence, error)
 	// close gives the store up. A kind that holds the store exclusively
 	// releases it last.
 	close() error
@@ -255,6 +298,42 @@ type runTx interface {
 	createEntry(sequence int64, run string, line []byte) error
 	// createRelease keeps r under its id: faultTaken when one is held.
 	createRelease(r Release) error
+	// createTrigger keeps t under its id, with no delivery key and no file
+	// cursor: faultTaken when one is held, or when t is a cloud trigger
+	// whose binding another cloud trigger holds.
+	createTrigger(t Trigger) error
+	// putTrigger writes t, its delivery key's digest hash and its file
+	// cursor over the trigger held under t.ID, and with history keeps the
+	// snapshot of t's revision: faultTaken when that snapshot, or t's cloud
+	// binding, is held already, and faultAbsent when no trigger is held
+	// under t.ID. Nothing is written on either.
+	putTrigger(t Trigger, hash string, history bool) error
+	// createOccurrence keeps o, admitted under identity with the payload
+	// whose digest is payload: faultTaken when its id, or the identity for
+	// its trigger, is held.
+	createOccurrence(o Occurrence, identity, payload string) error
+	// putOccurrence writes o's state and record over the occurrence held
+	// under o.ID, and returns the state it held before. With expected other
+	// than anyState, the occurrence must be held in that state, or nothing
+	// is written and the fault is faultConflict: a final state is not
+	// overwritten by a preparation still in flight. faultAbsent when no
+	// occurrence is held under o.ID.
+	putOccurrence(o Occurrence, expected string) (string, error)
+	// createOccurrenceKey binds an occurrence to the delivery key that
+	// created it, by the key's digest: faultTaken when it is bound.
+	createOccurrenceKey(occurrence, hash string) error
+	// pendingOccurrences counts the occurrences accepted, preparing or
+	// waiting: the automatic queue (queueLimit).
+	pendingOccurrences() (int, error)
+	// jobActivity counts a job's runs queued or running and its occurrences
+	// accepted, preparing, waiting or needing attention.
+	jobActivity(job string) (int, error)
+	// preparingOccurrences are the occurrences held preparing, in the order
+	// they were admitted.
+	preparingOccurrences() ([]Occurrence, error)
+	// lastPreparing is the time of the newest occurrence.preparing entry
+	// concerning an occurrence, or faultAbsent.
+	lastPreparing(occurrence string) (string, error)
 	// appendJournal appends a change's entry to the journal of job activity,
 	// and returns its sequence; entries are only ever appended.
 	appendJournal(c change) (int64, error)

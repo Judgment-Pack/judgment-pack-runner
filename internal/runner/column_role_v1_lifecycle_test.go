@@ -158,15 +158,9 @@ func columnRoleRealRuntimeFirstSaveSignedExports(t *testing.T, core string) {
 	}
 	occurrence := newOccurrence(trigger, job, time.Now())
 	occurrence.PendingInput = triggerConfig.Input
-	tx, e := s.db.Begin()
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = s.admitOccurrence(tx, trigger, &occurrence, "fixture", ""); e != nil {
-		tx.Rollback()
-		t.Fatal(e)
-	}
-	if e = tx.Commit(); e != nil {
+	if e = s.store.update(func(tx runTx) error {
+		return s.admitOccurrence(tx, trigger, &occurrence, "fixture", "")
+	}); e != nil {
 		t.Fatal(e)
 	}
 	// Actual seed and first durable checkpoint, before advance can mask a loss.

@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"errors"
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/cloudgoogle"
@@ -126,9 +125,8 @@ func (s *Service) receiveCloud(c CloudConnection, d cloudgoogle.Delivery) (bool,
 	if s.unhealthy.Load() {
 		return false, errors.New("Runner is unavailable; cloud delivery remains unacknowledged.")
 	}
-	var triggerID string
-	e = s.db.QueryRow(`SELECT id FROM triggers WHERE json_extract(record,'$.config.cloud.connection')=? AND json_extract(record,'$.config.cloud.job')=?`, c.ID, signal.Job).Scan(&triggerID)
-	if errors.Is(e, sql.ErrNoRows) {
+	triggerID, e := s.store.cloudBoundTrigger(c.ID, signal.Job)
+	if absent(e) {
 		return discard(nil, "An unbound cloud signal was discarded. Check the Scheduler job name.")
 	}
 	if e != nil {
@@ -144,7 +142,7 @@ func (s *Service) receiveCloud(c CloudConnection, d cloudgoogle.Delivery) (bool,
 	identity := "cloud:" + digest(encode(signal))
 	if _, _, e = s.findOccurrence(t.ID, identity); e == nil {
 		return true, nil
-	} else if !errors.Is(e, sql.ErrNoRows) {
+	} else if !absent(e) {
 		return false, e
 	}
 	job, e := s.job(t.JobID)
@@ -167,14 +165,8 @@ func (s *Service) receiveCloud(c CloudConnection, d cloudgoogle.Delivery) (bool,
 	} else {
 		o.PendingInput = t.Config.Input
 	}
-	tx, e := s.db.Begin()
-	if e != nil {
-		return false, e
-	}
-	defer tx.Rollback()
-	if e = s.admitOccurrence(tx, t, &o, identity, digest(encode(signal))); e != nil {
-		return false, e
-	}
-	e = tx.Commit()
+	e = s.store.update(func(tx runTx) error {
+		return s.admitOccurrence(tx, t, &o, identity, digest(encode(signal)))
+	})
 	return e == nil, e
 }

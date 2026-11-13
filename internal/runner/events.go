@@ -382,13 +382,9 @@ func occurrenceChange(o Occurrence, from string, by EventActor) change {
 // triggerBefore reads, inside tx, the stored state of a trigger that a writer
 // is about to change from revision, and refuses the change if the store holds
 // another revision: the entry's from is the state the store held.
-func triggerBefore(tx *sql.Tx, id string, revision int) (string, error) {
-	var raw string
-	if err := tx.QueryRow("SELECT record FROM triggers WHERE id=?", id).Scan(&raw); err != nil {
-		return "", err
-	}
-	var held Trigger
-	if err := json.Unmarshal([]byte(raw), &held); err != nil {
+func triggerBefore(tx runTx, id string, revision int) (string, error) {
+	held, _, err := tx.trigger(id)
+	if err != nil {
 		return "", err
 	}
 	if held.Revision != revision {
@@ -430,16 +426,13 @@ func changeQueuedRun(st runStore, r Run) error {
 // its change of state, if its state changed. With guard, the stored state must
 // be guard, or nothing is written and errPreparationStopped is returned: a
 // final state is not overwritten by a preparation still in flight.
-func recordOccurrence(tx *sql.Tx, o Occurrence, guard string, by EventActor, interruption *EventInterruption) error {
-	var from string
-	if err := tx.QueryRow("SELECT state FROM occurrences WHERE id=?", o.ID).Scan(&from); err != nil {
-		return err
-	}
-	if guard != "" && from != guard {
+func recordOccurrence(tx runTx, o Occurrence, guard string, by EventActor, interruption *EventInterruption) error {
+	o = withOccurrenceClass(o)
+	from, err := tx.putOccurrence(o, guard)
+	if faultOf(err) == faultConflict {
 		return errPreparationStopped
 	}
-	o = withOccurrenceClass(o)
-	if _, err := tx.Exec("UPDATE occurrences SET state=?,record=? WHERE id=?", o.State, string(encode(o)), o.ID); err != nil {
+	if err != nil {
 		return err
 	}
 	if from == o.State {
@@ -447,22 +440,16 @@ func recordOccurrence(tx *sql.Tx, o Occurrence, guard string, by EventActor, int
 	}
 	c := occurrenceChange(o, from, by)
 	c.detail.Interruption = interruption
-	_, err := appendEvent(tx, c)
+	_, err = tx.appendJournal(c)
 	return err
 }
 
 // changeOccurrence records an occurrence and the entry of its change of
 // state, if any, in one transaction.
 func (s *Service) changeOccurrence(o Occurrence, guard string, by EventActor) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = recordOccurrence(tx, o, guard, by, nil); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.store.update(func(tx runTx) error {
+		return recordOccurrence(tx, o, guard, by, nil)
+	})
 }
 
 // restart records this process's start, and in the same transaction marks
@@ -488,32 +475,21 @@ func (s *Service) restart() error {
 				return err
 			}
 		}
-		// Occurrences are kept outside the contract, by the sqlite kind, and
-		// recovered in the same transaction.
-		tx, err := sqliteTxOf(contract)
-		if err != nil {
-			return err
-		}
-		return restartOccurrences(tx, started)
+		return restartOccurrences(contract, started)
 	})
 }
 
 // restartOccurrences marks, inside tx, each legacy preparation the last
 // process left preparing failed, with the window its stop lies in.
-func restartOccurrences(tx *sql.Tx, started int64) (err error) {
-	var occurrences []Occurrence
-	if err = eachRecord(tx, "SELECT record FROM occurrences WHERE state='preparing' ORDER BY seq", func(b []byte) error {
-		var o Occurrence
-		e := json.Unmarshal(b, &o)
-		occurrences = append(occurrences, o)
-		return e
-	}); err != nil {
+func restartOccurrences(tx runTx, started int64) (err error) {
+	occurrences, err := tx.preparingOccurrences()
+	if err != nil {
 		return err
 	}
 	for _, o := range occurrences {
-		var since string
-		if err = tx.QueryRow("SELECT at FROM events WHERE kind='occurrence.preparing' AND json_extract(concerns,'$.occurrence')=? ORDER BY sequence DESC LIMIT 1", o.ID).Scan(&since); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
+		since, e := tx.lastPreparing(o.ID)
+		if e != nil && !absent(e) {
+			return e
 		}
 		o.State = "failed"
 		o.Reason = "Source acquisition was interrupted. It was not repeated automatically."
@@ -529,26 +505,6 @@ func restartOccurrences(tx *sql.Tx, started int64) (err error) {
 		}
 	}
 	return nil
-}
-
-// eachRecord reads the record column of a query's rows, closing them before
-// returning: the store's handle has one connection.
-func eachRecord(tx *sql.Tx, query string, each func([]byte) error) error {
-	rows, err := tx.Query(query)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var b []byte
-		if err = rows.Scan(&b); err != nil {
-			return err
-		}
-		if err = each(b); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
 }
 
 // recordStop records an orderly stop, after the dispatcher, automation and

@@ -218,6 +218,23 @@ func readEarlierStore(t *testing.T, st *sqliteStore) {
 	if line, err := st.entryLine("run_chained"); err != nil || string(line) != `{"entryVersion":"1"}` {
 		t.Fatal("chain:", string(line), err)
 	}
+	tr, hash, err := st.trigger("trg_earlier")
+	if err != nil || !tr.HasKey || tr.keyRevision == nil || *tr.keyRevision != 2 || hash != "sha256:7777777777777777777777777777777777777777777777777777777777777777" {
+		t.Fatal("trigger:", tr.ID, hash, err)
+	}
+	if ids, err := st.enabledTriggers(); err != nil || len(ids) != 1 || ids[0] != "trg_earlier" {
+		t.Fatal("enabled triggers:", ids, err)
+	}
+	o, payload, err := st.identifiedOccurrence("trg_earlier", "event:first")
+	if err != nil || o.RunID != "run_earlier" || payload != "sha256:8888888888888888888888888888888888888888888888888888888888888888" {
+		t.Fatal("occurrence:", o.ID, payload, err)
+	}
+	if o, err := st.keyedOccurrence("occ_earlier", "trg_earlier", hash); err != nil || o.State != "submitted" {
+		t.Fatal("keyed occurrence:", o.State, err)
+	}
+	if items, next, err := st.occurrencePage("job_earlier", 1<<62, false, 50); err != nil || len(items) != 1 || next != 0 {
+		t.Fatal("occurrences:", len(items), next, err)
+	}
 	page, err := eventPageFrom(st, 0, journalFilter{})
 	if err != nil {
 		t.Fatal(err)

@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"encoding/json"
 	"math"
 	"net/http"
 	"strconv"
@@ -58,24 +57,13 @@ func (s *Service) triggerRoutes(mux routeMux) {
 			failure(w, e)
 			return
 		}
-		rows, e := s.db.Query("SELECT record,key_hash FROM triggers WHERE job_id=? ORDER BY seq", r.PathValue("job"))
+		held, e := s.store.jobTriggers(r.PathValue("job"))
 		if e != nil {
 			failure(w, e)
 			return
 		}
-		defer rows.Close()
 		items := []Trigger{}
-		for rows.Next() {
-			var raw, hash string
-			var t Trigger
-			if e = rows.Scan(&raw, &hash); e == nil {
-				e = json.Unmarshal([]byte(raw), &t)
-			}
-			if e != nil {
-				failure(w, e)
-				return
-			}
-			t.HasKey = hash != ""
+		for _, t := range held {
 			if t.Config.Cloud != nil {
 				if err := s.validateCloud(t.Config.Cloud); err != nil {
 					t.Problem = err.Error()
@@ -86,10 +74,6 @@ func (s *Service) triggerRoutes(mux routeMux) {
 				}
 			}
 			items = append(items, t)
-		}
-		if e = rows.Err(); e != nil {
-			failure(w, e)
-			return
 		}
 		write(w, 200, map[string]any{"items": items, "localFiles": s.cfg.InputRoot != "", "cloudConnections": s.cloudStatus(), "gatewayProfiles": s.gatewayProfiles()})
 	})
@@ -238,37 +222,13 @@ func (s *Service) triggerRoutes(mux routeMux) {
 			}
 			after = n
 		}
-		rows, e := s.db.Query("SELECT seq,record FROM occurrences WHERE job_id=? AND seq<? AND (?=0 OR (json_extract(record,'$.preparation') IS NOT NULL AND state<>'submitted')) ORDER BY seq DESC LIMIT 51", r.PathValue("job"), after, r.URL.Query().Get("preparations") == "1")
+		items, next, e := s.store.occurrencePage(r.PathValue("job"), after, r.URL.Query().Get("preparations") == "1", 50)
 		if e != nil {
 			failure(w, e)
 			return
 		}
-		defer rows.Close()
-		items := []Occurrence{}
-		var last, next int64
-		for rows.Next() {
-			var seq int64
-			var raw string
-			if e = rows.Scan(&seq, &raw); e != nil {
-				failure(w, e)
-				return
-			}
-			if len(items) == 50 {
-				next = last
-				break
-			}
-			var o Occurrence
-			if e = json.Unmarshal([]byte(raw), &o); e != nil {
-				failure(w, e)
-				return
-			}
-			o = publicOccurrence(o)
-			items = append(items, o)
-			last = seq
-		}
-		if e = rows.Err(); e != nil {
-			failure(w, e)
-			return
+		for i := range items {
+			items[i] = publicOccurrence(items[i])
 		}
 		write(w, 200, map[string]any{"items": items, "next": next})
 	})

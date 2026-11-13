@@ -174,15 +174,9 @@ func storedTrigger(t *testing.T, s *Service, id string) (Trigger, string) {
 
 func admit(t *testing.T, s *Service, tr Trigger, o *Occurrence, identity string) {
 	t.Helper()
-	tx, e := s.db.Begin()
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer tx.Rollback()
-	if e = s.admitOccurrence(tx, tr, o, identity, ""); e != nil {
-		t.Fatal(e)
-	}
-	if e = tx.Commit(); e != nil {
+	if e := s.store.update(func(tx runTx) error {
+		return s.admitOccurrence(tx, tr, o, identity, "")
+	}); e != nil {
 		t.Fatal(e)
 	}
 }

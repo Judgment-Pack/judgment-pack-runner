@@ -85,8 +85,9 @@ Each is the transaction it was, with the same statements in the same order.
   `interrupted` expected, keeping the interrupted attempt in the record, and the `run.queued`
   entry from `interrupted`. A repeated request reads the run and writes nothing.)
 - **Restart** (`restart`). One transaction, under the lock: the `runner.started` entry, every run
-  `runningRuns` reads ended `interrupted` with an entry naming the start, and the occurrences the
-  sqlite kind keeps outside the contract (section 6), through `sqliteTxOf`.
+  `runningRuns` reads ended `interrupted` with an entry naming the start, and every occurrence
+  `preparingOccurrences` reads ended `failed`, with an entry whose window starts at its last
+  `occurrence.preparing` entry (`lastPreparing`).
 - **Release** (`saveRelease`). One transaction: `createRelease` and the `release.previewed` entry.
 - **Stop** (`recordStop`). The `runner.stopped` entry; a failure is not reported, as before.
 
@@ -104,7 +105,7 @@ kinds and for the SQLite statements outside the contract.
 | `conflict` | A versioned update found another state than expected. Nothing is written. | `putRun`'s comparison | The same comparison. |
 | `durability` | A change was not made durable: a write statement, `BEGIN` or `COMMIT` failed. Never a success. | Any other failed write, a failed `BEGIN` or `COMMIT` | Its commit seam. |
 | `unreadable` | A read failed, or a record does not decode. | Any other failed read; a decoding error | A decoding error. |
-| `refused` | An argument outside the contract, refused before anything is written. | `SQLITE_CONSTRAINT_CHECK` (a chain sequence below 1); an unknown kind; `sqliteTxOf` for another kind | A chain sequence below 1. |
+| `refused` | An argument outside the contract, refused before anything is written. | `SQLITE_CONSTRAINT_CHECK` (a chain sequence below 1); an unknown kind; a schema not raised through the contract | A chain sequence below 1. |
 
 An error the Runner's own function returns inside `update` (an `apiError`, `errNoAuditBytes`,
 `errManualProtocol`) is returned unchanged. Opening a store is the kind's own: the sqlite kind's
@@ -178,19 +179,17 @@ the busy timeout, one connection, the schema and its migration, and the store's 
 `metadata`.
 
 The state the contract does not cover yet, kept in the same database and reached through the
-database handle the kind gives the Runner at opening (and `sqliteTxOf` inside a contract
-transaction): triggers and their revisions; occurrences and their keys; job creation and
-revision (`jobs` writes, `job_creations`, `job_revisions`); briefs; workflow executions and their
-artifacts; the manual-admission journal; `metadata` (beside the store's identity and schema: the profile
-registry, the manual-admission demand, the relocation history); the journal's reads, and every
-entry written with the state above.
+database handle the kind gives the Runner at opening: job creation and revision (`jobs` writes,
+`job_creations`, `job_revisions`, and the triggers a job's creation and revision write);
+workflow executions and their artifacts; the manual-admission journal; `metadata` beside the
+store's identity, its schema and the profile rows (the manual-admission demand, the relocation
+history); and every entry written with the state above. With #244, the journal's reads,
+refusals, profile rows, briefs, triggers and occurrences are the contract's (section 9.5).
 
 The statements left on `runs`, `releases` and `jobs` outside the kind, found by searching the
 package for those tables:
 
 - the job and run listings (`list.go`): joins, SQLite's ASCII case folding and a window function;
-- an occurrence's run by its request key (`triggers_dispatch.go`) and an occurrence's admission
-  counting a job's pending runs with its occurrences in one statement (`triggers_store.go`);
 - job creation's and revision's checks over job revisions joined to releases
   (`job_revisions.go`, `dialect_artifact.go`), and a revision's read and write of its job;
 - manual admission (`manual_admission_activation.go`, `manual_execution_binding.go`,
@@ -248,6 +247,13 @@ both kinds' cases to have run and passed.
   transaction, not inside it, so that the transaction reads nothing but the store. A request whose
   body is refused and whose subject's stored history does not decode now answers the body's
   refusal first.
+- With #244: writing a trigger that is not held (`putTrigger`) is `absent`, where the statement
+  changed no row and the write passed; every writer writes a trigger it read in the same
+  transaction or under `automationMu`, so none meets it. A trigger configured through another
+  job is refused as `absent`, as it was refused as SQL's no-rows error. A dispatched occurrence
+  reads its run through `requestedRun` and decodes the run's record, where it read the run's id
+  alone: a record that does not decode now stops the tick, as it stops every other read of the
+  run. A record that does not decode, of a trigger or an occurrence, carries `unreadable`.
 
 ## 9. Everything a Runner keeps
 
@@ -276,14 +282,14 @@ Runner.
 | Jobs | `jobs` (`seq`, `id`, `release_id`, `record`) | Creation (`store.go:422`); revision (`job_revisions.go:189`) | Reads only | Yes: `record.scope` | No: revised in place |
 | Job creations | `job_creations` | Creation (`recordInitialJob`, `job_revisions.go:48`); migration (`:20`) | No | In the record | Yes |
 | Job revisions | `job_revisions` (`request_digest`) | Creation (`job_revisions.go:51`); revision (`:192`); migration (`:21`) | No | In the record | Yes |
-| Triggers | `triggers` (`record`, `key_hash`, `observed`, `pending`, `pending_at`, `key_revision`) | Creation with a job (`store.go:415`) and alone (`triggers_store.go:138`); `saveTrigger` (`:44`) for a state change, a key rotation, the schedule and file ticks and the cloud binding; a job's revision (`job_revisions.go:205`) | No | Yes: `record.scope` | No |
-| Trigger revisions | `trigger_revisions` | `saveTrigger` with history (`triggers_store.go:49`); a job's revision (`job_revisions.go:208`) | No | In the record | Yes. Never read by the Runner |
-| Occurrences, their attempts and `nextAttemptAt` | `occurrences` (`identity`, `payload_digest`, `state`, `record`) | Admission (`triggers_store.go:549`); every state change, preparation, retry and expiry (`recordOccurrence`, `events.go:431`); the restart (`restartOccurrences`, through `sqliteTxOf`) | No | Yes: `record.scope` | No |
-| Occurrence keys | `occurrence_keys` | An event's admission (`triggers_store.go:460`) | No | No: keyed by its occurrence | Yes |
+| Triggers | `triggers` (`record`, `key_hash`, `observed`, `pending`, `pending_at`, `key_revision`) | Creation with a job (`store.go:415`) and alone (`createTrigger`); `putTrigger` for a state change, a key rotation, the schedule and file ticks and the cloud binding; a job's revision (`job_revisions.go:205`) | Yes, but a job's creation and revision | Yes: `record.scope` | No |
+| Trigger revisions | `trigger_revisions` | `putTrigger` with history; a job's revision (`job_revisions.go:208`) | Yes, but a job's revision | In the record | Yes. Never read by the Runner |
+| Occurrences, their attempts and `nextAttemptAt` | `occurrences` (`identity`, `payload_digest`, `state`, `record`) | Admission (`createOccurrence`); every state change, preparation, retry and expiry, and the restart (`recordOccurrence` through `putOccurrence`) | Yes | Yes: `record.scope` | No |
+| Occurrence keys | `occurrence_keys` | An event's admission (`createOccurrenceKey`) | Yes | No: keyed by its occurrence | Yes |
 | Runs (the queue, inputs, records) | `runs` (`state`, `record`) | `createRun`, `putRun` | Yes | Yes: `record.scope` | No: the state advances |
 | Idempotency keys | `runs` (`job_id`, `caller`, `idem`, `request_digest`) | `createRun` | Yes | Through the run | Yes: a key is never bound again |
 | The chain of runs | `run_chain` | `createEntry` | Yes | No | Yes |
-| The journal | `events` | `appendEvent` (`events.go:284`): through `appendJournal` for runs, releases and the Runner's start and stop; directly for job, trigger and occurrence entries and admission refusals (`journalRefusal`, `events.go:605`) | Writes of runs and releases only; no read | Yes: `detail.scope` when the job has one | Yes |
+| The journal | `events` | `appendEvent` (`events.go:284`): through `appendJournal` for runs, releases, triggers, occurrences, admission refusals (`journalRefusal`) and the Runner's start and stop; directly for a job's creation and revision and the trigger entries they write | Yes, but a job's creation and revision; every read through `journalPage` | Yes: `detail.scope` when the job has one | Yes |
 | The manual-admission journal | `manual_attempts` | Manual mode (`manual_admission_journal.go:46`, `:52`) | No | No | No: an attempt is updated |
 | Workflow executions | `workflow_executions`, `workflow_artifacts` | `workflow_store.go`, reached by no route; its tables are made only where it is opened | No | No | No |
 
@@ -332,8 +338,10 @@ failed commit.
 
 ### 9.5 What #244 puts behind the contract
 
-Each operation keeps the statement it replaces, moved into the sqlite kind; the in-memory kind
-implements it; and `store_conformance_widened_test.go` holds the cases every kind runs.
+Each operation keeps the statement it replaces, moved into the sqlite kind
+(`store_sqlite.go`, `store_sqlite_triggers.go`); the in-memory kind implements it; and
+`store_conformance_widened_test.go` and `store_conformance_triggers_test.go` hold the cases every
+kind runs.
 
 | Operation | Where | The sqlite kind's statement | Semantics |
 |---|---|---|---|
@@ -344,6 +352,17 @@ implements it; and `store_conformance_widened_test.go` holds the cases every kin
 | `profileRow(key)`, `putProfileRow(key, row)` | Both; in a transaction | `SELECT value FROM metadata WHERE key=?`; `INSERT ... ON CONFLICT(key) DO UPDATE` | The registry's and the selected profiles' rows, read and written whole, as written; `refused` for any other key, so that no metadata row of the store's identity or schema is reached. |
 | `brief(subject)`, `putBrief(subject, record)` | Both; in a transaction | `SELECT record FROM briefs WHERE subject=?`; `INSERT ... ON CONFLICT(subject) DO UPDATE` | A subject's brief history, as the bytes written. |
 | `raiseSchema(schema)` | In a transaction | `raiseScopedSchema`, `raiseRetrySchema` | Now also `scopedStoreSchema`, from `storeSchema` only; a store at a later schema keeps it. |
+| `trigger(id)` | Both | `SELECT record,key_hash,observed,pending,pending_at,key_revision FROM triggers WHERE id=?` | The trigger with its file cursor and key revision, and its key's digest, or `absent`. |
+| `triggerCount()`, `cloudBindings(except, connection, job)` | Both | `SELECT count(*) FROM triggers [WHERE id<>? AND <binding>]` | The installation's trigger bound, and a cloud binding's other holders. |
+| `occurrence(id)`, `identifiedOccurrence(trigger, identity)` | Both | `SELECT record[,payload_digest] FROM occurrences WHERE ...` | An occurrence by id, or by its trigger's identity with its payload's digest; `absent`. |
+| `enabledTriggers()`, `readyOccurrence()`, `preparableOccurrences(each)` | Outside | The automation tick's and the preparer's statements | Triggers not paused; the oldest accepted occurrence with no input left to prepare; the accepted ones with input to prepare and the waiting ones, in order, to `each` until it chooses one. |
+| `cloudBoundTrigger(connection, job)`, `jobTriggers(job)` | Outside | The cloud signal's and the trigger route's statements | A binding's trigger, or `absent`; a job's triggers, saying whether each holds a key. |
+| `occurrencePage(job, before, preparations, limit)` | Outside | `SELECT seq,record FROM occurrences WHERE job_id=? AND seq<? AND (...) ORDER BY seq DESC LIMIT limit+1` | A page of a job's occurrences, newest first, the filter applied where the kind reads, and the next page's cursor; the extra row is not decoded. |
+| `keyedOccurrence(id, trigger, hash)` | Outside | The three-table join of `eventResult` | One read, so that a key rotated after its caller's check still refuses. |
+| `createTrigger(t)`, `putTrigger(t, hash, history)` | In a transaction | `INSERT INTO triggers(id,job_id,record)`; `saveTrigger`'s `UPDATE` and `INSERT INTO trigger_revisions` | `taken` for a held id, snapshot or cloud binding (`triggers_cloud_binding`); `absent` for a trigger not held. |
+| `createOccurrence(o, identity, payload)`, `putOccurrence(o, expected)`, `createOccurrenceKey(occurrence, hash)` | In a transaction | The admission's `INSERT`s; `recordOccurrence`'s `SELECT state` and `UPDATE` | `taken` for a held id, identity or key; `putOccurrence` is versioned as `putRun` is, and `recordOccurrence` turns its `conflict` into `errPreparationStopped`. |
+| `pendingOccurrences()`, `jobActivity(job)` | In a transaction | The admission's two counts | The automatic queue (`queueLimit`), and a job's runs and occurrences in flight (overlap). |
+| `preparingOccurrences()`, `lastPreparing(occurrence)` | In a transaction | The restart's statements | What the last process left preparing, and when each began. `sqliteTxOf` is gone. |
 
 Every kind keeps a journal entry as one encoding, `journalRowOf`, with the sqlite kind's columns,
 and reads it back through `journalRow.event`, which the sqlite kind's `scanEvent` uses too, so an

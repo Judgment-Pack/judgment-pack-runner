@@ -59,13 +59,16 @@ type memoryState struct {
 	// histories, by subject.
 	profiles map[string]string
 	briefs   map[string][]byte
+	// automation is the triggers and occurrences
+	// (store_memory_triggers_test.go).
+	automation memoryAutomation
 	// schema is the last schema raised, or none.
 	schema string
 }
 
 func (m memoryState) clone() memoryState {
 	return memoryState{releases: maps.Clone(m.releases), jobs: maps.Clone(m.jobs), revisions: slices.Clone(m.revisions), runs: slices.Clone(m.runs), lastSeq: m.lastSeq, chain: slices.Clone(m.chain), journal: slices.Clone(m.journal),
-		profiles: maps.Clone(m.profiles), briefs: maps.Clone(m.briefs), schema: m.schema}
+		profiles: maps.Clone(m.profiles), briefs: maps.Clone(m.briefs), automation: m.automation.clone(), schema: m.schema}
 }
 
 // memoryStore is the in-memory kind.
@@ -81,7 +84,7 @@ type memoryStore struct {
 // is at opening.
 func newMemoryStore() *memoryStore {
 	began := journalRowOf(change{kind: "journal.began", by: runnerActor, detail: EventDetail{Held: &EventHeld{}}})
-	return &memoryStore{state: memoryState{releases: map[string][]byte{}, jobs: map[string][]byte{}, profiles: map[string]string{}, briefs: map[string][]byte{}, journal: []journalRow{began}}}
+	return &memoryStore{state: memoryState{releases: map[string][]byte{}, jobs: map[string][]byte{}, profiles: map[string]string{}, briefs: map[string][]byte{}, automation: newMemoryAutomation(), journal: []journalRow{began}}}
 }
 
 // seedJob keeps a job and its first revision, as one made outside the
@@ -446,6 +449,18 @@ func (r memoryReads) recordScope(records, id string) (string, error) {
 		record = r.s.jobs[id]
 	case "runs":
 		for _, held := range r.s.runs {
+			if held.id == id {
+				record = held.record
+			}
+		}
+	case "triggers":
+		for _, held := range r.s.automation.triggers {
+			if held.id == id {
+				record = held.record
+			}
+		}
+	case "occurrences":
+		for _, held := range r.s.automation.occurrences {
 			if held.id == id {
 				record = held.record
 			}
