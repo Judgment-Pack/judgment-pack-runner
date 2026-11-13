@@ -45,6 +45,11 @@ const (
 	// members issuer and subject an entry of EventEntryVersion never holds.
 	// Every other entry keeps EventEntryVersion.
 	callerEntryVersion = "2"
+	// scopedEntryVersion is the shape of an entry about a job created under a
+	// scope identifier, whose member scope an entry of an earlier version
+	// never holds, whatever its by. An entry about a job created under none
+	// keeps the version it had.
+	scopedEntryVersion = "3"
 	// eventPage is the most entries a page of the journal holds.
 	eventPage = 50
 	// maxEventReason bounds the reason an entry copies from its record.
@@ -120,8 +125,11 @@ type EventConcerns struct {
 	Run        string `json:"run,omitempty"`
 }
 
-// EventDetail holds the members particular to a kind.
+// EventDetail holds the members particular to a kind, and the scope.
 type EventDetail struct {
+	// Scope is the scope identifier of the job the entry is about, on an
+	// entry of any kind that names a job created under one (scope.go).
+	Scope            string             `json:"scope,omitempty"`
 	PreviousRevision json.RawMessage    `json:"previousRevision,omitempty"`
 	TriggerKind      string             `json:"triggerKind,omitempty"`
 	KeyIssued        bool               `json:"keyIssued,omitempty"`
@@ -251,6 +259,9 @@ func appendEvent(tx *sql.Tx, c change) (int64, error) {
 	if c.by.Kind == "caller" {
 		version = callerEntryVersion
 	}
+	if c.detail.Scope != "" {
+		version = scopedEntryVersion
+	}
 	res, err := tx.Exec("INSERT INTO events(entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail,job_id,release_id,refusal) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 		version, c.kind, c.at, string(encode(c.by)), string(encode(c.concerns)), revision, from, to, boundedReason(c.reason), string(encode(c.detail)), c.concerns.Job, c.concerns.Release, c.refusal)
 	if err != nil {
@@ -296,6 +307,7 @@ func occurrenceEventKind(from, to string) string {
 
 func runChange(r Run, from string, by EventActor, detail EventDetail) change {
 	c := change{kind: runEventKind(from, r.State), by: by, concerns: EventConcerns{Job: r.JobID, Release: r.ReleaseID, Run: r.ID}, states: true, from: from, to: r.State, reason: r.Problem, detail: detail}
+	c.detail.Scope = r.Scope
 	if r.Trigger != nil {
 		c.concerns.Trigger = r.Trigger.TriggerID
 		c.concerns.Occurrence = r.Trigger.OccurrenceID
@@ -314,6 +326,7 @@ func occurrenceChange(o Occurrence, from string, by EventActor) change {
 	case c.kind == "occurrence.ready":
 		c.detail.ReadyUntil = o.ReadyUntil
 	}
+	c.detail.Scope = o.Scope
 	return c
 }
 
@@ -509,7 +522,9 @@ func (s *Service) saveReleaseBy(by requester, r Release) error {
 // names nothing held, and a 5xx says the store or Runner failed; neither is
 // journaled. The refusal is answered as it was whether or not its entry could
 // be written.
-func (s *Service) refused(request string, err error, by EventActor, concerns EventConcerns) {
+//
+// scope is the scope identifier of the job the refusal names, "" for none.
+func (s *Service) refused(request string, err error, by EventActor, concerns EventConcerns, scope string) {
 	var api *apiError
 	if !errors.As(err, &api) {
 		return
@@ -519,7 +534,7 @@ func (s *Service) refused(request string, err error, by EventActor, concerns Eve
 	default:
 		return
 	}
-	s.journalRefusal(change{kind: "admission.refused", by: by, concerns: concerns, detail: EventDetail{Request: request, Status: api.Status, Code: api.Code}})
+	s.journalRefusal(change{kind: "admission.refused", by: by, concerns: concerns, detail: EventDetail{Scope: scope, Request: request, Status: api.Status, Code: api.Code}})
 }
 
 // journalRefusal writes a refusal unless the journal holds an identical one,
@@ -563,7 +578,7 @@ func (s *Service) refusedRun(jobID string, err error) { s.refusedRunBy(requester
 // refusedRunBy is refusedRun, for a submission by.
 func (s *Service) refusedRunBy(by requester, jobID string, err error) {
 	if j, e := s.job(jobID); e == nil {
-		s.refused("submit-run", err, s.actor(by), EventConcerns{Job: j.ID, Release: j.ReleaseID})
+		s.refused("submit-run", err, s.actor(by), EventConcerns{Job: j.ID, Release: j.ReleaseID}, j.Scope)
 	}
 }
 
@@ -602,7 +617,7 @@ func (s *Service) refusedEventBy(by requester, triggerID string, err error) {
 	if errors.As(err, &authenticated) {
 		actor = authenticated.by
 	}
-	s.refused("deliver-event", err, actor, EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID})
+	s.refused("deliver-event", err, actor, EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID}, j.Scope)
 }
 
 // refusedJob journals a refused job creation that names a release the store
@@ -614,7 +629,7 @@ func (s *Service) refusedJob(releaseID string, err error) {
 // refusedJobBy is refusedJob, for a job creation by.
 func (s *Service) refusedJobBy(by requester, releaseID string, err error) {
 	if _, e := s.release(releaseID); e == nil {
-		s.refused("create-job", err, s.actor(by), EventConcerns{Release: releaseID})
+		s.refused("create-job", err, s.actor(by), EventConcerns{Release: releaseID}, "")
 	}
 }
 
@@ -625,6 +640,7 @@ func (s *Service) refusedCloudSignal(connection string, t *Trigger, reason strin
 	if t != nil {
 		if j, e := s.job(t.JobID); e == nil {
 			c.concerns = EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID}
+			c.detail.Scope = j.Scope
 		}
 	}
 	s.journalRefusal(c)
@@ -829,7 +845,9 @@ func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // eventsHandler serves every entry; with a job, that job's entries and
-// Runner's own, which concern no job but explain a gap in every job's.
+// Runner's own, which concern no job but explain a gap in every job's; with a
+// scope identifier, of those, the entries that carry it, byte for byte
+// (scope.go), and no other.
 func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	req, err := eventQuery(r.URL.RawQuery)
 	if err != nil {
@@ -845,6 +863,9 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		// The job route's entries, and Runner's own.
 		where, args = jobEntries+" OR kind IN ('journal.began','runner.started','runner.stopped')", []any{j.ID, j.ID}
+	}
+	if scope := scopeNamed(r.Context()); scope != "" {
+		where, args = "("+where+") AND json_extract(detail,'$.scope')=?", append(args, scope)
 	}
 	page, err := s.eventPageFor(req, where, args...)
 	if err != nil {

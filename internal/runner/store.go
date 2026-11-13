@@ -313,13 +313,15 @@ func (s *Service) createJob(name, releaseID string) (Job, error) {
 	return s.createJobConfigured(name, releaseID, nil)
 }
 func (s *Service) createJobConfigured(name, releaseID string, c *TriggerConfig) (Job, error) {
-	return s.createJobBy(requester{}, name, releaseID, c)
+	return s.createJobBy(requester{}, name, releaseID, "", c)
 }
 
-// createJobBy is createJobConfigured, for a request by: the journal names by
-// as the creator of the job and of its first trigger.
-func (s *Service) createJobBy(by requester, name, releaseID string, c *TriggerConfig) (Job, error) {
-	if s.cfg.ExecutorAdmission != nil && c != nil {
+// createJobBy is createJobConfigured, for a request by, under the scope
+// identifier scope ("" for none, scope.go): the journal names by as the
+// creator of the job and of its first trigger. The scope is fixed on the job
+// here and nowhere else, and a repeated creation must name the same one.
+func (s *Service) createJobBy(by requester, name, releaseID, scope string, c *TriggerConfig) (Job, error) {
+	if s.cfg.ExecutorAdmission != nil && (c != nil || scope != "") {
 		return Job{}, manualUnsupported()
 	}
 	s.automationMu.Lock()
@@ -353,7 +355,7 @@ func (s *Service) createJobBy(by requester, name, releaseID string, c *TriggerCo
 		if err = json.Unmarshal(held, &stored); err != nil {
 			return stored, err
 		}
-		if stored.Name != name || stored.InitialTriggerDigest != initialDigest {
+		if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope {
 			return Job{}, &apiError{409, "release_already_used", "This preview already created a different job. Preview again to create another job."}
 		}
 		return stored, nil
@@ -387,7 +389,7 @@ func (s *Service) createJobBy(by requester, name, releaseID string, c *TriggerCo
 	if err = admitJobPack(tx, r); err != nil {
 		return Job{}, err
 	}
-	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest}
+	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest, Scope: scope}
 	if c != nil {
 		var count int
 		if err = tx.QueryRow("SELECT count(*) FROM triggers").Scan(&count); err != nil {
@@ -396,7 +398,7 @@ func (s *Service) createJobBy(by requester, name, releaseID string, c *TriggerCo
 		if count >= 128 {
 			return Job{}, bad("trigger_limit", "This local runner supports up to 128 triggers.")
 		}
-		t := Trigger{ID: id("trg_"), JobID: j.ID, Revision: 1, Authority: "local", Config: *c, Paused: true, CreatedAt: now(), UpdatedAt: now()}
+		t := Trigger{ID: id("trg_"), JobID: j.ID, Revision: 1, Authority: "local", Config: *c, Paused: true, CreatedAt: now(), UpdatedAt: now(), Scope: j.Scope}
 		if c.Kind == "cloud" {
 			t.Authority = "google-cloud"
 		}
@@ -414,11 +416,18 @@ func (s *Service) createJobBy(by requester, name, releaseID string, c *TriggerCo
 	if err = recordInitialJob(tx, j); err != nil {
 		return Job{}, err
 	}
-	if _, err = appendEvent(tx, change{kind: "job.created", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}}); err != nil {
+	// A store's first job under a scope identifier raises its schema in the
+	// same transaction, so that no earlier Runner opens it (scope.go).
+	if j.Scope != "" {
+		if err = raiseScopedSchema(tx); err != nil {
+			return Job{}, err
+		}
+	}
+	if _, err = appendEvent(tx, change{kind: "job.created", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}, detail: EventDetail{Scope: j.Scope}}); err != nil {
 		return Job{}, err
 	}
 	if c != nil {
-		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: j.InitialTriggerID}, revision: 1, states: true, to: "paused", detail: EventDetail{PreviousRevision: revisionValue(0), TriggerKind: c.Kind}}); err != nil {
+		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: j.InitialTriggerID}, revision: 1, states: true, to: "paused", detail: EventDetail{Scope: j.Scope, PreviousRevision: revisionValue(0), TriggerKind: c.Kind}}); err != nil {
 			return Job{}, err
 		}
 	}
@@ -572,7 +581,7 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 		if count >= queueLimit {
 			return &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 		}
-		r = Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller}
+		r = Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller, Scope: j.Scope}
 		if err = tx.createRun(r, caller, key, hash); err != nil {
 			return err
 		}

@@ -296,7 +296,7 @@ func (s *Service) selectedReport() map[string]any {
 	return map[string]any{"contract": selectedPreparationContract, "bound": map[string]int{"profiles": selectedProfileBound, "profilesBytes": selectedProfilesBytes}, "profiles": profiles}
 }
 
-func (s *Service) selectedProfileRoutes(mux *http.ServeMux) {
+func (s *Service) selectedProfileRoutes(mux routeMux) {
 	mux.HandleFunc("GET /v1/selected-profiles", func(w http.ResponseWriter, r *http.Request) {
 		if requestConversion(r) == nil {
 			failure(w, selectedUnselected())

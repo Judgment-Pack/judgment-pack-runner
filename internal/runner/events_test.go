@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -235,6 +236,22 @@ type journalWorld struct {
 	prepared, legacy            string
 	completed, interrupted      Run
 	left                        Run
+	// scope is the scope identifier every job of the scenario is created
+	// under, "" for none (scope.go).
+	scope string
+}
+
+// createJob creates a job of the scenario, under its scope.
+func (w *journalWorld) createJob(name, releaseID string, c *TriggerConfig) (Job, error) {
+	return w.s.createJobBy(requester{}, name, releaseID, w.scope, c)
+}
+
+// path is a route of the scenario's requests, naming its scope.
+func (w *journalWorld) path(route string) string {
+	if w.scope == "" {
+		return route
+	}
+	return route + "?scope=" + url.QueryEscape(w.scope)
 }
 
 type journalStep struct {
@@ -284,7 +301,7 @@ func journalSteps() []journalStep {
 		}},
 		{"a job is created with an event trigger", func(w *journalWorld) {
 			c := eventTriggerConfig()
-			j, e := w.s.createJobConfigured("Journal", w.release.ID, &c)
+			j, e := w.createJob("Journal", w.release.ID, &c)
 			must(w.t, e)
 			w.job = j
 			w.event, _ = storedTrigger(w.t, w.s, j.InitialTriggerID)
@@ -296,7 +313,7 @@ func journalSteps() []journalStep {
 		}},
 		{"repeating the creation changes nothing", func(w *journalWorld) {
 			c := eventTriggerConfig()
-			_, e := w.s.createJobConfigured("Journal", w.release.ID, &c)
+			_, e := w.createJob("Journal", w.release.ID, &c)
 			must(w.t, e)
 		}, nil, nil},
 		{"the trigger's configuration is saved", func(w *journalWorld) {
@@ -470,7 +487,7 @@ func journalSteps() []journalStep {
 		}, []string{"occurrence.cancelled"}, nil},
 		{"a release whose Runtime fails, and its job", func(w *journalWorld) {
 			w.failing = journalRelease(w.t, w.s, failingRuntime(w.t, w.cfg.Dir))
-			j, e := w.s.createJob("Failing", w.failing.ID)
+			j, e := w.createJob("Failing", w.failing.ID, nil)
 			must(w.t, e)
 			w.failingJob = j
 		}, []string{"release.previewed", "job.created"}, nil},
@@ -505,7 +522,7 @@ func journalSteps() []journalStep {
 		}},
 		{"a release whose Runtime waits, its job, and a submission", func(w *journalWorld) {
 			w.waiting = journalRelease(w.t, w.s, waitingRuntime(w.t, w.cfg.Dir, filepath.Join(w.t.TempDir(), "pid")))
-			j, e := w.s.createJob("Waiting", w.waiting.ID)
+			j, e := w.createJob("Waiting", w.waiting.ID, nil)
 			must(w.t, e)
 			w.waitingJob = j
 			w.interrupted, _, e = w.s.submit(j.ID, "stopped", journalInput())
@@ -529,7 +546,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"an event with a key no longer current is refused", func(w *journalWorld) {
-			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(deliver("stale"))), map[string]string{"X-Trigger-Token": w.oldToken}); got.Code != 401 {
+			if got := serve(w.t, w.s, "POST", w.path("/v1/triggers/"+w.event.ID+"/events"), string(encode(deliver("stale"))), map[string]string{"X-Trigger-Token": w.oldToken}); got.Code != 401 {
 				w.t.Fatal(got.Code, got.Body)
 			}
 		}, []string{"admission.refused"}, func(w *journalWorld, added []Event) {
@@ -539,7 +556,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"the same refusal within a minute is not written again", func(w *journalWorld) {
-			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(deliver("stale"))), map[string]string{"X-Trigger-Token": w.oldToken}); got.Code != 401 {
+			if got := serve(w.t, w.s, "POST", w.path("/v1/triggers/"+w.event.ID+"/events"), string(encode(deliver("stale"))), map[string]string{"X-Trigger-Token": w.oldToken}); got.Code != 401 {
 				w.t.Fatal(got.Code, got.Body)
 			}
 		}, nil, nil},
@@ -548,7 +565,7 @@ func journalSteps() []journalStep {
 			var e error
 			w.event, _, e = w.s.setTriggerState(tr.ID, tr.Revision, true, false)
 			must(w.t, e)
-			if got := serve(w.t, w.s, "POST", "/v1/triggers/"+w.event.ID+"/events", string(encode(deliver("paused"))), map[string]string{"X-Trigger-Token": w.token}); got.Code != 409 {
+			if got := serve(w.t, w.s, "POST", w.path("/v1/triggers/"+w.event.ID+"/events"), string(encode(deliver("paused"))), map[string]string{"X-Trigger-Token": w.token}); got.Code != 409 {
 				w.t.Fatal(got.Code, got.Body)
 			}
 		}, []string{"trigger.paused", "admission.refused"}, func(w *journalWorld, added []Event) {
@@ -557,7 +574,7 @@ func journalSteps() []journalStep {
 			}
 		}},
 		{"a submission without an idempotency key is refused", func(w *journalWorld) {
-			if got := serve(w.t, w.s, "POST", "/v1/jobs/"+w.job.ID+"/runs", `{"facts":{}}`, nil); got.Code != 400 {
+			if got := serve(w.t, w.s, "POST", w.path("/v1/jobs/"+w.job.ID+"/runs"), `{"facts":{}}`, nil); got.Code != 400 {
 				w.t.Fatal(got.Code, got.Body)
 			}
 		}, []string{"admission.refused"}, func(w *journalWorld, added []Event) {
@@ -585,7 +602,7 @@ func journalSteps() []journalStep {
 			}
 		}, nil, nil},
 		{"a submission to a job the store does not hold is answered, and not journaled", func(w *journalWorld) {
-			if got := serve(w.t, w.s, "POST", "/v1/jobs/job_unknown/runs", `{"facts":{}}`, map[string]string{"Idempotency-Key": "k"}); got.Code != 404 {
+			if got := serve(w.t, w.s, "POST", w.path("/v1/jobs/job_unknown/runs"), `{"facts":{}}`, map[string]string{"Idempotency-Key": "k"}); got.Code != 404 {
 				w.t.Fatal(got.Code, got.Body)
 			}
 		}, nil, nil},
@@ -637,7 +654,7 @@ func journalSteps() []journalStep {
 		}},
 		{"a job is explicitly upgraded", func(w *journalWorld) {
 			first := journalRelease(w.t, w.s, w.s.runtimeDigest)
-			j, e := w.s.createJob("Upgrade example", first.ID)
+			j, e := w.createJob("Upgrade example", first.ID, nil)
 			must(w.t, e)
 			next := journalRelease(w.t, w.s, w.s.runtimeDigest)
 			_, e = w.s.upgradeJob(context.Background(), j.ID, UpgradeJobRequest{ReleaseID: next.ID, BaseReleaseID: first.ID, BaseRevision: 1, Reviewed: true})
@@ -650,7 +667,14 @@ func journalSteps() []journalStep {
 // holds each to the entries it must add.
 func runJournalSteps(t *testing.T, cfg Config, check bool) *journalWorld {
 	t.Helper()
-	w := &journalWorld{t: t, cfg: cfg}
+	return runScopedJournalSteps(t, cfg, "", check)
+}
+
+// runScopedJournalSteps is runJournalSteps with every job created, and every
+// request about one made, under scope.
+func runScopedJournalSteps(t *testing.T, cfg Config, scope string, check bool) *journalWorld {
+	t.Helper()
+	w := &journalWorld{t: t, cfg: cfg, scope: scope}
 	t.Cleanup(func() {
 		if w.s != nil {
 			w.s.Close()

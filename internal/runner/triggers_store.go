@@ -110,7 +110,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		if count >= 128 {
 			return t, bad("trigger_limit", "This local runner supports up to 128 triggers.")
 		}
-		t = Trigger{ID: id("trg_"), JobID: jobID, Revision: 1, Authority: "local", CreatedAt: now()}
+		t = Trigger{ID: id("trg_"), JobID: jobID, Revision: 1, Authority: "local", CreatedAt: now(), Scope: job.Scope}
 	}
 	if c.Cloud != nil {
 		var other int
@@ -144,7 +144,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 	if e = saveTrigger(tx, t, hash, true); e != nil {
 		return t, e
 	}
-	if _, e = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}}); e != nil {
+	if _, e = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}}); e != nil {
 		return t, e
 	}
 	return t, tx.Commit()
@@ -236,7 +236,7 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 	t.Revision++
 	t.UpdatedAt = now()
 	t.Problem = ""
-	detail := EventDetail{PreviousRevision: revisionValue(t.Revision - 1), KeyIssued: secret != ""}
+	detail := EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(t.Revision - 1), KeyIssued: secret != ""}
 	if secret != "" {
 		issued := t.Revision
 		t.keyRevision = &issued
@@ -305,7 +305,7 @@ func (s *Service) rotateTriggerKeyBy(by requester, triggerID string, revision in
 	issued := t.Revision
 	t.keyRevision = &issued
 	state := triggerState(t.Paused)
-	e = s.writeTriggerChange(t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{PreviousRevision: revisionValue(t.Revision - 1)}})
+	e = s.writeTriggerChange(t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(t.Revision - 1)}})
 	return t, secret, e
 }
 func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
@@ -510,7 +510,7 @@ func (s *Service) eventResult(triggerID, occurrenceID, token string) (map[string
 	return answer, nil
 }
 func newOccurrence(t Trigger, j Job, at time.Time) Occurrence {
-	return Occurrence{PreparationSeconds: t.Config.PreparationSeconds, QueueSeconds: t.Config.QueueSeconds, ID: id("occ_"), JobID: j.ID, ReleaseID: j.ReleaseID, JobRevision: j.Revision, TriggerID: t.ID, TriggerRevision: t.Revision, Kind: t.Config.Kind, ReceivedAt: at.UTC().Format(time.RFC3339Nano), ExpiresAt: at.Add(time.Duration(t.Config.QueueSeconds) * time.Second).UTC().Format(time.RFC3339Nano), State: "accepted"}
+	return Occurrence{PreparationSeconds: t.Config.PreparationSeconds, QueueSeconds: t.Config.QueueSeconds, ID: id("occ_"), JobID: j.ID, ReleaseID: j.ReleaseID, JobRevision: j.Revision, TriggerID: t.ID, TriggerRevision: t.Revision, Kind: t.Config.Kind, ReceivedAt: at.UTC().Format(time.RFC3339Nano), ExpiresAt: at.Add(time.Duration(t.Config.QueueSeconds) * time.Second).UTC().Format(time.RFC3339Nano), State: "accepted", Scope: j.Scope}
 }
 func (s *Service) findOccurrence(trigger, identity string) (Occurrence, string, error) {
 	var o Occurrence

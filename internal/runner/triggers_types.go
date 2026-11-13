@@ -34,6 +34,9 @@ type Trigger struct {
 	NextAt    string        `json:"nextAt,omitempty"`
 	HasKey    bool          `json:"hasKey"`
 	Problem   string        `json:"problem,omitempty"`
+	// Scope is the scope identifier of the trigger's job (scope.go). A
+	// trigger of a job created under none has none.
+	Scope string `json:"scope,omitempty"`
 	// Persistent file observer cursor, excluded from public API responses.
 	observed, pending, pendingAt string
 	// keyRevision is the revision at which the trigger's current event key
@@ -75,6 +78,9 @@ type Occurrence struct {
 	MissedThrough      string             `json:"missedThrough,omitempty"`
 	PendingInput       *AutomaticInput    `json:"pendingInput,omitempty"`
 	Input              *Input             `json:"input,omitempty"`
+	// Scope is the scope identifier of the occurrence's job (scope.go). An
+	// occurrence of a job created under none has none.
+	Scope string `json:"scope,omitempty"`
 }
 type EventDelivery struct {
 	ID         string `json:"id"`
