@@ -8,11 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -652,45 +653,69 @@ func TestTheParameterDigestKeepsListOrderAndDecimalSpelling(t *testing.T) {
 	}
 }
 
-// goCommand is the go command of the toolchain that built this test, by its
-// path: no program is looked up by name.
-func goCommand(t *testing.T) string {
-	t.Helper()
-	root := runtime.GOROOT()
-	if root == "" {
-		t.Skip("this test binary does not know its toolchain's root")
-	}
-	path := filepath.Join(root, "bin", "go")
-	if runtime.GOOS == "windows" {
-		path += ".exe"
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Skip("the go command is not at the toolchain's root: ", err)
-	}
-	return path
+// module is this module's path, which an import inside it begins with.
+const module = "github.com/Judgment-Pack/judgment-pack-runner"
+
+// standardAllowed are the standard-library packages the package and every
+// package of this module it imports, at any depth, may import: a closed
+// list, none of which reaches the network or starts a process. A package
+// added to it must be one of those too.
+var standardAllowed = map[string]bool{
+	"bytes": true, "crypto/hmac": true, "crypto/sha256": true, "encoding/base64": true, "encoding/hex": true,
+	"encoding/json": true, "errors": true, "fmt": true, "io": true, "math": true, "math/big": true,
+	"regexp": true, "runtime": true, "sort": true, "strconv": true, "strings": true, "sync": true,
+	"sync/atomic": true, "time": true, "unicode/utf8": true,
 }
 
-// The package's dependencies, as go list reports them, include no network
-// package and none that starts a process.
+// The package has no network dependency, read from its source and not from
+// a program: the imports of every Go file, tests aside, of the package and
+// of each package of this module it imports, at any depth, are each a
+// package of this module or one of the closed list above.
 func TestThePackageHasNoNetworkDependency(t *testing.T) {
-	cmd := exec.Command(goCommand(t), "list", "-deps", ".")
-	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOFLAGS=-mod=readonly")
-	out, err := cmd.Output()
-	if err != nil {
-		var stderr []byte
-		if e, ok := err.(*exec.ExitError); ok {
-			stderr = e.Stderr
+	root := filepath.Join("..", "..")
+	visited := map[string]bool{}
+	pending := []string{module + "/sdk/dialect"}
+	for len(pending) > 0 {
+		path := pending[0]
+		pending = pending[1:]
+		if visited[path] {
+			continue
 		}
-		t.Fatalf("go list: %v\n%s", err, stderr)
+		visited[path] = true
+		if strings.HasPrefix(path, module+"/internal/runner") {
+			t.Errorf("the package depends on %s", path)
+		}
+		dir := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(path, module+"/")))
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("package %s: no Go files in %s (%v)", path, dir, err)
+		}
+		for _, file := range files {
+			if strings.HasSuffix(file, "_test.go") {
+				continue
+			}
+			f, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, spec := range f.Imports {
+				imported, err := strconv.Unquote(spec.Path.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch {
+				case imported == module || strings.HasPrefix(imported, module+"/"):
+					pending = append(pending, imported)
+				case !standardAllowed[imported]:
+					t.Errorf("%s imports %s, which is not on the closed list of standard-library packages", file, imported)
+				}
+			}
+		}
 	}
-	deps := strings.Fields(string(out))
-	if len(deps) < 10 || deps[len(deps)-1] != "github.com/Judgment-Pack/judgment-pack-runner/sdk/dialect" {
-		t.Fatalf("go list -deps gave an unexpected list: %q", deps)
-	}
-	for _, p := range deps {
-		if p == "net" || strings.HasPrefix(p, "net/") || p == "crypto/tls" || p == "crypto/x509" || p == "os/exec" || p == "plugin" ||
-			strings.HasPrefix(p, "github.com/Judgment-Pack/judgment-pack-runner/internal/runner") {
-			t.Errorf("the package depends on %s", p)
+	// The walk reached the engine and what it imports, so it is not vacuous.
+	for _, want := range []string{"/sdk/dialect", "/internal/dialect4", "/internal/derivation"} {
+		if !visited[module+want] {
+			t.Errorf("the walk did not reach %s: %v", want, visited)
 		}
 	}
 }
