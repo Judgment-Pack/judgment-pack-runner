@@ -84,13 +84,13 @@ that ends `failed` or `expired`, from now on carries `errorClass`, one of:
 
 | Class | Meaning | Produced by |
 |---|---|---|
-| `source` | a source acquisition through a Gateway connection failed: no answer, a refusal, an answer over its limit, a receipt for another session | an occurrence whose acquisition failed with `gateway_unavailable`, `gateway_refused`, `gateway_response_too_large` or `gateway_receipt_mismatch` |
+| `source` | a source acquisition through a Gateway connection failed: no answer, a refusal other than 401 or 403, an answer over its limit, a receipt for another session | an occurrence whose acquisition failed with `gateway_unavailable`, `gateway_refused` (any status but 401 and 403), `gateway_response_too_large` or `gateway_receipt_mismatch` |
 | `preparation` | the input could not be read or prepared, or no longer passes its checks | an occurrence whose input could not be read or prepared for another reason; an occurrence whose run Runner refused to queue for its input (an answer below 500); a run whose input failed its check again at dispatch; `prepared-by-earlier-runner` |
-| `evaluation` | the Runtime's evaluation failed, or what it wrote did not pass Runner's checks | a run whose evaluation failed |
-| `configuration` | what the work was set up with changed or is not installed | `profile-set-aside`; a run whose release's profiles failed their check at dispatch; an occurrence whose job's release changed before admission; an occurrence whose acquisition named a connection no longer installed (`gateway_connection_required`) |
+| `evaluation` | the Runtime's evaluation process started and failed, or what it wrote did not pass Runner's checks | a run whose Runtime, once started to evaluate, exited with an error, was stopped at its deadline, or answered out of form or out of its checks |
+| `configuration` | what the work was set up with changed, is not installed, or was refused access | `profile-set-aside`; a run whose release's profiles failed their check at dispatch; an occurrence whose job's release changed before admission; an occurrence whose acquisition named a connection no longer installed (`gateway_connection_required`); an occurrence whose acquisition the gateway refused 401 or 403 (`gateway_refused`, the status kept since `retries.md`): Runner's credential, or the connection's access to its provider, was refused |
 | `limit` | a time or count bound ended the work | `queue-expired` (a run or an occurrence), `attempt-limit-reached`, `retry-wait-too-long`, a durable preparation's source wait expiring |
 | `interrupted` | Runner stopped or restarted during the work | a run interrupted at a stop or found at a restart; an acquisition found at a restart; `runner-stopped` and `runner-restarted`, the reasons of an attempt a retry kept (`retries.md`) |
-| `internal` | Runner's own fault | `binding-refused` (a binding the Runtime refused is Runner's defect); a run whose release could not be read at dispatch; an occurrence whose submission Runner could not make (an answer of 500 or more) |
+| `internal` | Runner's own fault | `binding-refused` (a binding the Runtime refused is Runner's defect); a run whose release could not be read at dispatch; a run that failed before the Runtime's evaluation process started (see below); an occurrence whose submission Runner could not make (an answer of 500 or more) |
 
 The list is closed: a class is added only with a change of this record, and a
 reader may treat an unknown class as a newer Runner's. **Every reason code
@@ -99,8 +99,41 @@ maps to exactly one class**, by the table `reasonClasses`
 `trigger-paused`, `queue-full`, `overlap`) are a trigger's own rule, not a
 failure, and are listed apart (`notFailureReasons`); a skipped occurrence has
 no class. A test reads every code the package assigns to a `reason` and holds
-it to one of the two lists. A failure that has a sentence and no code takes
-its class from the place it is met, as the table's last column says.
+it to one of the two lists, whether the code is assigned where it is written
+or passed to a function that assigns it (`stopPreparation`). A failure that
+has a sentence and no code takes its class from the place it is met, as the
+table's last column says.
+
+**Before the Runtime evaluates.** A run is `evaluation` only once the
+Runtime's evaluation process has started (`invokeStarting` marks the start):
+the evaluation's own failure. Every failure of a dispatched run before that is
+`internal`, whatever the admission:
+
+- what Runner retained, checked again before the Runtime is asked: the
+  preparation recomputed, the pack's and the reviewed set's digests, the
+  pinned Runtime's bytes;
+- the pinned Runtime asked what it admits (its conversion limits, whether it
+  takes a binding), and the Runtime's evaluation process that could not be
+  started;
+- under manual admission, every refusal before the start: the protocol's own
+  checks (`errManualProtocol`), an attempt the run or its intent already holds
+  (a replay barrier, never a permit), a reservation the authority did not
+  commit or whose answer did not arrive, a start commitment it refused or did
+  not answer, a launch whose material changed.
+
+None of these is the job's own setup, which is checked, and classed
+`configuration`, before them: a profile set aside, a release's profiles, a
+release that changed before admission. The authority's answer does not say
+whether a reservation was declined for the job's registration or not reached
+at all, so Runner does not call it `configuration`; it is the admission
+channel's failure, which is Runner's.
+
+**Where, not whether.** A class says where the failure arose, not whether
+trying again will help. `source` and `configuration` are not "transient" and
+"permanent": whether an acquisition is attempted again is the job's retry
+policy's alone (`retries.md`), which reads the gateway's status and its
+form, not the class; a run is queued again only by a caller's retry. A
+reader that retries by class retries what this record does not promise.
 
 **Not a failure.** A completed run has no error class, whatever its
 disposition: an `unresolved` decision is a decision, counted in `byKind`, and
@@ -126,6 +159,13 @@ Following the journal's rule that a member added later raises `entryVersion`,
 `entryVersion` `"5"`**, whatever its `by`, scope and attempt (an entry of
 `"5"` may hold a caller, a scope and an attempt as well). Every other entry
 keeps its version and its bytes.
+
+**A retried run's first end stays.** A retry changes the run's record, not
+its journal: the `run.interrupted` entry of its first end, with its `counts`
+and `errorClass` `interrupted`, stays, and the run's next end is a new entry.
+A follower of `errorClass=interrupted` keeps the first; one of
+`kind=run.completed` may later read the same run completed. The record is the
+run's state now; the journal is every change it went through.
 
 ## 5. Filters
 
@@ -162,10 +202,13 @@ an entry's place in the order does not depend on the filter. Values:
   kinds, an `outcome` out of form, or any of them given more than 10 times, is
   `400` `invalid_filter`, as a malformed `state` is; on `GET /v1/jobs` either
   run filter is `400` `invalid_filter`, as `state` is;
-- a piece of the query that does not decode (`outcome=%zz`, a `;`) and names
-  one of the filters is `400` `invalid_filter`, not dropped, so that a filter
-  is never read as none (the runs listings read the rest of their query
-  leniently, as before; the journal refuses any query that does not decode).
+- a query that does not decode (`outcome=%zz`, a `;`) is never read as one
+  without its filters. On the runs listings and `GET /v1/jobs`, which read
+  the rest of their query leniently as before, it is `400` `invalid_filter`
+  when any of its pieces names a filter, whichever piece does not decode:
+  `x=%zz&outcome=proceed` is refused too. The journal refuses any query that
+  does not decode with `400` `invalid_cursor`, as it did before this change,
+  filters or none.
 
 **Scope.** The filters read the same rows as the scope filter, and AND with
 it: a listing under a scope never shows another scope's runs or entries, with

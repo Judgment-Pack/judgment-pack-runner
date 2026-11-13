@@ -121,10 +121,16 @@ func (h *governedHarness) launched(run Run) bool {
 	return err == nil || len(run.Audit) > 0
 }
 
+// requireNoLaunch holds an unadmitted run failed without reaching the
+// Runtime, and classed internal: a refusal before the Runtime's evaluation
+// starts is never the evaluation's (run_results.go).
 func (h *governedHarness) requireNoLaunch(run Run) {
 	h.t.Helper()
 	if run.State != "failed" || h.launched(run) {
 		h.t.Fatalf("an unadmitted run reached the Runtime: %s %s", run.State, run.Problem)
+	}
+	if run.ErrorClass != classInternal {
+		h.t.Fatalf("an unadmitted run is classed %q, want %q: %s", run.ErrorClass, classInternal, run.Problem)
 	}
 }
 
@@ -540,7 +546,7 @@ func TestGovernedAdmissionPreWithdrawalRestore(t *testing.T) {
 			h.requireCompleted(h.dispatch(run.ID))
 			restore(h, run.ID, state, record)
 			again := h.dispatch(run.ID)
-			if again.State != "failed" || h.count("commitStart") != 1 {
+			if again.State != "failed" || again.ErrorClass != classInternal || h.count("commitStart") != 1 {
 				t.Fatalf("a restored run resurrected its admission: %s %v", again.State, h.methods)
 			}
 		})

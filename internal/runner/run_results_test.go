@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -55,7 +56,8 @@ var reasonCode = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // Every reason code the package gives a run, an occurrence or an attempt
 // names exactly one class, or is a skip that names none: the table is total
 // over the codes, read from the package's own source, where each is a literal
-// or a constant assigned to a Reason.
+// or a constant assigned to a Reason, or passed to a function that assigns a
+// parameter of its own to one (stopPreparation), at each call of it.
 func TestEveryReasonCodeHasOneClass(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	must(t, err)
@@ -103,13 +105,50 @@ func TestEveryReasonCodeHasOneClass(t *testing.T) {
 			codes[s] = fset.Position(e.Pos()).String()
 		}
 	}
+	// carriers are the functions that assign a parameter of their own to a
+	// Reason, by name, with the parameter's place among their arguments.
+	carriers := map[string]int{}
+	parameter := func(fd *ast.FuncDecl, e ast.Expr) (int, bool) {
+		id, ok := e.(*ast.Ident)
+		if !ok {
+			return 0, false
+		}
+		i := 0
+		for _, field := range fd.Type.Params.List {
+			for _, n := range field.Names {
+				if n.Name == id.Name {
+					return i, true
+				}
+				i++
+			}
+			if len(field.Names) == 0 {
+				i++
+			}
+		}
+		return 0, false
+	}
+	reason := func(fd *ast.FuncDecl, e ast.Expr) {
+		if i, ok := parameter(fd, e); ok {
+			carriers[fd.Name.Name] = i
+			return
+		}
+		note(e)
+	}
+	var funcs []*ast.FuncDecl
 	for _, f := range parsed {
-		ast.Inspect(f, func(n ast.Node) bool {
+		for _, decl := range f.Decls {
+			if fd, ok := decl.(*ast.FuncDecl); ok && fd.Body != nil {
+				funcs = append(funcs, fd)
+			}
+		}
+	}
+	for _, fd := range funcs {
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.AssignStmt:
 				for i, lhs := range n.Lhs {
 					if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Reason" && i < len(n.Rhs) && len(n.Lhs) == len(n.Rhs) {
-						note(n.Rhs[i])
+						reason(fd, n.Rhs[i])
 					}
 				}
 			case *ast.CompositeLit:
@@ -117,7 +156,7 @@ func TestEveryReasonCodeHasOneClass(t *testing.T) {
 					for _, el := range n.Elts {
 						if kv, ok := el.(*ast.KeyValueExpr); ok {
 							if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Reason" {
-								note(kv.Value)
+								reason(fd, kv.Value)
 							}
 						}
 					}
@@ -125,6 +164,40 @@ func TestEveryReasonCodeHasOneClass(t *testing.T) {
 			}
 			return true
 		})
+	}
+	// A reason reaches a carrier as an argument, which is noted at each call;
+	// one that is in turn a parameter of its caller makes the caller a
+	// carrier, until no new one is found.
+	for found := true; found; {
+		found = false
+		for _, fd := range funcs {
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				name := ""
+				switch fn := call.Fun.(type) {
+				case *ast.Ident:
+					name = fn.Name
+				case *ast.SelectorExpr:
+					name = fn.Sel.Name
+				}
+				if i, ok := carriers[name]; ok && i < len(call.Args) {
+					if j, ok := parameter(fd, call.Args[i]); ok {
+						if _, known := carriers[fd.Name.Name]; !known {
+							carriers[fd.Name.Name], found = j, true
+						}
+					} else {
+						note(call.Args[i])
+					}
+				}
+				return true
+			})
+		}
+	}
+	if _, ok := carriers["stopPreparation"]; !ok {
+		t.Fatalf("the reason stopPreparation is given is not followed to its calls: %v", carriers)
 	}
 	// The codes the policy hands back as an occurrence's ending.
 	codes[occurrenceAttemptLimit], codes[occurrenceWaitTooLong] = "retries.go", "retries.go"
@@ -923,6 +996,84 @@ func TestRunResultsAreDocumented(t *testing.T) {
 			}
 			if name != "outcome" && len(doc.check(path+"/"+name, items, "not-one")) == 0 {
 				t.Errorf("GET %s: %s takes a value Runner refuses", path, name)
+			}
+		}
+	}
+	// The listing of jobs takes neither run filter, and says it refuses them
+	// as Runner does.
+	jobs := paths["/jobs"].(map[string]any)["get"].(map[string]any)
+	refused, _ := jobs["responses"].(map[string]any)["400"].(map[string]any)
+	description, _ := refused["description"].(string)
+	for _, name := range []string{"outcome", "errorClass"} {
+		if rec := serve(t, w.s, "GET", "/v1/jobs?"+name+"=x", "", nil); rec.Code != 400 || !strings.Contains(rec.Body.String(), "invalid_filter") || !strings.Contains(description, name) {
+			t.Errorf("GET /jobs with %s answers %d %s, and its 400 is documented as %q", name, rec.Code, rec.Body.String(), description)
+		}
+	}
+}
+
+// A run that fails before the Runtime's evaluation process has started fails
+// by Runner's own fault, internal, and not by the evaluation's: a pinned
+// Runtime that cannot be started, and a release whose pack no longer has its
+// digest. A run whose Runtime started and failed, or answered out of form,
+// is the evaluation's. A governed run refused before its start is internal
+// too (requireNoLaunch, manual_admission_acceptance_test.go).
+func TestAFailureBeforeTheRuntimeEvaluatesIsInternal(t *testing.T) {
+	unstartable := func(t *testing.T, dir string) string {
+		runtime := fakeRuntime(t, dir, "exit 0 # never started")
+		must(t, os.Chmod(filepath.Join(dir, "runtimes", strings.TrimPrefix(runtime, "sha256:")), 0600))
+		return runtime
+	}
+	answering := func(body string) func(*testing.T, string) string {
+		return func(t *testing.T, dir string) string { return fakeRuntime(t, dir, body) }
+	}
+	for name, c := range map[string]struct {
+		runtime    func(*testing.T, string) string
+		packDigest string
+		class      string
+	}{
+		"a Runtime that cannot be started":        {unstartable, "", classInternal},
+		"a pack that no longer has its digest":    {completingRuntime, digest([]byte("another pack")), classInternal},
+		"a Runtime that started and failed":       {failingRuntime, "", classEvaluation},
+		"a Runtime that answered out of its form": {answering("echo '{}'"), "", classEvaluation},
+	} {
+		cfg := journalConfig(t)
+		s := openJournal(t, cfg)
+		release := journalRelease(t, s, c.runtime(t, cfg.Dir))
+		j, e := s.createJob(name, release.ID)
+		must(t, e)
+		if c.packDigest != "" {
+			_, e = s.db.Exec("UPDATE releases SET record=json_set(record,'$.packDigest',?) WHERE id=?", c.packDigest, release.ID)
+			must(t, e)
+		}
+		run, _, e := s.submit(j.ID, "run", journalInput())
+		must(t, e)
+		if worked, e := s.dispatchNext(t.Context()); e != nil || !worked {
+			t.Fatalf("%s: the run was not dispatched: %v %v", name, worked, e)
+		}
+		run, e = s.run(run.ID)
+		must(t, e)
+		if run.State != "failed" || run.ErrorClass != c.class || run.Counts == nil || run.Counts.Decisions != 0 {
+			t.Errorf("%s: the run ended %s, classed %q, want failed and %q (%s)", name, run.State, run.ErrorClass, c.class, run.Problem)
+		}
+		s.Close()
+	}
+}
+
+// A gateway that refused an acquisition 401 or 403 refused Runner's
+// credential or the connection's access to its provider: the setup, not the
+// source, whatever the retry policy does with the answer. Every other
+// refusal stays the source's.
+func TestAGatewayRefusingAccessIsConfiguration(t *testing.T) {
+	policy := &RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}
+	for status, class := range map[int]string{401: classConfiguration, 403: classConfiguration, 400: classSource, 404: classSource, 502: classSource} {
+		for _, p := range []*RetryPolicy{nil, policy} {
+			w := acquiringWorld(t, p, func(int) (int, string) { return status, "" })
+			o := w.step(t)
+			if o.State != "failed" || o.ErrorClass != class || len(o.Attempts) > 1 {
+				t.Errorf("an acquisition the gateway answered %d (policy %v): %s %q, want class %q", status, p != nil, o.State, o.ErrorClass, class)
+			}
+			if p != nil && (len(o.Attempts) != 1 || o.Attempts[0].Status != status) {
+				t.Errorf("the attempt answered %d does not keep its status: %+v", status, o.Attempts)
 			}
 		}
 	}

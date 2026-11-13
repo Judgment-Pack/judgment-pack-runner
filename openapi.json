@@ -137,6 +137,16 @@
               }
             }
           },
+          "400": {
+            "description": "invalid_filter: a q over 200 bytes; a review other than true or false; a run filter, which a listing of jobs does not take (state, review=true, outcome, errorClass); or a query with a piece that does not decode beside an outcome or errorClass named anywhere in it (docs/design/run-results.md, section 5). invalid_cursor: an after that is not a cursor from 0.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "default": {
             "description": "Successful response",
             "content": {
@@ -3182,7 +3192,7 @@
       },
       "RetryPolicy": {
         "type": "object",
-        "description": "A job's retry policy, fixed when the job is created (docs/design/retries.md). It governs the source acquisition of the job's occurrences over a Gateway connection that is not durable, and has no effect on a job's runs or on any other acquisition. An attempt whose call the gateway answered 429 or 503 in its own form (Content-Type application/json and a JSON object whose error member is a string), with no earlier call of the attempt answered, is made again after min(backoffSeconds \u00d7 2^(n\u22121), maxBackoffSeconds) seconds and no sooner than the answer's Retry-After, up to maxAttempts attempts. A wait past 3600 seconds or the occurrence's expiresAt fails the occurrence (retry-wait-too-long) rather than be shortened. Nothing else is retried: an answer of those statuses in any other form, such as a proxy's page, is uncertain and fails the occurrence. Absent, a job makes one attempt.",
+        "description": "A job's retry policy, fixed when the job is created (docs/design/retries.md). It governs the source acquisition of the job's occurrences over a Gateway connection that is not durable, and has no effect on a job's runs or on any other acquisition. An attempt whose call the gateway answered 429 or 503 in its own form (Content-Type application/json and a JSON object whose error member is a string), with no earlier call of the attempt answered, is made again after min(backoffSeconds × 2^(n−1), maxBackoffSeconds) seconds and no sooner than the answer's Retry-After, up to maxAttempts attempts. A wait past 3600 seconds or the occurrence's expiresAt fails the occurrence (retry-wait-too-long) rather than be shortened. Nothing else is retried: an answer of those statuses in any other form, such as a proxy's page, is uncertain and fails the occurrence. Absent, a job makes one attempt.",
         "required": [
           "maxAttempts",
           "backoffSeconds",
@@ -8279,7 +8289,7 @@
           "interrupted",
           "internal"
         ],
-        "description": "The class of a run that ended failed or interrupted, or of an occurrence that ended failed or expired, from a closed list (docs/design/run-results.md, section 3), beside its reason: source, a source acquisition through a Gateway connection failed (no answer, a refusal, an answer over its limit, a receipt for another session); preparation, the input could not be read or prepared, or no longer passes its checks (prepared-by-earlier-runner among them); evaluation, the Runtime's evaluation failed or what it wrote did not pass Runner's checks; configuration, what the work was set up with changed or is not installed (profile-set-aside, a release changed before admission, a connection no longer installed); limit, a time or count bound ended the work (queue-expired, attempt-limit-reached, retry-wait-too-long, a source wait that expired); interrupted, Runner stopped or restarted during the work; internal, Runner's own fault (binding-refused, a release that could not be read). Every reason code maps to exactly one class. Absent on success, on a completed run whatever its disposition, on a skipped, cancelled or waiting occurrence, and on a record that ended before Runner kept it. A class is added only with a change of the design record: a reader may take an unknown class as a newer Runner's."
+        "description": "The class of a run that ended failed or interrupted, or of an occurrence that ended failed or expired, from a closed list (docs/design/run-results.md, section 3), beside its reason: source, a source acquisition through a Gateway connection failed (no answer, a refusal other than 401 or 403, an answer over its limit, a receipt for another session); preparation, the input could not be read or prepared, or no longer passes its checks (prepared-by-earlier-runner among them); evaluation, the Runtime's evaluation process started and failed, or what it wrote did not pass Runner's checks; configuration, what the work was set up with changed, is not installed or was refused access (profile-set-aside, a release changed before admission, a connection no longer installed, a gateway that refused the acquisition 401 or 403); limit, a time or count bound ended the work (queue-expired, attempt-limit-reached, retry-wait-too-long, a source wait that expired); interrupted, Runner stopped or restarted during the work; internal, Runner's own fault (binding-refused, a release that could not be read, and any failure of a run before the Runtime's evaluation process started, a manual admission authority's reservation or start commitment among them). Every reason code maps to exactly one class. A class says where the failure arose, not whether trying again will help: an acquisition is attempted again by the job's retry policy alone (docs/design/retries.md), and a run only by a caller's retry. Absent on success, on a completed run whatever its disposition, on a skipped, cancelled or waiting occurrence, and on a record that ended before Runner kept it. A class is added only with a change of the design record: a reader may take an unknown class as a newer Runner's."
       },
       "RunCounts": {
         "type": "object",

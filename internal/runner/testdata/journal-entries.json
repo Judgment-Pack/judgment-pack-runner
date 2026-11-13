@@ -610,5 +610,26 @@
    "status": 429,
    "retryAfterSeconds": 30
   }
+ },
+ {
+  "sequence": 29,
+  "entryVersion": "1",
+  "kind": "run.completed",
+  "at": "2026-10-06T09:22:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333",
+   "occurrence": "occ_44444444444444444444444444444444",
+   "run": "run_55555555555555555555555555555555"
+  },
+  "revision": 3,
+  "from": "running",
+  "to": "completed",
+  "reason": "Completed.",
+  "chainSequence": 7
  }
 ]

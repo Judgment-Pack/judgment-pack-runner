@@ -2108,7 +2108,8 @@ change created the record. `reason` is the reason or problem text the record
 serves, cut at 1,024 bytes. The other members belong to particular kinds. The
 API document's `JournalEntry` names the 26 kinds and every member, and
 `internal/runner/testdata/journal-entries.json` holds one entry of each kind,
-with every member its kind can carry. `at` is Runner's clock: order is
+with every member its kind can carry, and beside them one `run.completed` of
+version `"1"`, as a store written before run results holds a run's end. `at` is Runner's clock: order is
 `sequence`, never `at`.
 
 **Who.** `by` names what Runner can know initiated a change, never a person:

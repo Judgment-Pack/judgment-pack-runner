@@ -6,8 +6,10 @@ package runner
 // and journal kind.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -60,9 +62,16 @@ var sourceFailureCodes = []string{"gateway_unavailable", "gateway_refused", "gat
 
 // acquisitionClass is the class of an occurrence whose input could not be
 // acquired, read or prepared: source for a failed call to a Gateway
-// connection, configuration for a connection no longer installed, and
-// preparation for every other failure.
+// connection, configuration for a connection no longer installed and for a
+// gateway that refused the call 401 or 403 (Runner's credential, or the
+// connection's access to its provider, was refused), and preparation for
+// every other failure. A class says where the failure arose, not whether
+// another attempt would help: that is the job's retry policy's (retries.go).
 func acquisitionClass(err error) string {
+	var answer *gatewayAnswer
+	if errors.As(err, &answer) && (answer.status == http.StatusUnauthorized || answer.status == http.StatusForbidden) {
+		return classConfiguration
+	}
 	var api *apiError
 	if errors.As(err, &api) {
 		switch {
@@ -83,6 +92,25 @@ func submissionClass(api *apiError) string {
 		return classInternal
 	}
 	return classPreparation
+}
+
+// evaluationStart marks the context of a run's evaluation (store.go):
+// invokeStarting sets it once the Runtime's evaluation process has started.
+// A failure before that is Runner's own, not the evaluation's.
+type evaluationStart struct{}
+
+// markingStart is ctx marked for a run's evaluation, and the mark.
+func markingStart(ctx context.Context) (context.Context, *bool) {
+	started := new(bool)
+	return context.WithValue(ctx, evaluationStart{}, started), started
+}
+
+// noteStart sets ctx's mark, if it has one, when the process invokeStarting
+// started under label is the evaluation's.
+func noteStart(ctx context.Context, label string) {
+	if started, ok := ctx.Value(evaluationStart{}).(*bool); ok && label == evaluationLabel {
+		*started = true
+	}
 }
 
 // RunCounts are what a finished run's record holds, counted
