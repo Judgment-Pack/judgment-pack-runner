@@ -40,7 +40,10 @@ with the standard library rather than sharing code: the classes are the
 standard library's tables, `Default_Ignorable_Code_Point` is derived from them
 as `DerivedCoreProperties.txt` derives it, and `Cn` is a code point in no
 other category. A test holds the standard library to Unicode 15.0.0, so that a
-toolchain whose tables move fails it rather than move the rule. **The two
+toolchain whose tables move fails it rather than move the rule. (In 15.0.0
+every `Bidi_Control` code point is also `Default_Ignorable_Code_Point`, and
+every noncharacter is also `Cn`; both are named, as the gateway names them, so
+that the rule reads as its does.) **The two
 rules are meant to stay the same:** a rule changed in one is changed in the
 other. The table tests in `scope_test.go` mirror the gateway's corpus cases:
 valid, empty, at the bound, past the bound, a control character, tab, line
