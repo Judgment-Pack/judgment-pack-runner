@@ -412,10 +412,18 @@ func TestFormat4BoundsAtAndOverEachMaximum(t *testing.T) {
 	}
 	sixtyFive = append(sixtyFive, resolvedClause(map[string]any{"op": "always"}, []any{}, "r"))
 	listed := map[string]any{"op": "all", "of": repeated(map[string]any{"op": "exists", "field": "/x"}, 65)}
+	overClauses := format4Document(map[string]any{"ruleVersion": "2.0.0", "parameters": map[string]any{}, "clauses": sixtyFive}, nil)
+	overListed := format4Document(map[string]any{"ruleVersion": "2.0.0", "parameters": map[string]any{}, "clauses": []any{resolvedClause(listed, []any{}, "r"), resolvedClause(map[string]any{"op": "always"}, []any{}, "r")}}, nil)
 	overLiteral := format4Document(format4Simple(literal(strings.Repeat("é", 4096)+"a"), nil, nil), nil)
-	withUnknown := map[string]any{"unknown": 1}
-	for k, v := range overLiteral {
-		withUnknown[k] = v
+	overDerived := format4Document(format4Simple(one, format4Durations(17), nil), nil)
+	// A member no form admits: a document over a bound is over-bound before
+	// its form is read (§11's third phase).
+	withUnknown := func(document map[string]any) map[string]any {
+		out := map[string]any{"unknown": 1}
+		for k, v := range document {
+			out[k] = v
+		}
+		return out
 	}
 	cases := []struct {
 		name     string
@@ -424,10 +432,11 @@ func TestFormat4BoundsAtAndOverEachMaximum(t *testing.T) {
 		want     string
 	}{
 		{"16 derived values", format4Document(format4Simple(one, format4Durations(16), nil), nil), nil, ""},
-		{"17 derived values", format4Document(format4Simple(one, format4Durations(17), nil), nil), nil, codeOverBound},
+		{"17 derived values", overDerived, nil, codeOverBound},
+		{"17 derived values, counted before any form", withUnknown(overDerived), nil, codeOverBound},
 		{"a literal of 8192 bytes", format4Document(format4Simple(literal(strings.Repeat("é", 4096)), nil, nil), nil), nil, ""},
 		{"a literal of 8193 bytes", overLiteral, nil, codeOverBound},
-		{"a literal of 8193 bytes, counted before any form", withUnknown, nil, codeOverBound},
+		{"a literal of 8193 bytes, counted before any form", withUnknown(overLiteral), nil, codeOverBound},
 		{"1024 list elements", listDocument, map[string]any{"allowed": repeated("a", 1024)}, ""},
 		{"1025 list elements", listDocument, map[string]any{"allowed": repeated("a", 1025)}, codeOverBound},
 		{"a list element of 1024 bytes", listDocument, map[string]any{"allowed": []any{strings.Repeat("é", 512)}}, ""},
@@ -438,8 +447,10 @@ func TestFormat4BoundsAtAndOverEachMaximum(t *testing.T) {
 		{"1025 address ranges", rangeDocument, map[string]any{"ranges": repeated("10.0.0.0/8", 1025)}, codeOverBound},
 		{"a decimal of 128 characters", decimalDocument, map[string]any{"t": "1." + strings.Repeat("0", 126)}, ""},
 		{"a decimal of 129 characters", decimalDocument, map[string]any{"t": "1." + strings.Repeat("0", 127)}, codeParameter},
-		{"65 clauses", format4Document(map[string]any{"ruleVersion": "2.0.0", "parameters": map[string]any{}, "clauses": sixtyFive}, nil), nil, codeOverBound},
-		{"65 conditions listed by all", format4Document(map[string]any{"ruleVersion": "2.0.0", "parameters": map[string]any{}, "clauses": []any{resolvedClause(listed, []any{}, "r"), resolvedClause(map[string]any{"op": "always"}, []any{}, "r")}}, nil), nil, codeOverBound},
+		{"65 clauses", overClauses, nil, codeOverBound},
+		{"65 clauses, counted before any form", withUnknown(overClauses), nil, codeOverBound},
+		{"65 conditions listed by all", overListed, nil, codeOverBound},
+		{"65 conditions listed by all, counted before any form", withUnknown(overListed), nil, codeOverBound},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -520,8 +531,8 @@ func TestFormat4ExtendedProfileAndBindingAreRefused(t *testing.T) {
 	}
 	extended := f
 	extended.Dialect = bytes.Replace(f.Dialect, []byte(`"formatVersion"`), []byte(`"profile": "extended", "formatVersion"`), 1)
-	if r := VerifyPreparation(extended); r.Result != ResultRefusal || r.Code != "profile-unsupported" {
-		t.Fatal("the extended profile is read", r.Result, r.Code)
+	if r := VerifyPreparation(extended); r.Result != ResultRefusal || r.Code != "profile-unsupported" || !strings.Contains(r.Reason, "spec issue #324") {
+		t.Fatal("the extended profile is read, or refused for another reason", r.Result, r.Code, r.Reason)
 	}
 	base := f
 	base.Dialect = bytes.Replace(f.Dialect, []byte(`"formatVersion"`), []byte(`"profile": "base", "formatVersion"`), 1)
@@ -546,5 +557,90 @@ func TestFormat3StillRefusesACaseRule(t *testing.T) {
 	}
 	if !bytes.Contains(encode(m), []byte(`"rule"`)) {
 		t.Fatal("format 4.0.0's case lost its rule")
+	}
+}
+
+// A research source's read takes a rule of version 1.0.0 alone in format
+// 4.0.0 too (spec/dialect.md §2.2.4): the hand-written research vector's
+// dialect, of format 4.0.0, is read, and the same rule written as version
+// 2.0.0 is refused.
+func TestFormat4ResearchReadsTakeRule1Alone(t *testing.T) {
+	raw, err := os.ReadFile("../../vectors/preparation/gtm-company-person-stale-and-conflicting-unknown/mapping.json")
+	must(t, err)
+	document := readNumbers(t, raw).(map[string]any)
+	delete(document, "version")
+	document["formatVersion"], document["id"], document["version"] = format4, "urn:judgmentpack:dialect:format-4-research", "0.1.0"
+	four := encode(document)
+	if bytes.Count(four, []byte(`"ruleVersion":"1"`)) != 1 {
+		t.Fatal("the research vector's dialect is not the one this test expects")
+	}
+	var m InputMapping
+	must(t, strictJSON(four, &m))
+	if err := validateDialectMode(m, false, true); err != nil {
+		t.Fatal("the research dialect of format 4.0.0 is not read", err)
+	}
+	var two InputMapping
+	must(t, strictJSON(bytes.Replace(four, []byte(`"ruleVersion":"1"`), []byte(`"ruleVersion":"2.0.0"`), 1), &two))
+	if err = validateDialectMode(two, false, true); err == nil || !strings.Contains(err.Error(), `ruleVersion is not "1"`) {
+		t.Fatal("a research read's rule of version 2.0.0 was read", err)
+	}
+}
+
+// A copy of format 4.0.0 writes its basis as a set, in code point order
+// (spec/dialect.md §6.2: "every entry's Q, of facts and of evidence,
+// distinct, ordered by code point"), and its lineage in §9.3's order, the
+// targets in code point order (§2.2.6), whatever the order of its entries:
+// through the verifier's reader and through the package.
+func TestFormat4CopyBasisIsASetAndItsTargetsAreOrdered(t *testing.T) {
+	dialect := []byte(`{"formatVersion":"4.0.0","id":"urn:judgmentpack:dialect:format-4-copy","version":"0.1.0","case":{"facts":[{"target":"/b","source":"/x"},{"target":"/a","source":"/x"}],"evidence":[]}}`)
+	caseDocument := []byte(`{"x":1}`)
+	const verifiedAt = "2026-11-12T18:00:00Z"
+	var recomputed *Preparation
+	report := verifyPreparationUsing(PreparationFixture{Dialect: dialect, Case: caseDocument, Sources: []byte(`{}`), Profiles: []byte(`[]`), Preparation: []byte(`{"verifiedAt":"` + verifiedAt + `"}`)}, verifyAcquisition, &recomputed)
+	if report.Code != codeDiffers || recomputed == nil {
+		t.Fatal("the dialect is not read", report.Result, report.Code, report.Reason)
+	}
+	at, _ := time.Parse("2006-01-02T15:04:05Z", verifiedAt)
+	d, err := sdkdialect.Read(dialect)
+	must(t, err)
+	packaged, err := d.Prepare(caseDocument, at)
+	must(t, err)
+	for reader, document := range map[string][]byte{"verifier": encode(recomputed), "package": packaged.Bytes()} {
+		var p struct {
+			Lineage []struct {
+				Target string   `json:"target"`
+				Basis  []string `json:"basis"`
+			} `json:"lineage"`
+			Outcomes []struct {
+				Claim struct {
+					Basis []string `json:"basis"`
+				} `json:"claim"`
+			} `json:"outcomes"`
+		}
+		must(t, json.Unmarshal(document, &p))
+		if len(p.Lineage) != 2 || p.Lineage[0].Target != "/a" || p.Lineage[1].Target != "/b" {
+			t.Fatalf("%s: lineage %+v, want /a then /b", reader, p.Lineage)
+		}
+		for _, basis := range [][]string{p.Lineage[0].Basis, p.Lineage[1].Basis, p.Outcomes[0].Claim.Basis} {
+			if len(basis) != 1 || basis[0] != "/x" {
+				t.Fatalf("%s: basis %q, want [/x]", reader, basis)
+			}
+		}
+	}
+}
+
+// A retained-column leaf is format 3.0.0's: a copy of format 4.0.0 names a
+// target and a source, or a requirement and a source, alone. The verifier
+// refuses one by name, and the package finds the member outside the copy's
+// form.
+func TestFormat4RefusesARetainedColumnLeaf(t *testing.T) {
+	dialect := []byte(`{"profile":"base","formatVersion":"4.0.0","id":"urn:judgmentpack:dialect:format-4-column","version":"0.1.0","case":{"facts":[{"target":"/value","source":"/retained","conversion":{"contractVersion":"1","column":"X","kind":"string"}}],"evidence":[]}}`)
+	caseDocument := []byte(`{"origin":{"originalValues":{"X":"a"}},"retained":{"contractVersion":"1","origin":"asserted","values":{"X":"a"},"research":null}}`)
+	report := VerifyPreparation(PreparationFixture{Dialect: dialect, Case: caseDocument, Sources: []byte(`{}`), Profiles: []byte(`[]`), Preparation: []byte(`{"verifiedAt":"2026-11-12T18:00:00Z"}`)})
+	if report.Code != codeMalformed || !strings.Contains(report.Reason, "retained-column leaf is read in format 3.0.0 alone") {
+		t.Fatal("a retained-column leaf was read in format 4.0.0", report.Result, report.Code, report.Reason)
+	}
+	if _, err := sdkdialect.Read(dialect); err == nil || err.(*sdkdialect.Error).Code != sdkdialect.CodeMalformed {
+		t.Fatal("the package read a retained-column leaf", err)
 	}
 }

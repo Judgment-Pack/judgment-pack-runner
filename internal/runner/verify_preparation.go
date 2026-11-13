@@ -260,7 +260,7 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 	allLimit := artifactLimit(f.ConversionContract, MaxBody, columnCombinedLimit)
 	profilesLimit := artifactLimit(f.ConversionContract, maxProfilesDocument, columnProfilesLimit)
 	if code := columnProfileBytes(f.Dialect); code != "" {
-		return stop(code, "retained-column profile is unsupported or malformed")
+		return stop(code, profileReason(f.Dialect, code))
 	}
 	sources := f.Sources
 	if sources == nil {

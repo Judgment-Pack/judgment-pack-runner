@@ -25,6 +25,21 @@ func formatNotAdmitted() error {
 	return bad(codeFormatNotAdmitted, "This dialect is of the proposed format 4.0.0. Runner reads it only in jpack-runner verify-preparation, and the sdk/dialect package prepares one with no source in process: a release, a job, a preview or a delivery on it waits for the Spec's workflow and recording schemas to admit the format (spec issue #324).")
 }
 
+// profileReason is why verify-preparation refuses a dialect's profile, code
+// being the refusal's: for format 4.0.0, the extended profile waits for the
+// Spec to decide its literal bound (spec issue #324). The profile is read
+// before anything else (§11's first phase), so the format is read here only
+// to name the reason.
+func profileReason(dialect []byte, code string) string {
+	var top struct {
+		FormatVersion string `json:"formatVersion"`
+	}
+	if code == "profile-unsupported" && json.Unmarshal(dialect, &top) == nil && top.FormatVersion == format4 {
+		return "the extended profile of format 4.0.0 is not read until the Spec decides its literal bound (spec issue #324): verify-preparation reads the base profile"
+	}
+	return "retained-column profile is unsupported or malformed"
+}
+
 // engineError is err, a refusal or finding of the engine, with the code it
 // names (input-malformed when it names none).
 func engineError(err error) error {
