@@ -279,10 +279,14 @@ both kinds' cases to have run and passed.
   ([store-postgresql.md](store-postgresql.md), section 2). What a transaction read elsewhere is
   now read before it: a retry's audit check of the attempt's directory, a job's creation's and
   an upgrade's profiles set aside or selected, and an upgrade's check of a gateway mapping. Each
-  answers as it did when nothing changes between that read and the transaction. A retry whose
-  run's attempt changed between them, or whose run read before it failed, is answered
-  `409 attempt_mismatch`, as a retry of an attempt no longer held is, where it checked the
-  directory of the attempt it read inside. No statement or row changes.
+  answers as it did when nothing changes between that read and the transaction. A retry's
+  directories are read only on a run read interrupted, and their answer is given only for that
+  interruption (`sameInterruption`: the same attempt, begun and ended at the same instants).
+  Otherwise the retry is answered as it was at the read before: a run read still running is
+  refused `409 run_not_retryable`, where a run interrupted by the transaction's read was checked
+  then; a run whose attempt changed between them is answered `409 attempt_mismatch`, as a retry
+  of an attempt no longer held is. A read before that fails is answered as a failed read was,
+  `500 store_error`, and is not journaled as a refusal. No statement or row changes.
 - With #244: a Runner configured for manual admission is refused at opening with the manual
   protocol error when its store's kind hands over no manual-admission state. The sqlite kind
   hands it over, so no Runner today meets it. The errors of manual admission, its preparation

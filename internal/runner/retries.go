@@ -324,16 +324,21 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 	}
 	// The attempt directories are read before the transaction, which reads
 	// only the store (docs/design/store-postgresql.md, D2), on the run as read
-	// then; the answer is given inside it, where the check was made, for the
-	// attempt checked and no other.
-	checked, readErr := s.store.run(runID)
+	// then, and only once it is interrupted: until then its Runtime may still
+	// write them. The answer is given inside the transaction, and is theirs
+	// only for the interruption they were read after. A read that fails is
+	// answered as a failed read inside the transaction was.
+	checked, err := s.store.run(runID)
+	if err != nil {
+		return Run{}, false, err
+	}
 	var trail error
-	if readErr == nil {
+	if checked.State == "interrupted" {
 		trail = s.attemptsHoldNoAudit(checked)
 	}
 	var result Run
 	repeated := false
-	err := s.store.update(func(tx runTx) error {
+	err = s.store.update(func(tx runTx) error {
 		r, err := tx.run(runID)
 		if err != nil {
 			return err
@@ -351,9 +356,18 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 		if len(r.Audit) > 0 || len(r.AuditBytes) > 0 {
 			return errAuditKept
 		}
-		// The directories checked are another attempt's, or were not read:
-		// the run changed since the caller read it.
-		if readErr != nil || checked.Attempt != r.Attempt {
+		// The directories were not read after this interruption: the request
+		// is answered as it was when they were read, a run not yet
+		// interrupted refused as not retryable.
+		if !sameInterruption(checked, r) {
+			if attempt != checked.Attempt {
+				return errAttemptMismatch
+			}
+			if checked.State != "interrupted" {
+				return errRunNotRetryable
+			}
+			// The attempt was interrupted again since; no Runner does that
+			// without a retry, which the attempts kept answer above.
 			return errAttemptMismatch
 		}
 		if trail != nil {
@@ -404,6 +418,16 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 	default:
 	}
 	return result, false, nil
+}
+
+// sameInterruption says whether checked is r's interruption: the run read
+// interrupted, at the same attempt, begun and ended at the same instants. An
+// interruption ends its run's attempt at the instant it records, as the
+// Runner stopping (InterruptedAt) or a restart (FinishedAt) does, so a later
+// interruption of the same attempt is not taken for the one checked.
+func sameInterruption(checked, r Run) bool {
+	return checked.State == "interrupted" && r.State == "interrupted" && checked.Attempt == r.Attempt &&
+		checked.StartedAt == r.StartedAt && checked.FinishedAt == r.FinishedAt && checked.InterruptedAt == r.InterruptedAt
 }
 
 var errAuditKept = &apiError{409, "run_not_retryable", "This interrupted run's attempt left an audit record. It is not evaluated again."}

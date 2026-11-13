@@ -74,10 +74,12 @@ makes, between the two runs of the twice mode below, the change that shows it
   `update`, though a later run had committed the occurrence: an event admitted was answered
   `429 queue_full`. The refusal is now `fn`'s own answer.
 - `retryRunBy` (`retries.go`) read the attempt directories inside `fn` (`attemptsHoldNoAudit`).
-  The check is made before the transaction, on the run as read then, and its answer returned
-  inside `fn` where it was made, after the replay and the state checks; a run whose attempt inside
-  `fn` is not the one checked, or that the read before did not find, is refused with
-  `attempt_mismatch`, so that the check and the write concern one attempt.
+  The check is made before the transaction, on the run as read then and only once it reads
+  interrupted, and its answer returned inside `fn` where it was made, after the replay and the
+  state checks, only for the interruption checked (`sameInterruption`), so that the check and the
+  write concern one interruption of one attempt. Otherwise `fn` answers as the read before
+  would have: `run_not_retryable` for a run read still running, `attempt_mismatch` for another
+  attempt; a read before that fails is answered as a failed read.
 - `createJobWith` (`store.go`) read the profiles set aside and the selected profiles
   (`refuseSetAsideMapping`), process state a registration writes under `profilesMu`. The refusal
   is worked out before the transaction and returned inside it at the same place, after the

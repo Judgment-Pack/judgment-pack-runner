@@ -455,6 +455,33 @@ func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
 			t.Fatal("a refused retry changed the run", e)
 		}
 	})
+	// A retry whose directories were read while its run still ran is
+	// refused as a retry of a running run is, though the run is interrupted
+	// by the second run with a trail its Runtime wrote: the directories were
+	// read before the trail was.
+	t.Run("a retry checked while its run ran, interrupted with a trail between the runs", func(t *testing.T) {
+		s, cfg, r := interruptedRun(t, "", false)
+		running := r
+		running.State, running.FinishedAt, running.InterruptedAt, running.Problem = "running", "", "", ""
+		must(t, underlying(s.store).update(func(tx runTx) error { _, err := tx.putRun(running, anyState); return err }))
+		record.betweenRuns(t, "(*Service).retryRunBy", func(st runStore) error {
+			audit := filepath.Join(cfg.Dir, "attempts", r.ID, "audit")
+			if err := os.MkdirAll(audit, 0700); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(audit, "evaluations.jsonl"), []byte(`{"decision":"x"}`+"\n"), 0600); err != nil {
+				return err
+			}
+			return st.update(func(tx runTx) error { _, err := tx.putRun(r, anyState); return err })
+		})
+		got := serve(t, s, "POST", "/v1/runs/"+r.ID+"/retry", `{"attempt":1}`, nil)
+		if got.Code != 409 || !strings.Contains(got.Body.String(), "run_not_retryable") {
+			t.Fatalf("%d %s", got.Code, got.Body)
+		}
+		if held, e := s.run(r.ID); e != nil || runText(held) != runText(r) {
+			t.Fatal("a refused retry changed the run", e)
+		}
+	})
 	// A job's creation answers the profiles as they were when it was asked:
 	// a profile selected between its runs does not refuse the job its first
 	// run made, and refuses the next.

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1007,5 +1008,44 @@ func TestARecordWithoutARetryIsWrittenAsBefore(t *testing.T) {
 	}
 	if schema := storeSchemaOf(t, sqliteDB(s)); schema != storeSchema {
 		t.Fatalf("schema %s", schema)
+	}
+}
+
+// firstRunReadFails is a store whose next read of a run outside a
+// transaction fails, as a store that cannot be reached does, and whose later
+// reads succeed.
+type firstRunReadFails struct {
+	runStore
+	failed atomic.Bool
+}
+
+func (k *firstRunReadFails) run(id string) (Run, error) {
+	if k.failed.CompareAndSwap(false, true) {
+		return Run{}, storeFailure(faultUnavailable, "run", errors.New("the store cannot be reached"))
+	}
+	return k.runStore.run(id)
+}
+
+// A retry whose read of its run before the transaction fails is answered as
+// a failed read, 500 store_error, and not journaled as a refusal, though the
+// transaction would read the run; asked again, it is made.
+func TestARetryWhoseReadFailsIsAStoreError(t *testing.T) {
+	s, _, r := interruptedRun(t, "", false)
+	db := sqliteDB(s)
+	s.store = &firstRunReadFails{runStore: s.store}
+	got := serve(t, s, "POST", "/v1/runs/"+r.ID+"/retry", `{"attempt":1}`, nil)
+	if got.Code != 500 || !strings.Contains(got.Body.String(), "store_error") {
+		t.Fatalf("%d %s", got.Code, got.Body)
+	}
+	var n int
+	must(t, db.QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(concerns,'$.run')=?", r.ID).Scan(&n))
+	if n != 0 {
+		t.Fatal("a failed read journaled as a refusal:", n)
+	}
+	if held, e := s.run(r.ID); e != nil || runText(held) != runText(r) {
+		t.Fatal("a failed retry changed the run", e)
+	}
+	if again := serve(t, s, "POST", "/v1/runs/"+r.ID+"/retry", `{"attempt":1}`, nil); again.Code != 202 {
+		t.Fatalf("%d %s", again.Code, again.Body)
 	}
 }
