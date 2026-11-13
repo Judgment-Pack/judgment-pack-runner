@@ -41,7 +41,7 @@
             }
           }
         },
-        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
+        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. scope-identifiers means a job may be created under a scope identifier, which its records carry, the store-wide listings filter by, and every request that names one of them names (ScopeIdentifier). With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
       }
     },
     "/health": {
@@ -166,6 +166,14 @@
               "type": "string",
               "maxLength": 200
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "Serve only the records that carry exactly this scope identifier, compared byte for byte (no prefix matches, no case folded). Without it every record is served."
           }
         ],
         "description": "Paginated jobs include packTitle, packVersion and up to five recentRuns with id, state and createdAt."
@@ -239,6 +247,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ]
       }
@@ -316,6 +332,14 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ]
       },
@@ -383,6 +407,14 @@
               "pattern": "^[!-~]+$"
             },
             "description": "An identical retry under the same key returns the run first accepted, also after a profile its mapping names was set aside. A retry whose input is an import that names a set-aside profile is refused as 422 input_profile_set_aside: the import is bound before the retry is looked up. A request whose mapping names a selected profile (admitSelectedProfile) and that is not such a retry is refused as 422 input_profile_selected before its mapping is compared with the job's release."
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ]
       }
@@ -420,6 +452,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ]
       }
@@ -594,6 +634,14 @@
               ],
               "default": 2
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ],
         "responses": {
@@ -710,7 +758,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/run-chain": {
@@ -802,7 +860,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/events": {
@@ -866,7 +934,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "Serve only the entries that carry exactly this scope identifier, compared byte for byte; with job, also the job's scope identifier, as on every route that names a job. Without it every entry is served."
+          }
+        ]
       }
     },
     "/inputs/next": {
@@ -972,6 +1050,14 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "Serve only the records that carry exactly this scope identifier, compared byte for byte (no prefix matches, no case folded). Without it every record is served."
           }
         ],
         "summary": "List runs across all jobs",
@@ -1040,7 +1126,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       },
       "post": {
         "operationId": "savePausedTrigger",
@@ -1091,7 +1187,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/jobs/{job}/triggers/preview": {
@@ -1138,7 +1244,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/triggers/{trigger}/state": {
@@ -1202,7 +1318,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/triggers/{trigger}/rotate-key": {
@@ -1259,7 +1385,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/triggers/{trigger}/events": {
@@ -1351,7 +1487,17 @@
             }
           }
         },
-        "description": "Direct Runner requires owner bearer plus X-Trigger-Token; in service mode with an identity, an identity token in place of the owner bearer, and X-Trigger-Token as before. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap policy: inspect occurrence.state. While the local queue of pending occurrences is full a new delivery is refused with 429 queue_full, retryable, and nothing is admitted: the event ID stays unused, and the same bytes delivered again are admitted once the queue has room, while occurredAt is no older than 5 minutes; after that they are refused with 422 event_expired. An ID that an earlier Runner version recorded as skipped with reason queue-full still answers with that recorded occurrence. No Retry-After header is sent. The token that created an occurrence can read its result with readEventResult."
+        "description": "Direct Runner requires owner bearer plus X-Trigger-Token; in service mode with an identity, an identity token in place of the owner bearer, and X-Trigger-Token as before. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap policy: inspect occurrence.state. While the local queue of pending occurrences is full a new delivery is refused with 429 queue_full, retryable, and nothing is admitted: the event ID stays unused, and the same bytes delivered again are admitted once the queue has room, while occurredAt is no older than 5 minutes; after that they are refused with 422 event_expired. An ID that an earlier Runner version recorded as skipped with reason queue-full still answers with that recorded occurrence. No Retry-After header is sent. The token that created an occurrence can read its result with readEventResult.",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/triggers/{trigger}/occurrences/{occurrence}": {
@@ -1405,7 +1551,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/jobs/{job}/occurrences": {
@@ -1477,7 +1633,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/background-connections": {
@@ -1557,7 +1723,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/occurrences/{occurrence}/reconcile": {
@@ -1595,7 +1771,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/jobs/{job}/upgrade": {
@@ -1610,6 +1796,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ],
         "requestBody": {
@@ -1748,7 +1942,17 @@
             }
           }
         },
-        "description": "Owner-authenticated local control delivery of a previously persisted immutable record envelope. Bind releaseId to the reviewed release. Older occurredAt timestamps are allowed for outbox recovery; future timestamps, source freshness, mapping checks and queue expiry still apply. Persist exact bytes before the first request. Exact retries return the original occurrence, even when paused; changed payloads conflict. While the local queue of pending occurrences is full the delivery is refused with 429 queue_full, retryable, and nothing is admitted: deliver the same bytes again later. As with deliverEvent, it is never recorded as skipped for a full queue. This route is not exposed through the public Desk event-token ingress."
+        "description": "Owner-authenticated local control delivery of a previously persisted immutable record envelope. Bind releaseId to the reviewed release. Older occurredAt timestamps are allowed for outbox recovery; future timestamps, source freshness, mapping checks and queue expiry still apply. Persist exact bytes before the first request. Exact retries return the original occurrence, even when paused; changed payloads conflict. While the local queue of pending occurrences is full the delivery is refused with 429 queue_full, retryable, and nothing is admitted: deliver the same bytes again later. As with deliverEvent, it is never recorded as skipped for a full queue. This route is not exposed through the public Desk event-token ingress.",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/triggers/{trigger}/deliveries/{event}": {
@@ -1803,7 +2007,17 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
       }
     },
     "/jobs/{job}/upgrade-receipt": {
@@ -1845,6 +2059,14 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ],
         "responses": {
@@ -1903,6 +2125,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ],
         "responses": {
@@ -2162,6 +2392,14 @@
               "maxLength": 4096
             },
             "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ],
         "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. "
@@ -2240,6 +2478,14 @@
               "maxLength": 4096
             },
             "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ],
         "description": "Experimental retained-column Base adapter. Exact installed identity and complete operation roles are required before effects. Ordinary routes retain ordinary limits. "
@@ -2283,6 +2529,14 @@
               "maxLength": 4096
             },
             "description": "Canonical unpadded base64url of closed ConversionContract JSON. Validated after authentication and before the larger body read. Body source.conversionContract must match exactly."
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
           }
         ],
         "responses": {
@@ -2616,6 +2870,10 @@
           },
           "trigger": {
             "$ref": "#/components/schemas/TriggerConfig"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeIdentifier",
+            "description": "The scope identifier the job is created under, fixed for as long as the job exists. Absent, the job has none. Written null, empty or out of form, the creation is refused (invalid_scope). A repeated creation from the same release must name the same one."
           }
         },
         "required": [
@@ -2625,6 +2883,11 @@
         ],
         "additionalProperties": false,
         "description": "Requires explicit review. Only passed checks and explicitly reviewed not-run releases are admitted. Failed, incomplete or mismatched test evidence returns 409 release_not_ready. An installation booted with requireTestedReleases refuses a new job from a not-run release with 409 release_untested; repeating the creation of an existing job still returns it. An installation booted with requireComparableFacts refuses a new job from a release not checked with it, one whose config is not byte for byte the configuration Runner generates with it, with 409 release_comparable_facts_required; repeating the creation of an existing job still returns it, and its runs keep running. An installation booted with requireSuppliedReviewedSet refuses a new job from a release not checked against a supplied reviewed-set lock, or whose suppliedReviewedSet lock does not have its lockDigest, with 409 release_reviewed_set_required; repeating the creation of an existing job still returns it, and its runs keep running. Coverage never gates. Reusing an immutable release and name is idempotent. A new job from a release that names a profile set aside when Runner opened its store is refused as 422 input_profile_set_aside; repeating the creation of a job made before still returns it. A release, job or run that names a selected profile (admitSelectedProfile) is refused as 422 input_profile_selected: a selected profile is bound by selected preparation alone."
+      },
+      "ScopeIdentifier": {
+        "type": "string",
+        "minLength": 1,
+        "description": "A scope identifier (docs/design/scope-identifiers.md): an opaque label of at least one code point and at most 128 bytes of UTF-8, not 128 characters (the gateway's bound, in bytes; maxLength counts characters, so none is stated), with no code point of General_Category Cc (tab and line feed among them), Co or Cn, Bidi_Control, Default_Ignorable_Code_Point or Noncharacter_Code_Point, as Unicode 15.0.0 assigns them; the gateway's rule for its own scope identifier, meant to stay the same. Compared as written, byte for byte: nothing is folded, trimmed or normalized. A label and a filter, not an authorization boundary: every request the API admits may name any scope, or none to list every scope's records."
       },
       "Job": {
         "type": "object",
@@ -2706,6 +2969,10 @@
               "required": [],
               "additionalProperties": false
             }
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeIdentifier",
+            "description": "The scope identifier the job was created under; absent for a job created under none."
           }
         },
         "required": [
@@ -2954,6 +3221,10 @@
           "suppliedLockDigest": {
             "type": "string",
             "description": "The digest of the supplied reviewed-set lock this run's reviewed claim rests on (Release.suppliedReviewedSet.lockDigest), present exactly when reviewedSetOrigin is supplied. It is not the reviewedSet.lockDigest of the run's result or record, which names the release's own lock."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeIdentifier",
+            "description": "The scope identifier of the run's job, fixed when the run is queued; absent for a job created under none. Not part of a verification export."
           }
         }
       },
@@ -5367,6 +5638,10 @@
           },
           "problem": {
             "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeIdentifier",
+            "description": "The scope identifier of the trigger's job; absent for a job created under none."
           }
         },
         "required": [
@@ -5504,6 +5779,10 @@
           },
           "preparation": {
             "$ref": "#/components/schemas/SourcePreparation"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeIdentifier",
+            "description": "The scope identifier of the occurrence's job; absent for a job created under none."
           }
         },
         "required": [
@@ -6061,9 +6340,10 @@
           "entryVersion": {
             "enum": [
               "1",
-              "2"
+              "2",
+              "3"
             ],
-            "description": "2 for an entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell a caller's entry by its version before it reads by."
+            "description": "3 for an entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, and a 3 a scoped job's, whatever its by."
           },
           "kind": {
             "enum": [
@@ -6105,6 +6385,10 @@
           },
           "concerns": {
             "$ref": "#/components/schemas/JournalConcerns"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeIdentifier",
+            "description": "The scope identifier of the job the entry concerns, on an entry of any kind about a job created under one; absent otherwise."
           },
           "revision": {
             "type": "integer",

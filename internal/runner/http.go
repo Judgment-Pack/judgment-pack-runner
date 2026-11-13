@@ -140,7 +140,9 @@ func (s *Service) ServiceHandler(token string, identity *Identity) http.Handler 
 }
 
 func (s *Service) handler(token string, identity *Identity, service bool) http.Handler {
-	mux := http.NewServeMux()
+	routes := http.NewServeMux()
+	// Every route reads the scope its request names (scope.go).
+	mux := scopedMux{routes, s}
 	mux.HandleFunc("GET /v1/jobs/{job}/execution-binding", s.manualExecutionBindingHandler)
 	s.triggerRoutes(mux)
 	mux.HandleFunc("POST /v1/input-profiles", s.registerInputProfileHandler)
@@ -238,7 +240,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		status := map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration", "selected-profile-preparation"}}
+		status := map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration", "selected-profile-preparation", "scope-identifiers"}}
 		// A bound input root reports whether it holds U+FFFD and whether it
 		// exists (path_domain.go), or, when its status could not be read,
 		// inputRootUnreadable in place of inputRootExists.
@@ -299,10 +301,18 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			ReleaseID string         `json:"releaseId"`
 			Reviewed  bool           `json:"reviewed"`
 			Trigger   *TriggerConfig `json:"trigger,omitempty"`
+			Scope     *string        `json:"scope,omitempty"`
 		}
 		by := requesterFrom(r.Context())
-		if raw, err := decodeRaw(w, r, &req); err != nil {
+		raw, err := decodeRaw(w, r, &req)
+		if err != nil {
 			s.refusedJobBy(by, releaseNamed(raw), err)
+			failure(w, err)
+			return
+		}
+		scope, err := jobScope(raw, req.Scope)
+		if err != nil {
+			s.refusedJobBy(by, req.ReleaseID, err)
 			failure(w, err)
 			return
 		}
@@ -313,7 +323,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			failure(w, err)
 			return
 		}
-		j, err := s.createJobBy(by, req.Name, req.ReleaseID, req.Trigger)
+		j, err := s.createJobBy(by, req.Name, req.ReleaseID, scope, req.Trigger)
 		if err != nil {
 			s.refusedJobBy(by, req.ReleaseID, err)
 			failure(w, err)
@@ -419,7 +429,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			failure(w, err)
 			return
 		}
-		mux.ServeHTTP(selectedReplyWriter(w, adapted), adapted)
+		routes.ServeHTTP(selectedReplyWriter(w, adapted), adapted)
 	})
 }
 
@@ -451,6 +461,11 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string)
 		return
 	}
 	filter := recordFilter{Search: strings.TrimSpace(r.URL.Query().Get("q")), State: r.URL.Query().Get("state"), Review: r.URL.Query().Get("review") == "true"}
+	// A store-wide listing keeps the records of the scope named, if any; a
+	// job's runs are its own, named under its scope (scope.go).
+	if job == "" {
+		filter.Scope = scopeNamed(r.Context())
+	}
 	if len(filter.Search) > 200 || (filter.State != "" && !validRunState(filter.State)) || (r.URL.Query().Get("review") != "" && r.URL.Query().Get("review") != "true" && r.URL.Query().Get("review") != "false") || (kind == "jobs" && (filter.State != "" || filter.Review)) {
 		failure(w, &apiError{400, "invalid_filter", "Use a search up to 200 bytes and supported run filters."})
 		return

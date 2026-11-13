@@ -206,7 +206,9 @@ func (k *sqliteStore) migrate() error {
 		return err
 	}
 	switch schema {
-	case storeSchema:
+	case storeSchema, scopedStoreSchema:
+		// A store that holds a job under a scope identifier was raised from
+		// storeSchema by the job's creation (scope.go), and needs nothing.
 		return nil
 	case "", "1", "2":
 	default:

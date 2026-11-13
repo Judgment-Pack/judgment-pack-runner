@@ -192,7 +192,7 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	if _, err = tx.Exec("INSERT INTO job_revisions(job_id,revision,release_id,record,request_digest) VALUES(?,?,?,?,?)", j.ID, j.Revision, j.ReleaseID, string(encode(j)), hash); err != nil {
 		return Job{}, err
 	}
-	if _, err = appendEvent(tx, change{kind: "job.upgraded", by: s.actor(requesterFrom(ctx)), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}, revision: j.Revision, detail: EventDetail{PreviousRevision: revisionValue(req.BaseRevision)}}); err != nil {
+	if _, err = appendEvent(tx, change{kind: "job.upgraded", by: s.actor(requesterFrom(ctx)), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}, revision: j.Revision, detail: EventDetail{Scope: j.Scope, PreviousRevision: revisionValue(req.BaseRevision)}}); err != nil {
 		return Job{}, err
 	}
 	for _, t := range triggers {
@@ -208,7 +208,7 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 		if _, err = tx.Exec("INSERT INTO trigger_revisions(trigger_id,revision,record) VALUES(?,?,?)", t.ID, t.Revision, string(encode(t))); err != nil {
 			return Job{}, err
 		}
-		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(requesterFrom(ctx)), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: "paused", to: "paused", detail: EventDetail{PreviousRevision: revisionValue(previous), TriggerKind: t.Config.Kind}}); err != nil {
+		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(requesterFrom(ctx)), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: "paused", to: "paused", detail: EventDetail{Scope: j.Scope, PreviousRevision: revisionValue(previous), TriggerKind: t.Config.Kind}}); err != nil {
 			return Job{}, err
 		}
 	}
@@ -266,7 +266,13 @@ func (s *Service) upgradeReceipt(jobID string, req UpgradeJobRequest) (Job, bool
 }
 func (s *Service) upgradeReceiptHandler(w http.ResponseWriter, r *http.Request) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || len(q) != 3 || len(q["baseRevision"]) != 1 || len(q["baseReleaseId"]) != 1 || len(q["releaseId"]) != 1 {
+	// A scope identifier names the job (scope.go), and is no part of the
+	// upgrade the receipt is for.
+	members := len(q)
+	if q.Has("scope") {
+		members--
+	}
+	if err != nil || members != 3 || len(q["baseRevision"]) != 1 || len(q["baseReleaseId"]) != 1 || len(q["releaseId"]) != 1 {
 		failure(w, bad("invalid_request", "Choose the exact job upgrade to reconcile."))
 		return
 	}

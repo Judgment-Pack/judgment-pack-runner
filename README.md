@@ -180,6 +180,24 @@ as in `https://issuer.example#ops-service` (an issuer holds no `#`), and its
 `{"kind":"caller","issuer":"…","subject":"…"}` in an entry of `entryVersion` `"2"`.
 Without `identity`, every record is as a companion writes it.
 
+**Scope identifiers.** `POST /v1/jobs` takes an optional `scope`, an opaque label
+of 1 to 128 bytes of UTF-8 with no control, invisible, private-use, unassigned or
+noncharacter code point (the gateway's rule for its own scope identifier), fixed
+on the job for as long as it exists. The job's triggers, occurrences, runs and
+journal entries carry it as `scope`; an entry that carries it has `entryVersion`
+`"3"`. Every request that names the job or one of its records names the scope in
+the query parameter `scope`, and a request that names a record under another
+scope, under none for a record under one, or under one for a record under none, is
+answered as the same request for a record the store does not hold. Any other route
+refuses a `scope` (`invalid_scope`). `GET /v1/jobs`, `GET /v1/runs` and
+`GET /v1/events` with `scope` serve exactly the records that carry it, compared
+byte for byte; without it they serve everything. It is a label and a filter, not an
+authorization boundary: every request admitted may name any scope, or none. A store
+whose first job is created under a scope is raised to schema `"5"`, which every
+earlier Runner refuses; going back needs a copy of the store from before that job.
+A store without one stays at schema `"3"`, byte for byte
+([design record](docs/design/scope-identifiers.md)).
+
 **Health.** `GET /v1/health` answers without a credential, `200 {"healthy":true}` or
 `503 {"healthy":false}`, and says nothing else. `GET /v1/status` keeps its
 credential. A companion serves no health route.
@@ -840,6 +858,8 @@ and up to five `recentRuns` (ID, execution state, creation time).
 one job. Run lists accept `q` (run ID or job name), `state` and `review=true`.
 Search uses literal substrings with SQLite ASCII case folding. Filters apply
 before the existing 50-record cursor pagination; combine them with `after`.
+`scope` keeps the jobs or runs of exactly that scope identifier, compared byte for
+byte; `GET /v1/jobs/{job}/runs` names its job's scope instead.
 
 Attention includes failed or interrupted execution, unresolved decisions and
 requested handoffs. Rejection alone is not an execution failure. Summaries include

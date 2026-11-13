@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func (s *Service) triggerRoutes(mux *http.ServeMux) {
+func (s *Service) triggerRoutes(mux routeMux) {
 	mux.HandleFunc("GET /v1/triggers/{trigger}/deliveries/{event}", func(w http.ResponseWriter, r *http.Request) {
 		o, _, e := s.findOccurrence(r.PathValue("trigger"), "event:"+r.PathValue("event"))
 		if e != nil {

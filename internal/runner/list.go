@@ -10,6 +10,9 @@ type recordFilter struct {
 	Search string
 	State  string
 	Review bool
+	// Scope, when not empty, keeps the records that carry exactly this scope
+	// identifier (scope.go), compared byte for byte.
+	Scope string
 }
 
 // A list is a stable public projection, independent of Run's durable encoding.
@@ -33,6 +36,7 @@ type runListSummary struct {
 	Reason        *string        `json:"reason,omitempty"`
 	Signing       *RunSigning    `json:"signing,omitempty"`
 	Binding       *RunBinding    `json:"binding,omitempty"`
+	Scope         *string        `json:"scope,omitempty"`
 	Result        *runListResult `json:"result,omitempty"`
 	JobName       string         `json:"jobName"`
 }
@@ -76,6 +80,12 @@ func (s *Service) filteredRecords(kind, jobID string, after int64, filter record
 		if filter.Review {
 			where = append(where, `(t.state IN ('failed','interrupted') OR (t.state='completed' AND (json_extract(t.record,'$.result.disposition.kind')='unresolved' OR json_extract(t.record,'$.result.disposition.handoff.state')='requested')))`)
 		}
+	}
+	if filter.Scope != "" {
+		// SQLite compares text by its bytes (the BINARY collation): no case
+		// is folded and no prefix matches.
+		where = append(where, "json_extract(t.record,'$.scope')=?")
+		args = append(args, filter.Scope)
 	}
 	if filter.Search != "" {
 		where = append(where, "instr(lower("+search+"),lower(?))>0")

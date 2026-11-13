@@ -2088,8 +2088,12 @@ GET /v1/events?after=<sequence>&job=<job>
 }
 ```
 
-Every entry has `sequence`, `entryVersion` (`"1"`, or `"2"` for an entry whose
-`by` is a caller), `kind`, `at`, `by` and `concerns`. `revision` is the trigger revision, where an entry concerns a
+Every entry has `sequence`, `entryVersion` (`"1"`; `"2"` for an entry whose
+`by` is a caller; `"3"` for an entry about a job created under a scope
+identifier, whoever its `by` names), `kind`, `at`, `by` and `concerns`. An
+entry about a job created under a scope identifier carries it as `scope`, and
+`GET /v1/events?scope=` serves only the entries that carry exactly that one
+([design record](design/scope-identifiers.md)). `revision` is the trigger revision, where an entry concerns a
 trigger. `from` and `to` are the record's state before and after, for
 triggers (`paused` or `enabled`), occurrences and runs; `from` is null when the
 change created the record. `reason` is the reason or problem text the record
