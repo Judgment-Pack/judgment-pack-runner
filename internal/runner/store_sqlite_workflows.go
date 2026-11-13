@@ -2,7 +2,10 @@ package runner
 
 // The workflow store keeps a transition and all newly retained artifacts in one
 // SQLite transaction. It is deliberately not wired to a public route until run
-// execution, recovery and offline verification are present.
+// execution, recovery and offline verification are present. Its statements are
+// the sqlite kind's, in its database where the store is opened, and it stays
+// outside the store contract until a route reaches it
+// (docs/design/store-interface.md, section 8).
 import (
 	"bytes"
 	"database/sql"

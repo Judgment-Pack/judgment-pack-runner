@@ -8,7 +8,11 @@ package runner
 // them, moved here.
 //
 // The kind also keeps, in the same database, the manual-admission state,
-// which no other kind keeps (store_sqlite_manual.go; storeOpening.manual).
+// which no other kind keeps (store_sqlite_manual.go; storeOpening.manual),
+// the workflow store's tables where that store is opened
+// (store_sqlite_workflows.go), and the source worker's own database
+// (store_sqlite_sources.go). No statement of the module is outside the files
+// of this kind (TestNoStatementOutsideTheSQLiteKind).
 
 import (
 	"database/sql"

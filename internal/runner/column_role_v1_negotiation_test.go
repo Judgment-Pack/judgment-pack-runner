@@ -307,7 +307,7 @@ func TestColumnNegotiationWorkerStatusRechecksPersistedBound(t *testing.T) {
 	}
 	// A corrupted persisted completion cannot enlarge its frozen request ceiling.
 	status := sourceStatus{ID: req.ID, State: "completed", Deadline: req.Deadline, RetainedResponseJSON: `{}`}
-	if _, e := worker.db.Exec("UPDATE source_operations SET state=?,status=? WHERE id=?", status.State, string(encode(status)), req.ID); e != nil {
+	if _, e := worker.sources.db.Exec("UPDATE source_operations SET state=?,status=? WHERE id=?", status.State, string(encode(status)), req.ID); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := worker.status(req.ID); e == nil {
