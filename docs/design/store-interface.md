@@ -35,10 +35,10 @@ own writes.
 | `job(id)` | `SELECT record FROM jobs WHERE id=?` | The job, or `absent`. |
 | `requestedRun(job, caller, key)` | `SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?` | The request's digest and the run's record, decoded only when asked, so a caller compares the digest first, as it did; the decoding's error is `decodeRun`'s own. `absent` when nothing is held under the key. |
 | `entrySequence(run)` | `SELECT sequence FROM run_chain WHERE run=?` | The sequence of the run's entry, or `absent`. |
+| `run(id)` | `SELECT record FROM runs WHERE id=?` | The run, or `absent`. Inside a transaction, the run as the transaction holds it (later, with [retries](retries.md), so that a retry's checks and its write read one record). |
 
 | Outside a transaction | The sqlite kind's statement | Semantics |
 |---|---|---|
-| `run(id)` | `SELECT record FROM runs WHERE id=?` | The run, or `absent`. |
 | `oldestQueued()` | `SELECT record FROM runs WHERE state='queued' ORDER BY seq LIMIT 1` | The run queued first among those still queued, or `absent`. The order is the order of queueing, never the ids'. |
 | `entryLine(run)` | `SELECT line FROM run_chain WHERE run=?` | The entry's exact line, or `absent`. |
 | `chainPage(after, limit)` | `SELECT sequence,line FROM run_chain WHERE sequence>? ORDER BY sequence LIMIT ?` | Up to `limit` lines after `after`, in order of sequence, and the last sequence read (`after` when none). Entries are only appended, so pages read in turn are a prefix of the chain as it stood at some moment of the reading. |
@@ -55,6 +55,7 @@ own writes.
 | `createEntry(sequence, run, line)` | `INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)` | Appends an entry, created once: `taken` when the sequence or the run has one, `refused` for a sequence below 1. |
 | `createRelease(r)` | `INSERT INTO releases(id,record) VALUES (?,?)` | Keeps a release, created once: `taken` when its id is held. |
 | `appendJournal(c)` | `INSERT INTO events(...)` (`appendEvent`) | Appends a journal entry and returns its sequence. |
+| `raiseSchema(schema)` | `UPDATE metadata SET value=? WHERE key='schema' AND value IN (?,?)` (`raiseRetrySchema`) | Later, with [retries](retries.md): marks the store as holding records only a Runner that knows `schema` keeps, so that no earlier Runner opens it. `refused` for a schema the kind does not know; the sqlite kind knows `"6"`. |
 
 ### The Runner's operations over the contract
 
@@ -77,7 +78,12 @@ Each is the transaction it was, with the same statements in the same order.
   completion without its record's exact bytes is refused with `errNoAuditBytes` and nothing is
   written.
 - **Retry.** None. A run is never queued again; a resubmission under the same key returns the
-  run, and one under a new key is a new run.
+  run, and one under a new key is a new run. (Later, with [retries](retries.md): `retryRunBy`.
+  One transaction: the run read with `run`, its checks (its state, the attempt named, its audit
+  record in the record and in every attempt's directory, the bound of attempts, the trigger's
+  deadline), `activeRuns` against the limit, `raiseSchema`, `putRun` to `queued` with
+  `interrupted` expected, keeping the interrupted attempt in the record, and the `run.queued`
+  entry from `interrupted`. A repeated request reads the run and writes nothing.)
 - **Restart** (`restart`). One transaction, under the lock: the `runner.started` entry, every run
   `runningRuns` reads ended `interrupted` with an entry naming the start, and the occurrences the
   sqlite kind keeps outside the contract (section 6), through `sqliteTxOf`.
@@ -134,6 +140,12 @@ comparison, made between the two statements the claim already made, never refuse
 does not expire, so there is no lease: a run left running is ended by the next process's restart,
 whose lock proves the last dispatcher is gone. A kind for use beyond one host would need a lease
 with fencing for the claim; this contract has none.
+
+Later, with [retries](retries.md), an interrupted run can return to `queued` when a caller asks:
+`putRun` with `interrupted` expected, so a second retry that read it interrupted meets `conflict`.
+A retry reads the run inside its transaction, so its checks and its write see one record; the
+`interrupted` expected by `putRun` remains as the fence the contract states. The claim's fence is unchanged: a claim reads and writes in one transaction, so no claim carries a
+read from an earlier time the run was queued, and each time it is queued it is claimed once.
 
 **Versions.** The only record the contract updates is a run, and its state is its version.
 Releases, chain entries and journal entries are created once and never changed. Jobs are revised
@@ -204,6 +216,8 @@ that does not decode) it asks of the kind under test.
 - A run is queued once under its id and once under its request key.
 - The queue is served in the order runs were queued, with ids that sort against it.
 - A run read queued is claimed once; an update expecting another state writes nothing.
+- An interrupted run is queued again once, keeping its attempts, and is claimed again; a schema
+  the kind does not know is `refused`.
 - Concurrent claimers grant every run once and lose none, with producers queueing at the same
   time; a claimer that meets `conflict` reads the queue again. The claimers share nothing but the
   store.

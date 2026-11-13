@@ -235,12 +235,13 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 	mux.HandleFunc("GET /v1/jobs/{job}/events", s.jobEventsHandler)
 	mux.HandleFunc("GET /v1/events", s.eventsHandler)
 	mux.HandleFunc("GET /v1/runs/{run}/diagnostics", s.diagnosticsHandler)
+	mux.HandleFunc("POST /v1/runs/{run}/retry", s.retryRunHandler)
 	mux.HandleFunc("GET /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("POST /v1/jobs/{job}/briefs", s.briefHandler("job"))
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		status := map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration", "selected-profile-preparation", "scope-identifiers"}}
+		status := map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration", "selected-profile-preparation", "scope-identifiers", "retries"}}
 		// A bound input root reports whether it holds U+FFFD and whether it
 		// exists (path_domain.go), or, when its status could not be read,
 		// inputRootUnreadable in place of inputRootExists.
@@ -302,6 +303,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			Reviewed  bool           `json:"reviewed"`
 			Trigger   *TriggerConfig `json:"trigger,omitempty"`
 			Scope     *string        `json:"scope,omitempty"`
+			Retry     *RetryPolicy   `json:"retry,omitempty"`
 		}
 		by := requesterFrom(r.Context())
 		raw, err := decodeRaw(w, r, &req)
@@ -316,6 +318,12 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			failure(w, err)
 			return
 		}
+		retry, err := jobRetry(raw, req.Retry)
+		if err != nil {
+			s.refusedJobBy(by, req.ReleaseID, err)
+			failure(w, err)
+			return
+		}
 		req.Name = strings.TrimSpace(req.Name)
 		if req.Name == "" || len(req.Name) > 160 || !req.Reviewed {
 			err := bad("review_required", "Enter a job name and review its fixed release and sample result.")
@@ -323,7 +331,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			failure(w, err)
 			return
 		}
-		j, err := s.createJobBy(by, req.Name, req.ReleaseID, scope, req.Trigger)
+		j, err := s.createJobWith(by, req.Name, req.ReleaseID, scope, req.Trigger, retry)
 		if err != nil {
 			s.refusedJobBy(by, req.ReleaseID, err)
 			failure(w, err)

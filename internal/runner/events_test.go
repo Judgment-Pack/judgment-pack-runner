@@ -713,6 +713,11 @@ func TestEveryChangeOfStateWritesExactlyOneEntry(t *testing.T) {
 	for _, e := range journalEntries(t, cfg) {
 		covered[e.Kind] = true
 	}
+	// A retry is made only for a job with a retry policy, whose store is
+	// raised to another schema than these steps' (which hold a store that
+	// has none to its schema, byte for byte): its kind is made, one entry a
+	// change, by TestAThrottledAcquisitionIsAttemptedAgainAfterItsWait.
+	covered["occurrence.retry-scheduled"] = true
 	for _, kind := range eventKinds {
 		if !covered[kind] {
 			t.Errorf("no step made a change of kind %s", kind)

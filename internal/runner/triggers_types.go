@@ -81,6 +81,12 @@ type Occurrence struct {
 	// Scope is the scope identifier of the occurrence's job (scope.go). An
 	// occurrence of a job created under none has none.
 	Scope string `json:"scope,omitempty"`
+	// Attempts are the occurrence's source acquisition attempts, for a job
+	// with a retry policy (retries.go), and NextAttemptAt the time of the
+	// next, while it waits for one. An occurrence of a job without a policy
+	// has neither.
+	Attempts      []Attempt `json:"attempts,omitempty"`
+	NextAttemptAt string    `json:"nextAttemptAt,omitempty"`
 }
 type EventDelivery struct {
 	ID         string `json:"id"`

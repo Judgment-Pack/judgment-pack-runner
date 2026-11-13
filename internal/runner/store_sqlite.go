@@ -206,9 +206,11 @@ func (k *sqliteStore) migrate() error {
 		return err
 	}
 	switch schema {
-	case storeSchema, scopedStoreSchema:
+	case storeSchema, scopedStoreSchema, retryStoreSchema:
 		// A store that holds a job under a scope identifier was raised from
-		// storeSchema by the job's creation (scope.go), and needs nothing.
+		// storeSchema by the job's creation (scope.go), and one that holds a
+		// retry policy or a retried run by its first (retries.go); neither
+		// needs anything.
 		return nil
 	case "", "1", "2":
 	default:
@@ -321,16 +323,16 @@ func (r sqliteReads) entrySequence(run string) (int64, error) {
 	return sequence, nil
 }
 
-func (k *sqliteStore) run(id string) (Run, error) {
+func (r sqliteReads) run(id string) (Run, error) {
 	var b []byte
-	if err := k.db.QueryRow("SELECT record FROM runs WHERE id=?", id).Scan(&b); err != nil {
+	if err := r.q.QueryRow("SELECT record FROM runs WHERE id=?", id).Scan(&b); err != nil {
 		return Run{}, sqliteFault("run", err, false)
 	}
-	r, err := decodeRun(b)
+	run, err := decodeRun(b)
 	if err != nil {
-		return r, storeFailure(faultUnreadable, "run", err)
+		return run, storeFailure(faultUnreadable, "run", err)
 	}
-	return r, nil
+	return run, nil
 }
 
 func (k *sqliteStore) oldestQueued() (Run, error) {
@@ -444,4 +446,11 @@ func (t *sqliteTx) createRelease(r Release) error {
 func (t *sqliteTx) appendJournal(c change) (int64, error) {
 	sequence, err := appendEvent(t.tx, c)
 	return sequence, sqliteFault("journal", err, true)
+}
+
+func (t *sqliteTx) raiseSchema(schema string) error {
+	if schema != retryStoreSchema {
+		return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))
+	}
+	return sqliteFault("schema", raiseRetrySchema(t.tx), true)
 }

@@ -44,10 +44,12 @@ type memoryState struct {
 	// chain is in order of sequence.
 	chain   []memoryEntry
 	journal []change
+	// schema is the last schema raised, or none.
+	schema string
 }
 
 func (m memoryState) clone() memoryState {
-	return memoryState{releases: maps.Clone(m.releases), jobs: maps.Clone(m.jobs), runs: slices.Clone(m.runs), lastSeq: m.lastSeq, chain: slices.Clone(m.chain), journal: slices.Clone(m.journal)}
+	return memoryState{releases: maps.Clone(m.releases), jobs: maps.Clone(m.jobs), runs: slices.Clone(m.runs), lastSeq: m.lastSeq, chain: slices.Clone(m.chain), journal: slices.Clone(m.journal), schema: m.schema}
 }
 
 // memoryStore is the in-memory kind.
@@ -145,9 +147,13 @@ func (m *memoryStore) entrySequence(run string) (int64, error) {
 func (m *memoryStore) run(id string) (Run, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for _, r := range m.state.runs {
-		if r.id == id {
-			return decodeHeld("run", r.record)
+	return m.reads().run(id)
+}
+
+func (r memoryReads) run(id string) (Run, error) {
+	for _, held := range r.s.runs {
+		if held.id == id {
+			return decodeHeld("run", held.record)
 		}
 	}
 	return Run{}, storeFailure(faultAbsent, "run", errNotHeld)
@@ -295,6 +301,14 @@ func (t *memoryTx) putRun(r Run, expected string) (string, error) {
 		return from, nil
 	}
 	return "", storeFailure(faultAbsent, "run", errNotHeld)
+}
+
+func (t *memoryTx) raiseSchema(schema string) error {
+	if schema != retryStoreSchema {
+		return storeFailure(faultRefused, "schema", errors.New("the schema is not raised through the contract"))
+	}
+	t.s.schema = schema
+	return nil
 }
 
 func (t *memoryTx) runningRuns() ([]Run, error) {

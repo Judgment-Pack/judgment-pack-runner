@@ -411,6 +411,41 @@ var storeCases = []storeCase{
 			t.Fatal("entries:", kindCount(kinds, "run.queued"), kindCount(kinds, "run.started"))
 		}
 	}},
+	{"an interrupted run is queued again once, keeping its attempts", func(t *testing.T, k storeKindUnderTest) {
+		// A retry (retries.go) is the one writer that moves a run back to
+		// queued: from interrupted, under the same fence as the claim.
+		w := newStoreWorld(t, k)
+		_, err := w.enqueue("run_a", "key-a")
+		must(t, err)
+		r, ok, err := claim(w.st)
+		if err != nil || !ok {
+			t.Fatal("no run claimed:", ok, err)
+		}
+		r.State, r.FinishedAt = "interrupted", now()
+		must(t, finishRunIn(w.st, r))
+		next := r
+		next.State, next.StartedAt, next.FinishedAt = "queued", "", ""
+		next.Attempts = []Attempt{{Number: 1, StartedAt: r.StartedAt, Outcome: "interrupted", Reason: runAttemptRestarted}}
+		retry := func() error {
+			return w.st.update(func(tx runTx) error {
+				if err := tx.raiseSchema(retryStoreSchema); err != nil {
+					return err
+				}
+				_, err := tx.putRun(next, "interrupted")
+				return err
+			})
+		}
+		must(t, retry())
+		wantFault(t, retry(), faultConflict, "a second retry of a run queued again")
+		again, ok, err := claim(w.st)
+		if err != nil || !ok || again.ID != r.ID {
+			t.Fatal("the run queued again is not claimed:", again.ID, ok, err)
+		}
+		if len(again.Attempts) != 1 || again.Attempts[0] != next.Attempts[0] {
+			t.Fatalf("the kept attempt is not held: %+v", again.Attempts)
+		}
+		wantFault(t, w.st.update(func(tx runTx) error { return tx.raiseSchema("7") }), faultRefused, "a schema the kind does not know")
+	}},
 	{"a transaction that fails keeps nothing", func(t *testing.T, k storeKindUnderTest) {
 		w := newStoreWorld(t, k)
 		before := k.journal(t, w.st)

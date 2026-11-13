@@ -118,6 +118,10 @@ type storeReads interface {
 	// entrySequence is the sequence of a run's entry in the installation's
 	// chain of runs, or faultAbsent.
 	entrySequence(run string) (int64, error)
+	// run is the run held under id, or faultAbsent. Inside a transaction it
+	// is the run as the transaction holds it, so that a retry's checks and
+	// its write see one record (retries.go).
+	run(id string) (Run, error)
 }
 
 // runStore is the Runner's durable state for the queue, releases, inputs and
@@ -132,8 +136,6 @@ type runStore interface {
 	// the store outside its transaction: a kind may wait for the transaction
 	// to end first.
 	update(fn func(runTx) error) error
-	// run is the run held under id, or faultAbsent.
-	run(id string) (Run, error)
 	// oldestQueued is the queued run queued first, or faultAbsent when none
 	// is queued: the queue is served in the order runs were queued.
 	oldestQueued() (Run, error)
@@ -160,7 +162,8 @@ type runTx interface {
 	// returns the state it held before. With expected other than anyState,
 	// the run must be held in that state, or nothing is written and the
 	// fault is faultConflict: the versioned update by which a queued run is
-	// claimed once. faultAbsent when no run is held under r.ID.
+	// claimed once, and by which an interrupted run is queued again by a
+	// retry (retries.go). faultAbsent when no run is held under r.ID.
 	putRun(r Run, expected string) (string, error)
 	// runningRuns are the runs held running, in the order they were queued.
 	runningRuns() ([]Run, error)
@@ -176,6 +179,12 @@ type runTx interface {
 	// appendJournal appends a change's entry to the journal of job activity,
 	// and returns its sequence; entries are only ever appended.
 	appendJournal(c change) (int64, error)
+	// raiseSchema marks the store as holding records that only a Runner
+	// that knows schema keeps, so that no earlier Runner opens it: the
+	// sqlite kind raises its schema (retryStoreSchema is the one raised
+	// through the contract). faultRefused for a schema the kind does not
+	// know.
+	raiseSchema(schema string) error
 }
 
 // storeOpening is what the Runner gives a kind's constructor.

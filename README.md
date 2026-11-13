@@ -198,6 +198,34 @@ earlier Runner refuses; going back needs a copy of the store from before that jo
 A store without one stays at schema `"3"`, byte for byte
 ([design record](docs/design/scope-identifiers.md)).
 
+**Retries.** `POST /v1/jobs` takes an optional `retry` policy, fixed on the job
+and kept by every upgrade: `maxAttempts` (1 to 10), `backoffSeconds` (1 to 3600)
+and `maxBackoffSeconds` (`backoffSeconds` to 3600). It governs the source
+acquisition of the job's occurrences over a Gateway connection that is not
+durable, and has no effect on any other job (a policy of `maxAttempts` 1 is the
+default, and the job is created without one). An attempt whose call the gateway
+answered `429` or `503` in its own JSON error form, with no earlier call of the
+attempt answered, is made again after
+`min(backoffSeconds × 2^(n−1), maxBackoffSeconds)` seconds and no sooner than the
+answer's `Retry-After` (delta-seconds or an HTTP-date; a malformed one is
+ignored). Nothing else is retried: no answer at all, any other status (the gateway
+answers a source that failed, throttled or not, `400`), an answer of those statuses
+in another form (a proxy's page may follow a call that ran), and every evaluation
+failure, refusal and configuration problem. Each attempt is recorded in the
+occurrence's `attempts` and journaled (`occurrence.retry-scheduled`, and
+`entryVersion` `"4"` for an entry that holds `attempt`); the waiting occurrence
+holds `nextAttemptAt`, which survives a restart. The last attempt ends the
+occurrence `failed`, reason `attempt-limit-reached`; a wait past 3600 seconds or
+the occurrence's `expiresAt` fails it, `retry-wait-too-long`. An attempt in
+flight at a crash is failed as before and not retried. Without a policy a job
+makes one attempt, as before. `POST /v1/runs/{run}/retry` with
+`{"attempt": n}` queues an interrupted run again as the same run, keeping the
+interrupted attempt in the run's `attempts`; the next attempt evaluates into
+`attempts/<run>.<n+1>`. A repeated request returns the run as it is (`200`), and so
+does the run's original event id or `Idempotency-Key`. A store's first policy or
+retry raises it to schema `"6"`, which every earlier Runner refuses. `GET
+/v1/status` lists `retries` ([design record](docs/design/retries.md)).
+
 **Health.** `GET /v1/health` answers without a credential, `200 {"healthy":true}` or
 `503 {"healthy":false}`, and says nothing else. `GET /v1/status` keeps its
 credential. A companion serves no health route.
@@ -727,8 +755,8 @@ checkpoint. A run whose inputs were all asserted can be rewritten consistently a
 still pass `verify-run` (#24), unless the verifier holds such a checkpoint, made
 before the rewrite and covering the run's entry: the audit record holds those
 inputs. A record signature does not change this: the operator holds the key.
-Before invoking Runtime, the dispatcher persists `running`. Each run has a unique private attempt directory and one attempt in this
-pilot. The non-rehearsal call records to that directory's Runtime audit trail.
+Before invoking Runtime, the dispatcher persists `running`. Each attempt of a run has a unique private directory: `attempts/<run>` for
+the first, and `attempts/<run>.<n>` for attempt n of a run a caller retried. The non-rehearsal call records to that directory's Runtime audit trail.
 Completed means the response and single audit record agree on pack, inputs,
 disposition, reviewed set and the supported contract. Reject, unresolved and
 not-applicable decisions can all have execution state **Completed**.
@@ -742,7 +770,11 @@ completed. A run Runner saw stop, at an orderly stop, keeps `interruptedAt` besi
 its stop lies in. Inspect the retained stdout and stderr, which
 `GET /v1/runs/{run}/diagnostics` serves up to 64 KiB each, and the audit before
 choosing a new submission. There is no exactly-once claim, automatic recovery
-reconciliation, or automatic retry of a possibly evaluated invocation. External
+reconciliation, or automatic retry of a possibly evaluated invocation: an
+interrupted run is attempted again only when a caller asks
+(`POST /v1/runs/{run}/retry`), and not when its record holds an audit record or
+any of its attempt directories holds a non-empty `audit/evaluations.jsonl` or one
+that cannot be read. External
 actions are not enabled.
 
 ## State and backups
