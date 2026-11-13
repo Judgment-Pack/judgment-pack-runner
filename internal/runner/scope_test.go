@@ -157,6 +157,11 @@ func scopeRoutes() []scopeRoute {
 		})},
 		{"POST /v1/jobs/{job}/upgrade", false, post(func(r scopedRecords) string { return "/v1/jobs/" + r.job + "/upgrade" }, string(encode(UpgradeJobRequest{ReleaseID: "release_x", BaseReleaseID: "release_y", BaseRevision: 1, Reviewed: true})))},
 		{"GET /v1/events", true, get(func(r scopedRecords) string { return "/v1/events?job=" + r.job })},
+		// A job named more than once, even as itself or empty, names no
+		// record: the route refuses it, whatever the ids.
+		{"GET /v1/events", false, get(func(r scopedRecords) string { return "/v1/events?job=" + r.job + "&job=x" })},
+		{"GET /v1/events", false, get(func(r scopedRecords) string { return "/v1/events?job=" + r.job + "&job=" + r.job })},
+		{"GET /v1/events", false, get(func(r scopedRecords) string { return "/v1/events?job=" + r.job + "&job=" })},
 		{"GET /v1/runs/{run}", true, get(func(r scopedRecords) string { return "/v1/runs/" + r.run })},
 		{"GET /v1/runs/{run}/briefs", false, get(func(r scopedRecords) string { return "/v1/runs/" + r.run + "/briefs" })},
 		{"POST /v1/runs/{run}/briefs", false, post(func(r scopedRecords) string { return "/v1/runs/" + r.run + "/briefs" }, `{}`)},
@@ -268,14 +273,15 @@ func TestARequestNamesARecordUnderItsScope(t *testing.T) {
 			{"under one, for a record under none", unscoped, "scope-a"},
 		} {
 			method, path, body, header := r.request(c.records)
-			got := serve(t, s, method, withScope(path, c.scope), body, header)
+			asked := withScope(path, c.scope)
+			got := serve(t, s, method, asked, body, header)
 			method, path, body, header = r.request(missing)
 			want := serve(t, s, method, withScope(path, c.scope), body, header)
 			if wholeAnswer(got) != wholeAnswer(want) {
-				t.Errorf("%s %s: answered\n%s\nand for a record the store does not hold\n%s", r.pattern, c.name, wholeAnswer(got), wholeAnswer(want))
+				t.Errorf("%s %s (%s): answered\n%s\nand for a record the store does not hold\n%s", r.pattern, c.name, asked, wholeAnswer(got), wholeAnswer(want))
 			}
 			if got.Code < 400 {
-				t.Errorf("%s %s: served %d", r.pattern, c.name, got.Code)
+				t.Errorf("%s %s (%s): served %d", r.pattern, c.name, asked, got.Code)
 			}
 		}
 	}
@@ -477,6 +483,16 @@ func TestAJobsScopeCannotBeChanged(t *testing.T) {
 	if upgraded.Revision != 2 || upgraded.Scope != "scope-a" {
 		t.Fatalf("%+v", upgraded)
 	}
+	// The upgrade's receipt is served under the job's scope, which is no
+	// part of the upgrade it is for, and under none as for a job the store
+	// does not hold.
+	receipt := "/v1/jobs/" + j.ID + "/upgrade-receipt?baseRevision=1&baseReleaseId=" + first.ID + "&releaseId=" + next.ID
+	if got := serve(t, s, "GET", receipt+"&scope=scope-a", "", nil); got.Code != 200 || !strings.Contains(got.Body.String(), `"scope":"scope-a"`) || !strings.Contains(got.Body.String(), next.ID) {
+		t.Errorf("the upgrade's receipt: %d %s", got.Code, got.Body)
+	}
+	if got := serve(t, s, "GET", receipt, "", nil); got.Code != 404 || !strings.Contains(got.Body.String(), "upgrade_not_completed") {
+		t.Errorf("the upgrade's receipt under none: %d %s", got.Code, got.Body)
+	}
 	for _, table := range []string{"jobs", "job_creations", "job_revisions"} {
 		var n, carrying int
 		must(t, s.db.QueryRow("SELECT count(*), count(CASE WHEN json_extract(record,'$.scope')='scope-a' THEN 1 END) FROM "+table).Scan(&n, &carrying))
@@ -497,6 +513,24 @@ func TestAJobIsCreatedUnderAScopeInForm(t *testing.T) {
 		body := `{"name":"Scoped","releaseId":"` + r.ID + `","reviewed":true,"scope":` + scope + `}`
 		if got := serve(t, s, "POST", "/v1/jobs", body, nil); got.Code != 400 || !strings.Contains(got.Body.String(), `"code":"`+code+`"`) {
 			t.Errorf("scope %s: %d %s", scope, got.Code, got.Body)
+		}
+	}
+	// A member whose name only folds to scope, which the decoder would take
+	// as it, is refused, alone or beside scope, so that a reader of scope as
+	// written never reads another value than Runner; scope named twice is
+	// refused as every duplicate member is.
+	for members, code := range map[string]string{
+		`"Scope":"scope-a"`:                   "invalid_scope",
+		`"SCOPE":"scope-a"`:                   "invalid_scope",
+		`"ſcope":"scope-a"`:                   "invalid_scope",
+		`"Scope":null`:                        "invalid_scope",
+		`"scope":"scope-a","Scope":"scope-b"`: "invalid_scope",
+		`"Scope":"scope-b","scope":"scope-a"`: "invalid_scope",
+		`"scope":"scope-a","scope":"scope-b"`: "invalid_request",
+	} {
+		body := `{"name":"Scoped","releaseId":"` + r.ID + `","reviewed":true,` + members + `}`
+		if got := serve(t, s, "POST", "/v1/jobs", body, nil); got.Code != 400 || !strings.Contains(got.Body.String(), `"code":"`+code+`"`) {
+			t.Errorf("members %s: %d %s", members, got.Code, got.Body)
 		}
 	}
 	if ids := listedIDs(t, s, "/v1/jobs"); len(ids) != 0 {
@@ -599,6 +633,36 @@ func TestEveryRecordAndEntryOfAScopedJobCarriesItsScope(t *testing.T) {
 				t.Errorf("%s: %v is not the documented scope", c.path, scope)
 			}
 		}
+	}
+}
+
+// A store at the scoped schema is relocated as a store at the schema before
+// it is, and keeps its scoped job and its schema.
+func TestAScopedStoreIsRelocated(t *testing.T) {
+	cfg := journalConfig(t)
+	cfg.InputRoot = relocationTempDir(t)
+	s, e := Open(cfg)
+	must(t, e)
+	j, e := s.createJobBy(requester{}, "Scoped", journalRelease(t, s, s.runtimeDigest).ID, "scope-a", nil)
+	must(t, e)
+	if schema := storeSchemaOf(t, s.db); schema != scopedStoreSchema {
+		t.Fatalf("schema %s", schema)
+	}
+	s.Close()
+	next := filepath.Join(relocationTempDir(t), "moved-project")
+	must(t, os.Rename(cfg.InputRoot, next))
+	request := RelocateRequest{Version: 1, ID: strings.Repeat("b", 32), Dir: cfg.Dir, Workspace: cfg.Workspace, Owner: cfg.Owner, PreviousInputRoot: cfg.InputRoot, InputRoot: next}
+	if result, e := RelocateWorkspace(request); e != nil || result.AlreadyApplied {
+		t.Fatal(result, e)
+	}
+	cfg.InputRoot = next
+	s, e = Open(cfg)
+	must(t, e)
+	defer s.Close()
+	held, e := s.job(j.ID)
+	must(t, e)
+	if held.Scope != "scope-a" || storeSchemaOf(t, s.db) != scopedStoreSchema {
+		t.Fatalf("%+v under schema %s", held, storeSchemaOf(t, s.db))
 	}
 }
 

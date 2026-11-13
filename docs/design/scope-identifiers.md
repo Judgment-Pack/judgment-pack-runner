@@ -62,6 +62,11 @@ the value.
 a string, or out of form, it is refused as `invalid_scope` (a body whose
 `scope` is not a string is refused as `invalid_request`, as any member of
 another type is), and the refusal is journaled as any refused creation is.
+A body is refused as `invalid_scope`, too, when a member's name only folds to
+`scope` (`Scope`, `SCOPE`, `ſcope`), alone or beside `scope`: the JSON decoder
+would read it as `scope`, and a reader that looks for `scope` as written must
+never read another value than Runner does. A `scope` written twice is refused
+as `invalid_request`, as every duplicate member is.
 
 The scope is fixed on the job there and nowhere else. A repeated creation from
 the same release, which returns the job it made, must name the same scope as
@@ -97,8 +102,10 @@ Each route reads it before it reads anything else of the request
 
 - **A route that names a job, a run, a trigger or an occurrence** in its path
   (the job's, else the run's, else the trigger's, else the occurrence's), or
-  `GET /v1/events` with `job`: the record must carry the scope named, or none
-  when none is named. So:
+  `GET /v1/events` with `job` named once, not empty: the record must carry the
+  scope named, or none when none is named. (A `job` named more than once, even
+  as the same id, names no record: the route refuses it, `400`
+  `invalid_filter`, whatever the ids; one named empty is none.) So:
   - a scoped job is addressable only by a request that names its scope;
   - a request that names a scope for a job created under none is refused;
   - a request that names another scope is refused.

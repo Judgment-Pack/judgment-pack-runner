@@ -16,6 +16,7 @@ package runner
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -198,7 +199,10 @@ func (s *Service) scoped(handler http.HandlerFunc) http.HandlerFunc {
 // parameter) that names the record a request addresses, the record's table and
 // its id: its job, else its run, else its trigger, else its occurrence, in its
 // path; or, for /v1/events, the job its job parameter names, when its query
-// parses (one that does not is refused by the route). "" when it names none.
+// parses and names job once, not empty. "" when it names none. A query that
+// does not parse, or names job more than once, names no record: the route
+// refuses it whatever the ids, and one named empty is none, so that each is
+// answered as it is for ids the store does not hold.
 func addressedRecord(r *http.Request) (string, string, string) {
 	for _, named := range []struct{ value, table string }{{"job", "jobs"}, {"run", "runs"}, {"trigger", "triggers"}, {"occurrence", "occurrences"}} {
 		if id := r.PathValue(named.value); id != "" {
@@ -206,15 +210,16 @@ func addressedRecord(r *http.Request) (string, string, string) {
 		}
 	}
 	if r.Pattern == "GET /v1/events" {
-		if q, e := url.ParseQuery(r.URL.RawQuery); e == nil && q.Get("job") != "" {
-			return "", "jobs", q.Get("job")
+		if q, e := url.ParseQuery(r.URL.RawQuery); e == nil && len(q["job"]) == 1 && q["job"][0] != "" {
+			return "", "jobs", q["job"][0]
 		}
 	}
 	return "", "", ""
 }
 
 // unheld is r naming unheldRecord in place of the record its path value name
-// names, or, for name "", its job parameter.
+// names, or, for name "", its job parameter, which addressedRecord reads only
+// when it is named once.
 func unheld(r *http.Request, name string) *http.Request {
 	r = r.Clone(r.Context())
 	if name != "" {
@@ -239,10 +244,23 @@ func (s *Service) heldScope(table, id string) (string, bool, error) {
 }
 
 // jobScope reads the scope member of a job's creation: absent is none, and a
-// member written null, empty or out of form is refused.
+// member written null, empty or out of form is refused. So is a member whose
+// name only folds to scope (Scope, SCOPE, ſcope), which the decoder takes as
+// it, so that a reader that looks for scope as written never reads another
+// value than Runner does. (A scope named twice as written is refused before,
+// as every duplicate member is: decodeRaw.)
 func jobScope(raw []byte, scope *string) (string, error) {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return "", errScopeForm
+	}
+	for name := range members {
+		if name != "scope" && strings.EqualFold(name, "scope") {
+			return "", errScopeForm
+		}
+	}
 	if scope == nil {
-		if namedAt(raw, "scope") {
+		if _, named := members["scope"]; named {
 			return "", errScopeForm
 		}
 		return "", nil

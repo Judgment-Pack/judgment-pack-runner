@@ -2887,8 +2887,7 @@
       "ScopeIdentifier": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 128,
-        "description": "A scope identifier (docs/design/scope-identifiers.md): an opaque label of 1 to 128 bytes of UTF-8 with no code point of General_Category Cc (tab and line feed among them), Co or Cn, Bidi_Control, Default_Ignorable_Code_Point or Noncharacter_Code_Point, as Unicode 15.0.0 assigns them; the gateway's rule for its own scope identifier, meant to stay the same. Compared as written, byte for byte: nothing is folded, trimmed or normalized. A label and a filter, not an authorization boundary: every request the API admits may name any scope, or none to list every scope's records."
+        "description": "A scope identifier (docs/design/scope-identifiers.md): an opaque label of at least one code point and at most 128 bytes of UTF-8, not 128 characters (the gateway's bound, in bytes; maxLength counts characters, so none is stated), with no code point of General_Category Cc (tab and line feed among them), Co or Cn, Bidi_Control, Default_Ignorable_Code_Point or Noncharacter_Code_Point, as Unicode 15.0.0 assigns them; the gateway's rule for its own scope identifier, meant to stay the same. Compared as written, byte for byte: nothing is folded, trimmed or normalized. A label and a filter, not an authorization boundary: every request the API admits may name any scope, or none to list every scope's records."
       },
       "Job": {
         "type": "object",
@@ -6344,7 +6343,7 @@
               "2",
               "3"
             ],
-            "description": "3 for an entry about a job created under a scope identifier, which holds the member scope an entry of version 1 or 2 never holds, whoever its by names; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell a caller's entry, or a scoped one, by its version before it reads by."
+            "description": "3 for an entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, and a 3 a scoped job's, whatever its by."
           },
           "kind": {
             "enum": [
