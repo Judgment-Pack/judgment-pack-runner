@@ -3,7 +3,7 @@
   "info": {
     "title": "Judgment Pack Runner local pilot",
     "version": "0.1.0",
-    "description": "Single local installation owner, one fixed pack release per job. Durable local schedules, file changes and authenticated event admission. Experimental evaluator; no external actions. Direct runner prefix /v1; owner-authenticated Desk proxy /api/operations."
+    "description": "Single local installation owner, one fixed pack release per job. Durable local schedules, file changes and authenticated event admission. Experimental evaluator; no external actions. Direct runner prefix /v1; owner-authenticated Desk proxy /api/operations. In service mode (jpack-runner serve --config) the control API is a long-running service's: with an identity configured, every request but GET /health carries an identity token in place of the owner bearer, and Runner speaks plain HTTP, terminating no TLS."
   },
   "servers": [
     {
@@ -42,6 +42,35 @@
           }
         },
         "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "security": [],
+        "description": "Service mode only: whether Runner is healthy, for a probe that holds no credential. healthy is false, answered 503, once the dispatcher has stopped after a storage error. It says nothing else: not the store, its directory, the workspace, the owner or a digest; GET /status, which does, keeps its credential. HEAD is answered as GET, with no body. A browser Origin is refused. A companion does not serve this route.",
+        "responses": {
+          "200": {
+            "description": "Runner is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The dispatcher has stopped after a storage error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/previews": {
@@ -1309,7 +1338,7 @@
             }
           }
         },
-        "description": "Direct Runner requires owner bearer plus X-Trigger-Token. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap policy: inspect occurrence.state. While the local queue of pending occurrences is full a new delivery is refused with 429 queue_full, retryable, and nothing is admitted: the event ID stays unused, and the same bytes delivered again are admitted once the queue has room, while occurredAt is no older than 5 minutes; after that they are refused with 422 event_expired. An ID that an earlier Runner version recorded as skipped with reason queue-full still answers with that recorded occurrence. No Retry-After header is sent. The token that created an occurrence can read its result with readEventResult."
+        "description": "Direct Runner requires owner bearer plus X-Trigger-Token; in service mode with an identity, an identity token in place of the owner bearer, and X-Trigger-Token as before. Desk exposes POST /api/job-events/{trigger} using only Authorization: Bearer <trigger-token>; browser Origin is refused. New deliveries must be no older than 5 minutes, at most 30 seconds in the future. Exact retries return the original occurrence; changed payloads with the same ID conflict. Accepted work may be skipped by overlap policy: inspect occurrence.state. While the local queue of pending occurrences is full a new delivery is refused with 429 queue_full, retryable, and nothing is admitted: the event ID stays unused, and the same bytes delivered again are admitted once the queue has room, while occurredAt is no older than 5 minutes; after that they are refused with 422 event_expired. An ID that an earlier Runner version recorded as skipped with reason queue-full still answers with that recorded occurrence. No Retry-After header is sent. The token that created an occurrence can read its result with readEventResult."
       }
     },
     "/triggers/{trigger}/occurrences/{occurrence}": {
@@ -2463,7 +2492,8 @@
     "securitySchemes": {
       "bearer": {
         "type": "http",
-        "scheme": "bearer"
+        "scheme": "bearer",
+        "description": "The owner bearer: a companion's boot line's token, or a service configuration's. In service mode with an identity, an identity token in its place: a JWT in compact form, at most 8192 bytes, from the configured issuer (iss), naming the configured audience (aud), for a subject the configuration lists (sub), signed with RS256, ES256 or EdDSA by a key of the configured key set, named by kid, with an expiry (exp) and, when present, a start (nbf), each held with 30 seconds' leeway. The owner bearer is not taken then. A refused token is answered 401 with WWW-Authenticate: Bearer and a message naming one reason, which never repeats the token. A token is a bearer credential: Runner keeps no record of the tokens it has taken, so one can be presented again until it expires."
       }
     },
     "schemas": {
@@ -2807,6 +2837,10 @@
           },
           "createdAt": {
             "type": "string"
+          },
+          "requestedBy": {
+            "type": "string",
+            "description": "Who requested the run: the owner, for a request that carried the owner bearer; the subject of the identity token a request in service mode carried; trigger:<id> for a run a trigger started; workflow for a workflow's. An Idempotency-Key is held within its requester's runs of the job: a caller's keys are its own."
           },
           "attempt": {
             "type": "integer",
@@ -5835,7 +5869,7 @@
         "additionalProperties": false
       },
       "JournalActor": {
-        "description": "Who Runner can say initiated a change. Never a person: Runner cannot know one. installation is whoever holds the owner bearer, named by the boot line's owner; a trigger acts at a revision; a trigger-credential is an event delivery whose X-Trigger-Token was the trigger's current key, named by the revision the key was issued at (null for a key issued before the journal began), never by the token or its digest; a delivery refused after its credential was authenticated is that credential's, as it was then, even if the key is rotated before the refusal is recorded; a cloud-connection is a cloud signal Runner discarded; runner is Runner itself.",
+        "description": "Who Runner can say initiated a change. Never a person: Runner cannot know one. installation is whoever holds the owner bearer, named by the boot line's owner; a caller is a request in service mode that carried an identity token, named by the token's iss and sub as Runner checked them, never by the token: the issuer's name for a caller, not a person Runner knows; a trigger acts at a revision; a trigger-credential is an event delivery whose X-Trigger-Token was the trigger's current key, named by the revision the key was issued at (null for a key issued before the journal began), never by the token or its digest; a delivery refused after its credential was authenticated is that credential's, as it was then, even if the key is rotated before the refusal is recorded; a cloud-connection is a cloud signal Runner discarded; runner is Runner itself.",
         "oneOf": [
           {
             "type": "object",
@@ -5849,6 +5883,26 @@
                 "const": "installation"
               },
               "owner": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "issuer",
+              "subject"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "caller"
+              },
+              "issuer": {
+                "type": "string"
+              },
+              "subject": {
                 "type": "string"
               }
             }
@@ -5992,7 +6046,11 @@
             "description": "The entry's place in the journal, from 1, in the order changes committed: the cursor."
           },
           "entryVersion": {
-            "const": "1"
+            "enum": [
+              "1",
+              "2"
+            ],
+            "description": "2 for an entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell a caller's entry by its version before it reads by."
           },
           "kind": {
             "enum": [
@@ -7476,6 +7534,18 @@
           "profiles"
         ],
         "additionalProperties": false
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "healthy"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "healthy": {
+            "type": "boolean"
+          }
+        }
       }
     }
   }

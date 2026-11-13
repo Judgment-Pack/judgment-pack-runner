@@ -19,14 +19,15 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /v1/triggers/{trigger}/deliveries", func(w http.ResponseWriter, r *http.Request) {
 		var req RecordDelivery
+		by := requesterFrom(r.Context())
 		if e := decodeInput(w, r, &req); e != nil {
-			s.refusedEvent(r.PathValue("trigger"), e)
+			s.refusedEventBy(by, r.PathValue("trigger"), e)
 			failure(w, e)
 			return
 		}
-		o, replay, e := s.deliverRecord(r.PathValue("trigger"), req.ReleaseID, req.Event)
+		o, replay, e := s.deliverRecordBy(by, r.PathValue("trigger"), req.ReleaseID, req.Event)
 		if e != nil {
-			s.refusedEvent(r.PathValue("trigger"), e)
+			s.refusedEventBy(by, r.PathValue("trigger"), e)
 			failure(w, e)
 			return
 		}
@@ -37,7 +38,7 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 		write(w, status, map[string]any{"occurrence": o, "replayed": replay})
 	})
 	mux.HandleFunc("POST /v1/occurrences/{occurrence}/reconcile", func(w http.ResponseWriter, r *http.Request) {
-		o, e := s.reconcileOccurrence(r.PathValue("occurrence"))
+		o, e := s.reconcileOccurrenceBy(requesterFrom(r.Context()), r.PathValue("occurrence"))
 		if e != nil {
 			failure(w, e)
 			return
@@ -102,7 +103,7 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 			failure(w, e)
 			return
 		}
-		t, e := s.configureTrigger(r.PathValue("job"), req.ID, req.Revision, req.Config)
+		t, e := s.configureTriggerBy(requesterFrom(r.Context()), r.PathValue("job"), req.ID, req.Revision, req.Config)
 		if e != nil {
 			failure(w, e)
 			return
@@ -173,7 +174,7 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 			failure(w, e)
 			return
 		}
-		t, key, e := s.setTriggerState(r.PathValue("trigger"), req.Revision, req.Paused, req.Reviewed)
+		t, key, e := s.setTriggerStateBy(requesterFrom(r.Context()), r.PathValue("trigger"), req.Revision, req.Paused, req.Reviewed)
 		if e != nil {
 			failure(w, e)
 			return
@@ -188,7 +189,7 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 			failure(w, e)
 			return
 		}
-		t, key, e := s.rotateTriggerKey(r.PathValue("trigger"), req.Revision)
+		t, key, e := s.rotateTriggerKeyBy(requesterFrom(r.Context()), r.PathValue("trigger"), req.Revision)
 		if e != nil {
 			failure(w, e)
 			return
@@ -197,14 +198,15 @@ func (s *Service) triggerRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /v1/triggers/{trigger}/events", func(w http.ResponseWriter, r *http.Request) {
 		var delivery EventDelivery
+		by := requesterFrom(r.Context())
 		if e := decodeInput(w, r, &delivery); e != nil {
-			s.refusedEvent(r.PathValue("trigger"), e)
+			s.refusedEventBy(by, r.PathValue("trigger"), e)
 			failure(w, e)
 			return
 		}
 		o, replay, e := s.event(r.PathValue("trigger"), r.Header.Get("X-Trigger-Token"), delivery)
 		if e != nil {
-			s.refusedEvent(r.PathValue("trigger"), e)
+			s.refusedEventBy(by, r.PathValue("trigger"), e)
 			failure(w, e)
 			return
 		}

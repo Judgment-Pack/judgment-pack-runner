@@ -28,9 +28,11 @@ import (
 // What the journal does not establish: anything against the operator, who
 // keeps the store and can rewrite it. It is the operator's own log, not
 // chained and not signed. Its times are Runner's clock. Its identities are what
-// Runner can know: the installation (whoever holds the owner bearer), a
-// trigger, a trigger's credential by the revision its key was issued at, a
-// cloud connection, or Runner itself; never a person.
+// Runner can know: the installation (whoever holds the owner bearer), a caller
+// by the issuer and subject of the identity token its request carried (service
+// mode, caller_identity.go), a trigger, a trigger's credential by the revision
+// its key was issued at, a cloud connection, or Runner itself; never a person
+// Runner knows.
 
 const (
 	// storeSchema 3 adds immutable job revisions and creation receipts. Earlier
@@ -39,6 +41,10 @@ const (
 	// EventEntryVersion is the shape of an entry. A member added later raises
 	// it.
 	EventEntryVersion = "1"
+	// callerEntryVersion is the shape of an entry whose by is a caller, whose
+	// members issuer and subject an entry of EventEntryVersion never holds.
+	// Every other entry keeps EventEntryVersion.
+	callerEntryVersion = "2"
 	// eventPage is the most entries a page of the journal holds.
 	eventPage = 50
 	// maxEventReason bounds the reason an entry copies from its record.
@@ -84,12 +90,16 @@ type Event struct {
 
 // EventActor is who Runner can say initiated a change.
 type EventActor struct {
-	// Kind is installation, trigger, trigger-credential, cloud-connection or
-	// runner.
+	// Kind is installation, caller, trigger, trigger-credential,
+	// cloud-connection or runner.
 	Kind string `json:"kind"`
 	// Owner is the boot line's owner, for the installation: whoever holds the
 	// owner bearer, not a person.
 	Owner string `json:"owner,omitempty"`
+	// Issuer and Subject name a caller: the iss and sub of the identity token
+	// its request carried, as Runner checked it, never the token.
+	Issuer  string `json:"issuer,omitempty"`
+	Subject string `json:"subject,omitempty"`
 	// Trigger and Revision name a trigger acting at a revision, or the
 	// trigger whose credential an event delivery carried.
 	Trigger  string `json:"trigger,omitempty"`
@@ -237,8 +247,12 @@ func appendEvent(tx *sql.Tx, c change) (int64, error) {
 			from = c.from
 		}
 	}
+	version := EventEntryVersion
+	if c.by.Kind == "caller" {
+		version = callerEntryVersion
+	}
 	res, err := tx.Exec("INSERT INTO events(entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail,job_id,release_id,refusal) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		EventEntryVersion, c.kind, c.at, string(encode(c.by)), string(encode(c.concerns)), revision, from, to, boundedReason(c.reason), string(encode(c.detail)), c.concerns.Job, c.concerns.Release, c.refusal)
+		version, c.kind, c.at, string(encode(c.by)), string(encode(c.concerns)), revision, from, to, boundedReason(c.reason), string(encode(c.detail)), c.concerns.Job, c.concerns.Release, c.refusal)
 	if err != nil {
 		return 0, err
 	}
@@ -477,12 +491,15 @@ func (s *Service) recordStop() {
 }
 
 // saveRelease stores a release that a preview made, with its entry.
-func (s *Service) saveRelease(r Release) error {
+func (s *Service) saveRelease(r Release) error { return s.saveReleaseBy(requester{}, r) }
+
+// saveReleaseBy is saveRelease, for a preview by.
+func (s *Service) saveReleaseBy(by requester, r Release) error {
 	return s.store.update(func(tx runTx) error {
 		if err := tx.createRelease(r); err != nil {
 			return err
 		}
-		_, err := tx.appendJournal(change{kind: "release.previewed", by: s.installation(), concerns: EventConcerns{Release: r.ID}, detail: EventDetail{PackID: r.PackID, PackVersion: r.PackVersion, PackDigest: r.PackDigest, RuntimeDigest: r.RuntimeDigest, Tests: r.Tests}})
+		_, err := tx.appendJournal(change{kind: "release.previewed", by: s.actor(by), concerns: EventConcerns{Release: r.ID}, detail: EventDetail{PackID: r.PackID, PackVersion: r.PackVersion, PackDigest: r.PackDigest, RuntimeDigest: r.RuntimeDigest, Tests: r.Tests}})
 		return err
 	})
 }
@@ -506,13 +523,19 @@ func (s *Service) refused(request string, err error, by EventActor, concerns Eve
 }
 
 // journalRefusal writes a refusal unless the journal holds an identical one,
-// for the same request, records and code (or reason), written in the last
-// minute. The check reads the journal in the refusal's own transaction, so it
-// holds across a restart and keeps nothing in memory. A sender refused again
-// and again cannot grow the journal without limit.
+// for the same request, records and code (or reason), and the same caller,
+// written in the last minute. The check reads the journal in the refusal's own
+// transaction, so it holds across a restart and keeps nothing in memory. A
+// sender refused again and again cannot grow the journal without limit.
 func (s *Service) journalRefusal(c change) {
 	c.detail.CoalescedSeconds = int(refusalWindow / time.Second)
-	c.refusal = strings.Join([]string{c.detail.Request, c.by.Connection, c.concerns.Job, c.concerns.Trigger, c.concerns.Release, c.detail.Code, c.reason}, "\x00")
+	key := []string{c.detail.Request, c.by.Connection, c.concerns.Job, c.concerns.Trigger, c.concerns.Release, c.detail.Code, c.reason}
+	// A caller's refusal is kept apart from another caller's, and from the
+	// installation's, whose keys are as they always were.
+	if c.by.Kind == "caller" {
+		key = append(key, c.by.Issuer, c.by.Subject)
+	}
+	c.refusal = strings.Join(key, "\x00")
 	tx, err := s.db.Begin()
 	if err != nil {
 		return
@@ -535,9 +558,12 @@ func (s *Service) journalRefusal(c change) {
 }
 
 // refusedRun journals a refused submission to a job the store holds.
-func (s *Service) refusedRun(jobID string, err error) {
+func (s *Service) refusedRun(jobID string, err error) { s.refusedRunBy(requester{}, jobID, err) }
+
+// refusedRunBy is refusedRun, for a submission by.
+func (s *Service) refusedRunBy(by requester, jobID string, err error) {
 	if j, e := s.job(jobID); e == nil {
-		s.refused("submit-run", err, s.installation(), EventConcerns{Job: j.ID, Release: j.ReleaseID})
+		s.refused("submit-run", err, s.actor(by), EventConcerns{Job: j.ID, Release: j.ReleaseID})
 	}
 }
 
@@ -557,6 +583,12 @@ func (e *credentialRefusal) Unwrap() error { return e.err }
 // holds: the authenticated credential's, when the refusal says one was, and
 // otherwise the installation's. The token is not checked again here.
 func (s *Service) refusedEvent(triggerID string, err error) {
+	s.refusedEventBy(requester{}, triggerID, err)
+}
+
+// refusedEventBy is refusedEvent, for a delivery by: the authenticated
+// credential's, when the refusal says one was, and otherwise by's.
+func (s *Service) refusedEventBy(by requester, triggerID string, err error) {
 	t, _, e := s.trigger(triggerID)
 	if e != nil {
 		return
@@ -565,19 +597,24 @@ func (s *Service) refusedEvent(triggerID string, err error) {
 	if e != nil {
 		return
 	}
-	by := s.installation()
+	actor := s.actor(by)
 	var authenticated *credentialRefusal
 	if errors.As(err, &authenticated) {
-		by = authenticated.by
+		actor = authenticated.by
 	}
-	s.refused("deliver-event", err, by, EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID})
+	s.refused("deliver-event", err, actor, EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID})
 }
 
 // refusedJob journals a refused job creation that names a release the store
 // holds.
 func (s *Service) refusedJob(releaseID string, err error) {
+	s.refusedJobBy(requester{}, releaseID, err)
+}
+
+// refusedJobBy is refusedJob, for a job creation by.
+func (s *Service) refusedJobBy(by requester, releaseID string, err error) {
 	if _, e := s.release(releaseID); e == nil {
-		s.refused("create-job", err, s.installation(), EventConcerns{Release: releaseID})
+		s.refused("create-job", err, s.actor(by), EventConcerns{Release: releaseID})
 	}
 }
 

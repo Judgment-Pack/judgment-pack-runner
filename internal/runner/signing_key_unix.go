@@ -27,6 +27,24 @@ func checkSigningKey(path, stateDir string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, errors.New("Runner's state directory could not be read")
 	}
+	info, err := placedFile(path, state)
+	if err != nil {
+		return nil, err
+	}
+	return info, keyFilePrivate(info)
+}
+
+// placedFile holds a file Runner reads at start to its placement: an
+// absolute, clean path with no symbolic link anywhere in it, through
+// directories alone, none of them state (Runner's state directory, compared
+// by device and inode) when state is not nil. It answers what it saw at the
+// path, which is not a link. A refusal never names the path. The signing key
+// (checkSigningKey), a service configuration (ReadServiceConfig) and an
+// identity's key set (readKeySet) are held to it.
+func placedFile(path string, state os.FileInfo) (os.FileInfo, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
+		return nil, errors.New("its path must be absolute and clean")
+	}
 	walked := "/"
 	parts := strings.Split(path[1:], "/")
 	for _, part := range parts[:len(parts)-1] {
@@ -39,7 +57,7 @@ func checkSigningKey(path, stateDir string) (os.FileInfo, error) {
 			return nil, errors.New("no symbolic link may be anywhere in its path: name it by its real path")
 		case !info.IsDir():
 			return nil, errors.New("its path passes through something that is not a directory")
-		case os.SameFile(info, state):
+		case state != nil && os.SameFile(info, state):
 			return nil, errors.New("it is inside Runner's state directory, which holds every attempt's directory")
 		}
 	}
@@ -50,7 +68,7 @@ func checkSigningKey(path, stateDir string) (os.FileInfo, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("no symbolic link may be anywhere in its path: name it by its real path")
 	}
-	return info, keyFilePrivate(info)
+	return info, nil
 }
 
 // keyFilePrivate holds a key file's own attributes to the placement: one

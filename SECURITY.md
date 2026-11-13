@@ -12,9 +12,14 @@ external action.
 
 Do not open a public issue for a vulnerability that could:
 
-- let a caller use the control API without the owner bearer, or let a trigger token do more than
-  start a run of its own trigger and read the result of an occurrence that token created;
-- disclose the owner bearer, a trigger token, a worker token, or a credential;
+- let a caller use the control API without the owner bearer, or, in service mode with an identity,
+  without an identity token that passes every check the [design note](docs/design/service-mode.md)
+  lists; or let a trigger token do more than start a run of its own trigger and read the result of an
+  occurrence that token created;
+- make service mode listen on an address that is not loopback without both an identity and
+  `acceptOtherHostsOverPlainHTTP: true`, or start from a configuration file it should refuse;
+- record a request as made by a subject other than the one its token was checked for;
+- disclose the owner bearer, an identity token, a trigger token, a worker token, or a credential;
 - make the runner accept a receipt, a release, or a mapped input it should refuse;
 - start a program other than the release's digest-pinned runtime; or
 - read or write outside the runner's own storage.
@@ -40,18 +45,42 @@ that asks for a stronger guarantee is the place to discuss it.
 Everything below describes what the runner holds to and, more importantly, what it does not.
 
 **There is one local owner.** The pilot has no delegated roles, no shared-user permissions and no
-access control beyond the owner bearer. Whoever holds that bearer can do everything the control API
-offers.
+access control beyond the owner bearer, or, in service mode with an identity, the identity token.
+Whoever holds that bearer can do everything the control API offers, and so can every subject an
+identity lists: there are no permissions that differ between callers.
 
-**The control API is local.** The runner binds an ephemeral IPv4 loopback port and refuses direct
-browser origins. Its bearer arrives on stdin at start. It is not printed, not passed as an argument,
-not read from a project file, and not sent to the browser. The runner provides no public ingress,
-no tunnel, and no transport security of its own.
+**A companion's control API is local.** Started by its host, the runner binds an ephemeral IPv4
+loopback port and refuses direct browser origins. Its bearer arrives on stdin at start. It is not
+printed, not passed as an argument, not read from a project file, and not sent to the browser. The
+runner provides no public ingress, no tunnel, and no transport security of its own.
+
+**Service mode listens where its operator says, over plain HTTP.** `jpack-runner serve --config`
+reads its configuration, with the owner bearer or an identity, from one file held to the signing
+key's rules: no symbolic link in its path, one name, owned by Runner's user, readable and writable by
+no one else, outside the state directory. It listens on loopback unless the configuration has both
+an identity and `acceptOtherHostsOverPlainHTTP: true`. **The runner terminates no TLS** and cannot
+check that anything in front of it does. Off loopback, unless TLS terminates in front of it, anyone
+on the network between can read a token and replay it until it expires, read every request and
+answer, a trigger key in the answer that issues it among them, and change a request. It limits
+neither request rate nor connections. `GET /v1/health` answers anyone who can reach the listener,
+and says only whether the runner is healthy.
+
+**An identity token is checked, not its holder.** With an identity, every request but the health
+probe holds one JWT from the configured issuer, naming the configured audience and a subject the
+configuration lists, signed by a key of the key set file the operator holds, within its `exp` and
+`nbf` with 30 seconds' leeway. The key decides the algorithm, so `none` and a token naming another
+algorithm are refused. The runner fetches no keys: a key set change takes effect at the next start.
+What this shows is that whoever holds the private half of a key in that file signed the token for
+that subject. It does not show who presented the token: a token is a bearer credential, the runner keeps no record of
+the tokens it has seen, and nothing revokes one before it expires short of removing its key and
+starting the runner again. A subject is the issuer's name for a caller, not a person the runner
+knows. The checked subject is recorded as the requester of the runs a request creates and as the
+journal's actor; the token is kept nowhere, neither in a record, the journal, an answer nor a log.
 
 **A trigger token is narrow by design.** It is random, shown once, and stored only as a SHA-256
 digest. Rotation revokes the previous token immediately. A token cannot list jobs, inspect records,
-edit triggers, or choose another release. A direct caller of the runner needs the owner bearer as
-well as the trigger token. A `202` acknowledges an occurrence, not a completed decision.
+edit triggers, or choose another release. A direct caller of the runner needs the owner bearer, or
+a service's identity token, as well as the trigger token. A `202` acknowledges an occurrence, not a completed decision.
 
 A token may read one thing: for an occurrence that token itself created, the occurrence's state
 and, once its run completed, the run's disposition and handoff target. Nothing else is in the
@@ -155,5 +184,6 @@ filesystem, with SQLite holding the queue and records. The source worker's datab
 requests and proof secrets. Anyone who can read those files can read their contents, so protect the
 directory with the host's own permissions and keep it out of anything you distribute.
 
-**Not in scope for this pilot:** availability, multi-user operation, hosted or public deployment,
-external actions, graph execution, and agent loops.
+**Not in scope for this pilot:** availability, multi-user operation with permissions that differ
+between callers, a control API open to the public internet, TLS, external actions, graph execution,
+and agent loops.

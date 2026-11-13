@@ -124,7 +124,22 @@ func releaseNamed(raw []byte) string {
 	}
 	return named.ReleaseID
 }
-func (s *Service) Handler(token string) http.Handler {
+
+// Handler is the control API of a companion: every request holds the owner
+// bearer, token, and none comes from a browser.
+func (s *Service) Handler(token string) http.Handler { return s.handler(token, nil, false) }
+
+// ServiceHandler is the control API in service mode (docs/design/
+// service-mode.md). With identity, every request holds an identity token
+// (caller_identity.go) and the owner bearer is not taken; without, every
+// request holds the owner bearer, token, as a companion's does. Either way
+// GET /v1/health answers without a credential, and says whether Runner is
+// healthy and nothing else.
+func (s *Service) ServiceHandler(token string, identity *Identity) http.Handler {
+	return s.handler(token, identity, true)
+}
+
+func (s *Service) handler(token string, identity *Identity, service bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/jobs/{job}/execution-binding", s.manualExecutionBindingHandler)
 	s.triggerRoutes(mux)
@@ -285,21 +300,22 @@ func (s *Service) Handler(token string) http.Handler {
 			Reviewed  bool           `json:"reviewed"`
 			Trigger   *TriggerConfig `json:"trigger,omitempty"`
 		}
+		by := requesterFrom(r.Context())
 		if raw, err := decodeRaw(w, r, &req); err != nil {
-			s.refusedJob(releaseNamed(raw), err)
+			s.refusedJobBy(by, releaseNamed(raw), err)
 			failure(w, err)
 			return
 		}
 		req.Name = strings.TrimSpace(req.Name)
 		if req.Name == "" || len(req.Name) > 160 || !req.Reviewed {
 			err := bad("review_required", "Enter a job name and review its fixed release and sample result.")
-			s.refusedJob(req.ReleaseID, err)
+			s.refusedJobBy(by, req.ReleaseID, err)
 			failure(w, err)
 			return
 		}
-		j, err := s.createJobConfigured(req.Name, req.ReleaseID, req.Trigger)
+		j, err := s.createJobBy(by, req.Name, req.ReleaseID, req.Trigger)
 		if err != nil {
-			s.refusedJob(req.ReleaseID, err)
+			s.refusedJobBy(by, req.ReleaseID, err)
 			failure(w, err)
 			return
 		}
@@ -328,22 +344,23 @@ func (s *Service) Handler(token string) http.Handler {
 		s.list(w, r, "runs", r.PathValue("job"))
 	})
 	mux.HandleFunc("POST /v1/jobs/{job}/runs", func(w http.ResponseWriter, r *http.Request) {
+		by := requesterFrom(r.Context())
 		key := r.Header.Get("Idempotency-Key")
 		if len(key) < 1 || len(key) > 128 || strings.IndexFunc(key, func(c rune) bool { return c < 33 || c > 126 }) >= 0 {
 			err := &apiError{400, "idempotency_key_required", "Supply an Idempotency-Key of 1 to 128 visible ASCII characters."}
-			s.refusedRun(r.PathValue("job"), err)
+			s.refusedRunBy(by, r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
 		input, manual, err := s.manualOwnerInput(w, r, key)
 		if err != nil {
-			s.refusedRun(r.PathValue("job"), err)
+			s.refusedRunBy(by, r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
-		run, replayed, err := s.submitInternalIntent(r.PathValue("job"), key, input, nil, manual)
+		run, replayed, err := s.submitBy(by, r.PathValue("job"), key, input, nil, manual)
 		if err != nil {
-			s.refusedRun(r.PathValue("job"), err)
+			s.refusedRunBy(by, r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
@@ -373,7 +390,21 @@ func (s *Service) Handler(token string) http.Handler {
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if token == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")), []byte(token)) != 1 {
+		if service && r.URL.Path == "/v1/health" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			s.health(w, r)
+			return
+		}
+		switch {
+		case identity != nil:
+			// The owner bearer is not taken: the caller is the token's.
+			by, err := identity.check(r.Header.Values("Authorization"), time.Now())
+			if err != nil {
+				w.Header().Set("WWW-Authenticate", "Bearer")
+				write(w, 401, map[string]string{"message": "Runner authentication required: " + err.Error() + "."})
+				return
+			}
+			r = r.WithContext(withRequester(r.Context(), by))
+		case token == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")), []byte(token)) != 1:
 			write(w, 401, map[string]string{"message": "Runner authentication required."})
 			return
 		}
@@ -391,6 +422,24 @@ func (s *Service) Handler(token string) http.Handler {
 		mux.ServeHTTP(selectedReplyWriter(w, adapted), adapted)
 	})
 }
+
+// health answers service mode's probe, which carries no credential: 200
+// with {"healthy": true}, or 503 with {"healthy": false} once the dispatcher
+// has stopped after a storage error. It says nothing else: not the store, its
+// directory, the workspace, the owner or a digest. A browser request is
+// refused, as on every route.
+func (s *Service) health(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Origin") != "" {
+		write(w, 403, map[string]string{"message": "Use the authenticated Desk API."})
+		return
+	}
+	if s.unhealthy.Load() {
+		write(w, 503, map[string]bool{"healthy": false})
+		return
+	}
+	write(w, 200, map[string]bool{"healthy": true})
+}
+
 func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string) {
 	after := int64(0)
 	var err error
