@@ -286,6 +286,47 @@ func TestEveryTransactionIsSafeToRunTwice(t *testing.T) {
 	}
 }
 
+// upgradeNamingALaterProfile is a job whose paused trigger acquires through
+// a Gateway mapping, and an upgrade to a release whose mapping names a
+// profile, "later", the installation has not registered: the upgrade, which
+// leaves the job unchanged when it is refused, and the profile's
+// registration.
+func upgradeNamingALaterProfile(t *testing.T) (func() (Job, error), func(runStore) error) {
+	t.Helper()
+	s, _, o, _ := preparationFixture(t)
+	o.State, o.Reason, o.PendingInput = "expired", "queue-expired", nil
+	must(t, s.saveOccurrence(o))
+	j, e := s.job(o.JobID)
+	must(t, e)
+	first, e := s.release(j.ReleaseID)
+	must(t, e)
+	later := s.cfg.InputProfiles[0]
+	later.ID = "later"
+	connection := s.cfg.GatewayConnections[0]
+	connection.Profile = later.ID
+	s.cfg.GatewayConnections = append(slices.Clone(s.cfg.GatewayConnections), connection)
+	var mapping InputMapping
+	must(t, json.Unmarshal(encode(*first.InputMapping), &mapping))
+	mapping.Sources[0].Profile, mapping.Sources[0].ProfileDigest = later.ID, profileHash(later)
+	next := first
+	next.ID, next.CreatedAt, next.InputMapping = id("release_"), now(), &mapping
+	must(t, s.saveRelease(next))
+	upgrade := func() (Job, error) {
+		upgraded, e := s.upgradeJob(context.Background(), j.ID, UpgradeJobRequest{ReleaseID: next.ID, BaseReleaseID: first.ID, BaseRevision: j.Revision, Reviewed: true})
+		if e != nil {
+			if held, err := s.job(j.ID); err != nil || held != j {
+				t.Error("the refused upgrade changed the job", held, err)
+			}
+		}
+		return upgraded, e
+	}
+	registered := func(runStore) error {
+		_, err := s.registerInputProfile(later)
+		return err
+	}
+	return upgrade, registered
+}
+
 // Each closure that broke the rule for fn, run twice with the change that
 // shows it made between its runs; and the chain's append, which keeps it.
 func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
@@ -441,36 +482,20 @@ func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
 	// An upgrade checks its triggers against the profiles as they were when
 	// it was asked: a profile its release names, registered between its
 	// runs, does not make a trigger its first run found incompatible
-	// compatible.
+	// compatible. Registered before the upgrade, the same profile makes the
+	// same upgrade pass (the control).
 	t.Run("an upgrade while a profile its release names is registered", func(t *testing.T) {
-		s, _, o, _ := preparationFixture(t)
-		o.State, o.Reason, o.PendingInput = "expired", "queue-expired", nil
-		must(t, s.saveOccurrence(o))
-		j, e := s.job(o.JobID)
-		must(t, e)
-		first, e := s.release(j.ReleaseID)
-		must(t, e)
-		later := s.cfg.InputProfiles[0]
-		later.ID = "later"
-		connection := s.cfg.GatewayConnections[0]
-		connection.Profile = later.ID
-		s.cfg.GatewayConnections = append(slices.Clone(s.cfg.GatewayConnections), connection)
-		var mapping InputMapping
-		must(t, json.Unmarshal(encode(*first.InputMapping), &mapping))
-		mapping.Sources[0].Profile = later.ID
-		next := first
-		next.ID, next.CreatedAt, next.InputMapping = id("release_"), now(), &mapping
-		must(t, s.saveRelease(next))
-		record.betweenRuns(t, "(*Service).upgradeJob", func(runStore) error {
-			_, err := s.registerInputProfile(later)
-			return err
-		})
-		_, e = s.upgradeJob(context.Background(), j.ID, UpgradeJobRequest{ReleaseID: next.ID, BaseReleaseID: first.ID, BaseRevision: j.Revision, Reviewed: true})
-		if refusedCode(e) != "trigger_upgrade_incompatible" {
+		upgrade, registered := upgradeNamingALaterProfile(t)
+		record.betweenRuns(t, "(*Service).upgradeJob", registered)
+		if _, e := upgrade(); refusedCode(e) != "trigger_upgrade_incompatible" {
 			t.Fatal("an upgrade whose trigger was found incompatible:", e)
 		}
-		if held, e := s.job(j.ID); e != nil || held != j {
-			t.Fatal("the refused upgrade changed the job", held, e)
+	})
+	t.Run("an upgrade after a profile its release names is registered", func(t *testing.T) {
+		upgrade, registered := upgradeNamingALaterProfile(t)
+		must(t, registered(nil))
+		if _, e := upgrade(); e != nil {
+			t.Fatal("the control's upgrade:", e)
 		}
 	})
 	// A finish whose first run met one chain head, and whose second meets
