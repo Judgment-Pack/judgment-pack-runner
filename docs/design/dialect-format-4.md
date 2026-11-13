@@ -119,7 +119,10 @@ case while several batches share one dialect, run once under `-race`.
 - **The extended profile.** §2.2.7 names `extended` ceilings (a literal of
   16384 bytes, a list element of 2048) against Core §4.1's table; spec issue
   #324 holds the literal-bound question. Both readers refuse the profile for
-  the format until it is decided.
+  the format until it is decided. Both scan for the declaration only in a
+  dialect of at most 262144 bytes, as the Spec's reader does
+  (`admit_envelope`); a larger one is `input-over-bound` whatever it
+  declares. §11's text does not give that size; the Spec's reader does.
 - **Records.** The workflow and recording schemas do not admit the format
   (spec issue #324); hence §2.
 - **A copy's basis in format `3.0.0`.** §6.2 gives a copy's `basis` as "every

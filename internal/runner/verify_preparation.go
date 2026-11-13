@@ -259,7 +259,7 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 	docLimit := artifactLimit(f.ConversionContract, maxPublishedDialect, columnDocumentLimit)
 	allLimit := artifactLimit(f.ConversionContract, MaxBody, columnCombinedLimit)
 	profilesLimit := artifactLimit(f.ConversionContract, maxProfilesDocument, columnProfilesLimit)
-	if code := columnProfileBytes(f.Dialect); code != "" {
+	if code := columnProfileBytes(f.Dialect); code != "" && !profileUnscanned(f.Dialect) {
 		return stop(code, profileReason(f.Dialect, code))
 	}
 	sources := f.Sources

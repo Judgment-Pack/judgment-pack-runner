@@ -546,6 +546,60 @@ func TestFormat4ExtendedProfileAndBindingAreRefused(t *testing.T) {
 	}
 }
 
+// §11's first phase scans a dialect for its profile declaration only up to
+// twice the dialect bound, 262144 bytes, as the Spec's reader does
+// (admit_envelope): a larger dialect of format 4.0.0 is input-over-bound
+// through both readers, whatever profile it declares. A dialect of format
+// 3.0.0 is scanned at any size, as before.
+func TestFormat4ProfileScanStopsAtTwiceTheDialectBound(t *testing.T) {
+	const verifiedAt = "2026-11-12T18:00:00Z"
+	at, _ := time.Parse("2006-01-02T15:04:05Z", verifiedAt)
+	base := format4File(t, "case-rule-no-sources/dialect.json")
+	caseDocument := format4File(t, "case-rule-no-sources/case.json")
+	// declaring is the dialect declaring profile, padded with white space to
+	// size bytes, of format version.
+	declaring := func(profile string, size int, version string) []byte {
+		d := bytes.Replace(base, []byte(`"formatVersion": "4.0.0"`), []byte(`"formatVersion": "`+version+`"`), 1)
+		head := []byte(`"profile": "` + profile + `", `)
+		pad := size - len(d) - len(head)
+		if pad < 0 {
+			t.Fatal("the dialect is larger than the size asked for")
+		}
+		d = bytes.Replace(d, []byte(`"formatVersion"`), append(append(head, bytes.Repeat([]byte(" "), pad)...), []byte(`"formatVersion"`)...), 1)
+		if len(d) != size || !bytes.Contains(d, []byte(`"formatVersion": "`+version+`"`)) {
+			t.Fatal("the padded dialect is not of the size or format asked for", len(d))
+		}
+		return d
+	}
+	for _, c := range []struct {
+		name     string
+		dialect  []byte
+		verifier string
+		packaged string
+	}{
+		{"extended, at 262144 bytes", declaring("extended", maxProfileScan, "4.0.0"), "profile-unsupported", "profile-unsupported"},
+		{"extended, at 262145 bytes", declaring("extended", maxProfileScan+1, "4.0.0"), codeOverBound, codeOverBound},
+		{"extended, at 300 KiB", declaring("extended", 300<<10, "4.0.0"), codeOverBound, codeOverBound},
+		{"an unknown profile, at 262144 bytes", declaring("other", maxProfileScan, "4.0.0"), codeMalformed, codeMalformed},
+		{"an unknown profile, at 300 KiB", declaring("other", 300<<10, "4.0.0"), codeOverBound, codeOverBound},
+		// Format 3.0.0 keeps its answer; the package does not read it.
+		{"format 3.0.0, extended, at 300 KiB", declaring("extended", 300<<10, "3.0.0"), "profile-unsupported", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			v := format4Verifier(t, c.dialect, caseDocument, verifiedAt)
+			if v.result != ResultRefusal || v.code != c.verifier {
+				t.Fatalf("verifier: %s %s (%s), want the refusal %s", v.result, v.code, v.reason, c.verifier)
+			}
+			if c.packaged == "" {
+				return
+			}
+			if p := format4Package(t, c.dialect, caseDocument, at); p.code != c.packaged {
+				t.Fatalf("package: %s (%s), want %s", p.code, p.reason, c.packaged)
+			}
+		})
+	}
+}
+
 // Format 3.0.0 reads none of what format 4.0.0 adds: a case's rule is not a
 // member of its case, as before.
 func TestFormat3StillRefusesACaseRule(t *testing.T) {

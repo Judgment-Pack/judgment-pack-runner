@@ -2328,7 +2328,11 @@ name `dialect-format-4.0.0`.
 What this release does not read of the format is refused by name:
 
 - the `extended` profile, `profile-unsupported`, until the Spec decides its
-  literal bound (spec issue #324). The `base` profile's bounds (§2.2.7) are
+  literal bound (spec issue #324). As the Spec's reader does, the declaration
+  is scanned for only in a dialect of at most 262144 bytes, twice the dialect
+  bound; a larger dialect of the format is `input-over-bound` whatever profile
+  it declares (a dialect of an earlier format is scanned at any size, as
+  before). The `base` profile's bounds (§2.2.7) are
   held: at most 16 derived values, a literal of at most 8192 bytes, and a list
   parameter of at most 1024 elements, each of at most 1024 bytes, measured
   before its type. A `decimal` is at most 128 characters as part of its type

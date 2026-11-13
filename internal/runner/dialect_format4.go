@@ -40,6 +40,28 @@ func profileReason(dialect []byte, code string) string {
 	return "retained-column profile is unsupported or malformed"
 }
 
+// maxProfileScan is the size up to which §11's first phase scans a dialect
+// of format 4.0.0 for its profile declaration: twice the base profile's
+// dialect bound, the extended profile's (Core §4.1). The Spec's reader
+// scans no larger dialect (its admit_envelope), and the sdk/dialect package
+// does the same.
+const maxProfileScan = 2 * maxPublishedDialect
+
+// profileUnscanned reports whether dialect is of format 4.0.0 and over
+// maxProfileScan bytes: its profile declaration is not read, and §12's byte
+// bounds refuse it input-over-bound, as the Spec's reader and the
+// sdk/dialect package do. A dialect of any other format is scanned at any
+// size, as before.
+func profileUnscanned(dialect []byte) bool {
+	if len(dialect) <= maxProfileScan {
+		return false
+	}
+	var top struct {
+		FormatVersion string `json:"formatVersion"`
+	}
+	return json.Unmarshal(dialect, &top) == nil && top.FormatVersion == format4
+}
+
 // engineError is err, a refusal or finding of the engine, with the code it
 // names (input-malformed when it names none).
 func engineError(err error) error {
