@@ -27,8 +27,9 @@ type storeFault string
 const (
 	// faultAbsent: no record is held under the id or key asked for.
 	faultAbsent storeFault = "absent"
-	// faultTaken: a create-once id or key is held already. Nothing is
-	// written.
+	// faultTaken: a create-once id or key is held already. An operation of
+	// one statement writes nothing; one of several may have made its first
+	// statements in the transaction, which its caller then abandons (runTx).
 	faultTaken storeFault = "taken"
 	// faultConflict: a versioned update found the record at another version
 	// than the one its writer read. Nothing is written.
@@ -38,8 +39,12 @@ const (
 	// A failed statement keeps nothing of the transaction; a failed commit
 	// may or may not have kept it.
 	faultDurability storeFault = "durability"
-	// faultUnreadable: a read failed, or what is held does not read as the
-	// record it should be.
+	// faultUnavailable: a read failed: the store did not answer, and nothing
+	// is known of what it holds. A caller never takes it for a record, or for
+	// none.
+	faultUnavailable storeFault = "unavailable"
+	// faultUnreadable: what is held does not read as the record it should
+	// be.
 	faultUnreadable storeFault = "unreadable"
 	// faultRefused: an argument outside the contract, refused before
 	// anything is written.
@@ -92,10 +97,12 @@ var errKeepNothing = errors.New("store: the transaction keeps nothing")
 // state the store holds it in.
 const anyState = ""
 
-// heldRequest is a run as the queue holds it under its request key: the
-// digest of the request that made it, and its record, read when asked, so
-// that a caller compares the digest before it reads the record.
+// heldRequest is a run as the queue holds it under its request key: its id,
+// the digest of the request that made it, and its record, read when asked,
+// so that a caller compares the digest before it reads the record, and a
+// caller that needs only the id never reads it.
 type heldRequest struct {
+	id     string
 	digest string
 	record []byte
 }
@@ -278,7 +285,10 @@ type runStore interface {
 	close() error
 }
 
-// runTx is one transaction of a store.
+// runTx is one transaction of a store. A write that returns a fault may have
+// made part of its statements in the transaction: its caller abandons the
+// transaction, returning the fault (or another error) from update's
+// function, and update keeps nothing of it.
 type runTx interface {
 	storeReads
 	// activeRuns counts the runs queued or running.
@@ -320,7 +330,8 @@ type runTx interface {
 	// cursor over the trigger held under t.ID, and with history keeps the
 	// snapshot of t's revision: faultTaken when that snapshot, or t's cloud
 	// binding, is held already, and faultAbsent when no trigger is held
-	// under t.ID. Nothing is written on either.
+	// under t.ID. On either its caller abandons the transaction: the
+	// trigger's columns may be written in it already.
 	putTrigger(t Trigger, hash string, history bool) error
 	// createOccurrence keeps o, admitted under identity with the payload
 	// whose digest is payload: faultTaken when its id, or the identity for
@@ -350,12 +361,15 @@ type runTx interface {
 	lastPreparing(occurrence string) (string, error)
 	// createJob keeps j, made from j.ReleaseID: the job, its creation and
 	// its first revision. faultTaken when its id, its release's creation or
-	// a revision naming its release is held.
+	// a revision naming its release is held; its caller then abandons the
+	// transaction, in which the job's row may be made already.
 	createJob(j Job) error
 	// reviseJob writes j over the job held under j.ID and keeps its
 	// revision j.Revision, made by the upgrade request whose digest is
 	// request: faultAbsent when no job is held under j.ID, and faultTaken
-	// when that revision, or one naming j's release, is held.
+	// when that revision, or one naming j's release, is held; its caller
+	// then abandons the transaction, in which the job may be written
+	// already.
 	reviseJob(j Job, request string) error
 	// openOccurrences counts a job's occurrences accepted, preparing,
 	// waiting or needing attention.
@@ -366,7 +380,8 @@ type runTx interface {
 	// reviseTrigger writes t's record over the trigger held under t.ID, its
 	// key and file cursor left as they are, and keeps the snapshot of t's
 	// revision: faultAbsent when no trigger is held under t.ID, faultTaken
-	// when the snapshot is held.
+	// when the snapshot is held; its caller then abandons the transaction,
+	// in which the record may be written already.
 	reviseTrigger(t Trigger) error
 	// appendJournal appends a change's entry to the journal of job activity,
 	// and returns its sequence; entries are only ever appended.

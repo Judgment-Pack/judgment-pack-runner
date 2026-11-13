@@ -85,7 +85,7 @@ func sqliteFault(op string, err error, write bool) error {
 	if write {
 		return storeFailure(faultDurability, op, err)
 	}
-	return storeFailure(faultUnreadable, op, err)
+	return storeFailure(faultUnavailable, op, err)
 }
 
 // sqlitePreparedStore checks that a manual-admission store was prepared
@@ -298,7 +298,7 @@ func (r sqliteReads) job(id string) (Job, error) {
 func (r sqliteReads) requestedRun(jobID, caller, key string) (heldRequest, error) {
 	var held heldRequest
 	var record string
-	if err := r.q.QueryRow("SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, caller, key).Scan(&held.digest, &record); err != nil {
+	if err := r.q.QueryRow("SELECT id,request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?", jobID, caller, key).Scan(&held.id, &held.digest, &record); err != nil {
 		return heldRequest{}, sqliteFault("run", err, false)
 	}
 	held.record = []byte(record)
@@ -401,12 +401,12 @@ func (t *sqliteTx) putRun(r Run, expected string) (string, error) {
 
 func (t *sqliteTx) runningRuns() ([]Run, error) {
 	var runs []Run
-	if err := eachRecord(t.tx, "SELECT record FROM runs WHERE state='running' ORDER BY seq", func(b []byte) error {
+	if err := eachRecord(t.tx, "queue", "SELECT record FROM runs WHERE state='running' ORDER BY seq", func(b []byte) error {
 		r, e := decodeRun(b)
 		runs = append(runs, r)
 		return e
 	}); err != nil {
-		return runs, storeFailure(faultUnreadable, "queue", err)
+		return runs, err
 	}
 	return runs, nil
 }
@@ -556,7 +556,11 @@ func (r sqliteReads) journalPage(f journalFilter, g journalRange) ([]Event, bool
 			more = true
 			break
 		}
-		e, err := scanEvent(rows)
+		sequence, row, err := scanJournalRow(rows)
+		if err != nil {
+			return nil, false, sqliteFault("journal", err, false)
+		}
+		e, err := row.event(sequence)
 		if err != nil {
 			return nil, false, storeFailure(faultUnreadable, "journal", err)
 		}

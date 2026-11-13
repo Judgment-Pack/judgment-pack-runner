@@ -217,6 +217,9 @@ func (s *Service) upgradeReceipt(jobID string, req UpgradeJobRequest) (Job, bool
 	if absent(err) {
 		return Job{}, false, nil
 	}
+	// A revision whose record does not decode was read, digest and all, and
+	// is compared by its digest first, as it was. A read that failed
+	// (faultUnavailable) read no digest, and is the store's failure.
 	if err != nil && faultOf(err) != faultUnreadable {
 		return Job{}, false, err
 	}

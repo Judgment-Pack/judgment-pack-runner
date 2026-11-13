@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -237,8 +238,8 @@ var storeCases = []storeCase{
 		wantFault(t, err, faultTaken, "a second run under one request key")
 		held, err := w.st.requestedRun(w.job.ID, "owner", "key-a")
 		must(t, err)
-		if held.digest != "sha256:key-a" {
-			t.Fatal("the request's digest is not the first's:", held.digest)
+		if held.digest != "sha256:key-a" || held.id != first.ID {
+			t.Fatal("the request's digest or run is not the first's:", held.digest, held.id)
 		}
 		if r, err := held.run(); err != nil || r.ID != first.ID {
 			t.Fatal("the run held under the key is not the first:", r.ID, err)
@@ -777,4 +778,91 @@ var sqliteOwnCases = []storeCase{
 		again := openSQLiteForTest(t, dir)
 		must(t, again.close())
 	}},
+	{"a transaction that fails or whose commit fails keeps no journal entry in the database", func(t *testing.T, k storeKindUnderTest) {
+		// Read from the events table itself, not through journalPage.
+		w := newStoreWorld(t, k)
+		db := w.st.(*sqliteStore).db
+		rows := func() (count int, last int64) {
+			t.Helper()
+			must(t, db.QueryRow("SELECT count(*),coalesce(max(sequence),0) FROM events").Scan(&count, &last))
+			return count, last
+		}
+		count, last := rows()
+		err := w.st.update(func(tx runTx) error {
+			if _, err := tx.appendJournal(change{kind: "runner.started", by: runnerActor}); err != nil {
+				return err
+			}
+			return errors.New("the transaction is abandoned")
+		})
+		if err == nil {
+			t.Fatal("an abandoned transaction succeeded")
+		}
+		k.failCommits(w.st, errors.New("the disk refused the commit"))
+		wantFault(t, w.st.update(func(tx runTx) error {
+			_, err := tx.appendJournal(change{kind: "runner.started", by: runnerActor})
+			return err
+		}), faultDurability, "an entry whose commit failed")
+		k.failCommits(w.st, nil)
+		if c, l := rows(); c != count || l != last {
+			t.Fatalf("the events table holds %d entries to %d, where it held %d to %d", c, l, count, last)
+		}
+	}},
+	{"a read that fails is unavailable, and a record that does not decode unreadable", func(t *testing.T, k storeKindUnderTest) {
+		w := newStoreWorld(t, k)
+		st := w.st.(*sqliteStore)
+		held := st.sqliteReads
+		st.sqliteReads = sqliteReads{failingReads{held.q, ""}}
+		reads := map[string]func() error{
+			"release":          func() error { _, err := st.release(w.release.ID); return err },
+			"job":              func() error { _, err := st.job(w.job.ID); return err },
+			"jobCreation":      func() error { _, err := st.jobCreation(w.release.ID); return err },
+			"jobRevision":      func() error { _, _, err := st.jobRevision(w.job.ID, 1); return err },
+			"releaseUses":      func() error { _, err := st.releaseUses(w.release.ID); return err },
+			"packConflicts":    func() error { _, err := st.packConflicts("p", "1", "d"); return err },
+			"dialectConflicts": func() error { _, err := st.dialectConflicts("d", "1", "d"); return err },
+			"trigger":          func() error { _, _, err := st.trigger("trg_1"); return err },
+			"occurrence":       func() error { _, err := st.occurrence("occ_1"); return err },
+			"brief":            func() error { _, err := st.brief("job:" + w.job.ID); return err },
+			"profileRow":       func() error { _, err := st.profileRow(registeredProfilesKey); return err },
+			"recordScope":      func() error { _, err := st.recordScope("jobs", w.job.ID); return err },
+			"journalPage":      func() error { _, _, err := st.journalPage(journalFilter{}, journalRange{limit: 1}); return err },
+		}
+		for name, read := range reads {
+			wantFault(t, read(), faultUnavailable, "a failed read of "+name)
+		}
+		st.sqliteReads = held
+		// Within a transaction, the rows of a query that fails, and a record
+		// that does not decode.
+		tx, err := st.db.Begin()
+		must(t, err)
+		defer tx.Rollback()
+		wantFault(t, eachRecord(tx, "queue", "SELECT record FROM a_table_never_made", func([]byte) error { return nil }), faultUnavailable, "a failed query of records")
+		wantFault(t, eachRecord(tx, "queue", "SELECT '{'", func(b []byte) error { _, err := decodeRun(b); return err }), faultUnreadable, "a record that does not decode")
+	}},
+}
+
+// failingReads answers each read whose statement names table, or every read
+// for "", with a statement that fails, as a store that is busy, damaged or
+// closed answers it.
+type failingReads struct {
+	sqliteQuerier
+	table string
+}
+
+func (f failingReads) fails(query string) bool {
+	return f.table == "" || strings.Contains(query, " "+f.table+" ") || strings.HasSuffix(query, " "+f.table)
+}
+
+func (f failingReads) QueryRow(query string, args ...any) *sql.Row {
+	if f.fails(query) {
+		return f.sqliteQuerier.QueryRow("SELECT record FROM a_table_never_made")
+	}
+	return f.sqliteQuerier.QueryRow(query, args...)
+}
+
+func (f failingReads) Query(query string, args ...any) (*sql.Rows, error) {
+	if f.fails(query) {
+		return f.sqliteQuerier.Query("SELECT record FROM a_table_never_made")
+	}
+	return f.sqliteQuerier.Query(query, args...)
 }

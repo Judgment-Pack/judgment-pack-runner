@@ -93,10 +93,11 @@ func (t *sqliteTx) openOccurrences(job string) (int, error) {
 	return count, nil
 }
 
-// triggerRecords reads in the order SQLite gives the job's index on triggers,
-// which is the order they were made.
+// triggerRecords reads in the order the triggers were made. The statement
+// before the contract named no order, and SQLite read the job's index on
+// triggers in that order.
 func (t *sqliteTx) triggerRecords(job string) ([]Trigger, error) {
-	rows, err := t.tx.Query("SELECT record FROM triggers WHERE job_id=?", job)
+	rows, err := t.tx.Query("SELECT record FROM triggers WHERE job_id=? ORDER BY seq", job)
 	if err != nil {
 		return nil, sqliteFault("trigger", err, false)
 	}

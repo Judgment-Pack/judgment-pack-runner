@@ -216,13 +216,12 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 	}
 	// Reconcile admission first: a crash after run creation must not become a
 	// second evaluation or an expiry, even if source receipts have since aged.
+	// The run's id alone is read, as before the contract: a run whose record
+	// does not decode is still the occurrence's run, and holds no occurrence
+	// behind it on every tick.
 	held, e := s.store.requestedRun(o.JobID, "trigger:"+o.TriggerID, o.ID)
 	if e == nil {
-		run, err := held.run()
-		if err != nil {
-			return err
-		}
-		o.RunID = run.ID
+		o.RunID = held.id
 		o.State = "submitted"
 		o.Input = nil
 		return s.saveOccurrence(o)

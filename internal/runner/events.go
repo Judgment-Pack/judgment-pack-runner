@@ -731,14 +731,13 @@ func (s *Service) eventPageFor(r eventRequest, f journalFilter) (EventPage, erro
 
 const eventColumns = "sequence,entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail"
 
-// scanEvent reads one entry from a row of eventColumns.
-func scanEvent(rows *sql.Rows) (Event, error) {
+// scanJournalRow reads one entry's sequence and row from a row of
+// eventColumns, not yet decoded.
+func scanJournalRow(rows *sql.Rows) (int64, journalRow, error) {
 	var sequence int64
 	var e journalRow
-	if err := rows.Scan(&sequence, &e.version, &e.kind, &e.at, &e.by, &e.concerns, &e.revision, &e.from, &e.to, &e.reason, &e.detail); err != nil {
-		return Event{}, err
-	}
-	return e.event(sequence)
+	err := rows.Scan(&sequence, &e.version, &e.kind, &e.at, &e.by, &e.concerns, &e.revision, &e.from, &e.to, &e.reason, &e.detail)
+	return sequence, e, err
 }
 
 // event is the entry a row holds at sequence, as the routes serve it.

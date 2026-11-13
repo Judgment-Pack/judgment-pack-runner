@@ -260,7 +260,7 @@ func (r memoryReads) job(id string) (Job, error) {
 func (r memoryReads) requestedRun(jobID, caller, key string) (heldRequest, error) {
 	for _, held := range r.s.runs {
 		if held.job == jobID && held.caller == caller && held.idem == key {
-			return heldRequest{digest: held.digest, record: held.record}, nil
+			return heldRequest{id: held.id, digest: held.digest, record: held.record}, nil
 		}
 	}
 	return heldRequest{}, storeFailure(faultAbsent, "run", errNotHeld)

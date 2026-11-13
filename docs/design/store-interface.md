@@ -33,7 +33,7 @@ own writes.
 |---|---|---|
 | `release(id)` | `SELECT record FROM releases WHERE id=?` | The release, or `absent`. A record that does not decode is `unreadable`. |
 | `job(id)` | `SELECT record FROM jobs WHERE id=?` | The job, or `absent`. |
-| `requestedRun(job, caller, key)` | `SELECT request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?` | The request's digest and the run's record, decoded only when asked, so a caller compares the digest first, as it did; the decoding's error is `decodeRun`'s own. `absent` when nothing is held under the key. |
+| `requestedRun(job, caller, key)` | `SELECT id,request_digest,record FROM runs WHERE job_id=? AND caller=? AND idem=?` | The run's id, the request's digest and the run's record, decoded only when asked, so a caller compares the digest first, as it did; the decoding's error is `decodeRun`'s own. `absent` when nothing is held under the key. |
 | `entrySequence(run)` | `SELECT sequence FROM run_chain WHERE run=?` | The sequence of the run's entry, or `absent`. |
 | `run(id)` | `SELECT record FROM runs WHERE id=?` | The run, or `absent`. Inside a transaction, the run as the transaction holds it (later, with [retries](retries.md), so that a retry's checks and its write read one record). |
 
@@ -104,7 +104,8 @@ kinds and for the SQLite statements outside the contract.
 | `taken` | A create-once id or key is held. Nothing is written. | `SQLITE_CONSTRAINT_PRIMARYKEY`, `SQLITE_CONSTRAINT_UNIQUE` | The id, key or sequence is held. |
 | `conflict` | A versioned update found another state than expected. Nothing is written. | `putRun`'s comparison | The same comparison. |
 | `durability` | A change was not made durable: a write statement, `BEGIN` or `COMMIT` failed. Never a success. | Any other failed write, a failed `BEGIN` or `COMMIT` | Its commit seam. |
-| `unreadable` | A read failed, or a record does not decode. | Any other failed read; a decoding error | A decoding error. |
+| `unavailable` | A read failed: the store did not answer, and nothing is known of what it holds. Never a record, and never none. | Any other failed read | None: it holds what it holds. |
+| `unreadable` | A record does not decode. | A decoding error | A decoding error. |
 | `refused` | An argument outside the contract, refused before anything is written. | `SQLITE_CONSTRAINT_CHECK` (a chain sequence below 1); an unknown kind; a schema not raised through the contract | A chain sequence below 1. |
 
 An error the Runner's own function returns inside `update` (an `apiError`, `errNoAuditBytes`,
@@ -250,9 +251,13 @@ both kinds' cases to have run and passed.
   changed no row and the write passed; every writer writes a trigger it read in the same
   transaction or under `automationMu`, so none meets it. A trigger configured through another
   job is refused as `absent`, as it was refused as SQL's no-rows error. A dispatched occurrence
-  reads its run through `requestedRun` and decodes the run's record, where it read the run's id
-  alone: a record that does not decode now stops the tick, as it stops every other read of the
-  run. A record that does not decode, of a trigger or an occurrence, carries `unreadable`.
+  reads its run's id alone through `requestedRun`, as it did: a run whose record does not decode
+  holds up no automatic occurrence. A record that does not decode, of a trigger or an
+  occurrence, carries `unreadable`.
+- With #244: a read that fails carries `unavailable`, and a record that does not decode
+  `unreadable`; the contract before #244 gave both `unreadable`. Only an upgrade's receipt tells
+  them apart: a revision whose record does not decode is compared by its digest first, as it
+  was, and a read that failed answers `500 store_error`, as it did.
 - With #244: revising a job that is not held (`reviseJob`) or a trigger that is not held
   (`reviseTrigger`) is `absent`, where the statement changed no row and the next one went on; a
   revision reads the job in its own transaction, so none meets it. A job's creation whose
@@ -373,11 +378,21 @@ implements it; and `store_conformance_widened_test.go`, `store_conformance_trigg
 | `packConflicts(pack, version, digest)`, `dialectConflicts(dialect, version, digest)` | Both | The two counts over `job_revisions` joined to `releases` | How many releases a job revision names carry the pack, or the dialect, at that version with other content. A release that names no dialect conflicts with none. |
 | `createJob(j)` | In a transaction | `INSERT INTO jobs`, `job_creations` and `job_revisions` | One operation: `taken` for a held id, a release that made a job, a held revision or a release another revision names. |
 | `reviseJob(j, request)` | In a transaction | `UPDATE jobs`, then `INSERT INTO job_revisions` with the request's digest | `absent` for a job not held; `taken` for a held revision or a release another revision names. |
-| `openOccurrences(job)`, `triggerRecords(job)`, `reviseTrigger(t)` | In a transaction | The upgrade's count, its trigger read, and its `UPDATE triggers SET record` with `INSERT INTO trigger_revisions` | The job's occurrences still `accepted`, `preparing`, `waiting` or `needs-attention`; its triggers as written, in the order they were made; a trigger's record revised alone, its key, cursor and pending state kept, `taken` for a held snapshot and `absent` for a trigger not held. |
+| `openOccurrences(job)`, `triggerRecords(job)`, `reviseTrigger(t)` | In a transaction | The upgrade's count, its trigger read (now `ORDER BY seq`, the order SQLite's index gave it), and its `UPDATE triggers SET record` with `INSERT INTO trigger_revisions` | The job's occurrences still `accepted`, `preparing`, `waiting` or `needs-attention`; its triggers as written, in the order they were made; a trigger's record revised alone, its key, cursor and pending state kept, `taken` for a held snapshot and `absent` for a trigger not held. |
 
 Every kind keeps a journal entry as one encoding, `journalRowOf`, with the sqlite kind's columns,
-and reads it back through `journalRow.event`, which the sqlite kind's `scanEvent` uses too, so an
+and reads it back through `journalRow.event`, which the sqlite kind uses on each row it scans
+(`scanJournalRow`), so an
 entry reads the same whatever kind keeps it. A new in-memory store begins its journal, as a new
 sqlite store does at opening. The conformance suite's journal is read through `journalPage`, and
-the kind-specific journal reader is gone.
+the kind-specific journal reader is gone; the sqlite kind's own cases also count the `events`
+rows themselves, so that a failed transaction's keeping no entry does not rest on `journalPage`
+alone.
+
+The sqlite kind's rows are held to v0.31.0's: `store_sqlite_rows_test.go` makes the journal's
+steps (every kind of change), a brief, a profile's registration, a job with a trigger upgraded,
+a scoped job and a job with a retry policy, reads every table's rows with `typeof()` and
+`quote()`, and compares them with `testdata/store-rows-v0.31.0.txt`, which the same test wrote
+in a checkout of v0.31.0. Ids, times, digests, keys, signatures and the state directory become
+placeholders numbered by first appearance; every other byte is compared as it is.
 

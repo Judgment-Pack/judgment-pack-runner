@@ -261,15 +261,13 @@ func (t *sqliteTx) jobActivity(job string) (int, error) {
 
 func (t *sqliteTx) preparingOccurrences() ([]Occurrence, error) {
 	var occurrences []Occurrence
-	if err := eachRecord(t.tx, "SELECT record FROM occurrences WHERE state='preparing' ORDER BY seq", func(b []byte) error {
+	err := eachRecord(t.tx, "occurrence", "SELECT record FROM occurrences WHERE state='preparing' ORDER BY seq", func(b []byte) error {
 		var o Occurrence
 		e := json.Unmarshal(b, &o)
 		occurrences = append(occurrences, o)
 		return e
-	}); err != nil {
-		return occurrences, storeFailure(faultUnreadable, "occurrence", err)
-	}
-	return occurrences, nil
+	})
+	return occurrences, err
 }
 
 func (t *sqliteTx) lastPreparing(occurrence string) (string, error) {
@@ -281,21 +279,22 @@ func (t *sqliteTx) lastPreparing(occurrence string) (string, error) {
 }
 
 // eachRecord reads the record column of a query's rows, closing them before
-// returning: the store's handle has one connection.
-func eachRecord(tx *sql.Tx, query string, each func([]byte) error) error {
+// returning: the store's handle has one connection. A read that fails is
+// faultUnavailable; a record each cannot decode is faultUnreadable.
+func eachRecord(tx *sql.Tx, op, query string, each func([]byte) error) error {
 	rows, err := tx.Query(query)
 	if err != nil {
-		return err
+		return sqliteFault(op, err, false)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var b []byte
 		if err = rows.Scan(&b); err != nil {
-			return err
+			return sqliteFault(op, err, false)
 		}
 		if err = each(b); err != nil {
-			return err
+			return storeFailure(faultUnreadable, op, err)
 		}
 	}
-	return rows.Err()
+	return sqliteFault(op, rows.Err(), false)
 }
