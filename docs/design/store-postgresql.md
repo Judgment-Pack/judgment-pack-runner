@@ -1,7 +1,8 @@
 # A second storage kind on PostgreSQL
 
-Issue #244. Status: design. Nothing here is built; the slice that builds it follows this note. The
-decision is recorded in [ADR 0001](../adr/0001-second-storage-kind.md).
+Issue #244. Status: design. The kind is not built; the Runner's changes before it (section 11,
+steps 1 to 4) are, but for what step 3 and step 4 list as left. The decision is recorded in
+[ADR 0001](../adr/0001-second-storage-kind.md).
 
 A Runner keeps its state in one SQLite database and a few directories under its state directory
 ([store-interface.md](store-interface.md), section 9). This note fixes the second storage kind,
@@ -408,7 +409,7 @@ Every read in the code whose rows can lie in more than one scope:
 
 | Read | Where | Under (a) | What a client sees |
 |---|---|---|---|
-| `jobCreation(release)` (a repeated creation) and `releaseUses(release)` | `POST /v1/jobs` (`store.go:357`, `:368`); `POST /v1/jobs/{job}/upgrade` (`job_revisions.go:119`) | The keys on `jobs.release_id`, `job_creations.release_id` and `job_revisions.release_id`, which no policy narrows: another scope's row reads `absent`, and the write meets the key as `taken` | `409 release_already_used`, with SQLite's message for the key that holds the release, a creation's or a revision's. The Runner is to answer those keys' `taken` so; it answers `500` today, where no such `taken` is met |
+| `jobCreation(release)` (a repeated creation) and `releaseUses(release)` | `POST /v1/jobs` (`store.go:357`, `:368`); `POST /v1/jobs/{job}/upgrade` (`job_revisions.go:119`) | The keys on `jobs.release_id`, `job_creations.release_id` and `job_revisions.release_id`, which no policy narrows: another scope's row reads `absent`, and the write meets the key as `taken` | `409 release_already_used`, with SQLite's message for the key that holds the release, a creation's or a revision's. The Runner answers those keys' `taken` so (`releaseTaken`); the sqlite kind, whose reads before the write see every scope, never meets one |
 | `packConflicts`, `dialectConflicts` | Both routes (`admitJobPack`, `job_revisions.go:34`; `dialect_artifact.go:159`) | `pack_identities` and `dialect_identities`, unscoped: each revision's release's identities are inserted (`ON CONFLICT DO NOTHING`) in its transaction, and their held digests read back | `409 artifact_identity_conflict`, as on SQLite |
 | `triggerCount()` | `POST /v1/jobs` with a trigger (`store.go:396`); `POST /v1/jobs/{job}/triggers` (`triggers_store.go:67`, outside the transaction) | `counts.triggers`, raised by `createTrigger` only while below 128 | `400 trigger_limit` at the installation's 128th trigger |
 | `cloudBindings(except, connection, job)` | `POST /v1/jobs/{job}/triggers` (`triggers_store.go:77`, outside the transaction) | The binding's unique index on `triggers`, which no policy narrows: the write meets it as `taken` | `400 cloud_binding_used`, the Runner answering the index's `taken` so |
@@ -572,9 +573,19 @@ leave SQLite's statements and rows as they are; the kind is written only after t
 3. The contract's scope for a transaction or a read (section 2); the claim's token, `putRun`'s
    expected claim and `renewClaim` (D3); and the retry check's question to the kind, whether a
    missing attempt directory may be taken to hold no audit record (D11: yes for the sqlite kind,
-   as now; no for the second kind).
+   as now; no for the second kind). (Built, #244's third slice: `heldTo(storeScope)`, the store
+   as a kind opens it doing the work for every scope; `runClaim`, `runExpected` and
+   `renewClaim`, the dispatcher's claim fencing its finish; `missingAttemptHoldsNoAudit`. The
+   in-memory kind holds the scope's policy and the claim's lease by a clock of its own, and the
+   suite tests both. Left: holding each route of the table in section 6 to its scope, of which
+   `POST /v1/jobs` and `POST /v1/jobs/{job}/upgrade` are held; and the renewal loop and the
+   margin, which only a kind that holds a lease needs.)
 4. The Runner's answers to the keys across scopes (D9): `taken` on a release's keys as
-   `409 release_already_used`, on the cloud binding's index as `400 cloud_binding_used`.
+   `409 release_already_used`, on the cloud binding's index as `400 cloud_binding_used`. (The
+   release's keys are built, #244's third slice: a `taken` names its key, `storeKey`, and
+   `releaseTaken` answers it. Left: the binding's answer. Its key is named, but the Runner's own
+   check of the binding answers `422 cloud_binding_used`, and `trigger_limit` is `422` too,
+   where section 6 says `400`.)
 5. The kind: its migrations and commands, the rows of section 3, its policies, the lease and its
    renewal, the attempts' volume rows (D11), the pinned Runtime directory (D12), the CI service
    container, and the tests of section 10.

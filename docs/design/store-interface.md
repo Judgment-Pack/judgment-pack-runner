@@ -43,13 +43,16 @@ own writes.
 | `entryLine(run)` | `SELECT line FROM run_chain WHERE run=?` | The entry's exact line, or `absent`. |
 | `chainPage(after, limit)` | `SELECT sequence,line FROM run_chain WHERE sequence>? ORDER BY sequence LIMIT ?` | Up to `limit` lines after `after`, in order of sequence, and the last sequence read (`after` when none). Entries are only appended, so pages read in turn are a prefix of the chain as it stood at some moment of the reading. |
 | `update(fn)` | `BEGIN` ... `COMMIT` | Runs `fn` in one transaction. What `fn` wrote is kept only if `fn` returns nil and the commit succeeds. `fn`'s error is returned as `fn` gave it. Transactions are serializable. |
+| `heldTo(scope)` | None: the kind returns itself | The store with every read and transaction held to one scope identifier, the none scope, or every scope ([store-postgresql.md](store-postgresql.md), sections 2 and 6). A store as a kind opens it does the work for every scope. A kind that holds a row policy reads another scope's record as `absent` and refuses a write of one; the rules held for the installation read every scope's records (D9). |
+| `missingAttemptHoldsNoAudit()` | None: yes | Whether the retry check may take an attempt directory that does not exist to hold no audit record (D11). A kind that says no has the check take it to be unknown. |
 | `close()` | | Closes the database, then gives the lock up. |
 
 | In a transaction | The sqlite kind's statement | Semantics |
 |---|---|---|
 | `activeRuns()` | `SELECT count(*) FROM runs WHERE state IN ('queued','running')` | The runs queued or running. |
 | `createRun(r, caller, key, digest)` | `INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (...)` | Queues a run, created once: `taken` when its id or its request key is held. |
-| `putRun(r, expected)` | `SELECT state FROM runs WHERE id=?`, then `UPDATE runs SET state=?,record=? WHERE id=?` | Writes the run's state and record, and returns the state it held. With `expected` other than `anyState`, the run must be held in that state, or nothing is written and the fault is `conflict` (section 4). `absent` when no run is held under the id. |
+| `putRun(r, expected)` | `SELECT state FROM runs WHERE id=?`, then `UPDATE runs SET state=?,record=? WHERE id=?` | Writes the run's state and record, and returns the state it held. With `expected.state` other than `anyState`, the run must be held in that state, or nothing is written and the fault is `conflict` (section 4). With `expected.claim`, the run must also be held under the claimant's claim, its lease not run out by the store's clock, or the fault is `conflict` ([store-postgresql.md](store-postgresql.md), D3); the run is then held under the claim `r` carries, none clearing it. The sqlite kind takes the claim and ignores it: its lock is the fence. `absent` when no run is held under the id. |
+| `renewClaim(run, claim)` | None: the kind holds no lease | Holds a run's claim for another lease if the run is held running under it, its lease live; otherwise `conflict`. |
 | `runningRuns()` | `SELECT record FROM runs WHERE state='running' ORDER BY seq` | The runs left running, in the order they were queued. |
 | `lastEntry()` | `SELECT sequence,line FROM run_chain ORDER BY sequence DESC LIMIT 1` | The chain's last entry, or `absent` when it holds none. |
 | `createEntry(sequence, run, line)` | `INSERT INTO run_chain(sequence,run,line) VALUES (?,?,?)` | Appends an entry, created once: `taken` when the sequence or the run has one, `refused` for a sequence below 1. |
@@ -101,7 +104,7 @@ kinds and for the SQLite statements outside the contract.
 | Fault | Meaning | sqlite kind | in-memory kind |
 |---|---|---|---|
 | `absent` | Nothing is held under the id or key. | `sql.ErrNoRows` | Nothing is held. |
-| `taken` | A create-once id or key is held. Nothing is written. | `SQLITE_CONSTRAINT_PRIMARYKEY`, `SQLITE_CONSTRAINT_UNIQUE` | The id, key or sequence is held. |
+| `taken` | A create-once id or key is held. Nothing is written. The keys the Runner tells apart are named (`takenKey`): a job's release, a creation's, a revision's, a cloud binding's. | `SQLITE_CONSTRAINT_PRIMARYKEY`, `SQLITE_CONSTRAINT_UNIQUE`, the key named from SQLite's message | The id, key or sequence is held. |
 | `conflict` | A versioned update found another state than expected. Nothing is written. | `putRun`'s comparison | The same comparison. |
 | `durability` | A change was not made durable: a write statement, `BEGIN` or `COMMIT` failed. Never a success. | Any other failed write, a failed `BEGIN` or `COMMIT` | Its commit seam. |
 | `unavailable` | A read failed: the store did not answer, and nothing is known of what it holds. Never a record, and never none. | Any other failed read | None: it holds what it holds. |
@@ -239,6 +242,17 @@ that does not decode) it asks of the kind under test.
   ids sort against it.
 - Nothing held reads `absent`.
 - A record that does not read is `unreadable`.
+- A store as a kind opens it reaches every scope's records. A store held to one scope reads that
+  scope's records alone, the journal's entries of the none scope that name no job beside them; one
+  held to the none scope reads the records that carry none. It writes no other scope's record:
+  another scope's reads `absent`, and a new one is `refused`. The rules held for the installation
+  (the active runs, the triggers, the pending occurrences, the keys that hold a release and a
+  binding once) count and meet every scope's records, a `taken` naming its key. The sqlite kind
+  holds no policy and returns itself.
+- A claimant's write is fenced by its claim: another claim's token, a lease run out by the store's
+  clock, and a run interrupted and retried, then claimed again, are each `conflict`, and nothing is
+  written; the claimant's own claim renews and finishes. The sqlite kind, whose lock is the fence,
+  skips those, and holds a run interrupted under its first claimant's finish.
 - The sqlite kind only: a reopened store holds what it held (a claimed run still running, a
   completed run with its entry, the queue's order, the release, the request, the journal), and one
   process holds the store at a time.
