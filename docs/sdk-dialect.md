@@ -42,7 +42,10 @@ for i, r := range d.PrepareBatch(cases, time.Now()) {
   gave it, in `canon`. It does not change with the order of the case's
   members, its whitespace or its escapes, nor with `runAt`. The keyed form is
   labelled `hmac-sha256` with the caller's key identifier, as the Runtime's
-  keyed decision record is; the package keeps the key nowhere.
+  keyed decision record is; the package keeps the key nowhere. As the Runtime
+  does, it refuses a key identifier that holds the plain parameter digest or
+  the preparation's digest, as hexadecimal or unpadded base64: that catches
+  one plausible mistake and is not a defence, so use an opaque identifier.
 
 | code | meaning |
 |---|---|

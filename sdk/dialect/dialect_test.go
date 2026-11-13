@@ -3,6 +3,7 @@ package dialect_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -563,6 +564,65 @@ func TestTheParameterDigest(t *testing.T) {
 	} {
 		if got, err := base.KeyedParameterDigest(c.id, c.key); !errors.Is(err, dialect.ErrKeyedDigest) || got.Digest != nil {
 			t.Errorf("key identifier %q, key of %d bytes: %v", c.id, len(c.key), err)
+		}
+	}
+}
+
+// A key identifier that holds a plain digest of the preparation, the
+// SHA-256 of ParameterText or of Bytes, in any of the forms its characters
+// can spell, is refused: it would carry in clear beside the keyed digest
+// the plain digest the keyed digest replaces. The case is chosen so that
+// each digest's standard base64 has a slash and no plus, so that it passes
+// the identifier's grammar and differs from its URL-alphabet form: each
+// row then reaches its own form's check.
+func TestAKeyIdentifierHoldingAPlainDigestIsRefused(t *testing.T) {
+	d := read(t, digestDialect)
+	at := instant(t, "2026-11-12T18:00:00Z")
+	spellable := func(sum [32]byte) bool {
+		std := base64.RawStdEncoding.EncodeToString(sum[:])
+		return strings.Contains(std, "/") && !strings.Contains(std, "+")
+	}
+	var p *dialect.Preparation
+	for i := 0; i < 1000 && p == nil; i++ {
+		candidate, err := d.Prepare([]byte(fmt.Sprintf(`{"amount":"%d","member":"M-0042","note":"n"}`, 1000+i)), at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spellable(sha256.Sum256(candidate.ParameterText())) && spellable(sha256.Sum256(candidate.Bytes())) {
+			p = candidate
+		}
+	}
+	if p == nil {
+		t.Fatal("no case in 1000 has digests whose base64 this test needs")
+	}
+	key := []byte("a key of the caller's")
+	type row struct{ name, id string }
+	rows := []row{{"ParameterDigest as written", p.ParameterDigest()}}
+	for name, sum := range map[string][32]byte{"parameter text": sha256.Sum256(p.ParameterText()), "preparation bytes": sha256.Sum256(p.Bytes())} {
+		digits := hex.EncodeToString(sum[:])
+		rows = append(rows,
+			row{name + ", lower-case hex", digits},
+			row{name + ", upper-case hex", strings.ToUpper(digits)},
+			row{name + ", mixed-case hex inside", "key-" + strings.ToUpper(digits[:32]) + digits[32:] + "-2"},
+			row{name + ", standard base64", base64.RawStdEncoding.EncodeToString(sum[:])},
+			row{name + ", URL base64 inside", "k:" + base64.RawURLEncoding.EncodeToString(sum[:]) + ":1"},
+		)
+	}
+	for _, r := range rows {
+		got, err := p.KeyedParameterDigest(r.id, key)
+		if !errors.Is(err, dialect.ErrKeyedDigest) || got.Digest != nil {
+			t.Errorf("%s: a key identifier holding it was accepted (%v)", r.name, err)
+		}
+		if err != nil && strings.Contains(err.Error(), r.id) {
+			t.Errorf("%s: the error repeats the key identifier", r.name)
+		}
+	}
+	// Controls: an opaque identifier, and a digest truncated by one digit,
+	// which is not detected (and should not be used).
+	sum := sha256.Sum256(p.ParameterText())
+	for _, id := range []string{"key-2026-11", hex.EncodeToString(sum[:])[1:]} {
+		if _, err := p.KeyedParameterDigest(id, key); err != nil {
+			t.Errorf("key identifier %q: %v", id, err)
 		}
 	}
 }

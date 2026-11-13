@@ -77,7 +77,10 @@ over it; Core §4.1's 256-character row does not apply to it.
   HMAC-SHA-256 of the same bytes under a key the caller holds, labelled
   `hmac-sha256` with the caller's key identifier, of the grammar of the
   Runtime's keyed decision record (1 to 128 characters of `A-Z a-z 0-9 . _ - :
-  /`). The package returns both and writes neither anywhere: no run of the
+  /`). Following that record's rule, an identifier that holds the SHA-256 of
+  the parameters' text or of the preparation's bytes, as hexadecimal digits
+  of either case or unpadded base64 of either alphabet, is refused; any other
+  derivation is not detected. The package returns both and writes neither anywhere: no run of the
   format exists to record them. A value is bound as the case gave it: a
   list's elements in their order, a decimal's digits as written (`"0.75"` and
   `"0.750"` differ).

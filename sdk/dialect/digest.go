@@ -3,7 +3,10 @@ package dialect
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"strings"
 
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/dialect4"
 )
@@ -51,8 +54,10 @@ type KeyedDigest struct {
 
 // ErrKeyedDigest is returned for a key identifier that is not 1 to 128
 // characters from A-Z, a-z, 0-9, dot, underscore, hyphen, colon and slash,
-// or an empty key. The error repeats neither.
-var ErrKeyedDigest = errors.New("dialect: a keyed parameter digest needs a key identifier of 1 to 128 characters from A-Z, a-z, 0-9, dot, underscore, hyphen, colon and slash, and a key that is not empty")
+// for one that holds a plain digest of the preparation (see
+// KeyedParameterDigest), or for an empty key. The error repeats neither the
+// identifier nor the key.
+var ErrKeyedDigest = errors.New("dialect: a keyed parameter digest needs a key identifier of 1 to 128 characters from A-Z, a-z, 0-9, dot, underscore, hyphen, colon and slash that holds no plain digest of the preparation, and a key that is not empty")
 
 // KeyedParameterDigest is HMAC-SHA-256 of ParameterText under key, which
 // the caller holds and which this package keeps nowhere, labelled with
@@ -60,8 +65,20 @@ var ErrKeyedDigest = errors.New("dialect: a keyed parameter digest needs a key i
 // keyed decision record: algorithm hmac-sha256 and a key identifier of the
 // same grammar. Without the key, the digest does not let a reader test a
 // guess at the parameters.
+//
+// The key identifier is carried in clear beside the keyed digest. As the
+// Runtime's keyed record does, this refuses, with ErrKeyedDigest, an
+// identifier that holds a plain digest the keyed digest replaces: the
+// SHA-256 of ParameterText (the digest ParameterDigest names) or of Bytes,
+// as hexadecimal digits of either case or as unpadded base64 of either
+// alphabet, anywhere in the identifier. That catches one plausible mistake
+// and is not a defence: an identifier derived from the parameters any other
+// way (a truncated digest, a digest of another spelling of them, of the
+// case or of its source data) is not detected, and re-creates the
+// pseudonym the key removes. Use an opaque identifier, such as a random
+// string or a version number, never one derived from the case or the key.
 func (p *Preparation) KeyedParameterDigest(keyID string, key []byte) (KeyedDigest, error) {
-	if !validKeyID(keyID) || len(key) == 0 {
+	if !validKeyID(keyID) || len(key) == 0 || keyIDHolds(keyID, p.ParameterText(), p.bytes) {
 		return KeyedDigest{}, ErrKeyedDigest
 	}
 	mac := hmac.New(sha256.New, key)
@@ -82,4 +99,21 @@ func validKeyID(id string) bool {
 		}
 	}
 	return true
+}
+
+// keyIDHolds reports whether a key identifier holds the SHA-256 of one of
+// the texts, as hexadecimal digits of either case or as unpadded base64 of
+// either alphabet: the forms of a digest the identifier's characters can
+// spell. It is the Runtime's rule for its keyed record (keyIDHolds).
+func keyIDHolds(id string, texts ...[]byte) bool {
+	lower := strings.ToLower(id)
+	for _, text := range texts {
+		sum := sha256.Sum256(text)
+		if strings.Contains(lower, hex.EncodeToString(sum[:])) ||
+			strings.Contains(id, base64.RawURLEncoding.EncodeToString(sum[:])) ||
+			strings.Contains(id, base64.RawStdEncoding.EncodeToString(sum[:])) {
+			return true
+		}
+	}
+	return false
 }
