@@ -460,7 +460,7 @@ func TestAnAttemptInFlightAtACrashIsNotRetried(t *testing.T) {
 		t.Fatalf("%d calls: %+v", w.calls.Load(), o)
 	}
 	entries := occurrenceEntries(t, s, o.ID)
-	if last := entries[len(entries)-1]; last.Kind != "occurrence.failed" || last.Attempt == nil || last.Attempt.Outcome != "interrupted" || last.EntryVersion != attemptEntryVersion {
+	if last := entries[len(entries)-1]; last.Kind != "occurrence.failed" || last.Attempt == nil || last.Attempt.Outcome != "interrupted" || last.ErrorClass != classInterrupted || last.EntryVersion != resultEntryVersion {
 		t.Fatalf("%+v", last)
 	}
 }
