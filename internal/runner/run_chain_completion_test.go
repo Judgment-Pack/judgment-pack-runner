@@ -92,13 +92,20 @@ func TestARunWhoseRecordsBytesCannotBeKeptFails(t *testing.T) {
 // A completed run is not recorded without its entry: finishRun refuses a
 // completion whose record's exact bytes, one line, were not kept, and the run
 // stays as it was, with no entry. A run that did not complete needs none.
+// Each finish is of a run the store holds running, as the dispatcher's is: a
+// finish expects it running (docs/design/store-postgresql.md, D3).
 func TestACompletionWithoutTheRecordsBytesIsNotRecorded(t *testing.T) {
 	s := placeholderStore(t)
-	run, record := syntheticRun(0)
-	running := Run{ID: run, State: "running"}
-	if _, e := sqliteDB(s).Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,'job','caller','key','digest','running',?)", run, string(encode(running))); e != nil {
-		t.Fatal(e)
+	held := func(run, key string) Run {
+		t.Helper()
+		running := Run{ID: run, State: "running"}
+		if _, e := sqliteDB(s).Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,'job','caller',?,'digest','running',?)", run, key, string(encode(running))); e != nil {
+			t.Fatal(e)
+		}
+		return running
 	}
+	run, record := syntheticRun(0)
+	running := held(run, "key")
 	for name, kept := range map[string][]byte{
 		"none":              nil,
 		"empty":             {},
@@ -118,7 +125,8 @@ func TestACompletionWithoutTheRecordsBytesIsNotRecorded(t *testing.T) {
 			t.Fatal(name, "an entry was written")
 		}
 	}
-	failed := running
+	other, _ := syntheticRun(1)
+	failed := held(other, "key-failed")
 	failed.State = "failed"
 	if e := s.finishRun(failed); e != nil {
 		t.Fatal(e)
