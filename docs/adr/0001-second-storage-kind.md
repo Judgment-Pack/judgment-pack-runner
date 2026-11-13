@@ -41,16 +41,22 @@ elsewhere while the SQLite kind stays as it is; the second option still needs lo
 third changes every installation.
 
 The contract is widened first, in slices, each keeping the sqlite kind's statements and bytes
-(`docs/design/store-interface.md`, section 9). The kind is then built as
-`docs/design/store-postgresql.md` fixes it: one schema owned by a role that cannot log in, reached
-by a migration login through `SET ROLE`; run-time logins with table privileges only; row security
-enabled and forced on every table, keyed on a per-transaction setting with a prefix that keeps an
-unset setting from reading as the none scope; a worker login for the Runner's work across scopes;
-a lease per claim in place of the process lock; the attempts' volume recorded so that a retry
-across hosts fails closed; the pinned Runtime rebuilt at start from shipped executables by digest;
-and the pgx driver through `database/sql`. The note lists twelve decisions (D1 to D12) with the
-options and a recommendation for each; this record accepts the direction, and each decision is
-taken when the slice that needs it is built.
+(`docs/design/store-interface.md`, section 9). The Runner's transaction functions are then made
+safe to run twice, under a gate that runs every one twice in the in-memory kind, and the listings
+put behind the contract. The kind is then built as `docs/design/store-postgresql.md` fixes it: one
+schema owned by a role that cannot log in, reached by a migration login through `SET ROLE`, with
+policies of its own for migrations and a migration that fails when a row statement changes no row;
+a request login and a worker login with table privileges only, each route's transactions on the
+login and scope the note names; row security enabled and forced on every table, keyed on a
+per-transaction setting with a prefix that keeps an unset setting from reading as the none scope;
+the Runner's rules across scopes held by keys and rows no policy narrows; writers committing one
+at a time, so that the journal's sequence follows the order of commits; a lease per claim in place
+of the process lock, its token fencing every write a claimant makes, by the database's clock; a
+missing attempt directory taken as unknown, so that a retry across hosts fails closed; the pinned
+Runtime rebuilt at start from shipped executables by digest; and the pgx driver through
+`database/sql`. The note lists fifteen decisions (D1 to D15) with the options and a recommendation
+for each; this record accepts the direction, and each decision is taken when the slice that needs
+it is built.
 
 ### Consequences
 
@@ -58,10 +64,12 @@ taken when the slice that needs it is built.
   them.
 - Good, because every new operation is tested on every kind by one suite, so the second kind is
   held to the same semantics.
-- Bad, because transactions retried on serialization failure must read nothing but the store, a
-  rule every future transaction keeps.
-- Bad, because an interrupted run whose attempt ran on a lost volume cannot be retried; its caller
-  submits a new run.
+- Bad, because a transaction function retried on serialization failure must start from copies of
+  its inputs and read nothing but the store, its arguments and the clock, a rule every future
+  transaction keeps; three do not yet, and are changed before the kind is written.
+- Bad, because the second kind's writes serialize, one transaction at a time, as SQLite's do.
+- Bad, because an interrupted run whose attempt directories the host does not hold cannot be
+  retried; its caller submits a new run.
 - Bad, because an image must carry every Runtime a held release names.
 - Revisit when several Runners share a store (#245), or when a caller is held to the scopes it
   may name.
