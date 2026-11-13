@@ -222,6 +222,9 @@ func TestAnIdentityTokenIsRefusedForEachReason(t *testing.T) {
 		{"signed by another key under the same key id", []string{"Bearer " + tokenOf(stranger, good())}, "signature does not verify"},
 		{"claims signed by one key, presented with another's signature", []string{"Bearer " + parts[0] + "." + strings.Split(tokenOf(ed, claimsFor("build-bot", now)), ".")[1] + "." + parts[2]}, "signature does not verify"},
 		{"an ES256 signature of the wrong length", []string{"Bearer " + signedPartsWith(ec, func(b []byte) []byte { return append(b, 0) }, headerOf(ec), good())}, "signature does not verify"},
+		// The same r and s, with s written in 33 bytes: a second spelling of
+		// a good signature, which only the length tells apart.
+		{"an ES256 signature with s widened by a zero byte", []string{"Bearer " + signedPartsWith(ec, func(b []byte) []byte { return append(append(b[:32:32], 0), b[32:]...) }, headerOf(ec), good())}, "signature does not verify"},
 		{"a padded signature", []string{"Bearer " + valid + "=="}, "signature is not canonical base64url"},
 		{"a padded payload, signed as given", []string{"Bearer " + signedParts(ed, parts[0], parts[1]+"=")}, "payload is not canonical base64url"},
 		{"claims that are not JSON", []string{"Bearer " + rawToken(ed, edHeader, "{")}, "claims is not one JSON object"},

@@ -157,7 +157,8 @@ an encoded member that is not the canonical unpadded base64url of its bytes.
 4. an `alg` that is that key's own. The algorithm is the key's, never the
    token's word, so `none` is refused, and so is a token that names another
    algorithm for the key;
-5. a signature that key checks out over the first two parts;
+5. a signature that key checks out over the first two parts (for `ES256`,
+   exactly 64 bytes, `r` then `s`, so no second spelling of one is taken);
 6. then, and only then, the claims, one JSON object with each member once: the
    configured issuer as `iss`; the configured audience in `aud`, a string or an
    array of strings; a `sub`; an integer `exp`, with no fraction or exponent,
@@ -169,7 +170,7 @@ an encoded member that is not the canonical unpadded base64url of its bytes.
 A request that fails any of them is answered `401` with
 `WWW-Authenticate: Bearer` and
 `{"message":"Runner authentication required: <reason>."}`, one reason. No reason
-repeats any part of the token, its key id or its algorithm. Such a request is
+repeats any part of the token, nor the key id or algorithm it names. Such a request is
 refused before any route and is not journaled, as a request without the owner
 bearer is not: it can come from anyone who can reach the listener.
 
