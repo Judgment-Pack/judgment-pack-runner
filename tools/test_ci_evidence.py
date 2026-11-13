@@ -119,7 +119,7 @@ def go_versions(text):
 
 
 
-def unit_partition_trace(script, *, script_text=None, fail_call=None, conformance='sqlite,memory'):
+def unit_partition_trace(script, *, script_text=None, fail_call=None, conformance='sqlite,memory,twice'):
     """Execute only shell wiring: the fake Go records selections, never builds."""
     with tempfile.TemporaryDirectory(prefix='runner-unit-selection-') as temporary:
         directory = Path(temporary)
@@ -357,21 +357,22 @@ class Checks(unittest.TestCase):
                 self.assertIn('fake Go failure at call %d' % failed, process.stdout)
 
     def assert_unit_store_conformance_required(self, *, script_text=None):
-        for kinds, missing in [('sqlite', 'memory'), ('memory', 'sqlite'), ('', 'sqlite')]:
+        for kinds, missing in [('sqlite,twice', 'memory'), ('memory,twice', 'sqlite'), ('sqlite,memory', 'twice'),
+                               ('', 'sqlite')]:
             process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh',
                                                    script_text=script_text, conformance=kinds)
             self.assertNotEqual(process.returncode, 0, 'script accepted missing store conformance')
             self.assertEqual(len(calls), 11)
             self.assertIn('TestStoreKindsConform/%s did not run and pass' % missing, process.stdout)
 
-    def test_unit_script_requires_both_actual_store_conformance_kinds(self):
+    def test_unit_script_requires_every_actual_store_conformance_kind(self):
         self.assert_unit_store_conformance_required()
 
     def test_unit_store_controls_catch_removed_kind_assertion(self):
         script = read('scripts/checks/unit-tests.sh')
-        before = 'for kind in sqlite memory; do'
+        before = 'for kind in sqlite memory twice; do'
         self.assertEqual(script.count(before), 1)
-        for after in ('for kind in sqlite; do', 'for kind in memory; do'):
+        for after in ('for kind in memory twice; do', 'for kind in sqlite twice; do', 'for kind in sqlite memory; do'):
             with self.subTest(mutation=after):
                 with self.assertRaisesRegex(AssertionError, 'script accepted missing store conformance'):
                     self.assert_unit_store_conformance_required(script_text=script.replace(before, after))

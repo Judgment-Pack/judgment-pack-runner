@@ -546,7 +546,7 @@ func TestAnOccurrenceWhoseRunRecordDoesNotDecodeIsSubmittedToItsRun(t *testing.T
 	made, _, e := w.s.submitInternal(o.JobID, o.ID, *o.Input, origin)
 	must(t, e)
 	w.restart()
-	if _, e = w.s.db.Exec("UPDATE runs SET record='{' WHERE id=?", made.ID); e != nil {
+	if _, e = sqliteDB(w.s).Exec("UPDATE runs SET record='{' WHERE id=?", made.ID); e != nil {
 		t.Fatal(e)
 	}
 	must(t, w.s.dispatchOccurrence(o, time.Now()))

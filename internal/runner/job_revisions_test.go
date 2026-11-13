@@ -98,7 +98,7 @@ func TestJobUpgradeAdmissionAndRollback(t *testing.T) {
 		t.Fatal("untested upgrade accepted")
 	}
 	s.cfg.RequireTestedReleases = false
-	_, err = s.db.Exec(`CREATE TRIGGER reject_upgrade BEFORE INSERT ON events WHEN NEW.kind='job.upgraded' BEGIN SELECT RAISE(ABORT,'test'); END`)
+	_, err = sqliteDB(s).Exec(`CREATE TRIGGER reject_upgrade BEFORE INSERT ON events WHEN NEW.kind='job.upgraded' BEGIN SELECT RAISE(ABORT,'test'); END`)
 	must(t, err)
 	if _, err = s.upgradeJob(context.Background(), j.ID, req); err == nil {
 		t.Fatal("event failure ignored")
@@ -109,11 +109,11 @@ func TestJobUpgradeAdmissionAndRollback(t *testing.T) {
 		t.Fatal("partial upgrade", held)
 	}
 	var count int
-	must(t, s.db.QueryRow("SELECT count(*) FROM job_revisions WHERE job_id=?", j.ID).Scan(&count))
+	must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM job_revisions WHERE job_id=?", j.ID).Scan(&count))
 	if count != 1 {
 		t.Fatal("partial receipt")
 	}
-	_, err = s.db.Exec("DROP TRIGGER reject_upgrade")
+	_, err = sqliteDB(s).Exec("DROP TRIGGER reject_upgrade")
 	must(t, err)
 	_, err = s.upgradeJob(context.Background(), j.ID, req)
 	must(t, err)
@@ -190,13 +190,13 @@ func TestJobUpgradeRefusesEveryPendingOccurrence(t *testing.T) {
 			j, e := s.createJob("Pending", first.ID)
 			must(t, e)
 			next := journalRelease(t, s, s.runtimeDigest)
-			_, e = s.db.Exec("INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES(?,?,?,?,?,?,?)", "occ-pending", j.ID, "test", "event", "digest", state, `{}`)
+			_, e = sqliteDB(s).Exec("INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES(?,?,?,?,?,?,?)", "occ-pending", j.ID, "test", "event", "digest", state, `{}`)
 			must(t, e)
 			req := UpgradeJobRequest{ReleaseID: next.ID, BaseReleaseID: first.ID, BaseRevision: 1, Reviewed: true}
 			if _, e = s.upgradeJob(context.Background(), j.ID, req); e == nil {
 				t.Fatal("pending occurrence accepted")
 			}
-			_, e = s.db.Exec("UPDATE occurrences SET state='cancelled'")
+			_, e = sqliteDB(s).Exec("UPDATE occurrences SET state='cancelled'")
 			must(t, e)
 			_, e = s.upgradeJob(context.Background(), j.ID, req)
 			must(t, e)
@@ -214,7 +214,7 @@ func TestJobRevisionMigrationFromSchemaTwo(t *testing.T) {
 	must(t, e)
 	_, _, e = s.setTriggerState(tr.ID, tr.Revision, false, true)
 	must(t, e)
-	_, e = s.db.Exec("DROP TABLE job_creations; DROP TABLE job_revisions; UPDATE metadata SET value='2' WHERE key='schema'")
+	_, e = sqliteDB(s).Exec("DROP TABLE job_creations; DROP TABLE job_revisions; UPDATE metadata SET value='2' WHERE key='schema'")
 	must(t, e)
 	s.Close()
 	s = openJournal(t, cfg)
@@ -225,7 +225,7 @@ func TestJobRevisionMigrationFromSchemaTwo(t *testing.T) {
 		t.Fatal("creation receipt changed during migration")
 	}
 	var count int
-	must(t, s.db.QueryRow("SELECT count(*) FROM job_revisions WHERE job_id=? AND revision=1", j.ID).Scan(&count))
+	must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM job_revisions WHERE job_id=? AND revision=1", j.ID).Scan(&count))
 	if count != 1 {
 		t.Fatal(count)
 	}
@@ -234,7 +234,7 @@ func TestJobRevisionMigrationFromSchemaTwo(t *testing.T) {
 	if hash == "" || restored.keyRevision == nil {
 		t.Fatal("trigger credential revision lost")
 	}
-	must(t, s.db.QueryRow("SELECT count(*) FROM events WHERE kind='journal.began'").Scan(&count))
+	must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM events WHERE kind='journal.began'").Scan(&count))
 	if count != 1 {
 		t.Fatal("migration restarted journal")
 	}

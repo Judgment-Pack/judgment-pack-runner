@@ -23,7 +23,7 @@ const (
 func leaveOutStored(t *testing.T, s *Service, runID string, members []string) {
 	t.Helper()
 	var record string
-	if err := s.db.QueryRow("SELECT record FROM runs WHERE id=?", runID).Scan(&record); err != nil {
+	if err := sqliteDB(s).QueryRow("SELECT record FROM runs WHERE id=?", runID).Scan(&record); err != nil {
 		t.Fatal(err)
 	}
 	var run map[string]any
@@ -37,7 +37,7 @@ func leaveOutStored(t *testing.T, s *Service, runID string, members []string) {
 		}
 		delete(input, member)
 	}
-	if _, err := s.db.Exec("UPDATE runs SET record=? WHERE id=?", string(encode(run)), runID); err != nil {
+	if _, err := sqliteDB(s).Exec("UPDATE runs SET record=? WHERE id=?", string(encode(run)), runID); err != nil {
 		t.Fatal(err)
 	}
 }

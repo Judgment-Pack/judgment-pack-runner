@@ -176,7 +176,7 @@ func TestSourceWorkerRejectsInvalidAdmissionWithoutState(t *testing.T) {
 		}
 	}
 	var count int
-	s.db.QueryRow("SELECT count(*) FROM source_operations").Scan(&count)
+	s.sources.db.QueryRow("SELECT count(*) FROM source_operations").Scan(&count)
 	if count != 0 || calls.Load() != 0 {
 		t.Fatal("invalid input retained or acquired")
 	}

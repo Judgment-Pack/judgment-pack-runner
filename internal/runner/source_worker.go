@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -45,7 +44,7 @@ type sourceStatus struct {
 }
 type SourceWorker struct {
 	cfg          SourceWorkerConfig
-	db           *sql.DB
+	sources      *sqliteSources
 	lock         *os.File
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -110,8 +109,8 @@ func OpenSourceWorker(cfg SourceWorkerConfig) (_ *SourceWorker, err error) {
 	}
 	defer func() {
 		if err != nil {
-			if s.db != nil {
-				s.db.Close()
+			if s.sources != nil {
+				s.sources.close()
 			}
 			s.lock.Close()
 		}
@@ -153,29 +152,15 @@ func OpenSourceWorker(cfg SourceWorkerConfig) (_ *SourceWorker, err error) {
 	if err = privateFile(dbpath); err != nil {
 		return nil, err
 	}
-	if s.db, err = sql.Open("sqlite", dbpath); err != nil {
-		return nil, err
-	}
-	s.db.SetMaxOpenConns(1)
-	_, err = s.db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
- CREATE TABLE IF NOT EXISTS worker_metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS source_operations (id TEXT PRIMARY KEY,request TEXT NOT NULL,state TEXT NOT NULL,status TEXT NOT NULL);`)
-	if err != nil {
-		return nil, err
-	}
-	if _, err = s.db.Exec("INSERT OR IGNORE INTO worker_metadata VALUES ('gateway',?)", cfg.Gateway); err != nil {
-		return nil, err
-	}
 	var gateway string
-	if err = s.db.QueryRow("SELECT value FROM worker_metadata WHERE key='gateway'").Scan(&gateway); err != nil {
+	if s.sources, gateway, err = openSQLiteSources(dbpath, cfg.Gateway); err != nil {
 		return nil, err
 	}
 	if gateway != cfg.Gateway {
 		return nil, errors.New("worker store belongs to a different Gateway")
 	}
 	// A durable claim is never reassigned after a process disappears.
-	_, err = s.db.Exec(`UPDATE source_operations SET state='needs-attention',status=json_set(status,'$.state','needs-attention','$.reason','The acquisition worker stopped before retaining the response. The source was not called again.') WHERE state='running'`)
-	if err != nil {
+	if err = s.sources.interruptRunning(); err != nil {
 		return nil, err
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
@@ -192,7 +177,7 @@ func (s *SourceWorker) Close() {
 	s.cancel()
 	s.mu.Unlock()
 	s.workers.Wait()
-	s.db.Close()
+	s.sources.close()
 	s.lock.Close()
 }
 func (s *SourceWorker) Handler() http.Handler {
@@ -240,7 +225,7 @@ func (s *SourceWorker) Handler() http.Handler {
 			status.Response = nil
 			status.RetainedResponseJSON = ""
 			status.Reason = "Cancelled locally; the provider may still finish."
-			if _, e = s.db.Exec("UPDATE source_operations SET state=?,status=? WHERE id=?", status.State, string(encode(status)), id); e != nil {
+			if e = s.sources.setStatus(id, status.State, string(encode(status))); e != nil {
 				write(w, 500, map[string]string{"error": "cancellation could not be retained"})
 				return
 			}
@@ -252,9 +237,8 @@ func (s *SourceWorker) Handler() http.Handler {
 	})
 }
 func (s *SourceWorker) status(id string) (sourceStatus, error) {
-	var raw, request string
 	var status sourceStatus
-	e := s.db.QueryRow("SELECT request,status FROM source_operations WHERE id=?", id).Scan(&request, &raw)
+	request, raw, e := s.sources.operation(id)
 	if e == nil {
 		var frozen sourceRequest
 		if strictJSON([]byte(request), &frozen) != nil {
@@ -291,7 +275,7 @@ func (s *SourceWorker) status(id string) (sourceStatus, error) {
 		if status.State != previous {
 			status.Response = nil
 			status.RetainedResponseJSON = ""
-			if _, e = s.db.Exec("UPDATE source_operations SET state=?,status=? WHERE id=?", status.State, string(encode(status)), id); e != nil {
+			if e = s.sources.setStatus(id, status.State, string(encode(status))); e != nil {
 				return sourceStatus{}, e
 			}
 			if status.State == "expired" {
@@ -327,25 +311,24 @@ func (s *SourceWorker) submit(req sourceRequest) (sourceStatus, int, error) {
 	if s.closed {
 		return sourceStatus{}, 503, errors.New("source worker is stopping")
 	}
-	var held string
-	e = s.db.QueryRow("SELECT request FROM source_operations WHERE id=?", req.ID).Scan(&held)
+	held, e := s.sources.request(req.ID)
 	if e == nil {
 		if held != string(encode(req)) {
 			return sourceStatus{}, 409, errors.New("operation ID already names another request")
 		}
-	} else if errors.Is(e, sql.ErrNoRows) {
+	} else if sqliteNoRows(e) {
 		if !time.Now().Before(deadline) || time.Until(deadline) > 7*24*time.Hour {
 			return sourceStatus{}, 400, errors.New("deadline must be within the next seven days")
 		}
-		var count int
-		if e = s.db.QueryRow("SELECT count(*) FROM source_operations").Scan(&count); e != nil {
+		count, e := s.sources.count()
+		if e != nil {
 			return sourceStatus{}, 500, e
 		}
 		if count >= 10000 {
 			return sourceStatus{}, 507, errors.New("worker operation capacity reached; retain existing records for reconciliation")
 		}
 		status := sourceStatus{ID: req.ID, State: "queued", Deadline: req.Deadline}
-		if _, e = s.db.Exec("INSERT INTO source_operations VALUES (?,?,?,?)", req.ID, string(encode(req)), status.State, string(encode(status))); e != nil {
+		if e = s.sources.add(req.ID, string(encode(req)), status.State, string(encode(status))); e != nil {
 			return sourceStatus{}, 500, e
 		}
 	} else {
@@ -358,7 +341,7 @@ func (s *SourceWorker) submit(req sourceRequest) (sourceStatus, int, error) {
 	if status.State == "queued" && len(s.active) < 4 {
 		status.State = "running"
 		// SQLite FULL/WAL commits the claim before the first external request.
-		if _, e = s.db.Exec("UPDATE source_operations SET state=?,status=? WHERE id=? AND state='queued'", status.State, string(encode(status)), req.ID); e != nil {
+		if e = s.sources.claimQueued(req.ID, status.State, string(encode(status))); e != nil {
 			return status, 500, e
 		}
 		ctx, stop := context.WithDeadline(s.ctx, deadline)
@@ -426,7 +409,7 @@ func (s *SourceWorker) acquire(ctx context.Context, stop context.CancelFunc, req
 		status.Reason = "The source deadline elapsed; remote completion may still occur."
 	}
 	// Cancellation/expiry wins even when a response was already in transit.
-	_, _ = s.db.Exec("UPDATE source_operations SET state=?,status=? WHERE id=? AND state='running'", status.State, string(encode(status)), req.ID)
+	_ = s.sources.settleRunning(req.ID, status.State, string(encode(status)))
 	delete(s.active, req.ID)
 	s.mu.Unlock()
 	// Sealing cannot keep a preparation worker occupied indefinitely.

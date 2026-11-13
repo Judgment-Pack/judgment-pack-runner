@@ -14,7 +14,6 @@ package runner
 // for one.
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 )
@@ -82,10 +81,10 @@ func faultOf(err error) storeFault {
 }
 
 // absent says whether err says nothing is held: a contract read's
-// faultAbsent, or the no-rows error of a SQLite statement the Runner makes
-// outside the contract (store_sqlite.go names that state).
+// faultAbsent, or the no-rows error of a statement of the sqlite kind's that
+// reaches the Runner as it is (store_sqlite_manual.go).
 func absent(err error) bool {
-	return faultOf(err) == faultAbsent || errors.Is(err, sql.ErrNoRows)
+	return faultOf(err) == faultAbsent || sqliteNoRows(err)
 }
 
 // errKeepNothing ends a transaction without keeping anything, when its
@@ -222,13 +221,26 @@ type journalRange struct {
 // the same whatever kind keeps it.
 type journalRow struct {
 	version, kind, at, by, concerns string
-	revision                        sql.NullInt64
-	from, to                        sql.NullString
+	revision                        nullInt
+	from, to                        nullText
 	reason, detail                  string
 	// job, release and refusal are what a read selects on: the concerned
 	// job and release, and a refusal's key (journalRefusal).
 	job, release, refusal string
 }
+
+// nullInt and nullText are a journal column that may hold nothing, as the
+// sqlite kind's NULL: held says whether it holds value.
+type (
+	nullInt struct {
+		value int64
+		held  bool
+	}
+	nullText struct {
+		value string
+		held  bool
+	}
+)
 
 // runStore is the Runner's durable state for the queue, releases, inputs and
 // run records, behind one contract.
@@ -280,9 +292,59 @@ type runStore interface {
 	// the trigger's, or faultAbsent: one read, so that a key rotated after
 	// its caller checked it still refuses (eventResult).
 	keyedOccurrence(id, trigger, hash string) (Occurrence, error)
+	// listedJobs are up to limit of the jobs made before the order before,
+	// newest first, whose release is held and that f keeps (its Scope and
+	// Search), each labelled with its release's title and pack version.
+	listedJobs(before int64, f recordFilter, limit int) ([]listedRecord, error)
+	// listedRuns are up to limit of the runs queued before the order
+	// before, newest first, of job ("" for every job's), whose job is held
+	// and that f keeps, each labelled with its job's name.
+	listedRuns(job string, before int64, f recordFilter, limit int) ([]listedRecord, error)
+	// recentRuns are the newest per runs of each of jobs, by job id and
+	// newest first.
+	recentRuns(jobs []string, per int) ([]recentRun, error)
+	// listedTriggers are the triggers of jobs, in the order they were made,
+	// each with the job it is held under.
+	listedTriggers(jobs []string) ([]listedTrigger, error)
 	// close gives the store up. A kind that holds the store exclusively
 	// releases it last.
 	close() error
+}
+
+// listedRecord is a job or a run as a listing reads it (list.go): its order,
+// its record as written, which the listing projects, and the labels shown
+// beside it, read from the record it names: a job's release's title and
+// pack version, a run's job's name ("" for version). A listing's filter is
+// applied where a kind reads, as SQLite applies it:
+//
+//   - Scope keeps a record whose scope member is the scope as text, compared
+//     byte for byte;
+//   - Search keeps a job whose name holds it, and a run whose id, a space
+//     and its job's name hold it, with ASCII letters folded to lower case
+//     and no other;
+//   - State keeps a run held in that state; Review a run failed or
+//     interrupted, or completed with an unresolved disposition or a
+//     handoff requested; Results a run as resultFilter says, its outcomes
+//     only of a completed run.
+//
+// A member is read as json_extract reads it: text when the record holds it
+// as a JSON string, and otherwise compared to no text.
+type listedRecord struct {
+	seq            int64
+	record         []byte
+	label, version string
+}
+
+// recentRun is one of a job's newest runs, as a job's listing shows it.
+type recentRun struct {
+	job, id, state, createdAt string
+}
+
+// listedTrigger is a trigger as a job's listing shows it, under the job it
+// is held under.
+type listedTrigger struct {
+	job     string
+	trigger Trigger
 }
 
 // runTx is one transaction of a store. A write that returns a fault may have
@@ -409,11 +471,69 @@ type storeOpening struct {
 	// it opens its database: the Runner prepares its working directories
 	// there, in the order it always has.
 	afterLock func() error
-	// opened runs on the sqlite kind's database handle before its schema is
-	// applied: the Runner keeps the handle for the state outside the
-	// contract, and checks a manual-admission store there.
-	opened func(*sql.DB) error
+	// manual runs on the kind's manual-admission state once its database
+	// is open and before its schema is applied: the Runner keeps it, for the
+	// execution binding and manual admission, and checks a manual-admission
+	// store there. Only the sqlite kind keeps that state
+	// (docs/design/store-postgresql.md, D4); another kind does not run it.
+	manual func(manualState) error
+	// manualAdmission is set when the Runner runs under manual admission:
+	// a kind that hands it no manual-admission state is then refused.
+	manualAdmission bool
 }
+
+// manualState is the manual-admission state the sqlite kind keeps beside
+// the contract's: the store's manual demand and schema, the manual-admission
+// journal, and the reads manual admission checks a store and a job by.
+type manualState interface {
+	manualReads
+	// queuedRunRecords gives each the record of every run held queued, with
+	// the error of a row that does not read, until each returns an error,
+	// which it returns.
+	queuedRunRecords(each func(record []byte, err error) error) error
+	// readManual runs fn in one read transaction.
+	readManual(fn func(manualReads) error) error
+	// createManualAttempt journals a run's manual attempt under its intent:
+	// faultTaken when either holds one.
+	createManualAttempt(run, intent, record string) error
+	// replaceManualAttempt writes after over a run's attempt held as
+	// before, and returns how many it wrote, -1 when that is not known.
+	replaceManualAttempt(run, before, after string) (int64, error)
+}
+
+// manualReads are the reads of the manual-admission state, outside a
+// transaction or in one.
+type manualReads interface {
+	// manualValue is the store's metadata row held under key, or
+	// faultAbsent.
+	manualValue(key string) (string, error)
+	// manualCount answers question, with its arguments.
+	manualCount(question storeQuestion, args ...any) (int, error)
+	// manualRecord is the record of a job or a release held under id, as
+	// written, or faultAbsent.
+	manualRecord(records, id string) ([]byte, error)
+}
+
+// storeQuestion is a count manual admission, its preparation and relocation
+// ask of the sqlite kind's database, outside the contract.
+type storeQuestion int
+
+const (
+	// askTriggers counts the triggers held; askUnpausedTriggers those not
+	// paused; askJobTriggers a job's.
+	askTriggers storeQuestion = iota + 1
+	askUnpausedTriggers
+	askJobTriggers
+	// askActiveRuns counts the runs queued or running.
+	askActiveRuns
+	// askOpenOccurrences counts the occurrences accepted, preparing,
+	// waiting or needing attention.
+	askOpenOccurrences
+	// askManualAttempts counts the manual attempts journaled; askRunAttempts
+	// those of a run or an intent.
+	askManualAttempts
+	askRunAttempts
+)
 
 // defaultStoreKind is the kind every Runner opens. The boot line names no
 // kind, so no other is selectable yet.
@@ -430,13 +550,30 @@ var storeKinds = map[string]func(storeOpening) (runStore, error){
 	},
 }
 
-// openStore opens a store of the named kind.
+// openStore opens a store of the named kind. Under manual admission, a
+// kind that hands over no manual-admission state never checked the store
+// (store-postgresql.md, D4), and is refused.
 func openStore(kind string, o storeOpening) (runStore, error) {
 	open, ok := storeKinds[kind]
 	if !ok {
 		return nil, storeFailure(faultRefused, "open", fmt.Errorf("no store kind %q", kind))
 	}
-	return open(o)
+	handed := false
+	if manual := o.manual; manual != nil {
+		o.manual = func(m manualState) error {
+			handed = true
+			return manual(m)
+		}
+	}
+	st, err := open(o)
+	if err != nil {
+		return nil, err
+	}
+	if o.manualAdmission && !handed {
+		st.close()
+		return nil, errManualProtocol
+	}
+	return st, nil
 }
 
 // validateStoredInput rechecks the installed selection at each persistence

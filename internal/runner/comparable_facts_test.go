@@ -56,7 +56,7 @@ func checkRelease(t *testing.T, s *Service, comparable bool) Release {
 func releasesHeld(t *testing.T, s *Service) int {
 	t.Helper()
 	var n int
-	must(t, s.db.QueryRow("SELECT count(*) FROM releases").Scan(&n))
+	must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM releases").Scan(&n))
 	return n
 }
 
@@ -236,7 +236,7 @@ func TestBootRequirementHoldsJobsToReleasesCheckedWithComparableFacts(t *testing
 	// A release as a Runner before #210 stored it, written out by hand.
 	old := "release_checkedbefore210"
 	record := `{"schemaVersion":"1","id":"` + old + `","pack":` + string(encode(journalPack)) + `,"packDigest":"` + digest([]byte(journalPack)) + `","packId":"journal","packVersion":"1.0.0","title":"Journal","runtimeDigest":"` + s.runtimeDigest + `","createdAt":"2026-10-01T00:00:00Z","config":` + string(encode(configWithout)) + `,"lock":` + string(encode(checkLock)) + `,"validation":{"outputVersion":"2","status":"valid"},"sample":{"facts":{"request":{"marker":"facts-never-journaled-7f3a"}}},"preview":{"outputVersion":"2","status":"evaluated"},"tests":"not-run"}`
-	if _, e := s.db.Exec("INSERT INTO releases(id,record) VALUES(?,?)", old, record); e != nil {
+	if _, e := sqliteDB(s).Exec("INSERT INTO releases(id,record) VALUES(?,?)", old, record); e != nil {
 		t.Fatal(e)
 	}
 	before, e := s.createJob("Before", old)

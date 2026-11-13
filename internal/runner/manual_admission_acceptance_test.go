@@ -65,7 +65,7 @@ func newGovernedHarness(t *testing.T, answer authorityAnswer) *governedHarness {
 	s.executor = lease
 	o := ExecutorOwnership{Root: f.root, MachineWorkspace: f.identity.Workspace, RunnerWorkspace: cfg.Workspace, RootDevice: f.identity.RootDevice, RootInode: f.identity.RootInode, FileDevice: f.identity.FileDevice, FileInode: f.identity.FileInode}
 	s.cfg.ExecutorOwnership = &o
-	_, err = s.db.Exec(manualJournalSchema)
+	_, err = sqliteDB(s).Exec(manualJournalSchema)
 	executorMust(t, err)
 	h := &governedHarness{t: t, s: s, cfg: cfg, job: job, runs: map[string]string{}}
 	h.connect(answer)
@@ -154,7 +154,7 @@ func (h *governedHarness) count(method string) int {
 // journal is the retained local attempt record of a run, or "".
 func (h *governedHarness) journal(runID string) string {
 	var record string
-	if err := h.s.db.QueryRow("SELECT record FROM manual_attempts WHERE run_id=?", runID).Scan(&record); err != nil {
+	if err := sqliteDB(h.s).QueryRow("SELECT record FROM manual_attempts WHERE run_id=?", runID).Scan(&record); err != nil {
 		return ""
 	}
 	return record
@@ -200,7 +200,7 @@ func TestGovernedAdmissionOmittedDependencySubstitution(t *testing.T) {
 		release, err := h.s.release(run.ReleaseID)
 		executorMust(t, err)
 		release.Lock = strings.Replace(release.Lock, "{", `{"substituted":true,`, 1)
-		_, err = h.s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(release)), release.ID)
+		_, err = sqliteDB(h.s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(release)), release.ID)
 		executorMust(t, err)
 		h.requireNoLaunch(h.dispatch(run.ID))
 		if h.count("reserve") != 0 || h.count("commitStart") != 0 {
@@ -508,9 +508,9 @@ func TestGovernedAdmissionIdentityRevocation(t *testing.T) {
 func TestGovernedAdmissionPreWithdrawalRestore(t *testing.T) {
 	restore := func(h *governedHarness, runID, state, record string) {
 		h.t.Helper()
-		_, err := h.s.db.Exec("UPDATE runs SET state=?, record=? WHERE id=?", state, record, runID)
+		_, err := sqliteDB(h.s).Exec("UPDATE runs SET state=?, record=? WHERE id=?", state, record, runID)
 		executorMust(h.t, err)
-		_, err = h.s.db.Exec("DELETE FROM manual_attempts WHERE run_id=?", runID)
+		_, err = sqliteDB(h.s).Exec("DELETE FROM manual_attempts WHERE run_id=?", runID)
 		executorMust(h.t, err)
 		// The backup predates the attempt's directory too.
 		executorMust(h.t, os.RemoveAll(filepath.Join(h.cfg.Dir, "attempts", runID)))
@@ -518,7 +518,7 @@ func TestGovernedAdmissionPreWithdrawalRestore(t *testing.T) {
 	backup := func(h *governedHarness, runID string) (string, string) {
 		h.t.Helper()
 		var state, record string
-		executorMust(h.t, h.s.db.QueryRow("SELECT state, record FROM runs WHERE id=?", runID).Scan(&state, &record))
+		executorMust(h.t, sqliteDB(h.s).QueryRow("SELECT state, record FROM runs WHERE id=?", runID).Scan(&state, &record))
 		return state, record
 	}
 	for _, answer := range []string{"recovered", "intent-unavailable"} {

@@ -128,7 +128,7 @@ func TestReleaseHeldToASuppliedReviewedSet(t *testing.T) {
 		t.Fatalf("the check invoked\n%s\nnot\n%s", got, want)
 	}
 	var stored string
-	must(t, s.db.QueryRow("SELECT record FROM releases WHERE id=?", r.ID).Scan(&stored))
+	must(t, sqliteDB(s).QueryRow("SELECT record FROM releases WHERE id=?", r.ID).Scan(&stored))
 	if !strings.HasSuffix(stored, member) || r.Config != configWithout || r.Lock != checkLock {
 		t.Fatalf("the store holds\n%s", stored)
 	}
@@ -167,7 +167,7 @@ func TestReleaseHeldToASuppliedReviewedSet(t *testing.T) {
 			}
 		}
 		var record string
-		must(t, s.db.QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&record))
+		must(t, sqliteDB(s).QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&record))
 		if strings.Contains(record, "reviewedSetOrigin") || strings.Contains(record, "suppliedLockDigest") {
 			t.Fatal("the stored run carries the origin:", record)
 		}
@@ -503,7 +503,7 @@ func TestAnExportChecksTheSuppliedLockByItsDigest(t *testing.T) {
 	// The store's release keeps a lock that is no longer its digest's.
 	changed := r
 	changed.SuppliedReviewedSet = &SuppliedReviewedSet{ID: "journal", Lock: suppliedLock + " ", LockDigest: sha(suppliedLock)}
-	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(changed)), r.ID); e != nil {
+	if _, e := sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(changed)), r.ID); e != nil {
 		t.Fatal(e)
 	}
 	want := `{"error":{"code":"store_error","message":"The local runner could not complete this request.","retryable":false}}` + "\n"
@@ -575,7 +575,7 @@ func TestRunsOfAReleaseHeldToASuppliedReviewedSetSaySo(t *testing.T) {
 	}
 	altered := r
 	altered.SuppliedReviewedSet = &SuppliedReviewedSet{ID: set.ID, Lock: set.Lock + " ", LockDigest: set.LockDigest}
-	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(altered)), r.ID); e != nil {
+	if _, e := sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(altered)), r.ID); e != nil {
 		t.Fatal(e)
 	}
 	for name, res := range map[string]*httptest.ResponseRecorder{
@@ -586,7 +586,7 @@ func TestRunsOfAReleaseHeldToASuppliedReviewedSetSaySo(t *testing.T) {
 			t.Fatalf("%s, of a release whose stored lock is not its digest's, served %d\n%s", name, res.Code, res.Body.String())
 		}
 	}
-	if _, e := s.db.Exec("UPDATE releases SET record=? WHERE id=?", "{", r.ID); e != nil {
+	if _, e := sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", "{", r.ID); e != nil {
 		t.Fatal(e)
 	}
 	for name, res := range map[string]interface{ String() string }{
@@ -610,7 +610,7 @@ func TestBootRequirementHoldsJobsToReleasesCheckedAgainstASuppliedReviewedSet(t 
 	// A release as a Runner before #210 stored it, written out by hand.
 	old := "release_checkedbefore210"
 	record := `{"schemaVersion":"1","id":"` + old + `","pack":` + string(encode(journalPack)) + `,"packDigest":"` + sha(journalPack) + `","packId":"journal","packVersion":"1.0.0","title":"Journal","runtimeDigest":"` + s.runtimeDigest + `","createdAt":"2026-10-01T00:00:00Z","config":` + string(encode(configWithout)) + `,"lock":` + string(encode(checkLock)) + `,"validation":{"outputVersion":"2","status":"valid"},"sample":{"facts":{"request":{"marker":"facts-never-journaled-7f3a"}}},"preview":{"outputVersion":"2","status":"evaluated"},"tests":"not-run"}`
-	if _, e := s.db.Exec("INSERT INTO releases(id,record) VALUES(?,?)", old, record); e != nil {
+	if _, e := sqliteDB(s).Exec("INSERT INTO releases(id,record) VALUES(?,?)", old, record); e != nil {
 		t.Fatal(e)
 	}
 	if held, e := s.release(old); e != nil || held.SuppliedReviewedSet != nil || held.Lock != checkLock {

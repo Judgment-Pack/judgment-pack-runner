@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -67,8 +66,6 @@ type manualPrepareRecord struct {
 	RequestDigest string                `json:"requestDigest"`
 	Demand        ManualExecutionDemand `json:"executionDemand"`
 }
-
-const manualJournalSchema = `CREATE TABLE manual_attempts(run_id TEXT PRIMARY KEY,intent_id TEXT NOT NULL UNIQUE,record TEXT NOT NULL);`
 
 func prepareRefusal(code string) ManualStorePrepareResult {
 	return ManualStorePrepareResult{Version: 1, Status: "refused", Code: code}
@@ -153,20 +150,11 @@ func prepareManualStoreHeldUsing(q ManualStorePrepareRequest, raw []byte, lease 
 		return prepareRefusal("unsafe-custody")
 	}
 	defer targetDirectory.Close()
-	db, err := sql.Open("sqlite", database)
+	tx, err := openSQLiteManualPreparation(database)
 	if err != nil {
 		return prepareRefusal("storage-failed")
 	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	if _, err = db.Exec("PRAGMA temp_store=MEMORY; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;"); err != nil {
-		return prepareRefusal("storage-failed")
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return prepareRefusal("storage-failed")
-	}
-	defer tx.Rollback()
+	defer tx.close()
 	// SQLite uses either a retained descriptor path or the isolated process's
 	// retained cwd and private relative VFS. Also
 	// compare the configured placement and DB inode around connection opening
@@ -176,13 +164,12 @@ func prepareManualStoreHeldUsing(q ManualStorePrepareRequest, raw []byte, lease 
 		return prepareRefusal("unsafe-custody")
 	}
 	for key, want := range map[string]string{"workspace": q.Workspace, "owner": q.Owner} {
-		var got string
-		if tx.QueryRow("SELECT value FROM metadata WHERE key=?", key).Scan(&got) != nil || got != want {
+		if got, err := tx.value(key); err != nil || got != want {
 			return prepareRefusal("unsupported-store")
 		}
 	}
-	var schema string
-	if tx.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema) != nil {
+	schema, err := tx.value("schema")
+	if err != nil {
 		return prepareRefusal("unsupported-store")
 	}
 	record := manualPrepareRecord{1, q.PrepareID, digest(raw), q.Demand}
@@ -192,12 +179,10 @@ func prepareManualStoreHeldUsing(q ManualStorePrepareRequest, raw []byte, lease 
 		if manualDecode(old, &held) != nil || held != record || schema != manualStoreSchema {
 			return prepareRefusal("pending-transition")
 		}
-		var retained string
-		if tx.QueryRow("SELECT value FROM metadata WHERE key='manualExecutionDemand'").Scan(&retained) != nil || retained != string(encode(q.Demand)) {
+		if retained, err := tx.value("manualExecutionDemand"); err != nil || retained != string(encode(q.Demand)) {
 			return prepareRefusal("pending-transition")
 		}
-		var attempts int
-		if tx.QueryRow("SELECT count(*) FROM manual_attempts").Scan(&attempts) != nil || verifyManualDatabasePath(lease, databaseIdentity) != nil {
+		if _, err := tx.count(askManualAttempts); err != nil || verifyManualDatabasePath(lease, databaseIdentity) != nil {
 			return prepareRefusal("pending-transition")
 		}
 		return ManualStorePrepareResult{Version: 1, Status: "ok", PrepareID: q.PrepareID, RequestDigest: record.RequestDigest, Delivery: "recovered", StoreSchema: manualStoreSchema}
@@ -208,9 +193,9 @@ func prepareManualStoreHeldUsing(q ManualStorePrepareRequest, raw []byte, lease 
 	if schema != storeSchema {
 		return prepareRefusal("unsupported-store")
 	}
-	for _, query := range []string{"SELECT count(*) FROM triggers", "SELECT count(*) FROM runs WHERE state IN ('queued','running')", "SELECT count(*) FROM occurrences WHERE state IN ('accepted','preparing','waiting','needs-attention')"} {
-		var count int
-		if tx.QueryRow(query).Scan(&count) != nil {
+	for _, question := range []storeQuestion{askTriggers, askActiveRuns, askOpenOccurrences} {
+		count, err := tx.count(question)
+		if err != nil {
 			return prepareRefusal("unsupported-store")
 		}
 		if count != 0 {
@@ -223,19 +208,13 @@ func prepareManualStoreHeldUsing(q ManualStorePrepareRequest, raw []byte, lease 
 	if writeManualPrepareMarker(lease, encode(record)) != nil {
 		return prepareRefusal("storage-failed")
 	}
-	if _, err = tx.Exec(manualJournalSchema); err != nil {
-		return prepareRefusal("storage-failed")
-	}
-	if _, err = tx.Exec("INSERT INTO metadata VALUES ('manualExecutionDemand',?)", string(encode(q.Demand))); err != nil {
-		return prepareRefusal("storage-failed")
-	}
-	if _, err = tx.Exec("UPDATE metadata SET value=? WHERE key='schema'", manualStoreSchema); err != nil {
+	if err = tx.prepareManual(string(encode(q.Demand))); err != nil {
 		return prepareRefusal("storage-failed")
 	}
 	if verifyManualDatabasePath(lease, databaseIdentity) != nil {
 		return prepareRefusal("unsafe-custody")
 	}
-	if err = tx.Commit(); err != nil {
+	if err = tx.commit(); err != nil {
 		return prepareRefusal("storage-failed")
 	}
 	return ManualStorePrepareResult{Version: 1, Status: "ok", PrepareID: q.PrepareID, RequestDigest: record.RequestDigest, Delivery: "committed", StoreSchema: manualStoreSchema}

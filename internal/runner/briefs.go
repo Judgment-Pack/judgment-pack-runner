@@ -65,9 +65,9 @@ func (s *Service) briefHandler(kind string) http.HandlerFunc {
 				return
 			}
 		}
-		var d BriefStore
+		var answer BriefStore
 		err = s.store.update(func(tx runTx) error {
-			d = BriefStore{Version: 1, Subjects: map[string]BriefHistory{}}
+			d := BriefStore{Version: 1, Subjects: map[string]BriefHistory{}}
 			saved, err := tx.brief(subject)
 			if err != nil && !absent(err) {
 				return err
@@ -78,6 +78,7 @@ func (s *Service) briefHandler(kind string) http.HandlerFunc {
 				}
 			}
 			if r.Method != http.MethodPost {
+				answer = d
 				return nil
 			}
 			if c.Subject != subject {
@@ -97,12 +98,16 @@ func (s *Service) briefHandler(kind string) http.HandlerFunc {
 			if len(data) > 16<<20 {
 				return bad("brief_limit", "Brief history reached its storage limit.")
 			}
-			return tx.putBrief(subject, data)
+			if err = tx.putBrief(subject, data); err != nil {
+				return err
+			}
+			answer = d
+			return nil
 		})
 		if err != nil {
 			failure(w, err)
 			return
 		}
-		write(w, 200, map[string]any{"content": d, "snapshot": snapshot})
+		write(w, 200, map[string]any{"content": answer, "snapshot": snapshot})
 	}
 }

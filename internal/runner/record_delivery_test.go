@@ -29,7 +29,7 @@ func TestRecordDeliveryFrozenRevisionAndRestart(t *testing.T) {
 		t.Fatal(o, replay, e)
 	}
 	var actorRaw string
-	if e = s.db.QueryRow("SELECT by_actor FROM events WHERE json_extract(concerns,'$.occurrence')=? ORDER BY sequence LIMIT 1", o.ID).Scan(&actorRaw); e != nil {
+	if e = sqliteDB(s).QueryRow("SELECT by_actor FROM events WHERE json_extract(concerns,'$.occurrence')=? ORDER BY sequence LIMIT 1", o.ID).Scan(&actorRaw); e != nil {
 		t.Fatal(e)
 	}
 	var actor EventActor
@@ -120,7 +120,7 @@ func TestRecordDeliveryHTTPPreservesVersion3AndJournalsRefusals(t *testing.T) {
 	}
 	var total int
 	var by string
-	if err = w.s.db.QueryRow("SELECT count(*),min(by_actor) FROM events WHERE kind='admission.refused' AND json_extract(concerns,'$.trigger')=?", tr.ID).Scan(&total, &by); err != nil || total != 1 || !strings.Contains(by, `"kind":"installation"`) {
+	if err = sqliteDB(w.s).QueryRow("SELECT count(*),min(by_actor) FROM events WHERE kind='admission.refused' AND json_extract(concerns,'$.trigger')=?", tr.ID).Scan(&total, &by); err != nil || total != 1 || !strings.Contains(by, `"kind":"installation"`) {
 		t.Fatal("refusal not coalesced/attributed", total, by, err)
 	}
 	control := serve(t, w.s, "POST", "/v1/triggers/"+tr.ID+"/deliveries", string(raw), nil)

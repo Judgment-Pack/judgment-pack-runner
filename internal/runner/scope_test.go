@@ -231,7 +231,7 @@ func wholeAnswer(w *httptest.ResponseRecorder) string {
 func journalLength(t *testing.T, s *Service) int {
 	t.Helper()
 	var n int
-	if e := s.db.QueryRow("SELECT count(*) FROM events").Scan(&n); e != nil {
+	if e := sqliteDB(s).QueryRow("SELECT count(*) FROM events").Scan(&n); e != nil {
 		t.Fatal(e)
 	}
 	return n
@@ -496,7 +496,7 @@ func TestAJobsScopeCannotBeChanged(t *testing.T) {
 	}
 	for _, table := range []string{"jobs", "job_creations", "job_revisions"} {
 		var n, carrying int
-		must(t, s.db.QueryRow("SELECT count(*), count(CASE WHEN json_extract(record,'$.scope')='scope-a' THEN 1 END) FROM "+table).Scan(&n, &carrying))
+		must(t, sqliteDB(s).QueryRow("SELECT count(*), count(CASE WHEN json_extract(record,'$.scope')='scope-a' THEN 1 END) FROM "+table).Scan(&n, &carrying))
 		if n == 0 || carrying != n {
 			t.Errorf("%s: %d of %d records carry the scope", table, carrying, n)
 		}
@@ -537,7 +537,7 @@ func TestAJobIsCreatedUnderAScopeInForm(t *testing.T) {
 	if ids := listedIDs(t, s, "/v1/jobs"); len(ids) != 0 {
 		t.Fatalf("a refused creation made %v", ids)
 	}
-	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != storeSchema {
 		t.Fatalf("schema %s", schema)
 	}
 	// The manual-admission gate holds no scope, and refuses one as it
@@ -589,12 +589,12 @@ func TestEveryRecordAndEntryOfAScopedJobCarriesItsScope(t *testing.T) {
 	}
 	for _, table := range []string{"jobs", "job_creations", "job_revisions", "triggers", "trigger_revisions", "occurrences", "runs"} {
 		var n, carrying int
-		must(t, s.db.QueryRow("SELECT count(*), count(CASE WHEN json_extract(record,'$.scope')='scope-a' THEN 1 END) FROM "+table).Scan(&n, &carrying))
+		must(t, sqliteDB(s).QueryRow("SELECT count(*), count(CASE WHEN json_extract(record,'$.scope')='scope-a' THEN 1 END) FROM "+table).Scan(&n, &carrying))
 		if n == 0 || carrying != n {
 			t.Errorf("%s: %d of %d records carry the scope", table, carrying, n)
 		}
 	}
-	if schema := storeSchemaOf(t, s.db); schema != scopedStoreSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != scopedStoreSchema {
 		t.Errorf("schema %s", schema)
 	}
 	desk := standInDesk{t, readOpenAPI(t), s}
@@ -646,7 +646,7 @@ func TestAScopedStoreIsRelocated(t *testing.T) {
 	must(t, e)
 	j, e := s.createJobBy(requester{}, "Scoped", journalRelease(t, s, s.runtimeDigest).ID, "scope-a", nil)
 	must(t, e)
-	if schema := storeSchemaOf(t, s.db); schema != scopedStoreSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != scopedStoreSchema {
 		t.Fatalf("schema %s", schema)
 	}
 	s.Close()
@@ -662,8 +662,8 @@ func TestAScopedStoreIsRelocated(t *testing.T) {
 	defer s.Close()
 	held, e := s.job(j.ID)
 	must(t, e)
-	if held.Scope != "scope-a" || storeSchemaOf(t, s.db) != scopedStoreSchema {
-		t.Fatalf("%+v under schema %s", held, storeSchemaOf(t, s.db))
+	if held.Scope != "scope-a" || storeSchemaOf(t, sqliteDB(s)) != scopedStoreSchema {
+		t.Fatalf("%+v under schema %s", held, storeSchemaOf(t, sqliteDB(s)))
 	}
 }
 
@@ -676,27 +676,27 @@ func TestAScopedJobRaisesTheStoresSchema(t *testing.T) {
 	runtime := completingRuntime(t, cfg.Dir)
 	_, e := s.createJob("Unscoped", journalRelease(t, s, runtime).ID)
 	must(t, e)
-	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != storeSchema {
 		t.Fatalf("an unscoped job: schema %s", schema)
 	}
 	refuse(t, s, `CREATE TRIGGER scope_test_fault BEFORE INSERT ON events WHEN NEW.kind='job.created' BEGIN SELECT RAISE(ABORT,'the test refuses this write'); END`)
 	if _, e = s.createJobBy(requester{}, "Scoped", journalRelease(t, s, runtime).ID, "scope-a", nil); e == nil {
 		t.Fatal("the refused creation was made")
 	}
-	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != storeSchema {
 		t.Fatalf("a refused scoped job: schema %s", schema)
 	}
 	refuse(t, s, "DROP TRIGGER scope_test_fault")
 	_, e = s.createJobBy(requester{}, "Scoped", journalRelease(t, s, runtime).ID, "scope-a", nil)
 	must(t, e)
-	if schema := storeSchemaOf(t, s.db); schema != scopedStoreSchema || schema == storeSchema || schema == manualStoreSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != scopedStoreSchema || schema == storeSchema || schema == manualStoreSchema {
 		t.Fatalf("a scoped job: schema %s", schema)
 	}
 	_, e = s.createJobBy(requester{}, "Scoped too", journalRelease(t, s, runtime).ID, "scope-b", nil)
 	must(t, e)
 	s.Close()
 	s = openJournal(t, cfg)
-	if schema := storeSchemaOf(t, s.db); schema != scopedStoreSchema {
+	if schema := storeSchemaOf(t, sqliteDB(s)); schema != scopedStoreSchema {
 		t.Fatalf("reopened: schema %s", schema)
 	}
 	refuse(t, s, "UPDATE metadata SET value='"+manualStoreSchema+"' WHERE key='schema'")

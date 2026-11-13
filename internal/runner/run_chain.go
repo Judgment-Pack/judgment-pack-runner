@@ -74,8 +74,6 @@ const (
 	maxChainFindings = 100
 )
 
-const runChainSchema = `CREATE TABLE IF NOT EXISTS run_chain (sequence INTEGER PRIMARY KEY CHECK (sequence > 0), run TEXT UNIQUE NOT NULL, line BLOB NOT NULL);`
-
 var (
 	chainTrailForm  = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	chainDigestForm = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)

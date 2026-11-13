@@ -141,7 +141,7 @@ func TestRecoveryAndExclusiveOwner(t *testing.T) {
 	// Inject the durable states on both sides of the claim boundary.
 	for _, state := range []string{"queued", "running"} {
 		r := Run{SchemaVersion: "1", ID: "run_" + state, JobID: j.ID, ReleaseID: release.ID, Revision: 1, State: state, Input: sample(), CreatedAt: now(), RequestedBy: cfg.Owner}
-		_, e = s.db.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, cfg.Owner, state, "fixture", state, string(encode(r)))
+		_, e = sqliteDB(s).Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, cfg.Owner, state, "fixture", state, string(encode(r)))
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -209,7 +209,7 @@ func TestAuditCrashWindow(t *testing.T) {
 		s.cancel()
 		<-s.done
 		r := Run{SchemaVersion: "1", ID: "run_crash", JobID: j.ID, ReleaseID: release.ID, Revision: 1, State: "running", Input: sample(), CreatedAt: now(), RequestedBy: cfg.Owner, Attempt: 1}
-		_, e = s.db.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, cfg.Owner, "crash", "fixture", r.State, string(encode(r)))
+		_, e = sqliteDB(s).Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", r.ID, j.ID, cfg.Owner, "crash", "fixture", r.State, string(encode(r)))
 		if e != nil {
 			t.Fatal(e)
 		}

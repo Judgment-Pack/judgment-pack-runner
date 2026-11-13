@@ -8,16 +8,6 @@ import (
 	"time"
 )
 
-const triggerSchema = `
- CREATE TABLE IF NOT EXISTS triggers(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,job_id TEXT NOT NULL,record TEXT NOT NULL,key_hash TEXT NOT NULL DEFAULT '',observed TEXT NOT NULL DEFAULT '',pending TEXT NOT NULL DEFAULT '',pending_at TEXT NOT NULL DEFAULT '');
- CREATE TABLE IF NOT EXISTS trigger_revisions(trigger_id TEXT NOT NULL,revision INTEGER NOT NULL,record TEXT NOT NULL,PRIMARY KEY(trigger_id,revision));
- CREATE TABLE IF NOT EXISTS occurrences(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,job_id TEXT NOT NULL,trigger_id TEXT NOT NULL,identity TEXT NOT NULL,payload_digest TEXT NOT NULL,state TEXT NOT NULL,record TEXT NOT NULL,UNIQUE(trigger_id,identity));
- CREATE TABLE IF NOT EXISTS occurrence_keys(occurrence_id TEXT PRIMARY KEY,key_hash TEXT NOT NULL);
- CREATE INDEX IF NOT EXISTS occurrences_state ON occurrences(state,seq);
- CREATE INDEX IF NOT EXISTS triggers_job ON triggers(job_id);
- CREATE INDEX IF NOT EXISTS occurrences_job ON occurrences(job_id,seq);
- CREATE UNIQUE INDEX IF NOT EXISTS triggers_cloud_binding ON triggers(json_extract(record,'$.config.cloud.connection'),json_extract(record,'$.config.cloud.job')) WHERE json_extract(record,'$.config.kind')='cloud';`
-
 func (s *Service) trigger(id string) (Trigger, string, error) { return s.store.trigger(id) }
 func (s *Service) writeTrigger(t Trigger, hash string, history bool) error {
 	return s.store.update(func(tx runTx) error { return tx.putTrigger(t, hash, history) })
@@ -46,7 +36,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 	}
 	var t Trigger
 	hash := ""
-	from, previous := "", 0
+	previous := 0
 	if triggerID != "" {
 		t, hash, e = s.trigger(triggerID)
 		if e != nil {
@@ -91,6 +81,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 	t.pending = ""
 	t.pendingAt = ""
 	return t, s.store.update(func(tx runTx) (err error) {
+		from := ""
 		if triggerID == "" {
 			if err = tx.createTrigger(t); err != nil {
 				return err
@@ -210,13 +201,14 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 // change's entry in one transaction.
 func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
 	return s.store.update(func(tx runTx) (err error) {
-		if c.from, err = triggerBefore(tx, t.ID, t.Revision-1); err != nil {
+		entry := c
+		if entry.from, err = triggerBefore(tx, t.ID, t.Revision-1); err != nil {
 			return err
 		}
 		if err = tx.putTrigger(t, hash, true); err != nil {
 			return err
 		}
-		_, err = tx.appendJournal(c)
+		_, err = tx.appendJournal(entry)
 		return err
 	})
 }
@@ -383,9 +375,10 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 		actor := s.actor(by)
 		publisher = &actor
 	}
-	var full error
+	var admitted Occurrence
 	e = s.store.update(func(tx runTx) error {
-		if err := s.admitOccurrenceAs(tx, t, &o, "event:"+event.ID, payload, publisher); err != nil {
+		a, err := s.admitOccurrenceAs(tx, t, o, "event:"+event.ID, payload, publisher)
+		if err != nil {
 			return err
 		}
 		// An event delivery is refused while the queue is full, not recorded as
@@ -396,25 +389,27 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 		// again are admitted once the queue has room, a credential's while its
 		// occurredAt is in the window above. A schedule, a file change or a cloud
 		// signal has no sender to refuse, and is still recorded skipped.
-		if o.State == "skipped" && o.Reason == "queue-full" {
-			full = &apiError{429, "queue_full", "The local queue is full. Deliver the same event again after queued occurrences are submitted, while its occurredAt is within the last five minutes."}
+		if a.State == "skipped" && a.Reason == "queue-full" {
 			if expectedRelease != "" {
-				full = &apiError{429, "queue_full", "The local queue is full. Deliver the same record again after queued occurrences are submitted."}
+				return &apiError{429, "queue_full", "The local queue is full. Deliver the same record again after queued occurrences are submitted."}
 			}
-			return full
+			return &apiError{429, "queue_full", "The local queue is full. Deliver the same event again after queued occurrences are submitted, while its occurredAt is within the last five minutes."}
 		}
 		// The occurrence is bound to the credential that created it, for that
 		// credential's read of its result.
 		if hash != "" {
-			return tx.createOccurrenceKey(o.ID, hash)
+			if err = tx.createOccurrenceKey(a.ID, hash); err != nil {
+				return err
+			}
 		}
+		admitted = a
 		return nil
 	})
-	if full != nil {
-		return Occurrence{}, false, full
+	if e != nil {
+		return Occurrence{}, false, e
 	}
-	o.Input = nil
-	return o, false, e
+	admitted.Input = nil
+	return admitted, false, nil
 }
 
 // eventResult answers a trigger token about an occurrence that token created:
@@ -461,18 +456,27 @@ func newOccurrence(t Trigger, j Job, at time.Time) Occurrence {
 func (s *Service) findOccurrence(trigger, identity string) (Occurrence, string, error) {
 	return s.store.identifiedOccurrence(trigger, identity)
 }
-func (s *Service) admitOccurrence(tx runTx, t Trigger, o *Occurrence, identity, payload string) error {
+
+// admitOccurrence admits o, as a schedule, a file change or a cloud signal
+// does, and answers the occurrence it recorded.
+func (s *Service) admitOccurrence(tx runTx, t Trigger, o Occurrence, identity, payload string) (Occurrence, error) {
 	return s.admitOccurrenceAs(tx, t, o, identity, payload, nil)
 }
-func (s *Service) admitOccurrenceAs(tx runTx, t Trigger, o *Occurrence, identity, payload string, publisher *EventActor) error {
+
+// admitOccurrenceAs records o, skipped when the queue is full or the job's
+// overlap rule holds it, with its entry, and answers what it recorded. It runs
+// inside a transaction the store may run again, so it works on its own copy
+// of o and changes nothing of its caller's: every run decides the queue and
+// the overlap from what it reads, as the first did.
+func (s *Service) admitOccurrenceAs(tx runTx, t Trigger, o Occurrence, identity, payload string, publisher *EventActor) (Occurrence, error) {
 	if o.State == "accepted" {
 		pending, e := tx.pendingOccurrences()
 		if e != nil {
-			return e
+			return Occurrence{}, e
 		}
 		active, e := tx.jobActivity(o.JobID)
 		if e != nil {
-			return e
+			return Occurrence{}, e
 		}
 		if pending >= queueLimit {
 			o.State = "skipped"
@@ -486,9 +490,9 @@ func (s *Service) admitOccurrenceAs(tx runTx, t Trigger, o *Occurrence, identity
 		o.Input = nil
 		o.PendingInput = nil
 	}
-	*o = withOccurrenceClass(*o)
-	if e := tx.createOccurrence(*o, identity, payload); e != nil {
-		return e
+	o = withOccurrenceClass(o)
+	if e := tx.createOccurrence(o, identity, payload); e != nil {
+		return Occurrence{}, e
 	}
 	// An event delivery is the credential's that the delivery carried, the
 	// trigger's current key; a schedule, a file change or a cloud signal is
@@ -500,8 +504,10 @@ func (s *Service) admitOccurrenceAs(tx runTx, t Trigger, o *Occurrence, identity
 	if publisher != nil {
 		by = *publisher
 	}
-	_, e := tx.appendJournal(occurrenceChange(*o, "", by))
-	return e
+	if _, e := tx.appendJournal(occurrenceChange(o, "", by)); e != nil {
+		return Occurrence{}, e
+	}
+	return o, nil
 }
 
 // saveOccurrence records an occurrence, and the entry of its change of state,

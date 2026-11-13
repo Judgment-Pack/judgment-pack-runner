@@ -72,14 +72,14 @@ func TestManualGovernedRealRuntimeGate(t *testing.T) {
 			s.executor = lease
 			o := ExecutorOwnership{Root: f.root, MachineWorkspace: f.identity.Workspace, RunnerWorkspace: cfg.Workspace, RootDevice: f.identity.RootDevice, RootInode: f.identity.RootInode, FileDevice: f.identity.FileDevice, FileInode: f.identity.FileInode}
 			s.cfg.ExecutorOwnership = &o
-			_, err = s.db.Exec(manualJournalSchema)
+			_, err = sqliteDB(s).Exec(manualJournalSchema)
 			executorMust(t, err)
 			var runID string
 			commits := 0
 			manualGateAuthority(t, s, func(method string, body json.RawMessage) (string, any, bool) {
 				if method == "reserve" {
 					if scenario == "journal-failure" {
-						_, e := s.db.Exec("DROP TABLE manual_attempts")
+						_, e := sqliteDB(s).Exec("DROP TABLE manual_attempts")
 						if e != nil {
 							return "", nil, true
 						}
@@ -92,7 +92,7 @@ func TestManualGovernedRealRuntimeGate(t *testing.T) {
 				if method == "commitStart" {
 					commits++
 					if scenario == "start-journal-failure" {
-						if _, e := s.db.Exec("DROP TABLE manual_attempts"); e != nil {
+						if _, e := sqliteDB(s).Exec("DROP TABLE manual_attempts"); e != nil {
 							return "", nil, true
 						}
 					}

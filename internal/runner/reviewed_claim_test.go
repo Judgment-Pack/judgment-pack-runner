@@ -167,7 +167,7 @@ func TestRunsSayWhoseReviewedSetTheirClaimIsAbout(t *testing.T) {
 	}
 
 	var stored string
-	must(t, s.db.QueryRow("SELECT record FROM runs WHERE id=?", held.ID).Scan(&stored))
+	must(t, sqliteDB(s).QueryRow("SELECT record FROM runs WHERE id=?", held.ID).Scan(&stored))
 	for name, b := range map[string]string{
 		"the stored run":          stored,
 		"the run list":            serve(t, s, "GET", "/v1/runs", "", nil).Body.String(),

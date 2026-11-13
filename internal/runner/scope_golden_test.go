@@ -33,7 +33,7 @@ func TestARecordWithoutAScopeIsWrittenAsBefore(t *testing.T) {
 	s := runJournalSteps(t, cfg, false).s
 	for table, column := range map[string]string{"jobs": "record", "job_creations": "record", "job_revisions": "record", "triggers": "record", "trigger_revisions": "record", "occurrences": "record", "runs": "record", "events": "detail"} {
 		var n, scoped int
-		if e := s.db.QueryRow("SELECT count(*), count(CASE WHEN instr("+column+",'\"scope\"')>0 THEN 1 END) FROM "+table).Scan(&n, &scoped); e != nil {
+		if e := sqliteDB(s).QueryRow("SELECT count(*), count(CASE WHEN instr("+column+",'\"scope\"')>0 THEN 1 END) FROM "+table).Scan(&n, &scoped); e != nil {
 			t.Fatal(e)
 		}
 		if n == 0 || scoped != 0 {
@@ -41,10 +41,10 @@ func TestARecordWithoutAScopeIsWrittenAsBefore(t *testing.T) {
 		}
 	}
 	var schema, versions string
-	if e := s.db.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema); e != nil || schema != "3" {
+	if e := sqliteDB(s).QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema); e != nil || schema != "3" {
 		t.Fatalf("schema %q %v", schema, e)
 	}
-	if versions = entryVersionsBesideResults(t, s.db); versions != "1" {
+	if versions = entryVersionsBesideResults(t, sqliteDB(s)); versions != "1" {
 		t.Fatalf("entry versions %q", versions)
 	}
 }

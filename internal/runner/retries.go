@@ -308,6 +308,8 @@ const (
 
 var errRunNotRetryable = &apiError{409, "run_not_retryable", "Only an interrupted run can be retried."}
 
+var errAttemptMismatch = &apiError{409, "attempt_mismatch", "This run's attempt is not the one named. Read the run again."}
+
 // retryRunBy queues an interrupted run again, for by: the same run, with its
 // interrupted attempt kept in its attempts (docs/design/retries.md, section
 // 6). attempt is the run's attempt as the caller read it. It returns the run
@@ -320,9 +322,23 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 	if s.unhealthy.Load() {
 		return Run{}, false, &apiError{503, "dispatcher_stopped", "The dispatcher stopped after a storage error. Restart Desk after checking the runner storage."}
 	}
+	// The attempt directories are read before the transaction, which reads
+	// only the store (docs/design/store-postgresql.md, D2), on the run as read
+	// then, and only once it is interrupted: until then its Runtime may still
+	// write them. The answer is given inside the transaction, and is theirs
+	// only for the interruption they were read after. A read that fails is
+	// answered as a failed read inside the transaction was.
+	checked, err := s.store.run(runID)
+	if err != nil {
+		return Run{}, false, err
+	}
+	var trail error
+	if checked.State == "interrupted" {
+		trail = s.attemptsHoldNoAudit(checked)
+	}
 	var result Run
 	repeated := false
-	err := s.store.update(func(tx runTx) error {
+	err = s.store.update(func(tx runTx) error {
 		r, err := tx.run(runID)
 		if err != nil {
 			return err
@@ -332,7 +348,7 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 			return errKeepNothing
 		}
 		if attempt != r.Attempt {
-			return &apiError{409, "attempt_mismatch", "This run's attempt is not the one named. Read the run again."}
+			return errAttemptMismatch
 		}
 		if r.State != "interrupted" {
 			return errRunNotRetryable
@@ -340,8 +356,22 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 		if len(r.Audit) > 0 || len(r.AuditBytes) > 0 {
 			return errAuditKept
 		}
-		if err = s.attemptsHoldNoAudit(r); err != nil {
-			return err
+		// The directories were not read after this interruption: the request
+		// is answered as it was when they were read, a run not yet
+		// interrupted refused as not retryable.
+		if !sameInterruption(checked, r) {
+			if attempt != checked.Attempt {
+				return errAttemptMismatch
+			}
+			if checked.State != "interrupted" {
+				return errRunNotRetryable
+			}
+			// The attempt was interrupted again since; no Runner does that
+			// without a retry, which the attempts kept answer above.
+			return errAttemptMismatch
+		}
+		if trail != nil {
+			return trail
 		}
 		if r.Attempt >= maxRetryAttempts {
 			return &apiError{409, "run_not_retryable", "This run has made its 10 attempts."}
@@ -371,8 +401,11 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 		if err = tx.raiseSchema(retryStoreSchema); err != nil {
 			return err
 		}
+		if err = recordRun(tx, next, "interrupted", s.actor(by), EventDetail{Attempt: &kept}); err != nil {
+			return err
+		}
 		result = next
-		return recordRun(tx, next, "interrupted", s.actor(by), EventDetail{Attempt: &kept})
+		return nil
 	})
 	if repeated && errors.Is(err, errKeepNothing) {
 		return result, true, nil
@@ -385,6 +418,16 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 	default:
 	}
 	return result, false, nil
+}
+
+// sameInterruption says whether checked is r's interruption: the run read
+// interrupted, at the same attempt, begun and ended at the same instants. An
+// interruption ends its run's attempt at the instant it records, as the
+// Runner stopping (InterruptedAt) or a restart (FinishedAt) does, so a later
+// interruption of the same attempt is not taken for the one checked.
+func sameInterruption(checked, r Run) bool {
+	return checked.State == "interrupted" && r.State == "interrupted" && checked.Attempt == r.Attempt &&
+		checked.StartedAt == r.StartedAt && checked.FinishedAt == r.FinishedAt && checked.InterruptedAt == r.InterruptedAt
 }
 
 var errAuditKept = &apiError{409, "run_not_retryable", "This interrupted run's attempt left an audit record. It is not evaluated again."}

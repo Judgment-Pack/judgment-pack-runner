@@ -77,7 +77,7 @@ func storedRowOf(t *testing.T, cfg Config) string {
 func heldRowOf(t *testing.T, s *Service) string {
 	t.Helper()
 	var row string
-	if err := s.db.QueryRow("SELECT value FROM metadata WHERE key=?", registeredProfilesKey).Scan(&row); err != nil {
+	if err := sqliteDB(s).QueryRow("SELECT value FROM metadata WHERE key=?", registeredProfilesKey).Scan(&row); err != nil {
 		t.Fatal(err)
 	}
 	return row

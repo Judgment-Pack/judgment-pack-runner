@@ -42,8 +42,8 @@ third changes every installation.
 
 The contract is widened first, in slices, each keeping the sqlite kind's statements and bytes
 (`docs/design/store-interface.md`, section 9). The Runner's transaction functions are then made
-safe to run twice, under a gate that runs every one twice in the in-memory kind, and the listings
-put behind the contract. The kind is then built as `docs/design/store-postgresql.md` fixes it: one
+safe to run twice, under a gate that runs every one twice, and the listings put behind the
+contract. The kind is then built as `docs/design/store-postgresql.md` fixes it: one
 schema owned by a role that cannot log in, reached by a migration login through `SET ROLE`, with
 policies of its own for migrations and a migration that fails when a row statement changes no row;
 a request login and a worker login with table privileges only, each route's transactions on the
@@ -66,7 +66,7 @@ it is built.
   held to the same semantics.
 - Bad, because a transaction function retried on serialization failure must start from copies of
   its inputs and read nothing but the store, its arguments and the clock, a rule every future
-  transaction keeps; three do not yet, and are changed before the kind is written.
+  transaction keeps; the closures that did not were changed, and a gate runs every one twice.
 - Bad, because the second kind's writes serialize, one transaction at a time, as SQLite's do.
 - Bad, because an interrupted run whose attempt directories the host does not hold cannot be
   retried; its caller submits a new run.

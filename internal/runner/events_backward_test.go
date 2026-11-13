@@ -31,7 +31,7 @@ func newBackwardFixture(t *testing.T, n int) *backwardFixture {
 	release := journalRelease(t, s, completingRuntime(t, cfg.Dir))
 	j, e := s.createJob("Backward", release.ID)
 	must(t, e)
-	tx, e := s.db.Begin()
+	tx, e := sqliteDB(s).Begin()
 	must(t, e)
 	for i := 0; i < n; i++ {
 		c := change{kind: "run.queued", by: runnerActor, reason: fmt.Sprintf("entry %d", i)}
@@ -48,7 +48,7 @@ func newBackwardFixture(t *testing.T, n int) *backwardFixture {
 		must(t, e)
 	}
 	must(t, tx.Commit())
-	_, e = s.db.Exec("UPDATE events SET at='2026-10-10T00:00:00.000000Z'")
+	_, e = sqliteDB(s).Exec("UPDATE events SET at='2026-10-10T00:00:00.000000Z'")
 	must(t, e)
 	f := &backwardFixture{s: s, job: j, release: release}
 	for after := int64(0); ; {

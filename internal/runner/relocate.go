@@ -4,7 +4,6 @@ package runner
 // root binding, under Runner's instance lock and a single SQLite transaction.
 // No HTTP capability grants it, and no retained run, release or audit is edited.
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -79,39 +78,29 @@ func RelocateWorkspace(request RelocateRequest) (RelocateResult, error) {
 	if err = privateFile(database); err != nil {
 		return result, err
 	}
-	db, err := sql.Open("sqlite", database)
+	tx, err := openSQLiteRelocation(database)
 	if err != nil {
 		return result, err
 	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	if _, err = db.Exec("PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;"); err != nil {
-		return result, err
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return result, err
-	}
-	defer tx.Rollback()
+	defer tx.close()
 	for key, expected := range map[string]string{"workspace": request.Workspace, "owner": request.Owner} {
-		var actual string
-		if err = tx.QueryRow("SELECT value FROM metadata WHERE key=?", key).Scan(&actual); err != nil || actual != expected {
+		if actual, err := tx.value(key); err != nil || actual != expected {
 			return result, errors.New("workspace identity does not match the relocation")
 		}
 	}
-	var schema string
-	if err = tx.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema); err != nil || schema != "1" && schema != "2" && schema != storeSchema && schema != scopedStoreSchema && schema != retryStoreSchema {
+	schema, err := tx.value("schema")
+	if err != nil || schema != "1" && schema != "2" && schema != storeSchema && schema != scopedStoreSchema && schema != retryStoreSchema {
 		return result, errors.New("unsupported workspace schema")
 	}
 	historyKey := "inputRootRelocation:" + request.ID
-	var binding, prior string
-	if err = tx.QueryRow("SELECT value FROM metadata WHERE key='inputRoot'").Scan(&binding); err != nil {
+	binding, err := tx.value("inputRoot")
+	if err != nil {
 		return result, err
 	}
 	if err = checkStoredBinding(binding); err != nil {
 		return result, err
 	}
-	err = tx.QueryRow("SELECT value FROM metadata WHERE key=?", historyKey).Scan(&prior)
+	prior, err := tx.value(historyKey)
 	record := struct {
 		Previous string `json:"previous"`
 		Current  string `json:"current"`
@@ -124,38 +113,32 @@ func RelocateWorkspace(request RelocateRequest) (RelocateResult, error) {
 		result.AlreadyApplied = true
 		return result, nil
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !absent(err) {
 		return result, err
 	}
 	if binding != request.PreviousInputRoot {
 		return result, errors.New("previous input root does not match; no relocation was made")
 	}
-	var active int
-	if err = tx.QueryRow("SELECT COUNT(*) FROM runs WHERE state IN ('queued','running')").Scan(&active); err != nil {
+	for _, check := range []struct {
+		question storeQuestion
+		refusal  string
+	}{
+		{askActiveRuns, "finish queued and running evaluations before relocating the workspace"},
+		{askUnpausedTriggers, "pause automatic triggers before relocating the workspace"},
+		{askOpenOccurrences, "finish or cancel pending source preparations before relocating the workspace"},
+	} {
+		active, err := tx.count(check.question)
+		if err != nil {
+			return result, err
+		}
+		if active != 0 {
+			return result, errors.New(check.refusal)
+		}
+	}
+	if err = tx.relocate(request.PreviousInputRoot, request.InputRoot, historyKey, string(recorded)); err != nil {
 		return result, err
 	}
-	if active != 0 {
-		return result, errors.New("finish queued and running evaluations before relocating the workspace")
-	}
-	if err = tx.QueryRow("SELECT COUNT(*) FROM triggers WHERE json_extract(record,'$.paused') IS NOT 1").Scan(&active); err != nil {
-		return result, err
-	}
-	if active != 0 {
-		return result, errors.New("pause automatic triggers before relocating the workspace")
-	}
-	if err = tx.QueryRow("SELECT COUNT(*) FROM occurrences WHERE state IN ('accepted','preparing','waiting','needs-attention')").Scan(&active); err != nil {
-		return result, err
-	}
-	if active != 0 {
-		return result, errors.New("finish or cancel pending source preparations before relocating the workspace")
-	}
-	if _, err = tx.Exec("UPDATE metadata SET value=? WHERE key='inputRoot' AND value=?", request.InputRoot, request.PreviousInputRoot); err != nil {
-		return result, err
-	}
-	if _, err = tx.Exec("INSERT INTO metadata(key,value) VALUES(?,?)", historyKey, string(recorded)); err != nil {
-		return result, err
-	}
-	if err = tx.Commit(); err != nil {
+	if err = tx.commit(); err != nil {
 		return result, err
 	}
 	return result, nil

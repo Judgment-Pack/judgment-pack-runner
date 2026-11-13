@@ -868,7 +868,7 @@
             }
           },
           "default": {
-            "description": "Refused: 400 invalid_request; 404 not_found; 409 run_not_retryable, for a run in any state but interrupted, an interrupted run whose record holds an audit record or one of whose attempt directories holds a non-empty audit/evaluations.jsonl or one that cannot be read, a trigger run whose queue deadline has passed, or a run at 10 attempts; 409 attempt_mismatch, for an attempt that is neither the run's nor one already retried; 429 queue_full; 503 dispatcher_stopped.",
+            "description": "Refused: 400 invalid_request; 404 not_found; 409 run_not_retryable, for a run in any state but interrupted, an interrupted run whose record holds an audit record or one of whose attempt directories holds a non-empty audit/evaluations.jsonl or one that cannot be read, a trigger run whose queue deadline has passed, or a run at 10 attempts; 409 attempt_mismatch, for an attempt that is neither the run's nor one already retried, or a run whose attempt changed while its attempt directories were read; 429 queue_full; 503 dispatcher_stopped.",
             "content": {
               "application/json": {
                 "schema": {

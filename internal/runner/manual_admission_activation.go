@@ -11,11 +11,15 @@ func ManualAdmissionAvailable() bool {
 }
 
 func (s *Service) validateManualStore() error {
-	var schema, raw string
-	if s.db.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema) != nil || schema != manualStoreSchema || s.cfg.ExecutorAdmission == nil {
+	if s.manual == nil {
 		return errManualProtocol
 	}
-	if s.db.QueryRow("SELECT value FROM metadata WHERE key='manualExecutionDemand'").Scan(&raw) != nil {
+	schema, err := s.manual.manualValue("schema")
+	if err != nil || schema != manualStoreSchema || s.cfg.ExecutorAdmission == nil {
+		return errManualProtocol
+	}
+	raw, err := s.manual.manualValue("manualExecutionDemand")
+	if err != nil {
 		return errManualProtocol
 	}
 	var d ManualExecutionDemand
@@ -27,28 +31,21 @@ func (s *Service) validateManualStore() error {
 	if err != nil || manualDecode(marker, &held) != nil || held.Version != 1 || !manualHex(held.PrepareID) || !validDigest(held.RequestDigest) || held.Demand != d {
 		return errManualProtocol
 	}
-	for _, query := range []string{"SELECT count(*) FROM triggers", "SELECT count(*) FROM occurrences WHERE state IN ('accepted','preparing','waiting','needs-attention')"} {
-		var count int
-		if s.db.QueryRow(query).Scan(&count) != nil || count != 0 {
+	for _, question := range []storeQuestion{askTriggers, askOpenOccurrences} {
+		if count, e := s.manual.manualCount(question); e != nil || count != 0 {
 			return manualUnsupported()
 		}
 	}
-	rows, err := s.db.Query("SELECT record FROM runs WHERE state='queued'")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var raw string
-		if rows.Scan(&raw) != nil {
+	return s.manual.queuedRunRecords(func(raw []byte, scanned error) error {
+		if scanned != nil {
 			return errManualProtocol
 		}
-		r, e := decodeRun([]byte(raw))
+		r, e := decodeRun(raw)
 		if e != nil || r.manual == nil || r.manual.resource == nil || r.manual.registration == nil || r.Trigger != nil || r.Input.Source != nil || r.Input.Preparation != nil {
 			return errManualProtocol
 		}
-	}
-	return rows.Err()
+		return nil
+	})
 }
 func (s *Service) activateManualAuthority() error {
 	if s.cfg.ExecutorAdmission == nil {

@@ -77,7 +77,7 @@ func TestARunKeepsItsAuditRecordsBytes(t *testing.T) {
 	// < and > escaped, and kept 1.0 and the other characters as they are. The
 	// parsed record Runner stores is the same JSON with other bytes.
 	var stored []byte
-	if e = s.db.QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&stored); e != nil {
+	if e = sqliteDB(s).QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&stored); e != nil {
 		t.Fatal(e)
 	}
 	var record map[string]json.RawMessage
@@ -254,10 +254,10 @@ func fixtureStore(t *testing.T, export []byte) (Config, VerificationBundle) {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	if _, e = s.db.Exec("INSERT INTO releases(id,record) VALUES (?,?)", b.Release.ID, string(encode(b.Release))); e != nil {
+	if _, e = sqliteDB(s).Exec("INSERT INTO releases(id,record) VALUES (?,?)", b.Release.ID, string(encode(b.Release))); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.db.Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", b.Run.ID, b.Run.JobID, b.Run.RequestedBy, "fixture", "", b.Run.State, string(encode(b.Run))); e != nil {
+	if _, e = sqliteDB(s).Exec("INSERT INTO runs(id,job_id,caller,idem,request_digest,state,record) VALUES (?,?,?,?,?,?,?)", b.Run.ID, b.Run.JobID, b.Run.RequestedBy, "fixture", "", b.Run.State, string(encode(b.Run))); e != nil {
 		t.Fatal(e)
 	}
 	return cfg, b

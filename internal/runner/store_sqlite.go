@@ -7,12 +7,12 @@ package runner
 // pragmas are the ones the Runner made before the contract stood in front of
 // them, moved here.
 //
-// The kind also keeps the state the contract does not cover yet, in the same
-// database (docs/design/store-interface.md, section 9): jobs as they are made
-// and revised, workflow executions, the manual-admission journal and the rest
-// of the store's metadata. The Runner reaches that state through the database
-// handle the kind gives it at opening (storeOpening.opened). Triggers and
-// occurrences are the contract's (store_sqlite_triggers.go).
+// The kind also keeps, in the same database, the manual-admission state,
+// which no other kind keeps (store_sqlite_manual.go; storeOpening.manual),
+// the workflow store's tables where that store is opened
+// (store_sqlite_workflows.go), and the source worker's own database
+// (store_sqlite_sources.go). No statement of the module is outside the files
+// of this kind (TestNoStatementOutsideTheSQLiteKind).
 
 import (
 	"database/sql"
@@ -97,9 +97,10 @@ func sqlitePreparedStore(dir string) error {
 
 // openSQLiteStore is the sqlite kind's constructor, and the one place the
 // boot line's directory reaches the store. It takes the lock, then runs the
-// Runner's afterLock, opens the database with one connection, gives it to
-// the Runner's opened, applies the schema, holds the store to its identity
-// and, when asked, migrates it. On a failure it gives up what it took.
+// Runner's afterLock, opens the database with one connection, gives its
+// manual-admission state to the Runner's manual, applies the schema, holds
+// the store to its identity and, when asked, migrates it. On a failure it
+// gives up what it took.
 func openSQLiteStore(o storeOpening) (_ *sqliteStore, err error) {
 	k := &sqliteStore{commit: (*sql.Tx).Commit}
 	defer func() {
@@ -136,8 +137,8 @@ func openSQLiteStore(o storeOpening) (_ *sqliteStore, err error) {
 		return nil, err
 	}
 	k.db.SetMaxOpenConns(1)
-	if o.opened != nil {
-		if err = o.opened(k.db); err != nil {
+	if o.manual != nil {
+		if err = o.manual(sqliteManual{q: k.db, db: k.db}); err != nil {
 			return nil, err
 		}
 	}
@@ -522,7 +523,7 @@ func sqliteJournalCondition(f journalFilter) (string, []any) {
 		where, args = "("+where+") AND json_extract(detail,'$.scope')=?", append(args, f.scope)
 	}
 	if !f.results.empty() {
-		conditions, more := f.results.conditions("detail", "kind", false)
+		conditions, more := sqliteResultConditions(f.results, "detail", "kind", false)
 		where, args = "("+where+") AND "+strings.Join(conditions, " AND "), append(args, more...)
 	}
 	return where, args

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,13 +73,14 @@ type Service struct {
 	automationMu           sync.Mutex
 	automationDone         chan struct{}
 	cfg                    Config
-	db                     *sql.DB
 	runtime, runtimeDigest string
 
 	// store keeps the queue, releases, inputs and run records
-	// (store_contract.go). db is the sqlite kind's database handle, for the
-	// state the contract does not cover yet (store_sqlite.go).
-	store runStore
+	// (store_contract.go). manual is the manual-admission state the sqlite
+	// kind keeps beside them (store_sqlite_manual.go), nil with a kind that
+	// keeps none.
+	store  runStore
+	manual manualState
 	// executor is fixed at Open and remains non-nil after Close.
 	executor *ExecutorLease
 	// authority is the immutable original inherited channel/session. It never
@@ -218,10 +218,10 @@ func Open(cfg Config) (_ *Service, err error) {
 	}()
 	// The boot line's directory reaches the store only through the store
 	// kind's constructor, which takes the store's lock, then runs afterLock,
-	// then opens the database, and applies the schema after opened.
+	// then opens the database, and applies the schema after manual.
 	s.store, err = openStore(defaultStoreKind, storeOpening{
 		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot,
-		migrate: cfg.ExecutorAdmission == nil,
+		migrate: cfg.ExecutorAdmission == nil, manualAdmission: cfg.ExecutorAdmission != nil,
 		afterLock: func() error {
 			for _, n := range []string{"releases", "attempts", "runtimes"} {
 				if err := privateDir(filepath.Join(cfg.Dir, n)); err != nil {
@@ -232,8 +232,8 @@ func Open(cfg Config) (_ *Service, err error) {
 			s.attempts, err = openHeldRoot(filepath.Join(cfg.Dir, "attempts"))
 			return err
 		},
-		opened: func(db *sql.DB) error {
-			s.db = db
+		manual: func(m manualState) error {
+			s.manual = m
 			if cfg.ExecutorAdmission != nil {
 				return s.validateManualStore()
 			}
@@ -352,6 +352,11 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 			return Job{}, err
 		}
 	}
+	// Whether the release names a profile set aside, or a selected profile, is
+	// process state a registration writes: it is read once, here, and its
+	// answer given inside the transaction, which reads only the store
+	// (docs/design/store-postgresql.md, D2).
+	setAside := s.refuseSetAsideMapping(r.InputMapping)
 	var made Job
 	err = s.store.update(func(tx runTx) error {
 		stored, err := tx.jobCreation(releaseID)
@@ -385,8 +390,8 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 		}
 		// Likewise, a release that names a profile set aside since it was made
 		// makes no new job; a job made from it before is returned as it was.
-		if err = s.refuseSetAsideMapping(r.InputMapping); err != nil {
-			return err
+		if setAside != nil {
+			return setAside
 		}
 		if err = admitJobPack(tx, r); err != nil {
 			return err
@@ -595,18 +600,21 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 		if count >= queueLimit {
 			return &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 		}
-		r = Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller, Scope: j.Scope}
-		if err = tx.createRun(r, caller, key, hash); err != nil {
+		queued := Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller, Scope: j.Scope}
+		if err = tx.createRun(queued, caller, key, hash); err != nil {
 			return err
 		}
 		actor := s.actor(by)
 		if origin != nil {
 			actor = triggerActor(origin.TriggerID, origin.TriggerRevision)
 		}
-		_, err = tx.appendJournal(runChange(r, "", actor, EventDetail{}))
-		return err
+		if _, err = tx.appendJournal(runChange(queued, "", actor, EventDetail{})); err != nil {
+			return err
+		}
+		r = queued
+		return nil
 	})
-	if replayed {
+	if replayed && errors.Is(err, errKeepNothing) {
 		return r, true, replayErr
 	}
 	if err != nil {

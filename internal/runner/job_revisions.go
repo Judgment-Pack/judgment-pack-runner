@@ -13,11 +13,6 @@ import (
 	"time"
 )
 
-const jobRevisionSchema = `CREATE TABLE job_creations (release_id TEXT PRIMARY KEY, record TEXT NOT NULL);
- CREATE TABLE job_revisions (job_id TEXT NOT NULL, revision INTEGER NOT NULL, release_id TEXT UNIQUE NOT NULL, record TEXT NOT NULL, request_digest TEXT NOT NULL DEFAULT '', PRIMARY KEY(job_id,revision));
- INSERT INTO job_creations SELECT release_id,record FROM jobs;
- INSERT INTO job_revisions(job_id,revision,release_id,record) SELECT id,json_extract(record,'$.revision'),release_id,record FROM jobs;`
-
 type UpgradeJobRequest struct {
 	ReleaseID     string `json:"releaseId"`
 	BaseReleaseID string `json:"baseReleaseId"`
@@ -107,6 +102,13 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 		return Job{}, err
 	}
 	by := s.actor(requesterFrom(ctx))
+	// Whether the release's mapping can be acquired in the background reads
+	// the profiles a registration writes: it is read once, here, and each
+	// trigger the transaction reads is checked against that answer, so that
+	// the transaction reads only the store (docs/design/store-postgresql.md,
+	// D2).
+	gateway := s.validateGatewayMapping(next)
+	var upgraded Job
 	err = s.store.update(func(tx runTx) error {
 		// The revision is re-read in the same transaction that updates it.
 		current, err := tx.job(jobID)
@@ -140,7 +142,7 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 				return &apiError{409, "job_triggers_active", "Pause all triggers before upgrading this job. They remain paused after the upgrade."}
 			}
 			c := t.Config
-			if err = s.validateTrigger(&c, next, time.Now()); err != nil {
+			if err = s.checkTrigger(&c, next, time.Now(), gateway); err != nil {
 				return &apiError{409, "trigger_upgrade_incompatible", "An existing trigger is incompatible with this release. Keep this job unchanged and create a new reviewed job for the new configuration."}
 			}
 		}
@@ -170,13 +172,13 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 				return err
 			}
 		}
-		j = revised
+		upgraded = revised
 		return nil
 	})
 	if err != nil {
 		return Job{}, err
 	}
-	return j, nil
+	return upgraded, nil
 }
 
 func (s *Service) checkUpgradeVersion(ctx context.Context, base, candidate string) error {

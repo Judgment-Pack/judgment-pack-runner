@@ -80,7 +80,7 @@ func TestManualExecutionBindingOwnerExactExport(t *testing.T) {
 	if err != nil || !bytes.Equal(again.ReleaseBytes, expected) {
 		t.Fatal("export mutability", err)
 	}
-	if _, err = s.db.Exec("INSERT INTO triggers(id,job_id,record)VALUES(?,?,?)", "trg_manual", job.ID, `{}`); err != nil {
+	if _, err = sqliteDB(s).Exec("INSERT INTO triggers(id,job_id,record)VALUES(?,?,?)", "trg_manual", job.ID, `{}`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.manualExecutionBinding(job.ID); err == nil {

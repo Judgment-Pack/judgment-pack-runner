@@ -137,7 +137,7 @@ func (w *coverWorld) durable() (Occurrence, *asyncFixture) {
 	w.s.cfg.GatewayConnections = []GatewayConnection{{Profile: p.ID, URL: "http://127.0.0.1:1", Durable: true, OperationsURL: server.URL, OperationsTokenFile: tokenFile}}
 	w.release.InputMapping = &input.Source.Mapping
 	w.release.InputProfiles = []InputProfile{p}
-	_, e := w.s.db.Exec("UPDATE releases SET record=? WHERE id=?", string(encode(w.release)), w.release.ID)
+	_, e := sqliteDB(w.s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(w.release)), w.release.ID)
 	must(w.t, e)
 	c := constantTrigger(time.Now())
 	c.PreparationSeconds = 3600
@@ -342,7 +342,7 @@ func TestEveryTransitionWritesItsEntry(t *testing.T) {
 		{"durable: an occurrence expires before it prepares", func(w *coverWorld) func() {
 			o, _ := w.durable()
 			o.ExpiresAt = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
-			_, e := w.s.db.Exec("UPDATE occurrences SET record=? WHERE id=?", string(encode(o)), o.ID)
+			_, e := sqliteDB(w.s).Exec("UPDATE occurrences SET record=? WHERE id=?", string(encode(o)), o.ID)
 			must(w.t, e)
 			return func() { step(w, o.ID, func(o Occurrence) bool { return o.State == "expired" }) }
 		}, []changeSeen{{"occurrence.expired", "accepted", "expired", "runner"}}},
@@ -453,7 +453,7 @@ func TestEveryWriterCommitsItsChangeWithItsEntry(t *testing.T) {
 	ctx := context.Background()
 	count := func(w *coverWorld, query string, args ...any) int {
 		var n int
-		must(w.t, w.s.db.QueryRow(query, args...).Scan(&n))
+		must(w.t, sqliteDB(w.s).QueryRow(query, args...).Scan(&n))
 		return n
 	}
 	type writer struct {

@@ -35,7 +35,7 @@ func TestManualQueuedRunListsKeepPrivatePreimages(t *testing.T) {
 		t.Fatal(err)
 	}
 	var before string
-	if err := s.db.QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&before); err != nil {
+	if err := sqliteDB(s).QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(before, `"manualAdmission"`) {
@@ -73,7 +73,7 @@ func TestManualQueuedRunListsKeepPrivatePreimages(t *testing.T) {
 		})
 	}
 	var after string
-	if err := s.db.QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&after); err != nil {
+	if err := sqliteDB(s).QueryRow("SELECT record FROM runs WHERE id=?", run.ID).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
 	if after != before {
@@ -92,7 +92,9 @@ func TestFilteredListsAcrossPages(t *testing.T) {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	s := &Service{db: db}
+	// The sqlite kind over this database alone, which holds the tables the
+	// listings read.
+	s := &Service{store: &sqliteStore{sqliteReads: sqliteReads{db}, db: db}}
 	for _, q := range []string{triggerSchema, `CREATE TABLE releases(id TEXT,record BLOB)`, `CREATE TABLE jobs(seq INTEGER PRIMARY KEY,id TEXT,release_id TEXT,record BLOB)`, `CREATE TABLE runs(seq INTEGER PRIMARY KEY,id TEXT,job_id TEXT,state TEXT,record BLOB)`} {
 		if _, err = db.Exec(q); err != nil {
 			t.Fatal(err)
