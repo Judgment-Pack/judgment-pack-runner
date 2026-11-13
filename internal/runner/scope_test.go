@@ -493,9 +493,9 @@ func TestAJobIsCreatedUnderAScopeInForm(t *testing.T) {
 	s := openJournal(t, cfg)
 	defer s.Close()
 	r := journalRelease(t, s, s.runtimeDigest)
-	for _, scope := range []string{`null`, `""`, `7`, `"scope\ta"`, `"` + strings.Repeat("a", 129) + `"`, `["scope-a"]`} {
+	for scope, code := range map[string]string{`null`: "invalid_scope", `""`: "invalid_scope", `"scope\ta"`: "invalid_scope", `"` + strings.Repeat("a", 129) + `"`: "invalid_scope", `7`: "invalid_request", `["scope-a"]`: "invalid_request"} {
 		body := `{"name":"Scoped","releaseId":"` + r.ID + `","reviewed":true,"scope":` + scope + `}`
-		if got := serve(t, s, "POST", "/v1/jobs", body, nil); got.Code != 400 {
+		if got := serve(t, s, "POST", "/v1/jobs", body, nil); got.Code != 400 || !strings.Contains(got.Body.String(), `"code":"`+code+`"`) {
 			t.Errorf("scope %s: %d %s", scope, got.Code, got.Body)
 		}
 	}
@@ -504,6 +504,14 @@ func TestAJobIsCreatedUnderAScopeInForm(t *testing.T) {
 	}
 	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
 		t.Fatalf("schema %s", schema)
+	}
+	// The manual-admission gate holds no scope, and refuses one as it
+	// refuses a trigger.
+	s.cfg.ExecutorAdmission = &ManualAdmissionBinding{}
+	_, e := s.createJobBy(requester{}, "Scoped", r.ID, "scope-a", nil)
+	s.cfg.ExecutorAdmission = nil
+	if e == nil || e.Error() != manualUnsupported().Error() {
+		t.Fatalf("a manual-admission Runner answered %v", e)
 	}
 }
 
