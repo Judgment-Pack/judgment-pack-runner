@@ -218,7 +218,7 @@ func readEarlierStore(t *testing.T, st *sqliteStore) {
 	if line, err := st.entryLine("run_chained"); err != nil || string(line) != `{"entryVersion":"1"}` {
 		t.Fatal("chain:", string(line), err)
 	}
-	page, err := eventPageFrom(st.db, 0, "1=1")
+	page, err := eventPageFrom(st, 0, journalFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

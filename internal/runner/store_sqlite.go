@@ -8,10 +8,10 @@ package runner
 // them, moved here.
 //
 // The kind also keeps the state the contract does not cover yet, in the same
-// database: jobs as they are made and revised, triggers, occurrences, briefs,
-// workflow executions, the manual-admission journal, the profile registry and
-// the store's metadata, and the journal's own reads. The Runner reaches that
-// state through the database handle the kind gives it at opening
+// database (docs/design/store-interface.md, section 9): jobs as they are made
+// and revised, triggers, occurrences, workflow executions, the
+// manual-admission journal and the rest of the store's metadata. The Runner
+// reaches that state through the database handle the kind gives it at opening
 // (storeOpening.opened), and, inside a contract transaction, through
 // sqliteTxOf.
 
@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	sqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -449,8 +450,127 @@ func (t *sqliteTx) appendJournal(c change) (int64, error) {
 }
 
 func (t *sqliteTx) raiseSchema(schema string) error {
-	if schema != retryStoreSchema {
-		return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))
+	switch schema {
+	case scopedStoreSchema:
+		return sqliteFault("schema", raiseScopedSchema(t.tx), true)
+	case retryStoreSchema:
+		return sqliteFault("schema", raiseRetrySchema(t.tx), true)
 	}
-	return sqliteFault("schema", raiseRetrySchema(t.tx), true)
+	return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))
+}
+
+func (r sqliteReads) recordScope(records, id string) (string, error) {
+	if !scopeCarriers[records] {
+		return "", storeFailure(faultRefused, "scope", fmt.Errorf("no record of kind %q carries a scope", records))
+	}
+	var scope string
+	err := r.q.QueryRow("SELECT coalesce(json_extract(record,'$.scope'),'') FROM "+records+" WHERE id=?", id).Scan(&scope)
+	return scope, sqliteFault("scope", err, false)
+}
+
+func (r sqliteReads) profileRow(key string) (string, error) {
+	if !profileRowKeys[key] {
+		return "", storeFailure(faultRefused, "profiles", fmt.Errorf("no profile row is held under %q", key))
+	}
+	var row string
+	err := r.q.QueryRow("SELECT value FROM metadata WHERE key=?", key).Scan(&row)
+	return row, sqliteFault("profiles", err, false)
+}
+
+func (t *sqliteTx) putProfileRow(key, row string) error {
+	if !profileRowKeys[key] {
+		return storeFailure(faultRefused, "profiles", fmt.Errorf("no profile row is held under %q", key))
+	}
+	_, err := t.tx.Exec("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, row)
+	return sqliteFault("profiles", err, true)
+}
+
+func (r sqliteReads) brief(subject string) ([]byte, error) {
+	var b []byte
+	err := r.q.QueryRow("SELECT record FROM briefs WHERE subject=?", subject).Scan(&b)
+	return b, sqliteFault("brief", err, false)
+}
+
+// putBrief keeps the record as the bytes it is given, as the brief route
+// always has.
+func (t *sqliteTx) putBrief(subject string, record []byte) error {
+	_, err := t.tx.Exec("INSERT INTO briefs(subject,record) VALUES (?,?) ON CONFLICT(subject) DO UPDATE SET record=excluded.record", subject, record)
+	return sqliteFault("brief", err, true)
+}
+
+func (t *sqliteTx) lastRefusal(key string) (string, error) {
+	var at string
+	err := t.tx.QueryRow("SELECT at FROM events WHERE refusal=? ORDER BY sequence DESC LIMIT 1", key).Scan(&at)
+	return at, sqliteFault("journal", err, false)
+}
+
+func (r sqliteReads) journalBegan() (string, error) {
+	var at string
+	err := r.q.QueryRow("SELECT at FROM events WHERE kind='journal.began' ORDER BY sequence LIMIT 1").Scan(&at)
+	return at, sqliteFault("journal", err, false)
+}
+
+// jobEntries selects a job's entries and all of its retained releases: those
+// naming the job, and those naming its release alone (its preview, a refused
+// creation).
+const jobEntries = "job_id=? OR (job_id='' AND release_id IN (SELECT release_id FROM job_revisions WHERE job_id=?))"
+
+// sqliteJournalCondition is the condition that selects the entries f keeps,
+// with its arguments.
+func sqliteJournalCondition(f journalFilter) (string, []any) {
+	where, args := "1=1", []any{}
+	if f.job != "" {
+		where, args = jobEntries, []any{f.job, f.job}
+		if f.runnerOwn {
+			where += " OR kind IN ('journal.began','runner.started','runner.stopped')"
+		}
+	}
+	if f.scope != "" {
+		where, args = "("+where+") AND json_extract(detail,'$.scope')=?", append(args, f.scope)
+	}
+	if !f.results.empty() {
+		conditions, more := f.results.conditions("detail", "kind", false)
+		where, args = "("+where+") AND "+strings.Join(conditions, " AND "), append(args, more...)
+	}
+	return where, args
+}
+
+// journalPage reads one row beyond the limit, to say whether there is more,
+// and does not decode it.
+func (r sqliteReads) journalPage(f journalFilter, g journalRange) ([]Event, bool, error) {
+	where, args := sqliteJournalCondition(f)
+	query := "SELECT " + eventColumns + " FROM events WHERE sequence>? AND (" + where + ") ORDER BY sequence LIMIT ?"
+	args = append(append([]any{g.after}, args...), g.limit+1)
+	if g.backward {
+		where, args = sqliteJournalCondition(f)
+		query = "SELECT " + eventColumns + " FROM events WHERE (" + where + ")"
+		if !g.tail {
+			query += " AND sequence<?"
+			args = append(args, g.before)
+		}
+		query += " ORDER BY sequence DESC LIMIT ?"
+		args = append(args, g.limit+1)
+	}
+	rows, err := r.q.Query(query, args...)
+	if err != nil {
+		return nil, false, sqliteFault("journal", err, false)
+	}
+	defer rows.Close()
+	var items []Event
+	more := false
+	for rows.Next() {
+		if len(items) == g.limit {
+			more = true
+			break
+		}
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, false, storeFailure(faultUnreadable, "journal", err)
+		}
+		items = append(items, e)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, sqliteFault("journal", err, false)
+	}
+	return items, more, nil
 }

@@ -122,12 +122,83 @@ type storeReads interface {
 	// is the run as the transaction holds it, so that a retry's checks and
 	// its write see one record (retries.go).
 	run(id string) (Run, error)
+	// recordScope is the scope identifier the record of a kind of record
+	// (scopeCarriers) held under id carries, "" for none, or faultAbsent.
+	// faultRefused for another kind of record.
+	recordScope(records, id string) (string, error)
+	// profileRow is the row of input profiles held under key
+	// (profileRowKeys), as it was written, or faultAbsent. faultRefused for
+	// another key.
+	profileRow(key string) (string, error)
+	// brief is the brief history held for subject, as it was written, or
+	// faultAbsent.
+	brief(subject string) ([]byte, error)
+}
+
+// scopeCarriers are the kinds of record that carry a scope identifier, by
+// the name recordScope takes.
+var scopeCarriers = map[string]bool{"jobs": true, "runs": true, "triggers": true, "occurrences": true}
+
+// profileRowKeys are the keys profile rows are held under.
+var profileRowKeys = map[string]bool{registeredProfilesKey: true, selectedProfilesKey: true}
+
+// journalReads are the journal's reads, outside a transaction.
+type journalReads interface {
+	// journalPage is up to r.limit entries f keeps, in the order r reads
+	// them, and whether f keeps another beyond them, which is not decoded.
+	journalPage(f journalFilter, r journalRange) ([]Event, bool, error)
+	// journalBegan is when the journal began: its first journal.began
+	// entry's time, or faultAbsent.
+	journalBegan() (string, error)
+}
+
+// journalFilter selects the journal's entries a read keeps; the zero filter
+// keeps every entry. A kind applies it where it reads, so that a page holds
+// only entries the filter keeps.
+type journalFilter struct {
+	// job keeps the entries naming the job, and those naming no job and one
+	// of the job's revisions' releases (a preview, a refused creation).
+	job string
+	// runnerOwn keeps, beside job's, the Runner's own entries (journal.began,
+	// runner.started, runner.stopped). It means nothing without job.
+	runnerOwn bool
+	// scope keeps, of those, only the entries whose detail carries this
+	// scope identifier, compared byte for byte.
+	scope string
+	// results keeps, of those, the entries of the outcomes, error classes
+	// and kinds named (run_results.go).
+	results resultFilter
+}
+
+// journalRange is where a read of the journal starts and which way it goes:
+// forward, the entries after after, oldest first; backward, the newest
+// (tail) or those before before, newest first.
+type journalRange struct {
+	after    int64
+	backward bool
+	tail     bool
+	before   int64
+	limit    int
+}
+
+// journalRow is an entry as every kind keeps it: a change encoded once
+// (journalRowOf), in the sqlite kind's columns, so that the journal reads
+// the same whatever kind keeps it.
+type journalRow struct {
+	version, kind, at, by, concerns string
+	revision                        sql.NullInt64
+	from, to                        sql.NullString
+	reason, detail                  string
+	// job, release and refusal are what a read selects on: the concerned
+	// job and release, and a refusal's key (journalRefusal).
+	job, release, refusal string
 }
 
 // runStore is the Runner's durable state for the queue, releases, inputs and
 // run records, behind one contract.
 type runStore interface {
 	storeReads
+	journalReads
 	// update runs fn in one transaction and keeps what it wrote only if fn
 	// returns nil and the commit succeeds. Transactions are serializable: one
 	// sees every write of each that committed before it began, and none of
@@ -158,6 +229,14 @@ type runTx interface {
 	// createRun queues r under its id and its request key (r.JobID, caller,
 	// key), with the request's digest: faultTaken when either is held.
 	createRun(r Run, caller, key, requestDigest string) error
+	// lastRefusal is the time of the newest entry journaled under a
+	// refusal's key, which is never empty (journalRefusal), or faultAbsent.
+	lastRefusal(key string) (string, error)
+	// putProfileRow writes the row of input profiles held under key,
+	// whatever it held. faultRefused for a key outside profileRowKeys.
+	putProfileRow(key, row string) error
+	// putBrief writes the brief history held for subject, whatever it held.
+	putBrief(subject string, record []byte) error
 	// putRun writes r's state and record over the run held under r.ID, and
 	// returns the state it held before. With expected other than anyState,
 	// the run must be held in that state, or nothing is written and the
@@ -181,9 +260,9 @@ type runTx interface {
 	appendJournal(c change) (int64, error)
 	// raiseSchema marks the store as holding records that only a Runner
 	// that knows schema keeps, so that no earlier Runner opens it: the
-	// sqlite kind raises its schema (retryStoreSchema is the one raised
-	// through the contract). faultRefused for a schema the kind does not
-	// know.
+	// sqlite kind raises its schema to scopedStoreSchema from storeSchema,
+	// and to retryStoreSchema from either; a store raised already is left
+	// as it is. faultRefused for a schema the kind does not know.
 	raiseSchema(schema string) error
 }
 

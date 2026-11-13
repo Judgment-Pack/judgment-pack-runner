@@ -52,7 +52,7 @@ func newBackwardFixture(t *testing.T, n int) *backwardFixture {
 	must(t, e)
 	f := &backwardFixture{s: s, job: j, release: release}
 	for after := int64(0); ; {
-		page, e := eventPageFrom(s.db, after, "1=1")
+		page, e := eventPageFrom(s.store, after, journalFilter{})
 		must(t, e)
 		f.all = append(f.all, page.Items...)
 		after = page.Next
@@ -61,7 +61,7 @@ func newBackwardFixture(t *testing.T, n int) *backwardFixture {
 		}
 	}
 	for after := int64(0); ; {
-		page, e := eventPageFrom(s.db, after, jobEntries, j.ID, j.ID)
+		page, e := eventPageFrom(s.store, after, journalFilter{job: j.ID})
 		must(t, e)
 		f.mine = append(f.mine, page.Items...)
 		after = page.Next

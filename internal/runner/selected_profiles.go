@@ -16,7 +16,6 @@ package runner
 // docs/design/selected-profile-preparation.md is the design.
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,9 +151,8 @@ func (s *Service) refuseSelectedIDs(ids []string) error {
 // set aside: kept byte for byte, its id taken, counted, listed with its
 // reason, and never bound.
 func (s *Service) loadSelectedProfiles() error {
-	var raw string
-	err := s.db.QueryRow("SELECT value FROM metadata WHERE key=?", selectedProfilesKey).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
+	raw, err := s.store.profileRow(selectedProfilesKey)
+	if absent(err) {
 		return nil
 	}
 	if err != nil {
@@ -235,7 +233,7 @@ func (s *Service) admitSelectedProfile(p InputProfile) (bool, error) {
 	}
 	// One synchronous write precedes making the profile visible, as an
 	// ordinary registration's does.
-	if _, err := s.db.Exec("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", selectedProfilesKey, storedRow(stored)); err != nil {
+	if err := s.store.update(func(tx runTx) error { return tx.putProfileRow(selectedProfilesKey, storedRow(stored)) }); err != nil {
 		return false, err
 	}
 	admitted := append(s.selectedInputProfiles(), frozen)

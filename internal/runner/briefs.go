@@ -1,9 +1,7 @@
 package runner
 
 import (
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 )
@@ -58,57 +56,50 @@ func (s *Service) briefHandler(kind string) http.HandlerFunc {
 			failure(w, err)
 			return
 		}
-		tx, err := s.db.Begin()
-		if err != nil {
-			failure(w, err)
-			return
-		}
-		defer tx.Rollback()
-		d := BriefStore{Version: 1, Subjects: map[string]BriefHistory{}}
-		var saved []byte
-		err = tx.QueryRow("SELECT record FROM briefs WHERE subject=?", subject).Scan(&saved)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			failure(w, err)
-			return
-		}
-		if len(saved) > 0 {
-			if err = json.Unmarshal(saved, &d); err != nil {
-				failure(w, err)
-				return
-			}
-		}
+		// The command is read before the transaction, so that the
+		// transaction reads nothing but the store and can be run again.
+		var c BriefCommand
 		if r.Method == http.MethodPost {
-			var c BriefCommand
 			if err = decode(w, r, &c); err != nil {
 				failure(w, err)
 				return
 			}
-			if c.Subject != subject {
-				failure(w, bad("invalid_subject", "This brief belongs to another subject."))
-				return
+		}
+		var d BriefStore
+		err = s.store.update(func(tx runTx) error {
+			d = BriefStore{Version: 1, Subjects: map[string]BriefHistory{}}
+			saved, err := tx.brief(subject)
+			if err != nil && !absent(err) {
+				return err
 			}
-			if c.Action == "begin" {
-				if !sameBriefJSON(c.Snapshot, snapshot) {
-					failure(w, &apiError{409, "stale_source", "The retained source changed. Reload before generating."})
-					return
+			if len(saved) > 0 {
+				if err = json.Unmarshal(saved, &d); err != nil {
+					return err
 				}
-				c.Snapshot = snapshot
 			}
-			if err = applyBrief(&d, c, time.Now()); err != nil {
-				failure(w, &apiError{409, "brief_conflict", err.Error()})
-				return
+			if r.Method != http.MethodPost {
+				return nil
+			}
+			if c.Subject != subject {
+				return bad("invalid_subject", "This brief belongs to another subject.")
+			}
+			command := c
+			if command.Action == "begin" {
+				if !sameBriefJSON(command.Snapshot, snapshot) {
+					return &apiError{409, "stale_source", "The retained source changed. Reload before generating."}
+				}
+				command.Snapshot = snapshot
+			}
+			if err = applyBrief(&d, command, time.Now()); err != nil {
+				return &apiError{409, "brief_conflict", err.Error()}
 			}
 			data, _ := json.Marshal(d)
 			if len(data) > 16<<20 {
-				failure(w, bad("brief_limit", "Brief history reached its storage limit."))
-				return
+				return bad("brief_limit", "Brief history reached its storage limit.")
 			}
-			if _, err = tx.Exec("INSERT INTO briefs(subject,record) VALUES (?,?) ON CONFLICT(subject) DO UPDATE SET record=excluded.record", subject, data); err != nil {
-				failure(w, err)
-				return
-			}
-		}
-		if err = tx.Commit(); err != nil {
+			return tx.putBrief(subject, data)
+		})
+		if err != nil {
 			failure(w, err)
 			return
 		}

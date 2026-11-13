@@ -253,19 +253,34 @@ func boundedReason(reason string) string {
 	return reason[:cut]
 }
 
-// appendEvent writes a change's entry inside tx, and returns its sequence.
+// appendEvent writes a change's entry inside a sqlite kind's transaction, and
+// returns its sequence.
 func appendEvent(tx *sql.Tx, c change) (int64, error) {
+	e := journalRowOf(c)
+	res, err := tx.Exec("INSERT INTO events(entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail,job_id,release_id,refusal) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		e.version, e.kind, e.at, e.by, e.concerns, e.revision, e.from, e.to, e.reason, e.detail, e.job, e.release, e.refusal)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// journalRowOf is a change's entry as every kind keeps it: its entry version,
+// its time (now, unless the change has one), and its actor, concerns and
+// detail encoded.
+func journalRowOf(c change) journalRow {
 	if c.at == "" {
 		c.at = now()
 	}
-	var revision, from, to any
+	var revision sql.NullInt64
+	var from, to sql.NullString
 	if c.revision > 0 {
-		revision = c.revision
+		revision = sql.NullInt64{Int64: int64(c.revision), Valid: true}
 	}
 	if c.states {
-		to = c.to
+		to = sql.NullString{String: c.to, Valid: true}
 		if c.from != "" {
-			from = c.from
+			from = sql.NullString{String: c.from, Valid: true}
 		}
 	}
 	version := EventEntryVersion
@@ -281,12 +296,8 @@ func appendEvent(tx *sql.Tx, c change) (int64, error) {
 	if c.detail.Disposition != nil || c.detail.ErrorClass != "" || c.detail.Counts != nil {
 		version = resultEntryVersion
 	}
-	res, err := tx.Exec("INSERT INTO events(entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail,job_id,release_id,refusal) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		version, c.kind, c.at, string(encode(c.by)), string(encode(c.concerns)), revision, from, to, boundedReason(c.reason), string(encode(c.detail)), c.concerns.Job, c.concerns.Release, c.refusal)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	return journalRow{version: version, kind: c.kind, at: c.at, by: string(encode(c.by)), concerns: string(encode(c.concerns)), revision: revision, from: from, to: to,
+		reason: boundedReason(c.reason), detail: string(encode(c.detail)), job: c.concerns.Job, release: c.concerns.Release, refusal: c.refusal}
 }
 
 // runEventKind names a run's change of state from one state to another; from
@@ -602,25 +613,23 @@ func (s *Service) journalRefusal(c change) {
 		key = append(key, "run", c.concerns.Run)
 	}
 	c.refusal = strings.Join(key, "\x00")
-	tx, err := s.db.Begin()
-	if err != nil {
-		return
-	}
-	defer tx.Rollback()
-	var last string
-	switch err = tx.QueryRow("SELECT at FROM events WHERE refusal=? ORDER BY sequence DESC LIMIT 1", c.refusal).Scan(&last); {
-	case err == nil:
-		if at, e := time.Parse(time.RFC3339Nano, last); e == nil {
-			if since := time.Since(at); since >= 0 && since < refusalWindow {
-				return
+	// A refusal that cannot be journaled is not reported: the request was
+	// refused all the same.
+	s.store.update(func(tx runTx) error {
+		last, err := tx.lastRefusal(c.refusal)
+		switch {
+		case err == nil:
+			if at, e := time.Parse(time.RFC3339Nano, last); e == nil {
+				if since := time.Since(at); since >= 0 && since < refusalWindow {
+					return errKeepNothing
+				}
 			}
+		case !absent(err):
+			return err
 		}
-	case !errors.Is(err, sql.ErrNoRows):
-		return
-	}
-	if _, err = appendEvent(tx, c); err == nil {
-		tx.Commit()
-	}
+		_, err = tx.appendJournal(c)
+		return err
+	})
 }
 
 // refusedRun journals a refused submission to a job the store holds.
@@ -754,84 +763,62 @@ func eventQuery(raw string) (eventRequest, error) {
 	return r, nil
 }
 
-// withResults narrows a journal condition to the entries r's filters keep, if
-// it names any.
-func (r eventRequest) withResults(where string, args []any) (string, []any) {
-	if r.results.empty() {
-		return where, args
-	}
-	conditions, more := r.results.conditions("detail", "kind", false)
-	return "(" + where + ") AND " + strings.Join(conditions, " AND "), append(args, more...)
-}
-
-// eventPageAfter is up to eventPage entries after a sequence, oldest first,
-// among those the condition selects.
-func (s *Service) eventPageAfter(after int64, where string, args ...any) (EventPage, error) {
-	return eventPageFrom(s.db, after, where, args...)
-}
-
-// eventPageFor answers a request: forward from its cursor, or backward.
-func (s *Service) eventPageFor(r eventRequest, where string, args ...any) (EventPage, error) {
+// eventPageFor answers a request: forward from its cursor, or backward,
+// among the entries f keeps with the results the request names.
+func (s *Service) eventPageFor(r eventRequest, f journalFilter) (EventPage, error) {
+	f.results = r.results
 	if r.backward {
-		return eventPageBefore(s.db, r.tail, r.before, where, args...)
+		return eventPageBefore(s.store, r.tail, r.before, f)
 	}
-	return eventPageFrom(s.db, r.after, where, args...)
+	return eventPageFrom(s.store, r.after, f)
 }
 
 const eventColumns = "sequence,entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail"
 
 // scanEvent reads one entry from a row of eventColumns.
 func scanEvent(rows *sql.Rows) (Event, error) {
-	var e Event
-	var by, concerns, detail string
-	var revision sql.NullInt64
-	var from, to sql.NullString
-	if err := rows.Scan(&e.Sequence, &e.EntryVersion, &e.Kind, &e.At, &by, &concerns, &revision, &from, &to, &e.Reason, &detail); err != nil {
+	var sequence int64
+	var e journalRow
+	if err := rows.Scan(&sequence, &e.version, &e.kind, &e.at, &e.by, &e.concerns, &e.revision, &e.from, &e.to, &e.reason, &e.detail); err != nil {
+		return Event{}, err
+	}
+	return e.event(sequence)
+}
+
+// event is the entry a row holds at sequence, as the routes serve it.
+func (row journalRow) event(sequence int64) (Event, error) {
+	e := Event{Sequence: sequence, EntryVersion: row.version, Kind: row.kind, At: row.at, Reason: row.reason}
+	if err := errors.Join(json.Unmarshal([]byte(row.by), &e.By), json.Unmarshal([]byte(row.concerns), &e.Concerns), json.Unmarshal([]byte(row.detail), &e.EventDetail)); err != nil {
 		return e, err
 	}
-	if err := errors.Join(json.Unmarshal([]byte(by), &e.By), json.Unmarshal([]byte(concerns), &e.Concerns), json.Unmarshal([]byte(detail), &e.EventDetail)); err != nil {
-		return e, err
-	}
-	if revision.Valid {
-		v := int(revision.Int64)
+	if row.revision.Valid {
+		v := int(row.revision.Int64)
 		e.Revision = &v
 	}
-	if to.Valid {
-		e.To = encode(to.String)
+	if row.to.Valid {
+		e.To = encode(row.to.String)
 		e.From = json.RawMessage("null")
-		if from.Valid {
-			e.From = encode(from.String)
+		if row.from.Valid {
+			e.From = encode(row.from.String)
 		}
 	}
 	return e, nil
 }
 
-// eventPageFrom reads a page of the journal from a store's database.
-func eventPageFrom(db *sql.DB, after int64, where string, args ...any) (EventPage, error) {
+// eventPageFrom reads a page of the journal forward from after, among the
+// entries f keeps.
+func eventPageFrom(st journalReads, after int64, f journalFilter) (EventPage, error) {
 	page := EventPage{Items: []Event{}, Next: after}
-	rows, err := db.Query("SELECT "+eventColumns+" FROM events WHERE sequence>? AND ("+where+") ORDER BY sequence LIMIT ?", append(append([]any{after}, args...), eventPage+1)...)
+	items, more, err := st.journalPage(f, journalRange{after: after, limit: eventPage})
 	if err != nil {
 		return page, err
 	}
-	for rows.Next() {
-		if len(page.Items) == eventPage {
-			page.More = true
-			break
-		}
-		e, err := scanEvent(rows)
-		if err != nil {
-			rows.Close()
-			return page, err
-		}
-		page.Items = append(page.Items, e)
-		page.Next = e.Sequence
+	page.Items = append(page.Items, items...)
+	page.More = more
+	if len(items) > 0 {
+		page.Next = items[len(items)-1].Sequence
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return page, err
-	}
-	err = db.QueryRow("SELECT at FROM events WHERE kind='journal.began' ORDER BY sequence LIMIT 1").Scan(&page.JournalBegan)
+	page.JournalBegan, err = st.journalBegan()
 	return page, err
 }
 
@@ -841,35 +828,13 @@ func eventPageFrom(db *sql.DB, after int64, where string, args ...any) (EventPag
 // entry exists, Before is the cursor for it, and Next is the forward cursor:
 // the sequence of the page's last entry, or 0 for an empty page, so that
 // following it forward starts from the beginning and skips nothing.
-func eventPageBefore(db *sql.DB, tail bool, before int64, where string, args ...any) (EventPage, error) {
+func eventPageBefore(st journalReads, tail bool, before int64, f journalFilter) (EventPage, error) {
 	page := EventPage{Items: []Event{}}
-	query := "SELECT " + eventColumns + " FROM events WHERE (" + where + ")"
-	if !tail {
-		query += " AND sequence<?"
-		args = append(args, before)
-	}
-	rows, err := db.Query(query+" ORDER BY sequence DESC LIMIT ?", append(args, eventPage+1)...)
+	newestFirst, more, err := st.journalPage(f, journalRange{backward: true, tail: tail, before: before, limit: eventPage})
 	if err != nil {
 		return page, err
 	}
-	var newestFirst []Event
-	for rows.Next() {
-		if len(newestFirst) == eventPage {
-			page.More = true
-			break
-		}
-		e, err := scanEvent(rows)
-		if err != nil {
-			rows.Close()
-			return page, err
-		}
-		newestFirst = append(newestFirst, e)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return page, err
-	}
+	page.More = more
 	for i := len(newestFirst) - 1; i >= 0; i-- {
 		page.Items = append(page.Items, newestFirst[i])
 	}
@@ -882,14 +847,9 @@ func eventPageBefore(db *sql.DB, tail bool, before int64, where string, args ...
 		page.Next = page.Items[len(page.Items)-1].Sequence
 	}
 	page.Before = &cursor
-	err = db.QueryRow("SELECT at FROM events WHERE kind='journal.began' ORDER BY sequence LIMIT 1").Scan(&page.JournalBegan)
+	page.JournalBegan, err = st.journalBegan()
 	return page, err
 }
-
-// jobEntries selects a job's entries and all of its retained releases: those
-// naming the job, and those naming its release alone (its preview, a refused
-// creation). Both routes use it.
-const jobEntries = "job_id=? OR (job_id='' AND release_id IN (SELECT release_id FROM job_revisions WHERE job_id=?))"
 
 // jobEventsHandler serves a job's entries.
 func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
@@ -903,8 +863,7 @@ func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	where, args := req.withResults(jobEntries, []any{j.ID, j.ID})
-	page, err := s.eventPageFor(req, where, args...)
+	page, err := s.eventPageFor(req, journalFilter{job: j.ID})
 	if err != nil {
 		failure(w, err)
 		return
@@ -922,7 +881,7 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	where, args := "1=1", []any{}
+	var f journalFilter
 	if req.job != "" {
 		j, err := s.job(req.job)
 		if err != nil {
@@ -930,13 +889,10 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// The job route's entries, and Runner's own.
-		where, args = jobEntries+" OR kind IN ('journal.began','runner.started','runner.stopped')", []any{j.ID, j.ID}
+		f.job, f.runnerOwn = j.ID, true
 	}
-	if scope := scopeNamed(r.Context()); scope != "" {
-		where, args = "("+where+") AND json_extract(detail,'$.scope')=?", append(args, scope)
-	}
-	where, args = req.withResults(where, args)
-	page, err := s.eventPageFor(req, where, args...)
+	f.scope = scopeNamed(r.Context())
+	page, err := s.eventPageFor(req, f)
 	if err != nil {
 		failure(w, err)
 		return

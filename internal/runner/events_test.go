@@ -123,7 +123,7 @@ func journalEntries(t *testing.T, cfg Config) []Event {
 	defer db.Close()
 	var all []Event
 	for after := int64(0); ; {
-		page, e := eventPageFrom(db, after, "1=1")
+		page, e := eventPageFrom(sqliteReads{db}, after, journalFilter{})
 		if e != nil {
 			t.Fatal(e)
 		}

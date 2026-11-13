@@ -244,6 +244,10 @@ both kinds' cases to have run and passed.
   and the lock. The lock is still given up last.
 - Errors from the contract's operations carry a fault; their text and what `errors.Is` reaches are
   unchanged.
+- With #244 (section 9.5): a brief's command is read from the request before the brief's
+  transaction, not inside it, so that the transaction reads nothing but the store. A request whose
+  body is refused and whose subject's stored history does not decode now answers the body's
+  refusal first.
 
 ## 9. Everything a Runner keeps
 
@@ -325,3 +329,25 @@ failed commit.
 - Outside the premise and outside the contract: briefs, the profile registry's and selected
   profiles' metadata rows, the scoped schema raise, and the manual-admission and workflow tables.
   `trigger_revisions` is written and never read.
+
+### 9.5 What #244 puts behind the contract
+
+Each operation keeps the statement it replaces, moved into the sqlite kind; the in-memory kind
+implements it; and `store_conformance_widened_test.go` holds the cases every kind runs.
+
+| Operation | Where | The sqlite kind's statement | Semantics |
+|---|---|---|---|
+| `journalPage(filter, range)` | Outside a transaction | `SELECT ... FROM events WHERE sequence>? AND (condition) ORDER BY sequence LIMIT ?`, or `... ORDER BY sequence DESC` backward | Up to `limit` entries the filter keeps, in the range's order, and whether another follows, read and not decoded. The filter (`journalFilter`) is a job (its entries, and those of its revisions' releases that name no job), the Runner's own entries beside a job's, a scope identifier compared byte for byte, and the outcomes, error classes and kinds of [run results](run-results.md): each kind applies it where it reads, so that a page holds only what it keeps. |
+| `journalBegan()` | Outside | `SELECT at FROM events WHERE kind='journal.began' ORDER BY sequence LIMIT 1` | When the journal began, or `absent`. |
+| `lastRefusal(key)` | In a transaction | `SELECT at FROM events WHERE refusal=? ORDER BY sequence DESC LIMIT 1` | The newest refusal under the key, or `absent`. A refusal is journaled (`journalRefusal`) in one transaction with this read, once per key in its window. |
+| `recordScope(records, id)` | Both | `SELECT coalesce(json_extract(record,'$.scope'),'') FROM <records> WHERE id=?` | The scope identifier of a job, run, trigger or occurrence, `""` for none, or `absent`; `refused` for another kind of record, so that no other name reaches the statement. |
+| `profileRow(key)`, `putProfileRow(key, row)` | Both; in a transaction | `SELECT value FROM metadata WHERE key=?`; `INSERT ... ON CONFLICT(key) DO UPDATE` | The registry's and the selected profiles' rows, read and written whole, as written; `refused` for any other key, so that no metadata row of the store's identity or schema is reached. |
+| `brief(subject)`, `putBrief(subject, record)` | Both; in a transaction | `SELECT record FROM briefs WHERE subject=?`; `INSERT ... ON CONFLICT(subject) DO UPDATE` | A subject's brief history, as the bytes written. |
+| `raiseSchema(schema)` | In a transaction | `raiseScopedSchema`, `raiseRetrySchema` | Now also `scopedStoreSchema`, from `storeSchema` only; a store at a later schema keeps it. |
+
+Every kind keeps a journal entry as one encoding, `journalRowOf`, with the sqlite kind's columns,
+and reads it back through `journalRow.event`, which the sqlite kind's `scanEvent` uses too, so an
+entry reads the same whatever kind keeps it. A new in-memory store begins its journal, as a new
+sqlite store does at opening. The conformance suite's journal is read through `journalPage`, and
+the kind-specific journal reader is gone.
+
