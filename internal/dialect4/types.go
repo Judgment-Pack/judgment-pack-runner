@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Format is the dialect format this package reads, and RuleVersion the rule
@@ -222,9 +223,14 @@ func addressOf(v any) (address, bool) {
 	return address{32, 0, lo}, ok
 }
 
+// rangeReads counts the address ranges rangeOf has read, for a test that
+// holds inParam to reading each element once per case, not once per leaf.
+var rangeReads atomic.Int64
+
 // rangeOf reads an address range: an address, a slash and a prefix length,
 // every bit after the prefix zero.
 func rangeOf(v any) (addressRange, bool) {
+	rangeReads.Add(1)
 	text, ok := v.(string)
 	if !ok || strings.Count(text, "/") != 1 {
 		return addressRange{}, false

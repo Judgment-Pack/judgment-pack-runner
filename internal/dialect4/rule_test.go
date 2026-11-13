@@ -48,3 +48,50 @@ func TestCheckRuleHoldsItsOwnBounds(t *testing.T) {
 		}
 	}
 }
+
+// inParam reads its parameter's elements once per case, not once per leaf:
+// 45 conditions of 63 inParam leaves each, over one address-range-list of
+// 1024 ranges, read 1024 ranges for a case however many leaves are
+// evaluated, where reading them per leaf would read 2903040.
+func TestInParamReadsEachListOncePerCase(t *testing.T) {
+	const groups, leaves, ranges = 45, 63, MaxListElements
+	leaf := `{"op":"inParam","field":"/address","param":"ranges"}`
+	var clauses []string
+	for g := 0; g < groups; g++ {
+		clauses = append(clauses, `{"when":{"op":"any","of":[`+strings.TrimSuffix(strings.Repeat(leaf+",", leaves), ",")+`]},`+
+			`"claim":{"facts":[{"pointer":"/group","value":`+strconv.Itoa(g)+`}],"evidence":{},"acquisitionStatus":"resolved"},"reason":"in"}`)
+	}
+	clauses = append(clauses, `{"when":{"op":"always"},"claim":{"facts":[],"evidence":{},"acquisitionStatus":"resolved"},"reason":"out"}`)
+	raw, err := ReadJSON([]byte(`{"ruleVersion":"2.0.0","parameters":{"ranges":"address-range-list"},"clauses":[`+strings.Join(clauses, ",")+`]}`), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := CheckRule(raw, nil, "rule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := make([]any, ranges)
+	for i := range list {
+		list[i] = "10." + strconv.Itoa(i/256) + "." + strconv.Itoa(i%256) + ".0/24"
+	}
+	scope := map[string]any{"ranges": list}
+	for _, c := range []struct {
+		address, reason string
+	}{
+		{"198.51.100.7", "out"}, // in no range: every leaf is evaluated
+		{"10.3.255.9", "in"},    // in the last range
+		{"10.0.0.1", "in"},      // in the first
+	} {
+		before := rangeReads.Load()
+		claim, _, err := rule.Apply(map[string]any{"address": c.address}, scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if read := rangeReads.Load() - before; read != ranges {
+			t.Errorf("%s: %d address ranges read for one case, want %d: one read of each element", c.address, read, ranges)
+		}
+		if claim.Reason != c.reason {
+			t.Errorf("%s: reason %q, want %q", c.address, claim.Reason, c.reason)
+		}
+	}
+}

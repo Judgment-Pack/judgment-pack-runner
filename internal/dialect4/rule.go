@@ -20,6 +20,7 @@ type Rule struct {
 	derived         []map[string]any
 	builtins        map[string]string
 	candidates      map[string]map[string]bool
+	listed          []string
 }
 
 // IsRule2 reports whether raw, a rule as written or decoded, names rule
@@ -394,6 +395,7 @@ func CheckRule(raw any, scope map[string]string, what string) (*Rule, error) {
 	if len(last) != 1 || last["op"] != "always" {
 		return nil, malformed("%s: the last clause's when is not always", what)
 	}
+	r.listed = inParamNames(r.clauses)
 	return r, nil
 }
 
@@ -524,7 +526,7 @@ func comparable(v any) (*big.Rat, bool) {
 	return nil, false
 }
 
-func (r *Rule) evaluate(c any, value any, params map[string]any, derived map[string]*derivedValue, basis map[string]bool) bool {
+func (r *Rule) evaluate(c any, value any, params map[string]any, lists map[string]list, derived map[string]*derivedValue, basis map[string]bool) bool {
 	m := c.(map[string]any)
 	op := m["op"].(string)
 	switch op {
@@ -532,20 +534,20 @@ func (r *Rule) evaluate(c any, value any, params map[string]any, derived map[str
 		return true
 	case "all":
 		for _, x := range m["of"].([]any) {
-			if !r.evaluate(x, value, params, derived, basis) {
+			if !r.evaluate(x, value, params, lists, derived, basis) {
 				return false
 			}
 		}
 		return true
 	case "any":
 		for _, x := range m["of"].([]any) {
-			if r.evaluate(x, value, params, derived, basis) {
+			if r.evaluate(x, value, params, lists, derived, basis) {
 				return true
 			}
 		}
 		return false
 	case "not":
-		return !r.evaluate(m["of"], value, params, derived, basis)
+		return !r.evaluate(m["of"], value, params, lists, derived, basis)
 	}
 	var found any
 	var present bool
@@ -605,31 +607,85 @@ func (r *Rule) evaluate(c any, value any, params map[string]any, derived map[str
 		}
 	case "inParam":
 		name := m["param"].(string)
-		elements, _ := params[name].([]any)
+		held := lists[name]
 		if r.Parameters[name] == TypeStringList {
 			s, ok := found.(string)
-			if !ok {
-				return false
-			}
-			for _, e := range elements {
-				if e == s {
-					return true
-				}
-			}
-			return false
+			return ok && held.members[s]
 		}
 		a, ok := addressOf(found)
 		if !ok {
 			return false
 		}
-		for _, e := range elements {
-			if rg, ok := rangeOf(e); ok && rg.in(a) {
+		for _, rg := range held.ranges {
+			if rg.in(a) {
 				return true
 			}
 		}
 		return false
 	}
 	return false
+}
+
+// list is the value of a list parameter an inParam names, as inParam
+// compares with it: a string-list's elements as a set, an
+// address-range-list's as the ranges they read as. Apply reads each once
+// for the case, so that no leaf reads its elements again.
+type list struct {
+	members map[string]bool
+	ranges  []addressRange
+}
+
+// readLists reads the value each list parameter an inParam names takes in
+// params.
+// An element that is not of its list's type is not one of its elements, as
+// it is not one inParam matches.
+func (r *Rule) readLists(params map[string]any) map[string]list {
+	out := make(map[string]list, len(r.listed))
+	for _, name := range r.listed {
+		elements, _ := params[name].([]any)
+		if r.Parameters[name] == TypeStringList {
+			members := make(map[string]bool, len(elements))
+			for _, e := range elements {
+				if s, ok := e.(string); ok {
+					members[s] = true
+				}
+			}
+			out[name] = list{members: members}
+			continue
+		}
+		ranges := make([]addressRange, 0, len(elements))
+		for _, e := range elements {
+			if rg, ok := rangeOf(e); ok {
+				ranges = append(ranges, rg)
+			}
+		}
+		out[name] = list{ranges: ranges}
+	}
+	return out
+}
+
+// inParamNames are the parameters the inParam leaves of conditions name, at
+// any depth, each once, in code point order.
+func inParamNames(clauses []map[string]any) []string {
+	named := map[string]bool{}
+	var walk func(any)
+	walk = func(c any) {
+		m := c.(map[string]any)
+		switch m["op"] {
+		case "inParam":
+			named[m["param"].(string)] = true
+		case "all", "any":
+			for _, x := range m["of"].([]any) {
+				walk(x)
+			}
+		case "not":
+			walk(m["of"])
+		}
+	}
+	for _, c := range clauses {
+		walk(c["when"])
+	}
+	return sortedSet(named)
 }
 
 // unsignedDecimal is isDecimalString's grammar: 0, or digits with no
@@ -661,10 +717,11 @@ func (r *Rule) Apply(value any, scope map[string]any) (Claim, Derivations, error
 		params[name] = scope[name]
 	}
 	derived := derive(r.derived, value, params)
+	lists := r.readLists(params)
 	basis := map[string]bool{}
 	var match map[string]any
 	for _, clause := range r.clauses {
-		if r.evaluate(clause["when"], value, params, derived, basis) {
+		if r.evaluate(clause["when"], value, params, lists, derived, basis) {
 			match = clause
 			break
 		}
