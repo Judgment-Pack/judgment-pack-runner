@@ -280,9 +280,59 @@ type runStore interface {
 	// the trigger's, or faultAbsent: one read, so that a key rotated after
 	// its caller checked it still refuses (eventResult).
 	keyedOccurrence(id, trigger, hash string) (Occurrence, error)
+	// listedJobs are up to limit of the jobs made before the order before,
+	// newest first, whose release is held and that f keeps (its Scope and
+	// Search), each labelled with its release's title and pack version.
+	listedJobs(before int64, f recordFilter, limit int) ([]listedRecord, error)
+	// listedRuns are up to limit of the runs queued before the order
+	// before, newest first, of job ("" for every job's), whose job is held
+	// and that f keeps, each labelled with its job's name.
+	listedRuns(job string, before int64, f recordFilter, limit int) ([]listedRecord, error)
+	// recentRuns are the newest per runs of each of jobs, by job id and
+	// newest first.
+	recentRuns(jobs []string, per int) ([]recentRun, error)
+	// listedTriggers are the triggers of jobs, in the order they were made,
+	// each with the job it is held under.
+	listedTriggers(jobs []string) ([]listedTrigger, error)
 	// close gives the store up. A kind that holds the store exclusively
 	// releases it last.
 	close() error
+}
+
+// listedRecord is a job or a run as a listing reads it (list.go): its order,
+// its record as written, which the listing projects, and the labels shown
+// beside it, read from the record it names: a job's release's title and
+// pack version, a run's job's name ("" for version). A listing's filter is
+// applied where a kind reads, as SQLite applies it:
+//
+//   - Scope keeps a record whose scope member is the scope as text, compared
+//     byte for byte;
+//   - Search keeps a job whose name holds it, and a run whose id, a space
+//     and its job's name hold it, with ASCII letters folded to lower case
+//     and no other;
+//   - State keeps a run held in that state; Review a run failed or
+//     interrupted, or completed with an unresolved disposition or a
+//     handoff requested; Results a run as resultFilter says, its outcomes
+//     only of a completed run.
+//
+// A member is read as json_extract reads it: text when the record holds it
+// as a JSON string, and otherwise compared to no text.
+type listedRecord struct {
+	seq            int64
+	record         []byte
+	label, version string
+}
+
+// recentRun is one of a job's newest runs, as a job's listing shows it.
+type recentRun struct {
+	job, id, state, createdAt string
+}
+
+// listedTrigger is a trigger as a job's listing shows it, under the job it
+// is held under.
+type listedTrigger struct {
+	job     string
+	trigger Trigger
 }
 
 // runTx is one transaction of a store. A write that returns a fault may have

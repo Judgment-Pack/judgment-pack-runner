@@ -222,10 +222,11 @@ wrote ignores the new members of a run (it decodes runs leniently, and
 rewrites a finished run only to queue an interrupted one again, which drops
 them as this Runner does), and serves an entry of `"5"` without the members it
 does not know, since it reads an entry's detail into its own form; the store
-keeps them, and this Runner serves them again. The listings are statements
-outside the store contract (`store-interface.md`, section 6), so the filters
-are the sqlite kind's; what the contract carries, the run's record, keeps its
-counts and class in both kinds (`TestStoreKindsConform`).
+keeps them, and this Runner serves them again. The listings are the store
+contract's (`listedJobs`, `listedRuns`; `store-interface.md`, section 9.5):
+each kind applies the filters where it reads, the conformance suite holds
+the kinds to the same answers, and the run's record keeps its counts and
+class in every kind (`TestStoreKindsConform`).
 
 **What is not changed.** A verification export's run, whose readers decode
 strictly, and the run's entry in the chain of runs carry neither member, as

@@ -187,13 +187,10 @@ history); and every entry written with the state above. With #244, the journal's
 refusals, profile rows, briefs, triggers, occurrences, and jobs as they are made and revised are
 the contract's (section 9.5).
 
-The statements left on `runs`, `releases` and `jobs` outside the kind, found by searching the
-package for those tables:
-
-- the job and run listings (`list.go`): joins, SQLite's ASCII case folding and a window function,
-  and the triggers of a listing's jobs;
-- manual admission (`manual_admission_activation.go`, `manual_execution_binding.go`,
-  `manual_store_prepare.go`).
+The statements left on `runs`, `releases` and `jobs` outside the contract, found by searching the
+package for those tables: manual admission (`manual_admission_activation.go`,
+`manual_execution_binding.go`, `manual_store_prepare.go`). The job and run listings are the
+contract's with #244 (section 9.5).
 
 Programs and modes that hold the SQLite files themselves: manual store preparation, its own
 process opening `runs.sqlite` through a held directory; offline workspace relocation
@@ -358,9 +355,10 @@ failed commit.
 ### 9.5 What #244 puts behind the contract
 
 Each operation keeps the statement it replaces, moved into the sqlite kind
-(`store_sqlite.go`, `store_sqlite_triggers.go`, `store_sqlite_jobs.go`); the in-memory kind
-implements it; and `store_conformance_widened_test.go`, `store_conformance_triggers_test.go` and
-`store_conformance_jobs_test.go` hold the cases every kind runs.
+(`store_sqlite.go`, `store_sqlite_triggers.go`, `store_sqlite_jobs.go`, `store_sqlite_lists.go`);
+the in-memory kind implements it; and `store_conformance_widened_test.go`,
+`store_conformance_triggers_test.go`, `store_conformance_jobs_test.go` and
+`store_conformance_lists_test.go` hold the cases every kind runs.
 
 | Operation | Where | The sqlite kind's statement | Semantics |
 |---|---|---|---|
@@ -387,6 +385,8 @@ implements it; and `store_conformance_widened_test.go`, `store_conformance_trigg
 | `packConflicts(pack, version, digest)`, `dialectConflicts(dialect, version, digest)` | Both | The two counts over `job_revisions` joined to `releases` | How many releases a job revision names carry the pack, or the dialect, at that version with other content. A release that names no dialect conflicts with none. |
 | `createJob(j)` | In a transaction | `INSERT INTO jobs`, `job_creations` and `job_revisions` | One operation: `taken` for a held id, a release that made a job, a held revision or a release another revision names. |
 | `reviseJob(j, request)` | In a transaction | `UPDATE jobs`, then `INSERT INTO job_revisions` with the request's digest | `absent` for a job not held; `taken` for a held revision or a release another revision names. |
+| `listedJobs(before, filter, limit)`, `listedRuns(job, before, filter, limit)` | Outside | The listings' statement (`store_sqlite_lists.go`): the jobs joined to their releases, or the runs to their jobs, `seq<?`, the filter's conditions, `ORDER BY t.seq DESC LIMIT limit` | Up to `limit` jobs or runs, newest first, each as its record was written with its labels (a job's release's title and pack version, a run's job's name), the filter applied where the kind reads: a scope compared byte for byte, a search that folds ASCII case only and matches no pattern, a run's state, review and [results](run-results.md). A job whose release, or a run whose job, is not held is not listed. The Runner projects each record and pages by 50, as before. |
+| `recentRuns(jobs, per)`, `listedTriggers(jobs)` | Outside | The window function over `runs` and the listing's trigger read | A listed job's newest `per` runs, by job id; the listed jobs' triggers in the order they were made. |
 | `openOccurrences(job)`, `triggerRecords(job)`, `reviseTrigger(t)` | In a transaction | The upgrade's count, its trigger read (now `ORDER BY seq`, the order SQLite's index gave it), and its `UPDATE triggers SET record` with `INSERT INTO trigger_revisions` | The job's occurrences still `accepted`, `preparing`, `waiting` or `needs-attention`; its triggers as written, in the order they were made; a trigger's record revised alone, its key, cursor and pending state kept, `taken` for a held snapshot and `absent` for a trigger not held. |
 
 Every kind keeps a journal entry as one encoding, `journalRowOf`, with the sqlite kind's columns,

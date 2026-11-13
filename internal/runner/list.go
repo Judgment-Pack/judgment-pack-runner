@@ -3,7 +3,6 @@ package runner
 import (
 	"encoding/json"
 	"math"
-	"strings"
 )
 
 type recordFilter struct {
@@ -58,94 +57,51 @@ func validRunState(state string) bool {
 	return false
 }
 
-// Filter before pagination. Search is a literal substring, never a SQL pattern.
-// Lists retain only public summaries, with no input snapshots or audit bodies.
+// Filter before pagination, where the store reads (listedRecord). Lists
+// retain only public summaries, with no input snapshots or audit bodies.
 func (s *Service) filteredRecords(kind, jobID string, after int64, filter recordFilter) ([]json.RawMessage, int64, error) {
 	if after == 0 {
 		after = math.MaxInt64
 	}
-	where := []string{"t.seq<?"}
-	args := []any{after}
-	table, joins := "jobs", " JOIN releases release ON release.id=t.release_id"
-	extra := "json_extract(release.record,'$.title'),json_extract(release.record,'$.packVersion')"
-	search := "json_extract(t.record,'$.name')"
+	var rows []listedRecord
+	var err error
 	if kind == "runs" {
-		table = "runs"
-		joins = " JOIN jobs job ON job.id=t.job_id"
-		extra = "json_extract(job.record,'$.name'),''"
-		search = "t.id || ' ' || json_extract(job.record,'$.name')"
-		if jobID != "" {
-			where = append(where, "t.job_id=?")
-			args = append(args, jobID)
-		}
-		if filter.State != "" {
-			where = append(where, "t.state=?")
-			args = append(args, filter.State)
-		}
-		results, resultArgs := filter.Results.conditions("t.record", "", true)
-		where, args = append(where, results...), append(args, resultArgs...)
-		if filter.Review {
-			where = append(where, `(t.state IN ('failed','interrupted') OR (t.state='completed' AND (json_extract(t.record,'$.result.disposition.kind')='unresolved' OR json_extract(t.record,'$.result.disposition.handoff.state')='requested')))`)
-		}
+		rows, err = s.store.listedRuns(jobID, after, filter, 51)
+	} else {
+		rows, err = s.store.listedJobs(after, filter, 51)
 	}
-	if filter.Scope != "" {
-		// SQLite compares text by its bytes (the BINARY collation): no case
-		// is folded and no prefix matches.
-		where = append(where, "json_extract(t.record,'$.scope')=?")
-		args = append(args, filter.Scope)
-	}
-	if filter.Search != "" {
-		where = append(where, "instr(lower("+search+"),lower(?))>0")
-		args = append(args, filter.Search)
-	}
-	rows, err := s.db.Query("SELECT t.seq,t.record,"+extra+" FROM "+table+" t"+joins+" WHERE "+strings.Join(where, " AND ")+" ORDER BY t.seq DESC LIMIT 51", args...)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
 	summaries := []map[string]json.RawMessage{}
 	var last, next int64
-	for rows.Next() {
-		var seq int64
-		var raw []byte
-		var label, version string
-		if err = rows.Scan(&seq, &raw, &label, &version); err != nil {
-			return nil, 0, err
-		}
+	for _, row := range rows {
 		if len(summaries) == 50 {
 			next = last
 			break
 		}
+		raw := row.record
 		var summary map[string]json.RawMessage
 		if kind == "runs" {
 			var public runListSummary
 			if err = json.Unmarshal(raw, &public); err != nil {
 				return nil, 0, err
 			}
-			public.JobName = label
+			public.JobName = row.label
 			raw = encode(public)
 		}
 		if err = json.Unmarshal(raw, &summary); err != nil {
 			return nil, 0, err
 		}
 		if kind != "runs" {
-			summary["packTitle"] = encode(label)
-			summary["packVersion"] = encode(version)
+			summary["packTitle"] = encode(row.label)
+			summary["packVersion"] = encode(row.version)
 		}
 		summaries = append(summaries, summary)
-		last = seq
-	}
-	if err = rows.Err(); err != nil {
-		return nil, 0, err
-	}
-	// The store intentionally permits one connection. Close this cursor before
-	// querying recent runs; do not deadlock by holding it across another query.
-	if err = rows.Close(); err != nil {
-		return nil, 0, err
+		last = row.seq
 	}
 	if kind == "jobs" && len(summaries) > 0 {
-		ids := []any{}
-		slots := []string{}
+		ids := []string{}
 		byID := map[string]map[string]json.RawMessage{}
 		recent := map[string][]json.RawMessage{}
 		for _, item := range summaries {
@@ -154,51 +110,27 @@ func (s *Service) filteredRecords(kind, jobID string, after int64, filter record
 				return nil, 0, err
 			}
 			ids = append(ids, id)
-			slots = append(slots, "?")
 			byID[id] = item
 			recent[id] = []json.RawMessage{}
 		}
-		recentRows, e := s.db.Query(`SELECT job_id,id,state,created FROM (SELECT job_id,id,state,json_extract(record,'$.createdAt') AS created,row_number() OVER(PARTITION BY job_id ORDER BY seq DESC) AS rank FROM runs WHERE job_id IN (`+strings.Join(slots, ",")+`)) WHERE rank<=5 ORDER BY job_id,rank`, ids...)
+		runs, e := s.store.recentRuns(ids, 5)
 		if e != nil {
 			return nil, 0, e
 		}
-		for recentRows.Next() {
-			var job, id, state, created string
-			if e = recentRows.Scan(&job, &id, &state, &created); e != nil {
-				recentRows.Close()
-				return nil, 0, e
-			}
-			recent[job] = append(recent[job], encode(map[string]string{"id": id, "state": state, "createdAt": created}))
-		}
-		e = recentRows.Err()
-		recentRows.Close()
-		if e != nil {
-			return nil, 0, e
+		for _, r := range runs {
+			recent[r.job] = append(recent[r.job], encode(map[string]string{"id": r.id, "state": r.state, "createdAt": r.createdAt}))
 		}
 		for id, item := range byID {
 			item["recentRuns"] = encode(recent[id])
 		}
-		triggerRows, e := s.db.Query("SELECT job_id,record FROM triggers WHERE job_id IN ("+strings.Join(slots, ",")+") ORDER BY seq", ids...)
+		held, e := s.store.listedTriggers(ids)
 		if e != nil {
 			return nil, 0, e
 		}
 		triggers := map[string][]any{}
-		for triggerRows.Next() {
-			var job, raw string
-			var t Trigger
-			if e = triggerRows.Scan(&job, &raw); e == nil {
-				e = json.Unmarshal([]byte(raw), &t)
-			}
-			if e != nil {
-				triggerRows.Close()
-				return nil, 0, e
-			}
-			triggers[job] = append(triggers[job], map[string]any{"id": t.ID, "kind": t.Config.Kind, "paused": t.Paused, "nextAt": t.NextAt})
-		}
-		e = triggerRows.Err()
-		triggerRows.Close()
-		if e != nil {
-			return nil, 0, e
+		for _, h := range held {
+			t := h.trigger
+			triggers[h.job] = append(triggers[h.job], map[string]any{"id": t.ID, "kind": t.Config.Kind, "paused": t.Paused, "nextAt": t.NextAt})
 		}
 		for id, item := range byID {
 			if len(triggers[id]) > 0 {

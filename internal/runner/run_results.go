@@ -286,39 +286,3 @@ func wellFormedOutcome(o string) bool {
 func (f resultFilter) empty() bool {
 	return len(f.Outcomes) == 0 && len(f.Classes) == 0 && len(f.Kinds) == 0
 }
-
-// in is a SQL test that expr is any of values, with its arguments.
-func in(expr string, values []string) (string, []any) {
-	slots := make([]string, len(values))
-	args := make([]any, len(values))
-	for i, v := range values {
-		slots[i], args[i] = "?", v
-	}
-	return expr + " IN (" + strings.Join(slots, ",") + ")", args
-}
-
-// conditions are the SQL tests of f over a record column holding a run
-// (runs) or over a journal entry's detail and kind (the journal), each with
-// its arguments. A run matches an outcome only when it completed with a
-// decision of kind outcome; SQLite compares text by its bytes.
-func (f resultFilter) conditions(record, kindColumn string, runs bool) ([]string, []any) {
-	var where []string
-	var args []any
-	add := func(expr string, a []any) { where, args = append(where, expr), append(args, a...) }
-	if len(f.Outcomes) > 0 {
-		disposition := "json_extract(" + record + ",'$.disposition"
-		if runs {
-			disposition = "json_extract(" + record + ",'$.result.disposition"
-			add("t.state='completed'", nil)
-		}
-		add(disposition+".kind')='outcome'", nil)
-		add(in(disposition+".outcomeId')", f.Outcomes))
-	}
-	if len(f.Classes) > 0 {
-		add(in("json_extract("+record+",'$.errorClass')", f.Classes))
-	}
-	if len(f.Kinds) > 0 {
-		add(in(kindColumn, f.Kinds))
-	}
-	return where, args
-}

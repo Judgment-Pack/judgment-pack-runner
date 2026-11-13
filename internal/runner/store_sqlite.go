@@ -522,7 +522,7 @@ func sqliteJournalCondition(f journalFilter) (string, []any) {
 		where, args = "("+where+") AND json_extract(detail,'$.scope')=?", append(args, f.scope)
 	}
 	if !f.results.empty() {
-		conditions, more := f.results.conditions("detail", "kind", false)
+		conditions, more := sqliteResultConditions(f.results, "detail", "kind", false)
 		where, args = "("+where+") AND "+strings.Join(conditions, " AND "), append(args, more...)
 	}
 	return where, args

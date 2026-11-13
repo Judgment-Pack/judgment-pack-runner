@@ -42,8 +42,8 @@ third changes every installation.
 
 The contract is widened first, in slices, each keeping the sqlite kind's statements and bytes
 (`docs/design/store-interface.md`, section 9). The Runner's transaction functions are then made
-safe to run twice, under a gate that runs every one twice in the in-memory kind, and the listings
-put behind the contract. The kind is then built as `docs/design/store-postgresql.md` fixes it: one
+safe to run twice, under a gate that runs every one twice, and the listings put behind the
+contract. The kind is then built as `docs/design/store-postgresql.md` fixes it: one
 schema owned by a role that cannot log in, reached by a migration login through `SET ROLE`, with
 policies of its own for migrations and a migration that fails when a row statement changes no row;
 a request login and a worker login with table privileges only, each route's transactions on the

@@ -29,9 +29,8 @@ out of argv and the environment, and keeps the single-owner local pilot as it is
 
 ## 2. The contract it implements
 
-Everything a Runner keeps goes through the contract (store-interface.md, section 9.5), but the
-job and run listings (`list.go`), which the next slice puts behind it (section 11), and manual
-admission (D4). The kind implements each operation with one statement or one transaction, as the
+Everything a Runner keeps goes through the contract (store-interface.md, section 9.5), but manual
+admission (D4), which only the sqlite kind keeps. The kind implements each operation with one statement or one transaction, as the
 sqlite kind does, with these differences:
 
 - **Serializable transactions that retry.** `update(fn)` runs at `SERIALIZABLE` and runs `fn` again
@@ -560,7 +559,7 @@ leave SQLite's statements and rows as they are; the kind is written only after t
 
 1. D2's rule: the closures of section 2 that broke it, and the twice mode, with the conformance
    suite and the Service's flows under it. This is the gate. (Built, #244's second slice.)
-2. The job and run listings (`list.go`) behind the contract.
+2. The job and run listings (`list.go`) behind the contract. (Built, #244's second slice.)
 3. The contract's scope for a transaction or a read (section 2); the claim's token, `putRun`'s
    expected claim and `renewClaim` (D3); and the retry check's question to the kind, whether a
    missing attempt directory may be taken to hold no audit record (D11: yes for the sqlite kind,
