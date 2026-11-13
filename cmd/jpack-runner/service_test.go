@@ -200,7 +200,7 @@ func TestAServiceConfigurationIsRefusedBeforeAnyEffect(t *testing.T) {
 		}, "identity.keys is refused: there is no file at its path"},
 		{"an identity that lists the owner", func(f serviceFixture) string {
 			return f.config("service.json", f.members(loopback, map[string]any{"token": nil, "identity": f.identity("ops-service", "service-owner").member}))
-		}, "identity.subjects[1] is the installation's owner"},
+		}, "identity.subjects[1] is, or with the issuer names, the installation's owner"},
 		{"no listen", func(f serviceFixture) string {
 			return f.config("service.json", f.members("", map[string]any{"listen": nil}))
 		}, "listen must be the address Runner listens on"},
@@ -213,13 +213,13 @@ func TestAServiceConfigurationIsRefusedBeforeAnyEffect(t *testing.T) {
 		{"a zone", func(f serviceFixture) string { return f.config("service.json", f.members("[fe80::1%lo]:8470", nil)) }, "with no zone"},
 		{"port 0", func(f serviceFixture) string { return f.config("service.json", f.members("127.0.0.1:0", nil)) }, "never one the system picks"},
 		{"a port past 65535", func(f serviceFixture) string { return f.config("service.json", f.members("127.0.0.1:65536", nil)) }, "has no port from 1 to 65535"},
-		{"a port with a leading zero", func(f serviceFixture) string { return f.config("service.json", f.members("127.0.0.1:08470", nil)) }, "written another way; give it as 127.0.0.1:8470"},
+		{"a port with a leading zero", func(f serviceFixture) string { return f.config("service.json", f.members("127.0.0.1:08470", nil)) }, "written another way than Runner writes it"},
 		{"IPv4 in IPv6 form", func(f serviceFixture) string {
 			return f.config("service.json", f.members("[::ffff:127.0.0.1]:8470", nil))
-		}, "written another way; give it as 127.0.0.1:8470"},
+		}, "written another way than Runner writes it"},
 		{"IPv6 uncompressed", func(f serviceFixture) string {
 			return f.config("service.json", f.members("[0:0:0:0:0:0:0:1]:8470", nil))
-		}, "written another way; give it as [::1]:8470"},
+		}, "written another way than Runner writes it"},
 		{"another host, with neither", func(f serviceFixture) string { return f.config("service.json", f.members("192.0.2.10:8470", nil)) }, "this configuration has neither"},
 		{"another host, without identity", func(f serviceFixture) string {
 			return f.config("service.json", f.members("192.0.2.10:8470", map[string]any{"acceptOtherHostsOverPlainHTTP": true}))
@@ -245,7 +245,17 @@ func TestAServiceConfigurationIsRefusedBeforeAnyEffect(t *testing.T) {
 			if status == 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), c.want) {
 				t.Fatalf("status=%d stdout=%q stderr=%q, want %q", status, stdout.String(), stderr.String(), c.want)
 			}
-			for _, held := range []string{serviceBearer, f.dir} {
+			held := []string{serviceBearer, f.dir}
+			// Nor the listen address the configuration gives.
+			var written struct {
+				Listen any `json:"listen"`
+			}
+			if raw, err := os.ReadFile(path); err == nil && json.Unmarshal(raw, &written) == nil {
+				if listen, ok := written.Listen.(string); ok && listen != "" {
+					held = append(held, listen)
+				}
+			}
+			for _, held := range held {
 				if strings.Contains(stderr.String(), held) {
 					t.Fatalf("the refusal repeats %q: %s", held, stderr.String())
 				}

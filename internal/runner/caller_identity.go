@@ -74,14 +74,22 @@ func (s *Service) actor(by requester) EventActor {
 }
 
 // requestedBy is a run's requestedBy, and the scope its idempotency key is
-// held in: the owner for the installation, as it always was, and the subject
-// for a caller.
+// held in: the owner for the installation, as it always was, and for a
+// caller its issuer and subject (callerName). The same subject from another
+// issuer, after a restart with another identity, is another requester, whose
+// keys are its own.
 func (s *Service) requestedBy(by requester) string {
 	if by.subject == "" {
 		return s.cfg.Owner
 	}
-	return by.subject
+	return callerName(by.issuer, by.subject)
 }
+
+// callerName is how a run names a caller as its requester: the issuer, "#",
+// then the subject, as in https://issuer.example#ops-service. An issuer holds
+// no "#" (ParseIdentityConfig), so the first "#" ends it, and no two callers
+// have one name: neither the issuer nor the subject can make another pair's.
+func callerName(issuer, subject string) string { return issuer + "#" + subject }
 
 // Bounds of an identity.
 const (
@@ -189,11 +197,21 @@ func identityText(s string, limit int) bool {
 	return s != "" && len(s) <= limit && strings.IndexFunc(s, unicode.IsControl) < 0
 }
 
+// subjectText says whether s is a subject as configured: identityText, with
+// no format character either (a zero-width space or a direction mark, which
+// makes one name read as another) and no white space at either end. Case is
+// significant: Ops-Service is not ops-service.
+func subjectText(s string) bool {
+	return identityText(s, maxSubject) && strings.TrimSpace(s) == s &&
+		strings.IndexFunc(s, func(r rune) bool { return unicode.Is(unicode.Cf, r) }) < 0
+}
+
 // ParseIdentityConfig reads a service configuration's identity member: an
 // object with exactly issuer, audience, subjects and keys. The issuer and the
 // audience are 1 to 1024 bytes, each subject 1 to 256, none with a control
-// character; subjects lists 1 to 256 of them, each once; keys is an absolute,
-// clean path. A refusal names the member, never a value.
+// character; the issuer holds no "#" (callerName), and a subject no format
+// character and no white space at either end (subjectText); subjects lists 1
+// to 256 of them, each once; keys is an absolute, clean path. A refusal names the member, never a value.
 func ParseIdentityConfig(raw []byte) (IdentityConfig, error) {
 	obj, err := identityJSON(raw, "identity")
 	if err != nil {
@@ -207,8 +225,8 @@ func ParseIdentityConfig(raw []byte) (IdentityConfig, error) {
 		}
 	}
 	var c IdentityConfig
-	if c.Issuer, _, err = stringMember(obj, "issuer", "identity"); err != nil || !identityText(c.Issuer, maxIdentityText) {
-		return IdentityConfig{}, errors.New("identity.issuer must be the token issuer, as its tokens name it: 1 to 1024 bytes, with no control character")
+	if c.Issuer, _, err = stringMember(obj, "issuer", "identity"); err != nil || !identityText(c.Issuer, maxIdentityText) || strings.Contains(c.Issuer, "#") {
+		return IdentityConfig{}, errors.New("identity.issuer must be the token issuer, as its tokens name it: 1 to 1024 bytes, with no control character and no \"#\", which ends the issuer in the requester a run records")
 	}
 	if c.Audience, _, err = stringMember(obj, "audience", "identity"); err != nil || !identityText(c.Audience, maxIdentityText) {
 		return IdentityConfig{}, errors.New("identity.audience must be the audience this Runner is named as in a token: 1 to 1024 bytes, with no control character")
@@ -220,8 +238,8 @@ func ParseIdentityConfig(raw []byte) (IdentityConfig, error) {
 	for i, v := range subjects {
 		subject, ok := v.(string)
 		switch {
-		case !ok || !identityText(subject, maxSubject):
-			return IdentityConfig{}, fmt.Errorf("identity.subjects[%d] must be a subject as its tokens name it: 1 to 256 bytes, with no control character", i)
+		case !ok || !subjectText(subject):
+			return IdentityConfig{}, fmt.Errorf("identity.subjects[%d] must be a subject as its tokens name it: 1 to 256 bytes, with no control or format character and no white space at either end", i)
 		case slices.Contains(c.Subjects, subject):
 			return IdentityConfig{}, fmt.Errorf("identity.subjects[%d] lists a subject a second time", i)
 		}
@@ -236,22 +254,23 @@ func ParseIdentityConfig(raw []byte) (IdentityConfig, error) {
 // LoadIdentity holds an identity's subjects to the names Runner records for
 // requests of its own, then reads the issuer's key set from its file, held to
 // its placement (readKeySet), before anything is opened. A subject is
-// refused when it is the installation's owner, which is the requestedBy and
-// the idempotency scope of every request that carries the owner bearer;
+// refused when it, or its caller name with the issuer (callerName), is the
+// installation's owner, which is the requestedBy and the idempotency scope of
+// every request that carries the owner bearer;
 // "workflow", which a workflow's runs are requested by; or one that begins
 // "trigger:", which a trigger's runs are. A refusal never names a path or a
 // value.
 func LoadIdentity(c IdentityConfig, owner, stateDir string) (*Identity, error) {
-	if !identityText(c.Issuer, maxIdentityText) || !identityText(c.Audience, maxIdentityText) || len(c.Subjects) == 0 || len(c.Subjects) > maxSubjects {
-		return nil, errors.New("identity needs an issuer, an audience and 1 to 256 subjects")
+	if !identityText(c.Issuer, maxIdentityText) || strings.Contains(c.Issuer, "#") || !identityText(c.Audience, maxIdentityText) || len(c.Subjects) == 0 || len(c.Subjects) > maxSubjects {
+		return nil, errors.New("identity needs an issuer with no \"#\", an audience and 1 to 256 subjects")
 	}
 	id := &Identity{issuer: c.Issuer, audience: c.Audience, subjects: map[string]bool{}}
 	for i, subject := range c.Subjects {
 		switch {
-		case !identityText(subject, maxSubject) || id.subjects[subject]:
-			return nil, fmt.Errorf("identity.subjects[%d] must be a subject, listed once: 1 to 256 bytes, with no control character", i)
-		case subject == owner:
-			return nil, fmt.Errorf("identity.subjects[%d] is the installation's owner, which every run the owner bearer requests is recorded as requested by: a caller's runs must be told apart from those", i)
+		case !subjectText(subject) || id.subjects[subject]:
+			return nil, fmt.Errorf("identity.subjects[%d] must be a subject, listed once: 1 to 256 bytes, with no control or format character and no white space at either end", i)
+		case subject == owner || callerName(c.Issuer, subject) == owner:
+			return nil, fmt.Errorf("identity.subjects[%d] is, or with the issuer names, the installation's owner, which every run the owner bearer requests is recorded as requested by: a caller's runs must be told apart from those", i)
 		case subject == "workflow" || strings.HasPrefix(subject, "trigger:"):
 			return nil, fmt.Errorf("identity.subjects[%d] is a name Runner records for runs it starts itself: \"workflow\" and every name that begins \"trigger:\" are", i)
 		}
@@ -269,7 +288,8 @@ func LoadIdentity(c IdentityConfig, owner, stateDir string) (*Identity, error) {
 
 // parseKeySet reads a JSON Web Key Set (RFC 7517) holding the issuer's public
 // keys: RSA of 2048 bits or more (RS256), EC P-256 (ES256) and Ed25519
-// (EdDSA). Every key carries a key id, once in the set. A use other than
+// (EdDSA). Every key carries a key id, once in the set, and no private
+// member (d, p, q, dp, dq, qi, oth or k). A use other than
 // signing, or key operations that do not include verifying, refuse the key;
 // so does an alg that is not its kind's. A key of another kind is refused
 // rather than skipped, since a file Runner would read only part of is a file
@@ -315,6 +335,13 @@ func parseKeySet(data []byte) (map[string]identityKey, error) {
 			ops, ok := raw.([]any)
 			if !ok || !slices.ContainsFunc(ops, func(op any) bool { return op == "verify" }) || slices.ContainsFunc(ops, func(op any) bool { _, s := op.(string); return !s }) {
 				return nil, fmt.Errorf("%s is not for verifying: its key_ops do not include verify", what)
+			}
+		}
+		// A key set holds public keys only, and others may read its file: a
+		// key that carries a private member is refused, never read in part.
+		for _, name := range []string{"d", "p", "q", "dp", "dq", "qi", "oth", "k"} {
+			if _, present := jwk[name]; present {
+				return nil, fmt.Errorf("%s holds the private member %s: a key set holds public keys only", what, name)
 			}
 		}
 		decode := func(name string) ([]byte, error) {

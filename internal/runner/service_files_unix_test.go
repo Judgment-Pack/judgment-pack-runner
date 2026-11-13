@@ -172,7 +172,7 @@ func TestAKeySetFileIsHeldToItsPlacement(t *testing.T) {
 		"not a key set": func() (string, string) {
 			p := filepath.Join(dir, "not-a-set.json")
 			writeMode(t, p, []byte(`{"keys":[{"kid":"k1","kty":"oct","k":"AA"}]}`), 0o644)
-			return p, "identity.keys: key 0 of the key set has a kty other than"
+			return p, "identity.keys: key 0 of the key set holds the private member k"
 		},
 	}
 	for name, setup := range cases {
@@ -188,5 +188,44 @@ func TestAKeySetFileIsHeldToItsPlacement(t *testing.T) {
 				t.Fatalf("the refusal names the path: %v", err)
 			}
 		})
+	}
+}
+
+// A file changed between its check at its path and its open is refused: one
+// put in its place, by device and inode, and one whose mode was widened, by
+// the attributes of the handle read.
+func TestAServiceFileChangedBeforeItIsOpenedIsRefused(t *testing.T) {
+	dir := ownDir(t)
+	content := []byte(`{"listen":"127.0.0.1:8470"}`)
+	path := filepath.Join(dir, "service.json")
+	t.Cleanup(func() { placedOpenHook = nil })
+	for name, c := range map[string]struct {
+		change func()
+		want   string
+	}{
+		"replaced": {func() {
+			other := filepath.Join(dir, "other.json")
+			writeMode(t, other, content, 0o600)
+			must(t, os.Rename(other, path))
+		}, "it was replaced while it was opened"},
+		"made readable by others": {func() { must(t, os.Chmod(path, 0o644)) }, "neither its group nor others may read or write it"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			writeMode(t, path, content, 0o600)
+			placedOpenHook = c.change
+			defer func() { placedOpenHook = nil }()
+			if got, err := ReadServiceConfig(path); err == nil || !strings.Contains(err.Error(), c.want) || got != nil {
+				t.Fatalf("%q %v, want a refusal saying %q", got, err, c.want)
+			}
+		})
+	}
+	// A key set file made writable by others before its open is refused.
+	state := filepath.Join(dir, "state")
+	keys := filepath.Join(dir, "keys.json")
+	writeMode(t, keys, encode(map[string]any{"keys": []any{edSigner(t, "k1").jwk}}), 0o644)
+	placedOpenHook = func() { must(t, os.Chmod(keys, 0o666)) }
+	defer func() { placedOpenHook = nil }()
+	if id, err := LoadIdentity(IdentityConfig{Issuer: testIssuer, Audience: testAudience, Subjects: []string{"ops-service"}, Keys: keys}, "journal-owner", state); err == nil || !strings.Contains(err.Error(), "neither its group nor others may write it") || id != nil {
+		t.Fatalf("%v %v", id, err)
 	}
 }

@@ -48,7 +48,13 @@ to (`ReadServiceConfig`, `internal/runner/service_files_unix.go`):
 - not inside Runner's state directory, compared by device and inode (a state
   directory that does not exist yet holds nothing).
 
-A refusal never names the path or anything the file holds. On a system where
+As for the signing key, the modes of the directories on the path are not
+checked: whoever can write one of them before Runner starts can put another
+file in the configuration's place, or the key set's. The operator keeps both in
+directories no one else can write.
+
+A refusal never names the path or anything the file holds, the `listen`
+address included. On a system where
 ownership and modes cannot be read the Unix way, service mode is refused, as
 the signing key is.
 
@@ -83,8 +89,8 @@ store is opened, nothing is bound, and nothing is printed on standard output.
 `listen` is an IP address and a port, written exactly as Runner binds and
 prints it: IPv4 in dotted decimal, IPv6 in brackets, compressed and in lower
 case, an IPv4 address never in IPv6 form, and a port from 1 to 65535 with no
-sign and no leading zero. Any other spelling is refused, naming the one to
-give. A name, `localhost` included, a zone and an empty host are refused, so no
+sign and no leading zero. Any other spelling is refused, saying what the form
+is, without repeating the value given. A name, `localhost` included, a zone and an empty host are refused, so no
 resolver decides where Runner listens. Port 0 is refused: a service is found at
 the port its operator chose, never one the system picks. There is no default;
 the examples use `127.0.0.1`.
@@ -121,10 +127,17 @@ to read a request's headers, 40 to read the request, 245 to write the answer,
 - `keys`: the absolute, clean path of the issuer's key set file.
 
 The issuer and the audience are 1 to 1,024 bytes, a subject 1 to 256, none
-with a control character. A subject is refused when it is the configuration's
-`owner`, `workflow`, or any name that begins `trigger:`: those are the names
-Runner records as the requester of the owner bearer's runs, of a workflow's
-and of a trigger's, and a caller's runs must be told apart from them.
+with a control character. The issuer holds no `#`, which ends it in the name a
+run records for a caller (section 7); an issuer as OpenID Connect defines one
+has no fragment, so holds none. A subject holds no format character either (a
+zero-width space, a direction mark, a byte order mark: Unicode category Cf),
+and no white space at either end, so that no subject reads as another.
+Case is significant: `Ops-Service` and `ops-service` are two subjects, as a
+token's `sub` is compared byte for byte. A subject is refused when it, or the
+name a run records for it, is the configuration's `owner`, and when it is
+`workflow` or begins `trigger:`: those are the names Runner records as the
+requester of the owner bearer's runs, of a workflow's and of a trigger's, and
+a caller's runs must be told apart from them.
 
 **The key set file** is a JSON Web Key Set (RFC 7517) of the issuer's public
 keys. Since the keys are public, others may read the file, but neither its
@@ -132,7 +145,10 @@ group nor others may write it, and its owner is Runner's user or root. It is
 placed as the configuration is: no symbolic link in its path, one regular
 file, outside the state directory. It is at most 1 MiB and read once, at
 start. Runner fetches nothing; a key not in the file is a key Runner does not
-know until the next start. Each key carries a `kid`, once in the set, and is
+know until the next start. A key that carries a private member (`d`, `p`, `q`,
+`dp`, `dq`, `qi`, `oth` or `k`) is refused, rather than read for its public
+half, since the file is one others may read. Each key carries a `kid`, once in
+the set, and is
 one of:
 
 - RSA of at least 2,048 bits, with an odd public exponent from 3 to 2^31 − 1,
@@ -158,7 +174,12 @@ an encoded member that is not the canonical unpadded base64url of its bytes.
    token's word, so `none` is refused, and so is a token that names another
    algorithm for the key;
 5. a signature that key checks out over the first two parts (for `ES256`,
-   exactly 64 bytes, `r` then `s`, so no second spelling of one is taken);
+   exactly 64 bytes, `r` then `s`, so a signature is not taken again widened
+   by a zero byte). An ECDSA signature `(r, s)` has a second valid form,
+   `(r, n − s)`, which Runner takes, as most issuers' signers produce either:
+   a token can be presented with either signature. Nothing depends on a
+   token's bytes being unique, since Runner keeps no token and reads no
+   `jti`;
 6. then, and only then, the claims, one JSON object with each member once: the
    configured issuer as `iss`; the configured audience in `aud`, a string or an
    array of strings; a `sub`; an integer `exp`, with no fraction or exponent,
@@ -182,7 +203,11 @@ subject is the issuer's name for a caller, not a person Runner knows. A token
 is a bearer credential: whoever holds it can present it until it expires,
 Runner keeps no record of the tokens it has seen (no `jti` is read), and
 nothing revokes one before it expires short of removing its key from the file
-and starting Runner again. Every listed subject may do everything the control
+and starting Runner again. Runner bounds no token's lifetime: an `exp` however
+far ahead is taken, so how long a token lasts is the issuer's choice. Nor does
+it read `typ`: a JWT of another kind that the issuer signs for this audience,
+with these claims, is taken as an identity token, so the audience is one the
+issuer uses for this Runner's control API alone. Every listed subject may do everything the control
 API offers, as the owner bearer may: there are no permissions that differ
 between callers. Runner keeps no token: no record, journal entry, answer or
 line on standard error holds one.
@@ -220,13 +245,19 @@ the owner, is unchanged.
 
 ## 7. Who is recorded
 
-With `identity`, the subject the token was checked for is the requester of
-what the request creates:
+With `identity`, the caller the token was checked for, its issuer and
+subject, is the requester of what the request creates:
 
-- **A run** (`POST /v1/jobs/{job}/runs`) has `requestedBy` the subject, a
-  member every run already holds. The subject is also the scope its
-  `Idempotency-Key` is held in: one key from two subjects makes two runs. A run
-  a trigger starts is the trigger's, `trigger:<id>`, as before.
+- **A run** (`POST /v1/jobs/{job}/runs`) has as `requestedBy`, a member
+  every run already holds, the caller's issuer and subject, written
+  `<issuer>#<subject>`, as in `https://issuer.example#ops-service`. Since an
+  issuer holds no `#`, the first `#` ends it, and no issuer and subject write
+  another pair's name. That name is also the scope its `Idempotency-Key` is
+  held in: one key from two subjects makes two runs, and so does one key from
+  the same subject of two issuers, as after a restart with another `identity`.
+  Without the issuer, that restart would answer the second issuer's caller with
+  the first's run, or refuse it as a conflict. A run a trigger starts is the
+  trigger's, `trigger:<id>`, as before.
 - **The journal** names the caller as
   `{"kind":"caller","issuer":"<iss>","subject":"<sub>"}` on every entry of a
   change the request made: `release.previewed`, `job.created`, `job.upgraded`,
@@ -277,7 +308,9 @@ notes say so.
   receipts name the token's SHA-256 digest; and Runner reads no delegation.
 - Runner's refusals never repeat the key id or the algorithm a token names.
 - Runner refuses a `listen` written any way but its own form, on loopback too,
-  naming the form to give, rather than rewriting it; and refuses port 0.
+  rather than rewriting it, and never repeats the value; and refuses port 0.
+- Runner refuses an issuer that holds `#`, a subject with a format character
+  or white space at either end, and a key that carries a private member.
 - Off loopback, what answers without a token is `GET /v1/health`, and nothing
   else; it says only whether Runner is healthy.
 - Runner's listener keeps the companion's timeouts (section 3).

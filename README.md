@@ -138,9 +138,10 @@ starts it), and:
   as `127.0.0.1:8470`. No name, `localhost` included, and no port 0: a service is
   found at the port its operator chose.
 - `token`, the owner bearer, when there is no `identity`.
-- `identity`, optional: `issuer`, `audience`, the `subjects` whose requests Runner
-  takes, and `keys`, the absolute path of the issuer's JSON Web Key Set file (RSA of
-  2048 bits or more, EC P-256 or Ed25519), read once at start. Others may read that
+- `identity`, optional: `issuer` (with no `#`), `audience`, the `subjects` whose
+  requests Runner takes (case is significant; no format character and no white
+  space at either end), and `keys`, the absolute path of the issuer's JSON Web Key Set file (RSA of
+  2048 bits or more, EC P-256 or Ed25519; no private member), read once at start. Others may read that
   file; no one but its owner, Runner's user or root, may write it.
 - `acceptOtherHostsOverPlainHTTP`, optional, `true` or `false`.
 
@@ -152,7 +153,7 @@ starts it), and:
 When it is ready it prints the companion's readiness line,
 `{"protocol":"jobs/1","url":"http://127.0.0.1:8470"}`. A configuration Runner
 refuses is refused before anything is opened, with a sentence that names the member
-and never a path or a value.
+and never a path or a value, `listen` included.
 
 **Other hosts.** A loopback `listen` (`127.0.0.0/8` or `::1`) is taken. Any other
 address is taken only with both an `identity` and `acceptOtherHostsOverPlainHTTP:
@@ -173,8 +174,9 @@ holds an identity token and `X-Trigger-Token`. What is checked is the token, not
 who holds it: a subject is the issuer's name for a caller, every listed subject may
 do everything the owner bearer may, and Runner keeps no token.
 
-**Who is recorded.** A caller's run has its subject as `requestedBy`, and its
-`Idempotency-Key` is held per subject. The journal names the caller as
+**Who is recorded.** A caller's run has `<issuer>#<subject>` as `requestedBy`,
+as in `https://issuer.example#ops-service` (an issuer holds no `#`), and its
+`Idempotency-Key` is held per issuer and subject. The journal names the caller as
 `{"kind":"caller","issuer":"…","subject":"…"}` in an entry of `entryVersion` `"2"`.
 Without `identity`, every record is as a companion writes it.
 
@@ -683,7 +685,7 @@ curl --fail-with-body "$DESK_URL/api/operations/jobs/$JOB_ID/runs" \
 A new acceptance returns 202 only after its queue row and idempotency binding commit.
 A repeated key with the same input returns 200 and the original run; a different
 input returns 409. Keys are scoped to job and requester (the installation owner, or a
-caller's subject in [service mode](#service-mode)) and retained with history. Repeating job creation with the same reviewed preview and name
+caller's issuer and subject in [service mode](#service-mode)) and retained with history. Repeating job creation with the same reviewed preview and name
 returns the existing job. Changing inputs invalidates the UI's preview approval.
 
 Lists return at most 50 records, newest first, with `next` as the next `after` cursor

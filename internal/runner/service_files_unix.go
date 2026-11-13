@@ -95,11 +95,19 @@ func keySetFileHeld(info os.FileInfo) error {
 	return nil
 }
 
+// placedOpenHook, when a test sets it, runs between a placed file's check at
+// its path and its open, where another process could replace the file or
+// change its mode.
+var placedOpenHook func()
+
 // readPlaced reads the file seen at path once: opened without following a
 // link and without blocking, the file seen by device and inode, its handle's
 // attributes held by hold, then read up to limit bytes; its attributes are
 // read again after, and a file that changed between is refused.
 func readPlaced(path string, seen os.FileInfo, hold func(os.FileInfo) error, limit int) ([]byte, error) {
+	if placedOpenHook != nil {
+		placedOpenHook()
+	}
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, errors.New("it could not be opened")

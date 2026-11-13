@@ -35,6 +35,51 @@ func serveAs(t *testing.T, h http.Handler, method, path, body, token string, hea
 	return w
 }
 
+// A subject is its issuer's name for a caller: after a restart with another
+// issuer, the same subject is another requester. Its run names it apart, and
+// an Idempotency-Key the first issuer's caller used is not replayed, nor
+// refused as a conflict, for the second's.
+func TestTheSameSubjectFromAnotherIssuerIsAnotherRequester(t *testing.T) {
+	s, _ := checkService(t)
+	signer := edSigner(t, "k1")
+	first := s.ServiceHandler("", testIdentity(t, signer))
+	keys, err := parseKeySet(encode(map[string]any{"keys": []any{signer.jwk}}))
+	must(t, err)
+	const otherIssuer = "https://other-issuer.example"
+	second := s.ServiceHandler("", &Identity{issuer: otherIssuer, audience: testAudience, subjects: map[string]bool{"ops-service": true}, keys: keys})
+	as := func(h http.Handler, issuer, method, path, body string, header map[string]string, want int) []byte {
+		t.Helper()
+		got := serveAs(t, h, method, path, body, tokenOf(signer, withClaims(claimsFor("ops-service", time.Now()), "iss", issuer)), header)
+		if got.Code != want {
+			t.Fatalf("%s %s from %s: %d %s", method, path, issuer, got.Code, got.Body)
+		}
+		return got.Body.Bytes()
+	}
+	var release Release
+	must(t, json.Unmarshal(as(first, testIssuer, "POST", "/v1/previews", checkRequest(false), nil, 201), &release))
+	var job Job
+	must(t, json.Unmarshal(as(first, testIssuer, "POST", "/v1/jobs", string(encode(map[string]any{"name": "Two issuers", "releaseId": release.ID, "reviewed": true})), nil, 201), &job))
+	keyed := map[string]string{"Idempotency-Key": "k1"}
+	input := string(encode(journalInput()))
+	var a, sameInput, otherInput, k2 Run
+	must(t, json.Unmarshal(as(first, testIssuer, "POST", "/v1/jobs/"+job.ID+"/runs", input, keyed, 202), &a))
+	must(t, json.Unmarshal(as(second, otherIssuer, "POST", "/v1/jobs/"+job.ID+"/runs", input, keyed, 202), &sameInput))
+	changed := journalInput()
+	changed.Facts = json.RawMessage(`{"other":true}`)
+	keyed["Idempotency-Key"] = "k2"
+	must(t, json.Unmarshal(as(first, testIssuer, "POST", "/v1/jobs/"+job.ID+"/runs", input, keyed, 202), &k2))
+	must(t, json.Unmarshal(as(second, otherIssuer, "POST", "/v1/jobs/"+job.ID+"/runs", string(encode(changed)), keyed, 202), &otherInput))
+	if a.ID == sameInput.ID || k2.ID == otherInput.ID || a.RequestedBy != testIssuer+"#ops-service" || sameInput.RequestedBy != otherIssuer+"#ops-service" || otherInput.RequestedBy != sameInput.RequestedBy {
+		t.Fatalf("runs %s by %s, %s by %s, %s by %s", a.ID, a.RequestedBy, sameInput.ID, sameInput.RequestedBy, otherInput.ID, otherInput.RequestedBy)
+	}
+	// Each issuer's caller still replays its own key.
+	var again Run
+	must(t, json.Unmarshal(as(second, otherIssuer, "POST", "/v1/jobs/"+job.ID+"/runs", input, map[string]string{"Idempotency-Key": "k1"}, 200), &again))
+	if again.ID != sameInput.ID {
+		t.Fatalf("the second issuer's caller's replay is run %s, not %s", again.ID, sameInput.ID)
+	}
+}
+
 // A caller is the requester of every run it submits, and the actor of every
 // entry its requests write: the journal names it by issuer and subject in an
 // entry of version 2, the run records it as requestedBy, and its idempotency
@@ -76,10 +121,10 @@ func TestACallerIsRecordedOnWhatItsRequestsCreate(t *testing.T) {
 	must(t, json.Unmarshal(as("ops-service", "POST", "/v1/jobs/"+job.ID+"/runs", input, keyed, 202), &first))
 	must(t, json.Unmarshal(as("ops-service", "POST", "/v1/jobs/"+job.ID+"/runs", input, keyed, 200), &replay))
 	must(t, json.Unmarshal(as("build-bot", "POST", "/v1/jobs/"+job.ID+"/runs", input, keyed, 202), &other))
-	if first.RequestedBy != "ops-service" || replay.ID != first.ID || other.ID == first.ID || other.RequestedBy != "build-bot" {
+	if first.RequestedBy != testIssuer+"#ops-service" || replay.ID != first.ID || other.ID == first.ID || other.RequestedBy != testIssuer+"#build-bot" {
 		t.Fatalf("first %s by %s, replay %s, other %s by %s", first.ID, first.RequestedBy, replay.ID, other.ID, other.RequestedBy)
 	}
-	for id, subject := range map[string]string{first.ID: "ops-service", other.ID: "build-bot"} {
+	for id, subject := range map[string]string{first.ID: testIssuer + "#ops-service", other.ID: testIssuer + "#build-bot"} {
 		if held, e := s.run(id); e != nil || held.RequestedBy != subject {
 			t.Fatalf("run %s is held as requested by %q: %v", id, held.RequestedBy, e)
 		}

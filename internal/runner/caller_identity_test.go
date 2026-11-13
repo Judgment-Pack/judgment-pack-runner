@@ -315,7 +315,17 @@ func TestAKeySetIsRefusedForEachReason(t *testing.T) {
 		{"key operations without verify", jwk(`"kid":"a","key_ops":["sign"],"kty":"OKP","crv":"Ed25519","x":"` + x + `"`), "not for verifying"},
 		{"key operations that are not strings", jwk(`"kid":"a","key_ops":["verify",1],"kty":"OKP","crv":"Ed25519","x":"` + x + `"`), "not for verifying"},
 		{"key operations that are not a list", jwk(`"kid":"a","key_ops":"verify","kty":"OKP","crv":"Ed25519","x":"` + x + `"`), "not for verifying"},
-		{"a symmetric key", jwk(`"kid":"a","kty":"oct","k":"` + x + `"`), "kty other than RSA, EC and OKP"},
+		{"a symmetric key", jwk(`"kid":"a","kty":"oct","k":"` + x + `"`), "holds the private member k"},
+		{"a symmetric key with no k", jwk(`"kid":"a","kty":"oct"`), "kty other than RSA, EC and OKP"},
+		{"an Ed25519 private key", jwk(`"kid":"a","kty":"OKP","crv":"Ed25519","x":"` + x + `","d":"` + x + `"`), "holds the private member d"},
+		{"an EC private key", jwk(`"kid":"a","kty":"EC","crv":"P-256","x":"` + x + `","y":"` + x + `","d":"` + x + `"`), "holds the private member d"},
+		{"an RSA key with p", jwk(`"kid":"a","kty":"RSA","n":"` + big256 + `","e":"AQAB","p":"AQAB"`), "holds the private member p"},
+		{"an RSA key with q", jwk(`"kid":"a","kty":"RSA","n":"` + big256 + `","e":"AQAB","q":"AQAB"`), "holds the private member q"},
+		{"an RSA key with dp", jwk(`"kid":"a","kty":"RSA","n":"` + big256 + `","e":"AQAB","dp":"AQAB"`), "holds the private member dp"},
+		{"an RSA key with dq", jwk(`"kid":"a","kty":"RSA","n":"` + big256 + `","e":"AQAB","dq":"AQAB"`), "holds the private member dq"},
+		{"an RSA key with qi", jwk(`"kid":"a","kty":"RSA","n":"` + big256 + `","e":"AQAB","qi":"AQAB"`), "holds the private member qi"},
+		{"an RSA key with oth", jwk(`"kid":"a","kty":"RSA","n":"` + big256 + `","e":"AQAB","oth":[]`), "holds the private member oth"},
+		{"a private member that is null", jwk(`"kid":"a","kty":"OKP","crv":"Ed25519","x":"` + x + `","d":null`), "holds the private member d"},
 		{"no kty", jwk(`"kid":"a","x":"` + x + `"`), "kty other than RSA, EC and OKP"},
 		{"an RSA key of 1024 bits", jwk(`"kid":"a","kty":"RSA","n":"` + b64([]byte(strings.Repeat("\xff", 128))) + `","e":"AQAB"`), "under 2048 bits"},
 		{"an RSA key with an even exponent", jwk(`"kid":"a","kty":"RSA","n":"` + big256 + `","e":"AQAA"`), "exponent that is even or outside"},
@@ -389,6 +399,7 @@ func TestAnIdentityConfigurationIsRefusedForEachReason(t *testing.T) {
 		{"an issuer that is not a string", member("issuer", 1), "identity.issuer must be"},
 		{"an issuer with a control character", member("issuer", "https://issuer.example\n"), "identity.issuer must be"},
 		{"an issuer past 1024 bytes", member("issuer", strings.Repeat("i", 1025)), "identity.issuer must be"},
+		{"an issuer with a #", member("issuer", "https://issuer.example#ops"), "identity.issuer must be"},
 		{"no audience", member("audience", nil), "identity.audience must be"},
 		{"an audience list", member("audience", []string{testAudience}), "identity.audience must be"},
 		{"no subjects", member("subjects", nil), "identity.subjects must list"},
@@ -399,6 +410,12 @@ func TestAnIdentityConfigurationIsRefusedForEachReason(t *testing.T) {
 		{"an empty subject", member("subjects", []string{""}), "identity.subjects[0] must be"},
 		{"a subject past 256 bytes", member("subjects", []string{strings.Repeat("s", 257)}), "identity.subjects[0] must be"},
 		{"a subject with a control character", member("subjects", []string{"ops\tservice"}), "identity.subjects[0] must be"},
+		{"a subject with a zero-width space", member("subjects", []string{"ops\u200b-service"}), "identity.subjects[0] must be"},
+		{"a subject behind a direction mark", member("subjects", []string{"\u202eops-service"}), "identity.subjects[0] must be"},
+		{"a subject with a byte order mark", member("subjects", []string{"\ufeffops-service"}), "identity.subjects[0] must be"},
+		{"a subject with a space before it", member("subjects", []string{" ops-service"}), "identity.subjects[0] must be"},
+		{"a subject with a space after it", member("subjects", []string{"ops-service "}), "identity.subjects[0] must be"},
+		{"a subject with a no-break space after it", member("subjects", []string{"ops-service\u00a0"}), "identity.subjects[0] must be"},
 		{"a subject twice", member("subjects", []string{"ops-service", "build-bot", "ops-service"}), "identity.subjects[2] lists a subject a second time"},
 		{"no keys", member("keys", nil), "identity.keys must be"},
 		{"keys at a relative path", member("keys", "keys.json"), "identity.keys must be"},
@@ -419,6 +436,10 @@ func TestAnIdentityConfigurationIsRefusedForEachReason(t *testing.T) {
 	if err != nil || got.Issuer != testIssuer || got.Audience != testAudience || got.Keys != "/etc/runner/keys.json" || strings.Join(got.Subjects, ",") != "ops-service,build-bot" {
 		t.Fatalf("%+v %v", got, err)
 	}
+	// Case is significant, and a space within a subject is its own.
+	if got, err = ParseIdentityConfig([]byte(member("subjects", []string{"ops-service", "Ops-Service", "ops service"}))); err != nil || len(got.Subjects) != 3 {
+		t.Fatalf("%+v %v", got, err)
+	}
 }
 
 // A subject that names what Runner records for requests of its own is
@@ -431,10 +452,12 @@ func TestAnIdentityMayNotListTheNamesRunnerRecordsItself(t *testing.T) {
 		subjects []string
 		want     string
 	}{
-		{"the owner", []string{"ops-service", "journal-owner"}, "identity.subjects[1] is the installation's owner"},
+		{"the owner", []string{"ops-service", "journal-owner"}, "identity.subjects[1] is, or with the issuer names, the installation's owner"},
 		{"workflow", []string{"workflow"}, "identity.subjects[0] is a name Runner records for runs it starts itself"},
 		{"a trigger's", []string{"trigger:trg_1"}, "identity.subjects[0] is a name Runner records for runs it starts itself"},
 		{"a subject twice", []string{"ops-service", "ops-service"}, "identity.subjects[1] must be a subject, listed once"},
+		{"a subject with a format character", []string{"ops-service", "build\u200b-bot"}, "identity.subjects[1] must be a subject, listed once"},
+		{"a subject with a space after it", []string{"ops-service "}, "identity.subjects[0] must be a subject, listed once"},
 		{"no subject", nil, "1 to 256 subjects"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -446,6 +469,17 @@ func TestAnIdentityMayNotListTheNamesRunnerRecordsItself(t *testing.T) {
 			}
 		})
 	}
+	// An owner that is a caller's name, issuer and subject, is refused too,
+	// and so is an issuer that holds the "#" that ends one.
+	config := base
+	config.Subjects = []string{"build-bot", "ops-service"}
+	if id, err := LoadIdentity(config, testIssuer+"#ops-service", t.TempDir()); err == nil || !strings.Contains(err.Error(), "identity.subjects[1] is, or with the issuer names, the installation's owner") || id != nil {
+		t.Fatalf("%v %v", id, err)
+	}
+	config.Issuer = testIssuer + "#build"
+	if id, err := LoadIdentity(config, "journal-owner", t.TempDir()); err == nil || !strings.Contains(err.Error(), "an issuer with no \"#\"") || id != nil {
+		t.Fatalf("%v %v", id, err)
+	}
 }
 
 // The requester a request carries is the installation unless an identity
@@ -456,8 +490,13 @@ func TestACallerIsNamedByItsIssuerAndSubject(t *testing.T) {
 		t.Fatalf("%+v %s", got, s.requestedBy(requester{}))
 	}
 	caller := requester{issuer: testIssuer, subject: "ops-service"}
-	if got := s.actor(caller); string(encode(got)) != `{"kind":"caller","issuer":"`+testIssuer+`","subject":"ops-service"}` || s.requestedBy(caller) != "ops-service" {
+	if got := s.actor(caller); string(encode(got)) != `{"kind":"caller","issuer":"`+testIssuer+`","subject":"ops-service"}` || s.requestedBy(caller) != testIssuer+"#ops-service" {
 		t.Fatalf("%s %s", encode(got), s.requestedBy(caller))
+	}
+	// The same subject from another issuer is another requester, and no
+	// issuer and subject spell another pair's name.
+	if other := (requester{issuer: "https://other.example", subject: "ops-service"}); s.requestedBy(other) == s.requestedBy(caller) {
+		t.Fatal("two issuers' callers have one name")
 	}
 	if requesterFrom(t.Context()) != (requester{}) || requesterFrom(withRequester(t.Context(), caller)) != caller {
 		t.Fatal("the requester is not carried")

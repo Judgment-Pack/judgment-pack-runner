@@ -181,23 +181,24 @@ func serviceObject(raw []byte) (map[string]json.RawMessage, error) {
 // included, a zone and an empty host are refused, so no resolver decides where
 // Runner listens; port 0, which the system would choose, is refused, since a
 // service is found at the port its operator chose. Any other spelling is
-// refused, naming the one to give.
+// refused. A refusal says what is wrong, never repeating the value, as no
+// refusal of the configuration repeats what it holds.
 func listenAddress(listen string) (netip.AddrPort, error) {
 	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
-		return netip.AddrPort{}, fmt.Errorf("listen %q is not an IP address and a port", listen)
+		return netip.AddrPort{}, errors.New("listen is not an IP address and a port")
 	}
 	addr, err := netip.ParseAddr(host)
 	if err != nil || addr.Zone() != "" {
-		return netip.AddrPort{}, fmt.Errorf("listen %q is not an IP address and a port: IPv4 in dotted decimal, or IPv6 in brackets, with no zone; a name is not one, localhost included", listen)
+		return netip.AddrPort{}, errors.New("listen is not an IP address and a port: IPv4 in dotted decimal, or IPv6 in brackets, with no zone; a name is not one, localhost included")
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 1 || n > 65535 {
-		return netip.AddrPort{}, fmt.Errorf("listen %q has no port from 1 to 65535: a service listens at the port its operator chose, never one the system picks", listen)
+		return netip.AddrPort{}, errors.New("listen has no port from 1 to 65535: a service listens at the port its operator chose, never one the system picks")
 	}
 	canonical := netip.AddrPortFrom(addr.Unmap(), uint16(n))
 	if canonical.String() != listen {
-		return netip.AddrPort{}, fmt.Errorf("listen %q is the address %s written another way; give it as %s", listen, canonical, canonical)
+		return netip.AddrPort{}, errors.New("listen is an address written another way than Runner writes it: IPv4 in dotted decimal, never in IPv6 form; IPv6 in brackets, compressed and in lower case; the port with no sign and no leading zero")
 	}
 	return canonical, nil
 }
@@ -214,7 +215,7 @@ func listenAddress(listen string) (netip.AddrPort, error) {
 func otherHosts(at netip.AddrPort, identity, accept bool) error {
 	if at.Addr().IsLoopback() {
 		if accept {
-			return fmt.Errorf("acceptOtherHostsOverPlainHTTP is true, and listen %s is a loopback address: the member acknowledges a listen that is not loopback, and is true only beside one", at)
+			return errors.New("acceptOtherHostsOverPlainHTTP is true, and listen is a loopback address: the member acknowledges a listen that is not loopback, and is true only beside one")
 		}
 		return nil
 	}
@@ -229,9 +230,9 @@ func otherHosts(at netip.AddrPort, identity, accept bool) error {
 	default:
 		return nil
 	}
-	return fmt.Errorf("listen %s is not a loopback address: other hosts can reach it, so Runner listens there only with identity, "+
+	return fmt.Errorf("listen is not a loopback address: other hosts can reach it, so Runner listens there only with identity, "+
 		"by which every request but GET /v1/health holds an identity token, and acceptOtherHostsOverPlainHTTP: true, "+
-		"which acknowledges that the tokens cross plain HTTP unless TLS terminates in front of Runner, which terminates none; %s", at, missing)
+		"which acknowledges that the tokens cross plain HTTP unless TLS terminates in front of Runner, which terminates none; %s", missing)
 }
 
 // otherHostsNote is the start's line on standard error for a listener other

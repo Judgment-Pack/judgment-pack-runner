@@ -57,7 +57,8 @@ runner provides no public ingress, no tunnel, and no transport security of its o
 **Service mode listens where its operator says, over plain HTTP.** `jpack-runner serve --config`
 reads its configuration, with the owner bearer or an identity, from one file held to the signing
 key's rules: no symbolic link in its path, one name, owned by Runner's user, readable and writable by
-no one else, outside the state directory. It listens on loopback unless the configuration has both
+no one else, outside the state directory. As for the signing key, the directories on its path, and
+on the key set's, are not checked: keep them where no one else can write. It listens on loopback unless the configuration has both
 an identity and `acceptOtherHostsOverPlainHTTP: true`. **The runner terminates no TLS** and cannot
 check that anything in front of it does. Off loopback, unless TLS terminates in front of it, anyone
 on the network between can read a token and replay it until it expires, read every request and
@@ -73,9 +74,12 @@ algorithm are refused. The runner fetches no keys: a key set change takes effect
 What this shows is that whoever holds the private half of a key in that file signed the token for
 that subject. It does not show who presented the token: a token is a bearer credential, the runner keeps no record of
 the tokens it has seen, and nothing revokes one before it expires short of removing its key and
-starting the runner again. A subject is the issuer's name for a caller, not a person the runner
-knows. The checked subject is recorded as the requester of the runs a request creates and as the
-journal's actor; the token is kept nowhere, neither in a record, the journal, an answer nor a log.
+starting the runner again. The runner bounds no token's lifetime, since any `exp` is taken, and
+does not read `typ`, so a JWT of another kind the issuer signs for this audience is taken too: the
+audience should name this runner's control API alone. A subject is the issuer's name for a caller,
+not a person the runner
+knows. The checked issuer and subject are recorded as the requester of the runs a request creates
+and as the journal's actor; the token is kept nowhere, neither in a record, the journal, an answer nor a log.
 
 **A trigger token is narrow by design.** It is random, shown once, and stored only as a SHA-256
 digest. Rotation revokes the previous token immediately. A token cannot list jobs, inspect records,

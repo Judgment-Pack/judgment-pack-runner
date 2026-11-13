@@ -48,7 +48,7 @@
       "get": {
         "operationId": "health",
         "security": [],
-        "description": "Service mode only: whether Runner is healthy, for a probe that holds no credential. healthy is false, answered 503, once the dispatcher has stopped after a storage error. It says nothing else: not the store, its directory, the workspace, the owner or a digest; GET /status, which does, keeps its credential. HEAD is answered as GET, with no body. A browser Origin is refused. A companion does not serve this route.",
+        "description": "Service mode only: whether Runner is healthy, for a probe that holds no credential. healthy is false, answered 503, once the dispatcher has stopped after a storage error. It says nothing else: not the store, its directory, the workspace, the owner or a digest; GET /status, which does, keeps its credential. A browser Origin is refused. A companion does not serve this route.",
         "responses": {
           "200": {
             "description": "Runner is healthy",
@@ -69,6 +69,19 @@
                 }
               }
             }
+          }
+        }
+      },
+      "head": {
+        "operationId": "healthHead",
+        "security": [],
+        "description": "Service mode only: GET /health's answer with no body, for a probe that reads only the status: 200 when Runner is healthy, 503 once the dispatcher has stopped after a storage error. A browser Origin is refused. A companion does not serve this route.",
+        "responses": {
+          "200": {
+            "description": "Runner is healthy"
+          },
+          "503": {
+            "description": "The dispatcher has stopped after a storage error"
           }
         }
       }
@@ -2840,7 +2853,7 @@
           },
           "requestedBy": {
             "type": "string",
-            "description": "Who requested the run: the owner, for a request that carried the owner bearer; the subject of the identity token a request in service mode carried; trigger:<id> for a run a trigger started; workflow for a workflow's. An Idempotency-Key is held within its requester's runs of the job: a caller's keys are its own."
+            "description": "Who requested the run: the owner, for a request that carried the owner bearer; for a request in service mode with an identity, the caller, written <issuer>#<subject> from the identity token it carried (an issuer holds no #, so the first # ends it); trigger:<id> for a run a trigger started; workflow for a workflow's. An Idempotency-Key is held within its requester's runs of the job: a caller's keys are its own, and the same subject from another issuer is another requester."
           },
           "attempt": {
             "type": "integer",
