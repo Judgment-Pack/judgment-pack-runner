@@ -221,7 +221,7 @@ func Open(cfg Config) (_ *Service, err error) {
 	// then opens the database, and applies the schema after manual.
 	s.store, err = openStore(defaultStoreKind, storeOpening{
 		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot,
-		migrate: cfg.ExecutorAdmission == nil,
+		migrate: cfg.ExecutorAdmission == nil, manualAdmission: cfg.ExecutorAdmission != nil,
 		afterLock: func() error {
 			for _, n := range []string{"releases", "attempts", "runtimes"} {
 				if err := privateDir(filepath.Join(cfg.Dir, n)); err != nil {
@@ -242,12 +242,6 @@ func Open(cfg Config) (_ *Service, err error) {
 	})
 	if err != nil {
 		return nil, err
-	}
-	// Manual admission stays on the sqlite kind (store-postgresql.md, D4): a
-	// kind that keeps no manual-admission state never checked the store, and
-	// is refused.
-	if cfg.ExecutorAdmission != nil && s.manual == nil {
-		return nil, errManualProtocol
 	}
 	if err = s.loadRegisteredProfiles(); err != nil {
 		return nil, err

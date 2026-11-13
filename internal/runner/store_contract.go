@@ -477,6 +477,9 @@ type storeOpening struct {
 	// store there. Only the sqlite kind keeps that state
 	// (docs/design/store-postgresql.md, D4); another kind does not run it.
 	manual func(manualState) error
+	// manualAdmission is set when the Runner runs under manual admission:
+	// a kind that hands it no manual-admission state is then refused.
+	manualAdmission bool
 }
 
 // manualState is the manual-admission state the sqlite kind keeps beside
@@ -547,13 +550,30 @@ var storeKinds = map[string]func(storeOpening) (runStore, error){
 	},
 }
 
-// openStore opens a store of the named kind.
+// openStore opens a store of the named kind. Under manual admission, a
+// kind that hands over no manual-admission state never checked the store
+// (store-postgresql.md, D4), and is refused.
 func openStore(kind string, o storeOpening) (runStore, error) {
 	open, ok := storeKinds[kind]
 	if !ok {
 		return nil, storeFailure(faultRefused, "open", fmt.Errorf("no store kind %q", kind))
 	}
-	return open(o)
+	handed := false
+	if manual := o.manual; manual != nil {
+		o.manual = func(m manualState) error {
+			handed = true
+			return manual(m)
+		}
+	}
+	st, err := open(o)
+	if err != nil {
+		return nil, err
+	}
+	if o.manualAdmission && !handed {
+		st.close()
+		return nil, errManualProtocol
+	}
+	return st, nil
 }
 
 // validateStoredInput rechecks the installed selection at each persistence
