@@ -441,9 +441,13 @@ func (t *sqliteTx) appendJournal(c change) (int64, error) {
 func (t *sqliteTx) raiseSchema(schema string) error {
 	switch schema {
 	case scopedStoreSchema:
-		return sqliteFault("schema", raiseScopedSchema(t.tx), true)
+		// From storeSchema only (scope.go).
+		_, err := t.tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value=?", scopedStoreSchema, storeSchema)
+		return sqliteFault("schema", err, true)
 	case retryStoreSchema:
-		return sqliteFault("schema", raiseRetrySchema(t.tx), true)
+		// From storeSchema or scopedStoreSchema (retries.go).
+		_, err := t.tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value IN (?,?)", retryStoreSchema, storeSchema, scopedStoreSchema)
+		return sqliteFault("schema", err, true)
 	}
 	return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))
 }

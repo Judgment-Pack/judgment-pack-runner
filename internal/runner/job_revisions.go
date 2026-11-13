@@ -4,9 +4,7 @@ package runner
 // and journal event commit together. Existing runs keep their original pins.
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"math"
 	"net/http"
 	"net/url"
@@ -29,12 +27,11 @@ type UpgradeJobRequest struct {
 
 // A preview is disposable. Once used by a job, its pack identity cannot be
 // reused with different bytes, even when another job is being created.
-func admitJobPack(tx *sql.Tx, r Release) error {
+func admitJobPack(tx runTx, r Release) error {
 	if err := admitJobDialect(tx, r); err != nil {
 		return err
 	}
-	var count int
-	err := tx.QueryRow(`SELECT count(*) FROM job_revisions j JOIN releases r ON r.id=j.release_id WHERE json_extract(r.record,'$.packId')=? AND json_extract(r.record,'$.packVersion')=? AND json_extract(r.record,'$.packDigest')<>?`, r.PackID, r.PackVersion, r.PackDigest).Scan(&count)
+	count, err := tx.packConflicts(r.PackID, r.PackVersion, r.PackDigest)
 	if err != nil {
 		return err
 	}
@@ -42,14 +39,6 @@ func admitJobPack(tx *sql.Tx, r Release) error {
 		return &apiError{409, "artifact_identity_conflict", "This pack identity and version already belongs to different job content. Choose a new artifact version and check it again."}
 	}
 	return nil
-}
-
-func recordInitialJob(tx *sql.Tx, j Job) error {
-	if _, err := tx.Exec("INSERT INTO job_creations(release_id,record) VALUES(?,?)", j.ReleaseID, string(encode(j))); err != nil {
-		return err
-	}
-	_, err := tx.Exec("INSERT INTO job_revisions(job_id,revision,release_id,record) VALUES(?,?,?,?)", j.ID, j.Revision, j.ReleaseID, string(encode(j)))
-	return err
 }
 
 func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRequest) (Job, error) {
@@ -117,102 +106,77 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	if err = s.checkDialectUpgrade(ctx, old, next); err != nil {
 		return Job{}, err
 	}
-	tx, err := s.db.Begin()
+	by := s.actor(requesterFrom(ctx))
+	err = s.store.update(func(tx runTx) error {
+		// The revision is re-read in the same transaction that updates it.
+		current, err := tx.job(jobID)
+		if err != nil {
+			return err
+		}
+		if current.Revision != j.Revision || current.ReleaseID != j.ReleaseID {
+			return &apiError{409, "job_changed", "The job changed after review. Review it again."}
+		}
+		used, err := tx.releaseUses(next.ID)
+		if err != nil {
+			return err
+		}
+		if used > 0 {
+			return &apiError{409, "release_already_used", "This preview already belongs to a job revision. Check a fresh release."}
+		}
+		// Pending source preparation can otherwise finish against an obsolete mapping.
+		// Pausing alone does not cancel accepted work; that work must settle first.
+		if used, err = tx.openOccurrences(jobID); err != nil {
+			return err
+		}
+		if used > 0 {
+			return &apiError{409, "job_work_pending", "Finish, cancel or reconcile pending occurrences before upgrading this job."}
+		}
+		triggers, err := tx.triggerRecords(jobID)
+		if err != nil {
+			return err
+		}
+		for _, t := range triggers {
+			if !t.Paused {
+				return &apiError{409, "job_triggers_active", "Pause all triggers before upgrading this job. They remain paused after the upgrade."}
+			}
+			c := t.Config
+			if err = s.validateTrigger(&c, next, time.Now()); err != nil {
+				return &apiError{409, "trigger_upgrade_incompatible", "An existing trigger is incompatible with this release. Keep this job unchanged and create a new reviewed job for the new configuration."}
+			}
+		}
+		if err = admitJobPack(tx, next); err != nil {
+			return err
+		}
+		revised := j
+		revised.ReleaseID = next.ID
+		revised.Revision++
+		if err = tx.reviseJob(revised, hash); err != nil {
+			return err
+		}
+		if _, err = tx.appendJournal(change{kind: "job.upgraded", by: by, concerns: EventConcerns{Job: revised.ID, Release: revised.ReleaseID}, revision: revised.Revision, detail: EventDetail{Scope: revised.Scope, PreviousRevision: revisionValue(req.BaseRevision)}}); err != nil {
+			return err
+		}
+		for _, t := range triggers {
+			if t.Revision == math.MaxInt {
+				return bad("trigger_revision_limit", "The trigger revision limit has been reached.")
+			}
+			previous := t.Revision
+			t.Revision++
+			t.UpdatedAt = now()
+			if err = tx.reviseTrigger(t); err != nil {
+				return err
+			}
+			if _, err = tx.appendJournal(change{kind: "trigger.configured", by: by, concerns: EventConcerns{Job: revised.ID, Release: revised.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: "paused", to: "paused", detail: EventDetail{Scope: revised.Scope, PreviousRevision: revisionValue(previous), TriggerKind: t.Config.Kind}}); err != nil {
+				return err
+			}
+		}
+		j = revised
+		return nil
+	})
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback()
-	// The revision is re-read in the same transaction that updates it.
-	var raw string
-	if err = tx.QueryRow("SELECT record FROM jobs WHERE id=?", jobID).Scan(&raw); err != nil {
-		return Job{}, err
-	}
-	var current Job
-	if err = json.Unmarshal([]byte(raw), &current); err != nil {
-		return Job{}, err
-	}
-	if current.Revision != j.Revision || current.ReleaseID != j.ReleaseID {
-		return Job{}, &apiError{409, "job_changed", "The job changed after review. Review it again."}
-	}
-	var used int
-	if err = tx.QueryRow("SELECT count(*) FROM job_revisions WHERE release_id=?", next.ID).Scan(&used); err != nil {
-		return Job{}, err
-	}
-	if used > 0 {
-		return Job{}, &apiError{409, "release_already_used", "This preview already belongs to a job revision. Check a fresh release."}
-	}
-	// Pending source preparation can otherwise finish against an obsolete mapping.
-	// Pausing alone does not cancel accepted work; that work must settle first.
-	if err = tx.QueryRow("SELECT count(*) FROM occurrences WHERE job_id=? AND state IN ('accepted','preparing','waiting','needs-attention')", jobID).Scan(&used); err != nil {
-		return Job{}, err
-	}
-	if used > 0 {
-		return Job{}, &apiError{409, "job_work_pending", "Finish, cancel or reconcile pending occurrences before upgrading this job."}
-	}
-	rows, err := tx.Query("SELECT record FROM triggers WHERE job_id=?", jobID)
-	if err != nil {
-		return Job{}, err
-	}
-	var triggers []Trigger
-	for rows.Next() {
-		var b []byte
-		var t Trigger
-		if err = rows.Scan(&b); err != nil {
-			break
-		}
-		if err = json.Unmarshal(b, &t); err != nil {
-			break
-		}
-		triggers = append(triggers, t)
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return Job{}, err
-	}
-	for _, t := range triggers {
-		if !t.Paused {
-			return Job{}, &apiError{409, "job_triggers_active", "Pause all triggers before upgrading this job. They remain paused after the upgrade."}
-		}
-		c := t.Config
-		if err = s.validateTrigger(&c, next, time.Now()); err != nil {
-			return Job{}, &apiError{409, "trigger_upgrade_incompatible", "An existing trigger is incompatible with this release. Keep this job unchanged and create a new reviewed job for the new configuration."}
-		}
-	}
-	if err = admitJobPack(tx, next); err != nil {
-		return Job{}, err
-	}
-	j.ReleaseID = next.ID
-	j.Revision++
-	if _, err = tx.Exec("UPDATE jobs SET release_id=?,record=? WHERE id=?", j.ReleaseID, string(encode(j)), j.ID); err != nil {
-		return Job{}, err
-	}
-	if _, err = tx.Exec("INSERT INTO job_revisions(job_id,revision,release_id,record,request_digest) VALUES(?,?,?,?,?)", j.ID, j.Revision, j.ReleaseID, string(encode(j)), hash); err != nil {
-		return Job{}, err
-	}
-	if _, err = appendEvent(tx, change{kind: "job.upgraded", by: s.actor(requesterFrom(ctx)), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}, revision: j.Revision, detail: EventDetail{Scope: j.Scope, PreviousRevision: revisionValue(req.BaseRevision)}}); err != nil {
-		return Job{}, err
-	}
-	for _, t := range triggers {
-		if t.Revision == math.MaxInt {
-			return Job{}, bad("trigger_revision_limit", "The trigger revision limit has been reached.")
-		}
-		previous := t.Revision
-		t.Revision++
-		t.UpdatedAt = now()
-		if _, err = tx.Exec("UPDATE triggers SET record=? WHERE id=?", string(encode(t)), t.ID); err != nil {
-			return Job{}, err
-		}
-		if _, err = tx.Exec("INSERT INTO trigger_revisions(trigger_id,revision,record) VALUES(?,?,?)", t.ID, t.Revision, string(encode(t))); err != nil {
-			return Job{}, err
-		}
-		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(requesterFrom(ctx)), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: "paused", to: "paused", detail: EventDetail{Scope: j.Scope, PreviousRevision: revisionValue(previous), TriggerKind: t.Config.Kind}}); err != nil {
-			return Job{}, err
-		}
-	}
-	return j, tx.Commit()
+	return j, nil
 }
 
 func (s *Service) checkUpgradeVersion(ctx context.Context, base, candidate string) error {
@@ -249,19 +213,16 @@ func (s *Service) upgradeJobHandler(w http.ResponseWriter, r *http.Request) {
 // upgradeReceipt never performs readiness checks or changes a job. Hosts use it
 // to reconcile a lost acknowledgement without granting a new write.
 func (s *Service) upgradeReceipt(jobID string, req UpgradeJobRequest) (Job, bool, error) {
-	var raw, hash string
-	err := s.db.QueryRow("SELECT record,request_digest FROM job_revisions WHERE job_id=? AND revision=?", jobID, req.BaseRevision+1).Scan(&raw, &hash)
-	if errors.Is(err, sql.ErrNoRows) {
+	job, hash, err := s.store.jobRevision(jobID, req.BaseRevision+1)
+	if absent(err) {
 		return Job{}, false, nil
 	}
-	if err != nil {
+	if err != nil && faultOf(err) != faultUnreadable {
 		return Job{}, false, err
 	}
 	if hash != digest(encode(req)) {
 		return Job{}, false, &apiError{409, "job_changed", "This job revision belongs to a different reviewed upgrade."}
 	}
-	var job Job
-	err = json.Unmarshal([]byte(raw), &job)
 	return job, err == nil, err
 }
 func (s *Service) upgradeReceiptHandler(w http.ResponseWriter, r *http.Request) {

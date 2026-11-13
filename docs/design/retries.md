@@ -311,7 +311,7 @@ run lists, and is not part of a verification export, whose readers
 decode strictly, nor of the run's entry in the chain of runs.
 
 **A store's first job with a policy, or its first explicit retry, raises its
-schema to `"6"`** in that transaction (`raiseRetrySchema`), from `"3"` or
+schema to `"6"`** in that transaction (`raiseSchema`), from `"3"` or
 `"5"`. An earlier Runner would drop the members from every record it rewrites
 (a job it upgrades, an occurrence it advances, a run it dispatches) and would
 evaluate a retried run into the first attempt's directory, which exists; every

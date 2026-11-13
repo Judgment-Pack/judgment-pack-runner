@@ -109,9 +109,23 @@ func (h heldRequest) run() (Run, error) { return decodeRun(h.record) }
 type storeReads interface {
 	// release is the release held under id, or faultAbsent.
 	release(id string) (Release, error)
-	// job is the job held under id, or faultAbsent. Jobs are made and
-	// revised outside the contract (store_sqlite.go).
+	// job is the job held under id, or faultAbsent.
 	job(id string) (Job, error)
+	// jobCreation is the job a release made, as it was made, or faultAbsent:
+	// a release makes one job, and a repeated creation returns it.
+	jobCreation(release string) (Job, error)
+	// releaseUses counts the job revisions that name a release.
+	releaseUses(release string) (int, error)
+	// jobRevision is a job's revision as it was made, with the digest of the
+	// upgrade request that made it ("" for a job's creation), or
+	// faultAbsent.
+	jobRevision(job string, revision int) (Job, string, error)
+	// packConflicts counts the job revisions whose release names the pack
+	// identity and version with other content than digest.
+	packConflicts(pack, version, digest string) (int, error)
+	// dialectConflicts counts the job revisions whose release names the
+	// dialect identity and version with other content than digest.
+	dialectConflicts(dialect, version, digest string) (int, error)
 	// requestedRun is the run held under its request key, the job, the
 	// caller and the caller's idempotency key, or faultAbsent.
 	requestedRun(jobID, caller, key string) (heldRequest, error)
@@ -334,6 +348,26 @@ type runTx interface {
 	// lastPreparing is the time of the newest occurrence.preparing entry
 	// concerning an occurrence, or faultAbsent.
 	lastPreparing(occurrence string) (string, error)
+	// createJob keeps j, made from j.ReleaseID: the job, its creation and
+	// its first revision. faultTaken when its id, its release's creation or
+	// a revision naming its release is held.
+	createJob(j Job) error
+	// reviseJob writes j over the job held under j.ID and keeps its
+	// revision j.Revision, made by the upgrade request whose digest is
+	// request: faultAbsent when no job is held under j.ID, and faultTaken
+	// when that revision, or one naming j's release, is held.
+	reviseJob(j Job, request string) error
+	// openOccurrences counts a job's occurrences accepted, preparing,
+	// waiting or needing attention.
+	openOccurrences(job string) (int, error)
+	// triggerRecords are a job's triggers, each as its record was written,
+	// in the order they were made.
+	triggerRecords(job string) ([]Trigger, error)
+	// reviseTrigger writes t's record over the trigger held under t.ID, its
+	// key and file cursor left as they are, and keeps the snapshot of t's
+	// revision: faultAbsent when no trigger is held under t.ID, faultTaken
+	// when the snapshot is held.
+	reviseTrigger(t Trigger) error
 	// appendJournal appends a change's entry to the journal of job activity,
 	// and returns its sequence; entries are only ever appended.
 	appendJournal(c change) (int64, error)

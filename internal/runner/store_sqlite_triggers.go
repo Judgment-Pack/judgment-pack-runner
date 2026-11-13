@@ -197,8 +197,8 @@ func (t *sqliteTx) putTrigger(tr Trigger, hash string, history bool) error {
 // errNoTrigger is the cause of putTrigger's faultAbsent.
 var errNoTrigger = errors.New("no trigger is held under that id")
 
-// saveTrigger is putTrigger's statements, which a job's creation also makes
-// (store.go) until it stands behind the contract.
+// saveTrigger is putTrigger's statements: the trigger's columns, and its
+// revision's snapshot with history.
 func saveTrigger(tx *sql.Tx, t Trigger, hash string, history bool) error {
 	var keyRevision any
 	if t.keyRevision != nil {

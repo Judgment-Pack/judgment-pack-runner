@@ -32,11 +32,14 @@ type memoryEntry struct {
 	line     []byte
 }
 
-// memoryRevision is a job's revision, by the release it names.
+// memoryRevision is a job's revision, by the release it names, as it was
+// made, with the digest of the upgrade request that made it.
 type memoryRevision struct {
 	job      string
 	revision int
 	release  string
+	record   []byte
+	request  string
 }
 
 // memoryState is everything the kind holds. Byte slices are never changed
@@ -44,8 +47,10 @@ type memoryRevision struct {
 type memoryState struct {
 	releases map[string][]byte
 	jobs     map[string][]byte
-	// revisions are every job's revisions, in the order they were made.
+	// revisions are every job's revisions, in the order they were made;
+	// creations the jobs as their releases made them, by release.
 	revisions []memoryRevision
+	creations map[string][]byte
 	// runs are in the order they were queued; lastSeq is the last order
 	// given, which a transaction that fails gives back.
 	runs    []memoryRun
@@ -67,7 +72,7 @@ type memoryState struct {
 }
 
 func (m memoryState) clone() memoryState {
-	return memoryState{releases: maps.Clone(m.releases), jobs: maps.Clone(m.jobs), revisions: slices.Clone(m.revisions), runs: slices.Clone(m.runs), lastSeq: m.lastSeq, chain: slices.Clone(m.chain), journal: slices.Clone(m.journal),
+	return memoryState{releases: maps.Clone(m.releases), jobs: maps.Clone(m.jobs), revisions: slices.Clone(m.revisions), creations: maps.Clone(m.creations), runs: slices.Clone(m.runs), lastSeq: m.lastSeq, chain: slices.Clone(m.chain), journal: slices.Clone(m.journal),
 		profiles: maps.Clone(m.profiles), briefs: maps.Clone(m.briefs), automation: m.automation.clone(), schema: m.schema}
 }
 
@@ -84,16 +89,16 @@ type memoryStore struct {
 // is at opening.
 func newMemoryStore() *memoryStore {
 	began := journalRowOf(change{kind: "journal.began", by: runnerActor, detail: EventDetail{Held: &EventHeld{}}})
-	return &memoryStore{state: memoryState{releases: map[string][]byte{}, jobs: map[string][]byte{}, profiles: map[string]string{}, briefs: map[string][]byte{}, automation: newMemoryAutomation(), journal: []journalRow{began}}}
+	return &memoryStore{state: memoryState{releases: map[string][]byte{}, jobs: map[string][]byte{}, creations: map[string][]byte{}, profiles: map[string]string{}, briefs: map[string][]byte{}, automation: newMemoryAutomation(), journal: []journalRow{began}}}
 }
 
-// seedJob keeps a job and its first revision, as one made outside the
-// contract.
+// seedJob keeps a job and its first revision, without the record of its
+// creation, as the sqlite kind's seedJob does.
 func (m *memoryStore) seedJob(j Job) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.state.jobs[j.ID] = encode(j)
-	m.state.revisions = append(m.state.revisions, memoryRevision{job: j.ID, revision: j.Revision, release: j.ReleaseID})
+	m.state.revisions = append(m.state.revisions, memoryRevision{job: j.ID, revision: j.Revision, release: j.ReleaseID, record: encode(j)})
 }
 
 // failCommits makes every later commit fail with err, or succeed again for

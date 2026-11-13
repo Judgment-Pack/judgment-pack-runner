@@ -3,7 +3,6 @@ package runner
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -143,7 +142,7 @@ func releaseDialectIdentity(r Release) (*DialectIdentity, error) {
 	}
 	return &DialectIdentity{mapping.ArtifactID, mapping.ArtifactVersion, mappingV2Hash(mapping)}, nil
 }
-func admitJobDialect(tx *sql.Tx, r Release) error {
+func admitJobDialect(tx runTx, r Release) error {
 	actual, err := releaseDialectIdentity(r)
 	if err != nil {
 		return err
@@ -157,8 +156,7 @@ func admitJobDialect(tx *sql.Tx, r Release) error {
 	if r.Dialect == nil || *actual != *r.Dialect {
 		return inputProblem("Dialect release identity does not match its retained document.")
 	}
-	var count int
-	err = tx.QueryRow(`SELECT count(*) FROM job_revisions j JOIN releases r ON r.id=j.release_id WHERE json_extract(r.record,'$.dialect.id')=? AND json_extract(r.record,'$.dialect.version')=? AND json_extract(r.record,'$.dialect.digest')<>?`, actual.ID, actual.Version, actual.Digest).Scan(&count)
+	count, err := tx.dialectConflicts(actual.ID, actual.Version, actual.Digest)
 	if err != nil {
 		return err
 	}

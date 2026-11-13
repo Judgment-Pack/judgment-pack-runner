@@ -15,7 +15,6 @@ package runner
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -267,12 +266,4 @@ func jobScope(raw []byte, scope *string) (string, error) {
 		return "", errScopeForm
 	}
 	return *scope, nil
-}
-
-// raiseScopedSchema raises the store's schema, inside the transaction that
-// creates its first job under a scope identifier, to scopedStoreSchema. A
-// store at it already is left as it is.
-func raiseScopedSchema(tx *sql.Tx) error {
-	_, err := tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value=?", scopedStoreSchema, storeSchema)
-	return err
 }

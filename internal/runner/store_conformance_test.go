@@ -28,7 +28,8 @@ type storeKindUnderTest struct {
 	name string
 	// open is a new, empty store of the kind.
 	open func(t *testing.T) runStore
-	// seedJob keeps a job, made outside the contract.
+	// seedJob keeps a job and its first revision, without the record of
+	// its creation: the world's job, made directly.
 	seedJob func(t *testing.T, st runStore, j Job)
 	// schema is the schema the store is at, as the sqlite kind names it.
 	schema func(t *testing.T, st runStore) string
@@ -79,7 +80,7 @@ func storeKindsUnderTest() []storeKindUnderTest {
 				return k
 			},
 			seedJob: func(t *testing.T, st runStore, j Job) {
-				// The statements job creation makes (store.go, job_revisions.go).
+				// Two of the statements createJob makes (store_sqlite_jobs.go).
 				db := st.(*sqliteStore).db
 				if _, err := db.Exec("INSERT INTO jobs(id,release_id,record)VALUES(?,?,?)", j.ID, j.ReleaseID, string(encode(j))); err != nil {
 					t.Fatal(err)
@@ -125,7 +126,7 @@ func storeKindsUnderTest() []storeKindUnderTest {
 func TestStoreKindsConform(t *testing.T) {
 	for _, k := range storeKindsUnderTest() {
 		t.Run(k.name, func(t *testing.T) {
-			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, k.own) {
+			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, k.own) {
 				t.Run(c.name, func(t *testing.T) { c.run(t, k) })
 			}
 		})

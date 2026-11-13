@@ -352,101 +352,100 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 			return Job{}, err
 		}
 	}
-	tx, err := s.db.Begin()
+	var made Job
+	err = s.store.update(func(tx runTx) error {
+		stored, err := tx.jobCreation(releaseID)
+		if err == nil {
+			if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope || !sameRetryPolicy(stored.Retry, retry) {
+				return &apiError{409, "release_already_used", "This preview already created a different job. Preview again to create another job."}
+			}
+			made = stored
+			return errKeepNothing
+		}
+		if !absent(err) {
+			return err
+		}
+		used, err := tx.releaseUses(releaseID)
+		if err != nil {
+			return err
+		}
+		if used != 0 {
+			return &apiError{409, "release_already_used", "This preview already belongs to a job revision. Check a fresh release."}
+		}
+		// Only a new job is refused: a job made before the setting was on is returned
+		// as any repeated creation is, and keeps running.
+		if s.cfg.RequireTestedReleases && r.Tests == "not-run" {
+			return &apiError{409, "release_untested", "This installation creates jobs only from releases whose saved tests ran and passed. Save tests for this pack, then check a new release."}
+		}
+		if s.cfg.RequireComparableFacts && !releaseRefusesIncomparableFacts(r) {
+			return errJobComparableFactsRequired
+		}
+		if s.cfg.RequireSuppliedReviewedSet && !heldToSuppliedReviewedSet(r) {
+			return errJobReviewedSetRequired
+		}
+		// Likewise, a release that names a profile set aside since it was made
+		// makes no new job; a job made from it before is returned as it was.
+		if err = s.refuseSetAsideMapping(r.InputMapping); err != nil {
+			return err
+		}
+		if err = admitJobPack(tx, r); err != nil {
+			return err
+		}
+		j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest, Scope: scope, Retry: retry}
+		if c != nil {
+			count, err := tx.triggerCount()
+			if err != nil {
+				return err
+			}
+			if count >= 128 {
+				return bad("trigger_limit", "This local runner supports up to 128 triggers.")
+			}
+			t := Trigger{ID: id("trg_"), JobID: j.ID, Revision: 1, Authority: "local", Config: *c, Paused: true, CreatedAt: now(), UpdatedAt: now(), Scope: j.Scope}
+			if c.Kind == "cloud" {
+				t.Authority = "google-cloud"
+			}
+			j.InitialTriggerID = t.ID
+			if err = tx.createTrigger(t); err != nil {
+				return err
+			}
+			if err = tx.putTrigger(t, "", true); err != nil {
+				return err
+			}
+		}
+		if err = tx.createJob(j); err != nil {
+			return err
+		}
+		// A store's first job under a scope identifier raises its schema in the
+		// same transaction, so that no earlier Runner opens it (scope.go).
+		if j.Scope != "" {
+			if err = tx.raiseSchema(scopedStoreSchema); err != nil {
+				return err
+			}
+		}
+		// Likewise its first job with a retry policy (retries.go).
+		if j.Retry != nil {
+			if err = tx.raiseSchema(retryStoreSchema); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.appendJournal(change{kind: "job.created", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}, detail: EventDetail{Scope: j.Scope}}); err != nil {
+			return err
+		}
+		if c != nil {
+			if _, err = tx.appendJournal(change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: j.InitialTriggerID}, revision: 1, states: true, to: "paused", detail: EventDetail{Scope: j.Scope, PreviousRevision: revisionValue(0), TriggerKind: c.Kind}}); err != nil {
+				return err
+			}
+		}
+		made = j
+		return nil
+	})
+	if errors.Is(err, errKeepNothing) {
+		return made, nil
+	}
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback()
-	var held []byte
-	err = tx.QueryRow("SELECT record FROM job_creations WHERE release_id=?", releaseID).Scan(&held)
-	if err == nil {
-		var stored Job
-		if err = json.Unmarshal(held, &stored); err != nil {
-			return stored, err
-		}
-		if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope || !sameRetryPolicy(stored.Retry, retry) {
-			return Job{}, &apiError{409, "release_already_used", "This preview already created a different job. Preview again to create another job."}
-		}
-		return stored, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return Job{}, err
-	}
-	var used int
-	if err = tx.QueryRow("SELECT count(*) FROM job_revisions WHERE release_id=?", releaseID).Scan(&used); err != nil {
-		return Job{}, err
-	}
-	if used != 0 {
-		return Job{}, &apiError{409, "release_already_used", "This preview already belongs to a job revision. Check a fresh release."}
-	}
-	// Only a new job is refused: a job made before the setting was on is returned
-	// as any repeated creation is, and keeps running.
-	if s.cfg.RequireTestedReleases && r.Tests == "not-run" {
-		return Job{}, &apiError{409, "release_untested", "This installation creates jobs only from releases whose saved tests ran and passed. Save tests for this pack, then check a new release."}
-	}
-	if s.cfg.RequireComparableFacts && !releaseRefusesIncomparableFacts(r) {
-		return Job{}, errJobComparableFactsRequired
-	}
-	if s.cfg.RequireSuppliedReviewedSet && !heldToSuppliedReviewedSet(r) {
-		return Job{}, errJobReviewedSetRequired
-	}
-	// Likewise, a release that names a profile set aside since it was made
-	// makes no new job; a job made from it before is returned as it was.
-	if err = s.refuseSetAsideMapping(r.InputMapping); err != nil {
-		return Job{}, err
-	}
-	if err = admitJobPack(tx, r); err != nil {
-		return Job{}, err
-	}
-	j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest, Scope: scope, Retry: retry}
-	if c != nil {
-		var count int
-		if err = tx.QueryRow("SELECT count(*) FROM triggers").Scan(&count); err != nil {
-			return Job{}, err
-		}
-		if count >= 128 {
-			return Job{}, bad("trigger_limit", "This local runner supports up to 128 triggers.")
-		}
-		t := Trigger{ID: id("trg_"), JobID: j.ID, Revision: 1, Authority: "local", Config: *c, Paused: true, CreatedAt: now(), UpdatedAt: now(), Scope: j.Scope}
-		if c.Kind == "cloud" {
-			t.Authority = "google-cloud"
-		}
-		j.InitialTriggerID = t.ID
-		if _, err = tx.Exec("INSERT INTO triggers(id,job_id,record)VALUES(?,?,?)", t.ID, j.ID, string(encode(t))); err != nil {
-			return Job{}, err
-		}
-		if err = saveTrigger(tx, t, "", true); err != nil {
-			return Job{}, err
-		}
-	}
-	if _, err = tx.Exec("INSERT INTO jobs(id,release_id,record)VALUES(?,?,?)", j.ID, j.ReleaseID, string(encode(j))); err != nil {
-		return Job{}, err
-	}
-	if err = recordInitialJob(tx, j); err != nil {
-		return Job{}, err
-	}
-	// A store's first job under a scope identifier raises its schema in the
-	// same transaction, so that no earlier Runner opens it (scope.go).
-	if j.Scope != "" {
-		if err = raiseScopedSchema(tx); err != nil {
-			return Job{}, err
-		}
-	}
-	// Likewise its first job with a retry policy (retries.go).
-	if j.Retry != nil {
-		if err = raiseRetrySchema(tx); err != nil {
-			return Job{}, err
-		}
-	}
-	if _, err = appendEvent(tx, change{kind: "job.created", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID}, detail: EventDetail{Scope: j.Scope}}); err != nil {
-		return Job{}, err
-	}
-	if c != nil {
-		if _, err = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: j.ID, Release: j.ReleaseID, Trigger: j.InitialTriggerID}, revision: 1, states: true, to: "paused", detail: EventDetail{Scope: j.Scope, PreviousRevision: revisionValue(0), TriggerKind: c.Kind}}); err != nil {
-			return Job{}, err
-		}
-	}
-	return j, tx.Commit()
+	return made, nil
 }
 func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
 	return s.submitInternal(jobID, key, input, nil)
