@@ -88,7 +88,7 @@ func submissionClass(api *apiError) string {
 // RunCounts are what a finished run's record holds, counted
 // (docs/design/run-results.md, section 2).
 type RunCounts struct {
-	// Sources are the sources the run's verified preparation records an
+	// Sources are the sources the run's preparation records an
 	// outcome for: none for a run whose input holds no preparation.
 	Sources *int `json:"sources,omitempty"`
 	// Decisions are the decisions the record holds: 1 for a completed run,

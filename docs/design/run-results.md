@@ -29,7 +29,7 @@ disposition.
 
 Sources are reached **before** a run exists: an occurrence of a trigger whose
 input is mapped from sources acquires them, or a request that names sources
-prepares them, and the run is queued with the verified preparation in its
+prepares them, and the run is queued with the preparation in its
 input (`input.preparation`). The preparation records one outcome per source it
 prepared (`preparation.outcomes`, the case among them when the mapping reads
 one). Runner does not keep a count of the calls a preparation made, and a
@@ -55,7 +55,7 @@ written with `counts`:
 
 | Member | What it counts |
 |---|---|
-| `sources` | the sources the run's verified preparation records an outcome for (`input.preparation.outcomes`); absent for a run whose input holds no preparation (facts given directly, or a file or constant input) |
+| `sources` | the sources the run's preparation records an outcome for (`input.preparation.outcomes`); absent for a run whose input holds no preparation (facts given directly, or a file or constant input) |
 | `decisions` | the decisions the run's record holds: 1 for a completed run, 0 for any other |
 | `byKind` | those decisions by disposition kind, `outcome`, `unresolved` or `not-applicable`, as the Runtime wrote it; `{}` when there are none |
 | `byOutcome` | those of kind `outcome`, by `outcomeId`; `{}` when there are none |
@@ -173,8 +173,9 @@ or without them. Nothing is counted across rows.
 raised: the filters read members of records the store already keeps, as `q`
 and `scope` do, at the same cost: a listing walks from its newest row and
 stops at a page of matches. An earlier Runner that opens a store this Runner
-wrote ignores the new members of a run (it decodes runs leniently and never
-rewrites a finished one), and serves an entry of `"5"` without the members it
+wrote ignores the new members of a run (it decodes runs leniently, and
+rewrites a finished run only to queue an interrupted one again, which drops
+them as this Runner does), and serves an entry of `"5"` without the members it
 does not know, since it reads an entry's detail into its own form; the store
 keeps them, and this Runner serves them again. The listings are statements
 outside the store contract (`store-interface.md`, section 6), so the filters

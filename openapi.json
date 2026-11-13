@@ -8288,7 +8288,7 @@
           "sources": {
             "type": "integer",
             "minimum": 0,
-            "description": "The sources the run's verified preparation records an outcome for (input.preparation.outcomes, the case among them when the mapping reads one). Absent for a run whose input holds no preparation."
+            "description": "The sources the run's preparation records an outcome for (input.preparation.outcomes, the case among them when the mapping reads one). Absent for a run whose input holds no preparation."
           },
           "decisions": {
             "type": "integer",

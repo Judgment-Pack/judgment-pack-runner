@@ -89,7 +89,9 @@ by the read.
   `scope` an entry of `"1"` or `"2"` never holds. Later again, with
   [retries](retries.md): `"4"` for an entry that holds the member `attempt`,
   whatever its `by` and scope, which an entry of `"1"`, `"2"` or `"3"` never
-  holds.)
+  holds. Later again, with [run results](run-results.md): `"5"` for an entry
+  that holds `disposition`, `errorClass` or `counts`, whatever its `by`, scope
+  and attempt, which an entry of `"1"` to `"4"` never holds.)
 - `kind`: one of the kinds below.
 - `at`: when Runner wrote the entry, by its own clock, in the form of every
   time Runner records (`model.go:109`). Order is `sequence`, never `at`.
@@ -207,6 +209,13 @@ occurrence's `occurrence.failed` or `occurrence.ready` after an attempt carries
 that attempt too. A run moved back to `queued` from `interrupted` by an explicit
 retry writes `run.queued`, from `interrupted`, by the installation or the
 caller, carrying the kept attempt as `attempt`.
+
+Later, with [run results](run-results.md): the entry of a run's end
+(`run.completed`, `run.failed`, `run.expired`, `run.interrupted`) carries the
+run's `counts`; `run.completed` carries `disposition`, the decision's `kind`
+and, for kind `outcome`, its `outcomeId`; the others carry the run's
+`errorClass`. `occurrence.failed` and `occurrence.expired` carry the
+occurrence's `errorClass`. No kind is added.
 
 ### Where each is written
 
@@ -563,6 +572,17 @@ around and follow the journal forward from any page. An empty backward page has
 request that sends neither parameter is answered as before, without the
 `before` member. A Runner that accepts the parameters lists `journal-backward`
 among its capabilities.
+
+**Filters.** Later, with [run results](run-results.md), both routes take
+`outcome=<outcomeId>`, the entries whose `disposition` is of kind `outcome`
+with that identifier; `errorClass=<class>`, the entries that carry that class;
+and `kind=<kind>`, the entries of that kind. Each may be repeated, up to 10
+times, for any of its values, and the three, `job` and `scope` combine by AND
+before the page is cut, in either direction. With `job` and a filter, Runner's
+own entries are kept only by a `kind` that names them. A value out of form, an unknown class
+or kind, or more than 10 of one, is a 400 `invalid_filter`. A Runner that
+accepts them lists `run-results` among its capabilities. A consumer of finished
+runs follows the journal with `kind` from its cursor: no push is made.
 
 ## 6. What the journal establishes, and what it does not
 
