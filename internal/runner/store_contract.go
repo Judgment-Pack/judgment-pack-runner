@@ -242,11 +242,49 @@ type (
 	}
 )
 
+// storeScope is the scope a transaction, or a read outside one, is held to
+// (docs/design/store-postgresql.md, sections 2 and 6). A store as a kind
+// opens it does the work for every scope: the dispatcher's, the ticks', the
+// restart's, and a listing's or a journal read's that names no scope. A
+// request's transactions and reads are made through heldTo, held to the
+// scope identifier the request names, or to none.
+//
+// A transaction held to a scope reads and writes only the records that carry
+// that scope identifier ("" being none), and the records no scope narrows:
+// releases, the chain of runs, the profile rows, and the rules held for the
+// installation (the counts of runs, triggers and occurrences, the pack and
+// dialect identities, the keys a record is created once under: D9). A record
+// of another scope reads absent; a write of one is refused. The journal is
+// read as section 6 says: a scope's entries, and the none scope's entries
+// that name no job.
+//
+// The zero value is the none scope, never every scope: a transaction held to
+// it by mistake reaches no other scope's record.
+type storeScope struct {
+	// every is the work for every scope; id means nothing with it.
+	every bool
+	// id is the scope identifier, "" for none.
+	id string
+}
+
+// everyScope is the work for every scope.
+var everyScope = storeScope{every: true}
+
+// scopeHeld is a transaction held to the scope identifier id, "" for none.
+func scopeHeld(id string) storeScope { return storeScope{id: id} }
+
+// reaches says whether sc reaches a record that carries scope ("" for none).
+func (sc storeScope) reaches(scope string) bool { return sc.every || sc.id == scope }
+
 // runStore is the Runner's durable state for the queue, releases, inputs and
 // run records, behind one contract.
 type runStore interface {
 	storeReads
 	journalReads
+	// heldTo is the store with every read and transaction held to sc
+	// (storeScope). A kind that holds no policy of its own, the sqlite kind,
+	// returns the store as it is: its one process holds every scope.
+	heldTo(sc storeScope) runStore
 	// update runs fn in one transaction and keeps what it wrote only if fn
 	// returns nil and the commit succeeds. Transactions are serializable: one
 	// sees every write of each that committed before it began, and none of

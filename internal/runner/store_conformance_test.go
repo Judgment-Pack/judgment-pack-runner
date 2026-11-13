@@ -39,6 +39,11 @@ type storeKindUnderTest struct {
 	failCommits func(st runStore, err error)
 	// spoil makes a run's record not read as one.
 	spoil func(t *testing.T, st runStore, run string)
+	// holdsScopes says the kind holds the row policy of a scope
+	// (store-postgresql.md, section 6): a store held to one (heldTo) reads
+	// and writes that scope's records alone. The sqlite kind holds none, its
+	// one process holding every scope.
+	holdsScopes bool
 	// own are the kind's own cases.
 	own []storeCase
 }
@@ -114,6 +119,7 @@ func storeKindsUnderTest() []storeKindUnderTest {
 		},
 		{
 			name:        "memory",
+			holdsScopes: true,
 			open:        func(t *testing.T) runStore { return newMemoryStore() },
 			seedJob:     func(t *testing.T, st runStore, j Job) { memoryOf(st).seedJob(j) },
 			schema:      func(t *testing.T, st runStore) string { return memoryOf(st).heldSchema() },
@@ -124,6 +130,7 @@ func storeKindsUnderTest() []storeKindUnderTest {
 		// every transaction's fn run twice, the first run thrown away.
 		{
 			name:        "twice",
+			holdsScopes: true,
 			open:        func(t *testing.T) runStore { return &twiceStore{runStore: newMemoryStore(), record: newTwiceRecord()} },
 			seedJob:     func(t *testing.T, st runStore, j Job) { memoryOf(st).seedJob(j) },
 			schema:      func(t *testing.T, st runStore) string { return memoryOf(st).heldSchema() },
@@ -140,7 +147,7 @@ func memoryOf(st runStore) *memoryStore { return underlying(st).(*memoryStore) }
 func TestStoreKindsConform(t *testing.T) {
 	for _, k := range storeKindsUnderTest() {
 		t.Run(k.name, func(t *testing.T) {
-			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, k.own) {
+			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, k.own) {
 				t.Run(c.name, func(t *testing.T) { c.run(t, k) })
 			}
 		})

@@ -11,7 +11,7 @@ import (
 func (r memoryReads) jobCreation(release string) (Job, error) {
 	var j Job
 	b, ok := r.s.creations[release]
-	if !ok {
+	if !ok || !r.sees(b) {
 		return j, storeFailure(faultAbsent, "job", errNotHeld)
 	}
 	if err := json.Unmarshal(b, &j); err != nil {
@@ -23,7 +23,7 @@ func (r memoryReads) jobCreation(release string) (Job, error) {
 func (r memoryReads) releaseUses(release string) (int, error) {
 	count := 0
 	for _, v := range r.s.revisions {
-		if v.release == release {
+		if v.release == release && r.sees(v.record) {
 			count++
 		}
 	}
@@ -33,7 +33,7 @@ func (r memoryReads) releaseUses(release string) (int, error) {
 func (r memoryReads) jobRevision(job string, revision int) (Job, string, error) {
 	var j Job
 	for _, v := range r.s.revisions {
-		if v.job == job && v.revision == revision {
+		if v.job == job && v.revision == revision && r.sees(v.record) {
 			if err := json.Unmarshal(v.record, &j); err != nil {
 				return j, v.request, storeFailure(faultUnreadable, "job", err)
 			}
@@ -45,6 +45,7 @@ func (r memoryReads) jobRevision(job string, revision int) (Job, string, error) 
 
 // revisionReleases are the releases the job revisions name, as the sqlite
 // kind's join reads them: a revision whose release is not held is not read.
+// Every scope's: a pack or dialect identity is the installation's (D9).
 func (r memoryReads) revisionReleases() ([]Release, error) {
 	var releases []Release
 	for _, v := range r.s.revisions {
@@ -127,6 +128,9 @@ func (t *memoryTx) revisionTaken(job string, revision int, release string) bool 
 // job_creations, a release, follows from the unique release of job_revisions:
 // every creation is kept with a revision naming its release.
 func (t *memoryTx) createJob(j Job) error {
+	if err := t.admits("job", encode(j)); err != nil {
+		return err
+	}
 	if _, held := t.s.jobs[j.ID]; held || t.revisionTaken(j.ID, j.Revision, j.ReleaseID) {
 		return storeFailure(faultTaken, "job", errTaken)
 	}
@@ -137,8 +141,11 @@ func (t *memoryTx) createJob(j Job) error {
 }
 
 func (t *memoryTx) reviseJob(j Job, request string) error {
-	if _, held := t.s.jobs[j.ID]; !held {
+	if b, held := t.s.jobs[j.ID]; !held || !t.sees(b) {
 		return storeFailure(faultAbsent, "job", errNotHeld)
+	}
+	if err := t.admits("job", encode(j)); err != nil {
+		return err
 	}
 	if t.revisionTaken(j.ID, j.Revision, j.ReleaseID) {
 		return storeFailure(faultTaken, "job", errTaken)
@@ -151,7 +158,7 @@ func (t *memoryTx) reviseJob(j Job, request string) error {
 func (t *memoryTx) openOccurrences(job string) (int, error) {
 	count := 0
 	for _, h := range t.s.automation.occurrences {
-		if h.job == job && slices.Contains([]string{"accepted", "preparing", "waiting", "needs-attention"}, h.state) {
+		if h.job == job && slices.Contains([]string{"accepted", "preparing", "waiting", "needs-attention"}, h.state) && t.sees(h.record) {
 			count++
 		}
 	}
@@ -161,7 +168,7 @@ func (t *memoryTx) openOccurrences(job string) (int, error) {
 func (t *memoryTx) triggerRecords(job string) ([]Trigger, error) {
 	var triggers []Trigger
 	for _, h := range t.s.automation.triggers {
-		if h.job != job {
+		if h.job != job || !t.sees(h.record) {
 			continue
 		}
 		var tr Trigger
@@ -175,9 +182,12 @@ func (t *memoryTx) triggerRecords(job string) ([]Trigger, error) {
 
 func (t *memoryTx) reviseTrigger(tr Trigger) error {
 	a := &t.s.automation
-	i := slices.IndexFunc(a.triggers, func(h memoryTrigger) bool { return h.id == tr.ID })
+	i := slices.IndexFunc(a.triggers, func(h memoryTrigger) bool { return h.id == tr.ID && t.sees(h.record) })
 	if i < 0 {
 		return storeFailure(faultAbsent, "trigger", errNotHeld)
+	}
+	if err := t.admits("trigger", encode(tr)); err != nil {
+		return err
 	}
 	if taken, err := a.boundElsewhere(tr); err != nil || taken {
 		if err != nil {

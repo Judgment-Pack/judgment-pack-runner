@@ -245,6 +245,10 @@ func (k *sqliteStore) migrate() error {
 	return tx.Commit()
 }
 
+// heldTo ignores the scope: the kind holds no row policy, and its lock keeps
+// every other process out (docs/design/store-postgresql.md, section 2).
+func (k *sqliteStore) heldTo(storeScope) runStore { return k }
+
 // close closes the database, then gives the lock up.
 func (k *sqliteStore) close() error {
 	err := k.db.Close()

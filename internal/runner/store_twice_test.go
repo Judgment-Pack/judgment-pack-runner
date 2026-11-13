@@ -131,6 +131,12 @@ func (k *twiceStore) update(fn func(runTx) error) error {
 	return k.runStore.update(fn)
 }
 
+// heldTo keeps the view held to a scope under the mode: its transactions too
+// are run twice.
+func (k *twiceStore) heldTo(sc storeScope) runStore {
+	return &twiceStore{runStore: k.runStore.heldTo(sc), record: k.record}
+}
+
 // transactionOpener is the function that called update, as runtime names
 // it without its package: "(*Service).createJobWith", "finishRunIn". A
 // closure is its enclosing function's.

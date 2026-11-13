@@ -113,13 +113,16 @@ func (a *memoryAutomation) boundElsewhere(t Trigger) (bool, error) {
 	return false, nil
 }
 
-// bindings counts, as the sqlite kind's statement does, the triggers other
-// than except whose record names a cloud binding to connection and job,
-// whatever their kind.
-func (a *memoryAutomation) bindings(except, connection, job string) (int, []string, error) {
+// bindings counts, as the sqlite kind's statement does, the triggers r's
+// scope reaches other than except whose record names a cloud binding to
+// connection and job, whatever their kind.
+func (r memoryReads) bindings(except, connection, job string) (int, []string, error) {
 	count := 0
 	var ids []string
-	for _, h := range a.triggers {
+	for _, h := range r.s.automation.triggers {
+		if !r.sees(h.record) {
+			continue
+		}
 		t, err := h.decode()
 		if err != nil {
 			return 0, nil, err
@@ -134,7 +137,7 @@ func (a *memoryAutomation) bindings(except, connection, job string) (int, []stri
 
 func (r memoryReads) trigger(id string) (Trigger, string, error) {
 	for _, h := range r.s.automation.triggers {
-		if h.id == id {
+		if h.id == id && r.sees(h.record) {
 			t, err := h.decode()
 			return t, h.hash, err
 		}
@@ -142,16 +145,20 @@ func (r memoryReads) trigger(id string) (Trigger, string, error) {
 	return Trigger{}, "", storeFailure(faultAbsent, "trigger", errNotHeld)
 }
 
+// triggerCount counts every scope's triggers: the bound is the
+// installation's (D9).
 func (r memoryReads) triggerCount() (int, error) { return len(r.s.automation.triggers), nil }
 
+// cloudBindings counts the bindings r's scope reaches; the binding's key is
+// the installation's, met by the write (boundElsewhere).
 func (r memoryReads) cloudBindings(except, connection, job string) (int, error) {
-	count, _, err := r.s.automation.bindings(except, connection, job)
+	count, _, err := r.bindings(except, connection, job)
 	return count, err
 }
 
 func (r memoryReads) occurrence(id string) (Occurrence, error) {
 	for _, h := range r.s.automation.occurrences {
-		if h.id == id {
+		if h.id == id && r.sees(h.record) {
 			return h.decode()
 		}
 	}
@@ -160,7 +167,7 @@ func (r memoryReads) occurrence(id string) (Occurrence, error) {
 
 func (r memoryReads) identifiedOccurrence(trigger, identity string) (Occurrence, string, error) {
 	for _, h := range r.s.automation.occurrences {
-		if h.trigger == trigger && h.identity == identity {
+		if h.trigger == trigger && h.identity == identity && r.sees(h.record) {
 			o, err := h.decode()
 			return o, h.payload, err
 		}
@@ -203,6 +210,9 @@ func (m *memoryStore) enabledTriggers() ([]string, error) {
 	defer m.mu.RUnlock()
 	ids := []string{}
 	for _, h := range m.state.automation.triggers {
+		if !m.reads().sees(h.record) {
+			continue
+		}
 		t, err := h.decode()
 		if err != nil {
 			return nil, err
@@ -229,7 +239,7 @@ func (m *memoryStore) readyOccurrence() (Occurrence, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, h := range m.state.automation.occurrences {
-		if h.state != "accepted" {
+		if h.state != "accepted" || !m.reads().sees(h.record) {
 			continue
 		}
 		if pending, err := pendingInput(h.record); err != nil || pending {
@@ -247,6 +257,9 @@ func (m *memoryStore) preparableOccurrences(each func(Occurrence) (bool, error))
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, h := range m.state.automation.occurrences {
+		if !m.reads().sees(h.record) {
+			continue
+		}
 		keep := h.state == "waiting"
 		if h.state == "accepted" {
 			pending, err := pendingInput(h.record)
@@ -272,7 +285,7 @@ func (m *memoryStore) preparableOccurrences(each func(Occurrence) (bool, error))
 func (m *memoryStore) cloudBoundTrigger(connection, job string) (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	_, ids, err := m.state.automation.bindings("", connection, job)
+	_, ids, err := m.reads().bindings("", connection, job)
 	if err != nil {
 		return "", err
 	}
@@ -287,7 +300,7 @@ func (m *memoryStore) jobTriggers(job string) ([]Trigger, error) {
 	defer m.mu.RUnlock()
 	items := []Trigger{}
 	for _, h := range m.state.automation.triggers {
-		if h.job != job {
+		if h.job != job || !m.reads().sees(h.record) {
 			continue
 		}
 		var t Trigger
@@ -310,7 +323,7 @@ func (m *memoryStore) occurrencePage(job string, before int64, preparations bool
 	held := m.state.automation.occurrences
 	for i := len(held) - 1; i >= 0; i-- {
 		h := held[i]
-		if h.job != job || h.seq >= before {
+		if h.job != job || h.seq >= before || !m.reads().sees(h.record) {
 			continue
 		}
 		if preparations {
@@ -344,9 +357,9 @@ func (m *memoryStore) keyedOccurrence(id, trigger, hash string) (Occurrence, err
 		return Occurrence{}, storeFailure(faultAbsent, "occurrence", errNotHeld)
 	}
 	for _, t := range a.triggers {
-		if t.id == trigger && t.hash == hash {
+		if t.id == trigger && t.hash == hash && m.reads().sees(t.record) {
 			for _, h := range a.occurrences {
-				if h.id == id && h.trigger == trigger {
+				if h.id == id && h.trigger == trigger && m.reads().sees(h.record) {
 					return h.decode()
 				}
 			}
@@ -357,6 +370,9 @@ func (m *memoryStore) keyedOccurrence(id, trigger, hash string) (Occurrence, err
 
 func (t *memoryTx) createTrigger(tr Trigger) error {
 	a := &t.s.automation
+	if err := t.admits("trigger", encode(tr)); err != nil {
+		return err
+	}
 	for _, h := range a.triggers {
 		if h.id == tr.ID {
 			return storeFailure(faultTaken, "trigger", errTaken)
@@ -375,9 +391,12 @@ func (t *memoryTx) createTrigger(tr Trigger) error {
 
 func (t *memoryTx) putTrigger(tr Trigger, hash string, history bool) error {
 	a := &t.s.automation
-	i := slices.IndexFunc(a.triggers, func(h memoryTrigger) bool { return h.id == tr.ID })
+	i := slices.IndexFunc(a.triggers, func(h memoryTrigger) bool { return h.id == tr.ID && t.sees(h.record) })
 	if i < 0 {
 		return storeFailure(faultAbsent, "trigger", errNotHeld)
+	}
+	if err := t.admits("trigger", encode(tr)); err != nil {
+		return err
 	}
 	if taken, err := a.boundElsewhere(tr); err != nil || taken {
 		if err != nil {
@@ -404,6 +423,9 @@ func (t *memoryTx) putTrigger(tr Trigger, hash string, history bool) error {
 
 func (t *memoryTx) createOccurrence(o Occurrence, identity, payload string) error {
 	a := &t.s.automation
+	if err := t.admits("occurrence", encode(o)); err != nil {
+		return err
+	}
 	for _, h := range a.occurrences {
 		if h.id == o.ID || h.trigger == o.TriggerID && h.identity == identity {
 			return storeFailure(faultTaken, "occurrence", errTaken)
@@ -418,8 +440,11 @@ func (t *memoryTx) putOccurrence(o Occurrence, expected string) (string, error) 
 	a := &t.s.automation
 	for i := range a.occurrences {
 		h := &a.occurrences[i]
-		if h.id != o.ID {
+		if h.id != o.ID || !t.sees(h.record) {
 			continue
+		}
+		if err := t.admits("occurrence", encode(o)); err != nil {
+			return h.state, err
 		}
 		from := h.state
 		if expected != anyState && from != expected {
@@ -431,7 +456,12 @@ func (t *memoryTx) putOccurrence(o Occurrence, expected string) (string, error) 
 	return "", storeFailure(faultAbsent, "occurrence", errNotHeld)
 }
 
+// createOccurrenceKey binds an occurrence its transaction's scope reaches: a
+// key carries its occurrence's scope (D5).
 func (t *memoryTx) createOccurrenceKey(occurrence, hash string) error {
+	if _, err := t.occurrence(occurrence); err != nil && !t.scope.every {
+		return storeFailure(faultRefused, "occurrence", errOtherScope)
+	}
 	if _, held := t.s.automation.keys[occurrence]; held {
 		return storeFailure(faultTaken, "occurrence", errTaken)
 	}
@@ -439,6 +469,8 @@ func (t *memoryTx) createOccurrenceKey(occurrence, hash string) error {
 	return nil
 }
 
+// pendingOccurrences counts every scope's occurrences: the automatic queue's
+// limit is the installation's (D9).
 func (t *memoryTx) pendingOccurrences() (int, error) {
 	count := 0
 	for _, h := range t.s.automation.occurrences {
@@ -452,12 +484,12 @@ func (t *memoryTx) pendingOccurrences() (int, error) {
 func (t *memoryTx) jobActivity(job string) (int, error) {
 	count := 0
 	for _, r := range t.s.runs {
-		if r.job == job && (r.state == "queued" || r.state == "running") {
+		if r.job == job && (r.state == "queued" || r.state == "running") && t.sees(r.record) {
 			count++
 		}
 	}
 	for _, h := range t.s.automation.occurrences {
-		if h.job == job && slices.Contains([]string{"accepted", "preparing", "waiting", "needs-attention"}, h.state) {
+		if h.job == job && slices.Contains([]string{"accepted", "preparing", "waiting", "needs-attention"}, h.state) && t.sees(h.record) {
 			count++
 		}
 	}
@@ -467,7 +499,7 @@ func (t *memoryTx) jobActivity(job string) (int, error) {
 func (t *memoryTx) preparingOccurrences() ([]Occurrence, error) {
 	var occurrences []Occurrence
 	for _, h := range t.s.automation.occurrences {
-		if h.state != "preparing" {
+		if h.state != "preparing" || !t.sees(h.record) {
 			continue
 		}
 		o, err := h.decode()
@@ -482,7 +514,7 @@ func (t *memoryTx) preparingOccurrences() ([]Occurrence, error) {
 func (t *memoryTx) lastPreparing(occurrence string) (string, error) {
 	for i := len(t.s.journal) - 1; i >= 0; i-- {
 		row := t.s.journal[i]
-		if row.kind != "occurrence.preparing" {
+		if row.kind != "occurrence.preparing" || !t.seesEntry(row) {
 			continue
 		}
 		concerned, _, err := memberText([]byte(row.concerns), "occurrence")
