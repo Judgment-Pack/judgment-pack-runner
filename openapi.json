@@ -41,7 +41,7 @@
             }
           }
         },
-        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. scope-identifiers means a job may be created under a scope identifier, which its records carry, the store-wide listings filter by, and every request that names one of them names (ScopeIdentifier). With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
+        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. scope-identifiers means a job may be created under a scope identifier, which its records carry, the store-wide listings filter by, and every request that names one of them names (ScopeIdentifier). retries means a job may be created with a retry policy (RetryPolicy), and an interrupted run may be retried (retryRun). With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
       }
     },
     "/health": {
@@ -750,6 +750,85 @@
           },
           "default": {
             "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ]
+      }
+    },
+    "/runs/{run}/retry": {
+      "parameters": [
+        {
+          "name": "run",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "retryRun",
+        "description": "Queues an interrupted run again, as the same run (docs/design/retries.md, section 6). Its interrupted attempt is kept in attempts (runner-stopped, with endedAt its interruptedAt, or runner-restarted); the run returns to queued with startedAt, finishedAt, problem and interruptedAt cleared and attempt unchanged, and the dispatcher makes the next attempt, which evaluates into its own directory (attempts/<run>.<n>), leaving the first attempt's as it was. A retried trigger run is held to its queue deadline and to source freshness at dispatch, as every attempt is, and keeps its place in the store's order of insertion. The original event id, or Idempotency-Key, of the run returns the run as it now is and queues nothing. Journaled run.queued from interrupted, with the kept attempt; a refusal of a run the store holds is journaled admission.refused, request retry-run. The job's retry policy does not apply: a run is retried only when asked, up to 10 attempts. Refused under the manual-admission gate (manual_unsupported). A store's first retry raises its schema to 6.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "attempt"
+                ],
+                "properties": {
+                  "attempt": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The run's attempt as the caller last read it."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run, queued again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "The run as it now is, for a request whose attempt names an attempt already retried: a repeated request changes nothing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused: 400 invalid_request; 404 not_found; 409 run_not_retryable, for a run in any state but interrupted, an interrupted run whose record holds an audit record, a trigger run whose queue deadline has passed, or a run at 10 attempts; 409 attempt_mismatch, for an attempt that is neither the run's nor one already retried; 429 queue_full; 503 dispatcher_stopped.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2874,6 +2953,10 @@
           "scope": {
             "$ref": "#/components/schemas/ScopeIdentifier",
             "description": "The scope identifier the job is created under, fixed for as long as the job exists. Absent, the job has none. Written null, empty or out of form, the creation is refused (invalid_scope). A repeated creation from the same release must name the same one."
+          },
+          "retry": {
+            "$ref": "#/components/schemas/RetryPolicy",
+            "description": "The job's retry policy. Absent, the job makes one attempt. Written null, out of form or out of bounds, or under a name that only folds to retry or to one of its members, the creation is refused (422 invalid_retry_policy). A repeated creation from the same release must name the same policy, or none. Refused under the manual-admission gate (manual_unsupported)."
           }
         },
         "required": [
@@ -2888,6 +2971,84 @@
         "type": "string",
         "minLength": 1,
         "description": "A scope identifier (docs/design/scope-identifiers.md): an opaque label of at least one code point and at most 128 bytes of UTF-8, not 128 characters (the gateway's bound, in bytes; maxLength counts characters, so none is stated), with no code point of General_Category Cc (tab and line feed among them), Co or Cn, Bidi_Control, Default_Ignorable_Code_Point or Noncharacter_Code_Point, as Unicode 15.0.0 assigns them; the gateway's rule for its own scope identifier, meant to stay the same. Compared as written, byte for byte: nothing is folded, trimmed or normalized. A label and a filter, not an authorization boundary: every request the API admits may name any scope, or none to list every scope's records."
+      },
+      "RetryPolicy": {
+        "type": "object",
+        "description": "A job's retry policy, fixed when the job is created (docs/design/retries.md). It governs the source acquisition of the job's occurrences over a Gateway connection that is not durable: an attempt whose call the gateway answered 429 or 503, with no earlier call of the attempt answered, is made again after min(backoffSeconds × 2^(n−1), maxBackoffSeconds) seconds and no sooner than the answer's Retry-After, up to maxAttempts attempts. A wait past 3600 seconds or the occurrence's expiresAt fails the occurrence (retry-wait-too-long) rather than be shortened. Nothing else is retried. Absent, a job makes one attempt.",
+        "required": [
+          "maxAttempts",
+          "backoffSeconds",
+          "maxBackoffSeconds"
+        ],
+        "properties": {
+          "maxAttempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "backoffSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "maxBackoffSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600,
+            "description": "At least backoffSeconds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Attempt": {
+        "type": "object",
+        "description": "One attempt: an occurrence's source acquisition, for a job with a retry policy, or a run's evaluation kept when the run was retried (docs/design/retries.md).",
+        "required": [
+          "number",
+          "delaySeconds"
+        ],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "delaySeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The wait that preceded the attempt: 0 for the first, and for a run's attempt a caller asked for."
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "endedAt": {
+            "type": "string",
+            "description": "Absent for an attempt Runner did not see end: one in flight at a restart."
+          },
+          "outcome": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "transient",
+              "interrupted"
+            ],
+            "description": "succeeded; failed, a failure that is not retried; transient, a gateway answer of 429 or 503, retried while attempts are left; interrupted, in flight when Runner stopped. Absent while the attempt is in flight."
+          },
+          "reason": {
+            "type": "string",
+            "description": "An acquisition's error code (gateway_refused, gateway_unavailable and the others an acquisition answers), or, for a run's kept attempt, runner-stopped (Runner saw it stop) or runner-restarted (found running at a restart)."
+          },
+          "status": {
+            "type": "integer",
+            "description": "The gateway's answer's HTTP status, when the gateway answered with one other than 200."
+          },
+          "retryAfterSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The wait the gateway's Retry-After asked for, in whole seconds rounded up, when it carried one in either form."
+          }
+        },
+        "additionalProperties": false
       },
       "Job": {
         "type": "object",
@@ -2973,6 +3134,10 @@
           "scope": {
             "$ref": "#/components/schemas/ScopeIdentifier",
             "description": "The scope identifier the job was created under; absent for a job created under none."
+          },
+          "retry": {
+            "$ref": "#/components/schemas/RetryPolicy",
+            "description": "The retry policy the job was created with, kept by every upgrade; absent for a job created without one."
           }
         },
         "required": [
@@ -3125,7 +3290,8 @@
           "attempt": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 10,
+            "description": "The run's current attempt: 0 while it was never started, 1 for its first, and one more for each retry a caller asked for (POST /v1/runs/{run}/retry)."
           },
           "result": {
             "type": "object"
@@ -3225,6 +3391,14 @@
           "scope": {
             "$ref": "#/components/schemas/ScopeIdentifier",
             "description": "The scope identifier of the run's job, fixed when the run is queued; absent for a job created under none. Not part of a verification export."
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attempt"
+            },
+            "maxItems": 9,
+            "description": "The run's attempts before its current one, each kept, interrupted, when a caller retried the run. Absent for a run never retried. Served with the run and in run lists; not in verification exports, nor in the run's entry in the chain of runs."
           }
         }
       },
@@ -5757,7 +5931,8 @@
             "type": "string"
           },
           "reason": {
-            "type": "string"
+            "type": "string",
+            "description": "Why the occurrence ended, in a sentence, as before; or, for an occurrence of a job with a retry policy that the policy ended, attempt-limit-reached (its last attempt allowed was transient) or retry-wait-too-long (the next attempt's wait was past 3600 seconds or the occurrence's expiresAt)."
           },
           "missedFrom": {
             "type": "string",
@@ -5783,6 +5958,18 @@
           "scope": {
             "$ref": "#/components/schemas/ScopeIdentifier",
             "description": "The scope identifier of the occurrence's job; absent for a job created under none."
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attempt"
+            },
+            "maxItems": 10,
+            "description": "The occurrence's source acquisition attempts, for a job with a retry policy; absent for a job without one."
+          },
+          "nextAttemptAt": {
+            "type": "string",
+            "description": "While an occurrence of a job with a retry policy waits for its next attempt (state accepted), the time of that attempt, which Runner does not make sooner. Absent otherwise."
           }
         },
         "required": [
@@ -6341,9 +6528,10 @@
             "enum": [
               "1",
               "2",
-              "3"
+              "3",
+              "4"
             ],
-            "description": "3 for an entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, and a 3 a scoped job's, whatever its by."
+            "description": "4 for an entry that holds attempt, whatever its by or scope, which an entry of an earlier version never holds; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, and a 4 holds an attempt, whatever its by."
           },
           "kind": {
             "enum": [
@@ -6361,6 +6549,7 @@
               "occurrence.needs-attention",
               "occurrence.cancelled",
               "occurrence.reconciled",
+              "occurrence.retry-scheduled",
               "run.queued",
               "run.started",
               "run.expired",
@@ -6433,7 +6622,7 @@
           },
           "nextAt": {
             "type": "string",
-            "description": "trigger.resumed, for a schedule: its next time."
+            "description": "trigger.resumed, for a schedule: its next time; occurrence.retry-scheduled: the time of the occurrence's next attempt."
           },
           "occurrenceKind": {
             "enum": [
@@ -6501,7 +6690,8 @@
               "submit-run",
               "deliver-event",
               "create-job",
-              "cloud-signal"
+              "cloud-signal",
+              "retry-run"
             ],
             "description": "admission.refused: the request refused. A refusal's entry is best effort: if the store cannot write it, the refusal is answered as it was and has no entry."
           },
@@ -6555,6 +6745,10 @@
           "version": {
             "type": "string",
             "description": "runner.started: the Runner build."
+          },
+          "attempt": {
+            "$ref": "#/components/schemas/Attempt",
+            "description": "The attempt the change closed or kept: on occurrence.retry-scheduled, on an occurrence's change from preparing for a job with a retry policy, and on run.queued from interrupted (a retry), the interrupted attempt kept. An entry that holds it has entryVersion 4."
           }
         }
       },

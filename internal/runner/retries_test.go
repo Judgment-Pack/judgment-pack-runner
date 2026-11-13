@@ -436,6 +436,51 @@ func TestAJobIsCreatedWithARetryPolicyInForm(t *testing.T) {
 	if status := serve(t, s, "GET", "/v1/status", "", nil); !strings.Contains(status.Body.String(), `"retries"`) {
 		t.Fatal(status.Body)
 	}
+	// An upgrade names no policy and keeps the job's.
+	upgrade := UpgradeJobRequest{ReleaseID: journalRelease(t, s, runtime).ID, BaseReleaseID: j.ReleaseID, BaseRevision: j.Revision, Reviewed: true}
+	if got := serve(t, s, "POST", "/v1/jobs/"+j.ID+"/upgrade", string(encode(upgrade)), nil); got.Code != 200 {
+		t.Fatalf("the upgrade: %d %s", got.Code, got.Body)
+	}
+	upgraded, e := s.job(j.ID)
+	must(t, e)
+	if upgraded.Revision != 2 || upgraded.Retry == nil || *upgraded.Retry != *j.Retry {
+		t.Fatalf("%+v", upgraded)
+	}
+	var revisions, carrying int
+	must(t, s.db.QueryRow("SELECT count(*), count(CASE WHEN json_extract(record,'$.retry.maxAttempts')=3 THEN 1 END) FROM job_revisions WHERE job_id=?", j.ID).Scan(&revisions, &carrying))
+	if revisions == 0 || carrying != revisions {
+		t.Fatalf("revisions %d, carrying the policy %d", revisions, carrying)
+	}
+}
+
+// A store at the retry schema is relocated, and keeps its job's policy and
+// its schema.
+func TestARetryStoreIsRelocated(t *testing.T) {
+	cfg := journalConfig(t)
+	cfg.InputRoot = relocationTempDir(t)
+	s, e := Open(cfg)
+	must(t, e)
+	j, e := s.createJobWith(requester{}, "Retrying", journalRelease(t, s, s.runtimeDigest).ID, "", nil, &RetryPolicy{2, 5, 5})
+	must(t, e)
+	if schema := storeSchemaOf(t, s.db); schema != retryStoreSchema {
+		t.Fatalf("schema %s", schema)
+	}
+	s.Close()
+	next := filepath.Join(relocationTempDir(t), "moved-project")
+	must(t, os.Rename(cfg.InputRoot, next))
+	request := RelocateRequest{Version: 1, ID: strings.Repeat("c", 32), Dir: cfg.Dir, Workspace: cfg.Workspace, Owner: cfg.Owner, PreviousInputRoot: cfg.InputRoot, InputRoot: next}
+	if result, e := RelocateWorkspace(request); e != nil || result.AlreadyApplied {
+		t.Fatal(result, e)
+	}
+	cfg.InputRoot = next
+	s, e = Open(cfg)
+	must(t, e)
+	defer s.Close()
+	held, e := s.job(j.ID)
+	must(t, e)
+	if held.Retry == nil || *held.Retry != (RetryPolicy{2, 5, 5}) || storeSchemaOf(t, s.db) != retryStoreSchema {
+		t.Fatalf("%+v under schema %s", held, storeSchemaOf(t, s.db))
+	}
 }
 
 // interruptedRun is a run of a job that its first attempt left interrupted:
@@ -543,6 +588,54 @@ func TestAnInterruptedRunIsRetriedKeepingItsFirstAttempt(t *testing.T) {
 	}
 }
 
+// The event an interrupted trigger run came from, delivered again after the
+// run is retried, replays its occurrence and queues no second run.
+func TestAnEventDeliveredAgainAfterARetryQueuesNothing(t *testing.T) {
+	cfg := journalConfig(t)
+	s := openJournal(t, cfg)
+	defer s.Close()
+	runtime := completingRuntime(t, cfg.Dir)
+	j, e := s.createJob("Delivered", journalRelease(t, s, runtime).ID)
+	must(t, e)
+	tr, e := s.configureTrigger(j.ID, "", 0, eventTriggerConfig())
+	must(t, e)
+	tr, key, e := s.setTriggerState(tr.ID, tr.Revision, false, true)
+	must(t, e)
+	event := delivery("first-event")
+	o, _, e := s.event(tr.ID, key, event)
+	must(t, e)
+	must(t, s.dispatchOccurrence(storedOccurrence(t, s, o.ID), time.Now()))
+	o, e = s.occurrence(o.ID)
+	must(t, e)
+	if o.State != "submitted" || o.RunID == "" {
+		t.Fatalf("%+v", o)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, e = s.dispatchNext(ctx)
+	must(t, e)
+	if got := serve(t, s, "POST", "/v1/runs/"+o.RunID+"/retry", `{"attempt":1}`, nil); got.Code != 202 {
+		t.Fatalf("%d %s", got.Code, got.Body)
+	}
+	runs := func() (n int) {
+		must(t, s.db.QueryRow("SELECT count(*) FROM runs").Scan(&n))
+		return n
+	}
+	for _, dispatch := range []bool{false, true} {
+		if dispatch {
+			_, e = s.dispatchNext(context.Background())
+			must(t, e)
+		}
+		again, replay, e := s.event(tr.ID, key, event)
+		if e != nil || !replay || again.ID != o.ID || again.RunID != o.RunID || runs() != 1 {
+			t.Fatalf("%+v %v %v, runs %d", again, replay, e, runs())
+		}
+	}
+	if r, e := s.run(o.RunID); e != nil || r.State != "completed" || r.Attempt != 2 || len(r.Attempts) != 1 {
+		t.Fatalf("%+v %v", r, e)
+	}
+}
+
 // A run in any state but interrupted is not retried, nor one whose record
 // holds an audit record, nor one at its last attempt; each refusal is
 // journaled and changes nothing.
@@ -593,10 +686,18 @@ func TestARetryIsRefusedForARunNotInterrupted(t *testing.T) {
 		must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(next, anyState); return e }))
 		refused(next, decimalRevision(next.Attempt), "run_not_retryable")
 	}
-	for _, body := range []string{``, `{}`, `{"attempt":-1}`, `{"attempt":"1"}`, `{"attempt":1,"attempt":1}`} {
+	// A malformed request, empty, missing its attempt or oversized, is
+	// refused and journaled as a refusal of the run it names.
+	oversized := `{"attempt":1,"pad":"` + strings.Repeat("a", MaxBody) + `"}`
+	for _, body := range []string{``, `{}`, `{"attempt":-1}`, `{"attempt":"1"}`, `{"attempt":1,"attempt":1}`, oversized} {
 		if got := serve(t, s, "POST", "/v1/runs/"+r.ID+"/retry", body, nil); got.Code != 400 {
-			t.Fatalf("%s: %d %s", body, got.Code, got.Body)
+			t.Fatalf("%.40s: %d %s", body, got.Code, got.Body)
 		}
+	}
+	var malformed int
+	must(t, s.db.QueryRow("SELECT count(*) FROM events WHERE kind='admission.refused' AND json_extract(detail,'$.request')='retry-run' AND json_extract(detail,'$.code')='invalid_request' AND json_extract(concerns,'$.run')=?", r.ID).Scan(&malformed))
+	if malformed != 1 {
+		t.Fatal("malformed retries journaled:", malformed)
 	}
 	if got := serve(t, s, "POST", "/v1/runs/run_unheld/retry", `{"attempt":1}`, nil); got.Code != 404 {
 		t.Fatalf("%d %s", got.Code, got.Body)
@@ -629,50 +730,8 @@ func TestARetryNamesTheRunUnderItsScope(t *testing.T) {
 	}
 }
 
-// The contract: an interrupted run returns to queued under the state fence,
-// once, and a kind records the schema a retry raises.
-func TestARetriedRunIsQueuedOnceUnderTheFence(t *testing.T) {
-	for _, kind := range []struct {
-		name string
-		open func(t *testing.T) runStore
-	}{
-		{"sqlite", func(t *testing.T) runStore {
-			s := openJournal(t, journalConfig(t))
-			t.Cleanup(func() { s.Close() })
-			return s.store
-		}},
-		{"memory", func(t *testing.T) runStore { return newMemoryStore() }},
-	} {
-		t.Run(kind.name, func(t *testing.T) {
-			st := kind.open(t)
-			r := Run{SchemaVersion: "1", ID: "run_retried", JobID: "job_x", ReleaseID: "release_x", Revision: 1, State: "interrupted", Input: journalInput(), CreatedAt: now(), RequestedBy: "owner", Attempt: 1}
-			must(t, st.update(func(tx runTx) error { return tx.createRun(r, "owner", "k", "d") }))
-			next := r
-			next.State, next.Attempts = "queued", []Attempt{{Number: 1, Outcome: "interrupted"}}
-			queue := func() error {
-				return st.update(func(tx runTx) error {
-					if e := tx.raiseSchema(retryStoreSchema); e != nil {
-						return e
-					}
-					_, e := tx.putRun(next, "interrupted")
-					return e
-				})
-			}
-			must(t, queue())
-			if e := queue(); faultOf(e) != faultConflict {
-				t.Fatalf("a second retry: %v", e)
-			}
-			held, e := st.run(r.ID)
-			must(t, e)
-			if held.State != "queued" || len(held.Attempts) != 1 {
-				t.Fatalf("%+v", held)
-			}
-			if e = st.update(func(tx runTx) error { return tx.raiseSchema("7") }); faultOf(e) != faultRefused {
-				t.Fatalf("an unknown schema: %v", e)
-			}
-		})
-	}
-}
+// The contract's retry is a case of the conformance suite
+// (store_conformance_test.go): an interrupted run is queued again once.
 
 // A record without a retry policy or an attempt is written byte for byte as
 // before (the literals of TestARecordWithoutAScopeIsWrittenAsBefore), and a

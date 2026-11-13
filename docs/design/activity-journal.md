@@ -86,7 +86,10 @@ by the read.
   caller, whose members an entry of `"1"` never holds. Later again, with
   [scope identifiers](scope-identifiers.md): `"3"` for an entry about a job
   created under a scope identifier, whatever its `by`, which holds the member
-  `scope` an entry of `"1"` or `"2"` never holds.)
+  `scope` an entry of `"1"` or `"2"` never holds. Later again, with
+  [retries](retries.md): `"4"` for an entry that holds the member `attempt`,
+  whatever its `by` and scope, which an entry of `"1"`, `"2"` or `"3"` never
+  holds.)
 - `kind`: one of the kinds below.
 - `at`: when Runner wrote the entry, by its own clock, in the form of every
   time Runner records (`model.go:109`). Order is `sequence`, never `at`.
@@ -196,6 +199,15 @@ The issue's list is here, with five more: `occurrence.preparing` and
 where the journal starts; `runner.started` is the restart's own entry the issue
 asks for; and `runner.stopped` tells an orderly stop from a crash.
 
+Later, with [retries](retries.md): `occurrence.retry-scheduled`, from
+`preparing` to `accepted`, by `runner`, when an acquisition attempt of a job
+with a retry policy ends in a failure Runner retries. It carries `nextAt`, the
+time of the next attempt, and `attempt`, the attempt that ended. An
+occurrence's `occurrence.failed` or `occurrence.ready` after an attempt carries
+that attempt too. A run moved back to `queued` from `interrupted` by an explicit
+retry writes `run.queued`, from `interrupted`, by the installation or the
+caller, carrying the kept attempt as `attempt`.
+
 ### Where each is written
 
 Each kind is written by the function that makes the change, in its transaction.
@@ -304,6 +316,8 @@ Members: `request`, `status` and `code` (or `reason`, for a cloud signal), and
 - `cloud-signal`: a signal Runner discards (`cloud.go:99-134`), whose reason it
   reports today only as the connection's latest problem, held in memory
   (`cloud.go:49-56`).
+- Later, with [retries](retries.md), `retry-run`: `POST /v1/runs/{run}/retry`,
+  naming a run the store holds. Its entry names the run in `concerns`.
 
 A refusal is journaled when it is answered 400, 401, 409, 422 or 429 to a
 request that names a job, trigger or release the store holds, and for every
@@ -322,7 +336,9 @@ trigger or release, and code (for a cloud signal, the same connection and
 reason), written in the last 60 seconds. The check reads
 the journal in the refusal's own transaction, so it holds across a restart and
 keeps nothing in memory. `coalescedSeconds: 60` tells a reader that identical
-refusals in the 60 seconds after the entry are not entries.
+refusals in the 60 seconds after the entry are not entries. (Later, with
+[retries](retries.md): a refusal that names a run is the same only for the same
+run, so one run's refused retry does not hide another's.)
 
 **Runner and the journal.**
 

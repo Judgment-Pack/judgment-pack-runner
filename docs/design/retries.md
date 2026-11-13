@@ -240,6 +240,17 @@ its `by` and scope (an entry of `"4"` may hold a caller and a scope as well).
 Every other entry keeps its version. The kind `occurrence.retry-scheduled` is
 new; `run.queued` from `interrupted` is the existing kind with a `from`.
 
+A refused retry names its run in `concerns`, and the refusal's coalescing key
+names the run too, so that one run's refusal within the minute does not hide
+another's. Every other refusal names no run and keeps its key. A malformed
+retry request (empty, without `attempt`, or over the body limit) naming a run
+the store holds is journaled as `400` `invalid_request`.
+
+The journal's test that walks every change of state through one store at
+schema `"3"` and entry version `"1"` does not walk `occurrence.retry-scheduled`,
+which needs a job with a policy and so a store at `"6"`; the kind is covered by
+the retry tests instead.
+
 ## 8. The store, and going back
 
 No table or column is added. A job's `retry`, an occurrence's `attempts` and
