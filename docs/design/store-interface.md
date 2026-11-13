@@ -244,3 +244,84 @@ both kinds' cases to have run and passed.
   and the lock. The lock is still given up last.
 - Errors from the contract's operations carry a fault; their text and what `errors.Is` reaches are
   unchanged.
+
+## 9. Everything a Runner keeps
+
+Issue #244 puts everything a Runner keeps behind the contract, so that a second storage kind
+([store-postgresql.md](store-postgresql.md)) is a kind and not a second Runner. This section is
+the inventory it starts from: every piece of state a Runner writes, read from the statements on
+main at v0.31.0 (found by searching every non-test file of `internal/runner` for `INSERT`,
+`UPDATE`, `DELETE`, `CREATE` and for paths joined to the state directory), not from this note's
+earlier sections.
+
+"Behind the contract" is the state before #244. "Scope" says whether a row carries a scope
+identifier ([scope-identifiers.md](scope-identifiers.md)) a second storage kind can key a row
+policy on. "Append-only" says whether a row, once written, is never changed or removed by the
+Runner.
+
+### 9.1 The database (`runs.sqlite`)
+
+| State | Table (columns) | Written by | Behind the contract | Scope | Append-only |
+|---|---|---|---|---|---|
+| The store's identity and schema | `metadata` (`workspace`, `owner`, `inputRoot`, `schema`) | Opening and migration (`store_sqlite.go:161`, `:241`); the scoped schema raised at a job's creation (`raiseScopedSchema`, `scope.go:278`); the retry schema (`raiseRetrySchema`, `retries.go:33`) | Identity: the kind's own at opening. Schema: the retry raise only (`raiseSchema`) | No | No: `schema` is raised |
+| The profile registry and the selected profiles | `metadata` (`registered-input-profiles-v1`, `selected-input-profiles-v1`) | The registry routes (`profile_registry.go:231`, `selected_profiles.go:238`) | No | No | No: replaced |
+| The manual-admission demand | `metadata` (`manualExecutionDemand`; schema `4`) | Manual store preparation, its own program (`manual_store_prepare.go:229`) | No | No | No |
+| The relocation history | `metadata` (a history key) | Offline relocation (`relocate.go:152`) | No | No | No |
+| Briefs | `briefs` (`subject`, `record`) | The brief routes, upsert (`briefs.go:106`) | No | No: the subject (`job:<id>`, `run:<id>`) carries it | No: replaced |
+| Releases | `releases` | A preview (`createRelease`) | Yes | No | Yes |
+| Jobs | `jobs` (`seq`, `id`, `release_id`, `record`) | Creation (`store.go:422`); revision (`job_revisions.go:189`) | Reads only | Yes: `record.scope` | No: revised in place |
+| Job creations | `job_creations` | Creation (`recordInitialJob`, `job_revisions.go:48`); migration (`:20`) | No | In the record | Yes |
+| Job revisions | `job_revisions` (`request_digest`) | Creation (`job_revisions.go:51`); revision (`:192`); migration (`:21`) | No | In the record | Yes |
+| Triggers | `triggers` (`record`, `key_hash`, `observed`, `pending`, `pending_at`, `key_revision`) | Creation with a job (`store.go:415`) and alone (`triggers_store.go:138`); `saveTrigger` (`:44`) for a state change, a key rotation, the schedule and file ticks and the cloud binding; a job's revision (`job_revisions.go:205`) | No | Yes: `record.scope` | No |
+| Trigger revisions | `trigger_revisions` | `saveTrigger` with history (`triggers_store.go:49`); a job's revision (`job_revisions.go:208`) | No | In the record | Yes. Never read by the Runner |
+| Occurrences, their attempts and `nextAttemptAt` | `occurrences` (`identity`, `payload_digest`, `state`, `record`) | Admission (`triggers_store.go:549`); every state change, preparation, retry and expiry (`recordOccurrence`, `events.go:431`); the restart (`restartOccurrences`, through `sqliteTxOf`) | No | Yes: `record.scope` | No |
+| Occurrence keys | `occurrence_keys` | An event's admission (`triggers_store.go:460`) | No | No: keyed by its occurrence | Yes |
+| Runs (the queue, inputs, records) | `runs` (`state`, `record`) | `createRun`, `putRun` | Yes | Yes: `record.scope` | No: the state advances |
+| Idempotency keys | `runs` (`job_id`, `caller`, `idem`, `request_digest`) | `createRun` | Yes | Through the run | Yes: a key is never bound again |
+| The chain of runs | `run_chain` | `createEntry` | Yes | No | Yes |
+| The journal | `events` | `appendEvent` (`events.go:284`): through `appendJournal` for runs, releases and the Runner's start and stop; directly for job, trigger and occurrence entries and admission refusals (`journalRefusal`, `events.go:605`) | Writes of runs and releases only; no read | Yes: `detail.scope` when the job has one | Yes |
+| The manual-admission journal | `manual_attempts` | Manual mode (`manual_admission_journal.go:46`, `:52`) | No | No | No: an attempt is updated |
+| Workflow executions | `workflow_executions`, `workflow_artifacts` | `workflow_store.go`, reached by no route; its tables are made only where it is opened | No | No | No |
+
+`sqlite_sequence` is SQLite's own. The source worker keeps a second database, `sources.sqlite`
+(`worker_metadata`, `source_operations`), in its own process under its own lock
+(`source_worker.go`).
+
+### 9.2 Files under the state directory
+
+| State | Path | Written by | Read later by | Survives a restart on another host |
+|---|---|---|---|---|
+| The store's lock | `runner.lock` | The sqlite kind (`flock`) | The kind | Not needed: a second kind has its own exclusivity |
+| A preview's working directory | `releases/<id>/` | A preview (`runtime.go:258`) | Nothing: the release's record holds the pack, configuration, lock, validation, preview and tests | Not needed |
+| An attempt's directory | `attempts/<run>[.<n>]/` | A run's evaluation (`store.go:720`); manual mode (`manual_admission_journal.go:117`) | The diagnostics route (`diagnostics.go:106`); a retry's audit check (`attemptsHoldNoAudit`, `retries.go:406`) | No. A missing directory reads as holding no audit record |
+| The pinned Runtime | `runtimes/<digest>` | At start (`pinExecutable`, `runtime.go:81`) | Every evaluation, by the release's `runtimeDigest` (`runtime.go:357`, which refuses a missing or changed file); manual binding (`manual_execution_binding.go:59`) | No. A missing file is refused |
+| Workflow attempts | `workflow-attempts/` | `workflow_host.go:29`, reached by no route | | |
+| A version check's copy | `version-check-*` | The upgrade check, removed after | Nothing | Not needed |
+| The manual-admission marker and the executor lease | `manual-execution-prepare.json`, the lease | Manual mode | Manual mode | Manual mode is single-host |
+| The source worker's state | `sources.sqlite`, `source-worker.lock`, `source-worker.token` | The source worker | The source worker | Its own process |
+
+### 9.3 State held in the process
+
+Not durable and not in the store, so not a storage kind's concern, but each assumes one Runner per
+store (issue #245): `automationMu`, which serializes the trigger ticks; the occurrences being
+prepared (`preparing`); the profile registry's and the selected profiles' caches; the cloud
+bindings' problems; the profiles set aside; and the unhealthy flag the dispatcher raises on a
+failed commit.
+
+### 9.4 Where the issue's premise is imprecise
+
+- Jobs are read through the contract already (`job`); only their creation and revision are
+  outside it.
+- The journal's writes for runs, releases and the Runner's start and stop are inside the contract
+  already. Outside are the writes for jobs, triggers, occurrences and refusals, and every read.
+- Runs are inside, except four statements: the listings, an occurrence's run by its request key
+  (`triggers_dispatch.go:254`), the admission count over runs and occurrences
+  (`triggers_store.go:533`), and manual activation.
+- A release's record is in the database, through the contract. Only a preview's working directory
+  is on local disk, and nothing reads it after the preview.
+- The pinned Runtime and the attempt directories are on local disk, as the issue says. The
+  pinned Runtime fails closed when missing; an attempt directory does not (section 9.2), which is
+  the one that bears on a restart on another host.
+- Outside the premise and outside the contract: briefs, the profile registry's and selected
+  profiles' metadata rows, the scoped schema raise, and the manual-admission and workflow tables.
+  `trigger_revisions` is written and never read.
