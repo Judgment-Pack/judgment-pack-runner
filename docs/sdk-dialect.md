@@ -38,8 +38,9 @@ for i, r := range d.PrepareBatch(cases, time.Now()) {
   `PrepareBatch` prepares many at one instant on up to `GOMAXPROCS`
   goroutines and returns their results in the order of the cases, each what
   `Prepare` gives for it.
-- The parameter digest holds the case's parameters by name, each as the case
-  gave it, in `canon`. It does not change with the order of the case's
+- The parameter digest holds the case's parameters by name, in `canon`: a
+  list's elements in their order, a decimal's digits as written, and an
+  integer by its value (`-0` as `0`). It does not change with the order of the case's
   members, its whitespace or its escapes, nor with `runAt`. The keyed form is
   labelled `hmac-sha256` with the caller's key identifier, as the Runtime's
   keyed decision record is; the package keeps the key nowhere. As the Runtime

@@ -38,10 +38,11 @@ func (p *Preparation) ParameterText() []byte {
 // changes with any parameter's value, and not with how the case was
 // written: the order of its members, its whitespace or its escapes. Two
 // cases that give their parameters the same values have the same parameter
-// digest, whatever else they hold. A value is bound as the case gave it: a
-// list's elements in their order, and a decimal's digits as written, so
-// "0.75" and "0.750", which a rule compares as equal, have different
-// digests.
+// digest, whatever else they hold. A list is bound with its elements in
+// their order, and a decimal with its digits as written, so "0.75" and
+// "0.750", which a rule compares as equal, have different digests. An
+// integer is bound in canon's form, by its value: one written -0 is bound
+// as 0.
 func (p *Preparation) ParameterDigest() string { return digestOf(p.ParameterText()) }
 
 // KeyedDigest is a keyed digest of ParameterText: the algorithm's label, the

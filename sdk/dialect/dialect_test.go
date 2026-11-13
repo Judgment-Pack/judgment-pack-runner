@@ -660,10 +660,11 @@ func TestAKeyIdentifierHoldingAPlainDigestIsRefused(t *testing.T) {
 }
 
 // A list parameter is its elements in their order, and a decimal its digits
-// as written: the digest binds the values the case gave.
+// as written; an integer is its value in canon's form, so -0 is 0.
 func TestTheParameterDigestKeepsListOrderAndDecimalSpelling(t *testing.T) {
 	d := read(t, `{"formatVersion":"4.0.0","id":"urn:judgmentpack:dialect:sdk-tests","version":"0.1.0","case":{`+
-		`"parameters":{"ranges":{"pointer":"/ranges","type":"address-range-list"},"rate":{"pointer":"/rate","type":"decimal"}},"facts":[],"evidence":[]}}`)
+		`"parameters":{"ranges":{"pointer":"/ranges","type":"address-range-list"},"rate":{"pointer":"/rate","type":"decimal"},`+
+		`"count":{"pointer":"/count","type":"integer"}},"facts":[],"evidence":[]}}`)
 	at := instant(t, "2026-11-12T18:00:00Z")
 	digest := func(caseDocument string) string {
 		t.Helper()
@@ -673,14 +674,18 @@ func TestTheParameterDigestKeepsListOrderAndDecimalSpelling(t *testing.T) {
 		}
 		return p.ParameterDigest()
 	}
-	base := digest(`{"ranges":["192.0.2.0/24","2001:db8::/32"],"rate":"0.75"}`)
+	base := digest(`{"ranges":["192.0.2.0/24","2001:db8::/32"],"rate":"0.75","count":0}`)
 	for _, other := range []string{
-		`{"ranges":["2001:db8::/32","192.0.2.0/24"],"rate":"0.75"}`,
-		`{"ranges":["192.0.2.0/24","2001:db8::/32"],"rate":"0.750"}`,
+		`{"ranges":["2001:db8::/32","192.0.2.0/24"],"rate":"0.75","count":0}`,
+		`{"ranges":["192.0.2.0/24","2001:db8::/32"],"rate":"0.750","count":0}`,
+		`{"ranges":["192.0.2.0/24","2001:db8::/32"],"rate":"0.75","count":1}`,
 	} {
 		if digest(other) == base {
 			t.Errorf("the parameter digest did not change: %s", other)
 		}
+	}
+	if same := `{"ranges":["192.0.2.0/24","2001:db8::/32"],"rate":"0.75","count":-0}`; digest(same) != base {
+		t.Errorf("an integer written -0 is not bound as 0: %s", same)
 	}
 }
 
