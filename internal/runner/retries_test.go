@@ -25,6 +25,8 @@ type retryWorld struct {
 	o     Occurrence
 	calls *atomic.Int32
 	clock *time.Time
+	tr    Trigger
+	job   Job
 }
 
 func newRetryWorld(t *testing.T, policy *RetryPolicy, answer func(n int) (int, string), more ...string) *retryWorld {
@@ -90,7 +92,19 @@ func newRetryWorld(t *testing.T, policy *RetryPolicy, answer func(n int) (int, s
 	must(t, e)
 	must(t, s.admitOccurrence(tx, tr, &o, "fixture", ""))
 	must(t, tx.Commit())
-	return &retryWorld{s: s, cfg: cfg, o: o, calls: calls, clock: &clock}
+	return &retryWorld{s: s, cfg: cfg, o: o, calls: calls, clock: &clock, tr: tr, job: j}
+}
+
+// admit accepts another occurrence of the world's trigger, after the first.
+func (w *retryWorld) admit(t *testing.T, key string) Occurrence {
+	t.Helper()
+	o := newOccurrence(w.tr, w.job, time.Now())
+	o.PendingInput = w.o.PendingInput
+	tx, e := w.s.db.Begin()
+	must(t, e)
+	must(t, w.s.admitOccurrence(tx, w.tr, &o, key, ""))
+	must(t, tx.Commit())
+	return o
 }
 
 // step lets the preparation workers take one turn, at the world's clock.
@@ -225,6 +239,15 @@ func TestARetryWaitPastTheCapOrTheDeadlineFails(t *testing.T) {
 		t.Fatalf("%+v", o)
 	}
 
+	// The cap holds on its own, before a deadline far past it.
+	far := Occurrence{Attempts: []Attempt{{Number: 1}}}
+	if again, reason := closeAttempt(&far, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), status: 429, retryAfter: "3601"}, time.Now().Add(24*time.Hour), time.Now(), false); again || reason != occurrenceWaitTooLong {
+		t.Fatalf("a wait past the cap: %v %q", again, reason)
+	}
+	if again, _ := closeAttempt(&far, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), status: 429, retryAfter: "3600"}, time.Now().Add(24*time.Hour), time.Now(), false); !again {
+		t.Fatal("a wait at the cap is not taken")
+	}
+
 	expiry := time.Now().Add(10 * time.Second)
 	held := Occurrence{Attempts: []Attempt{{Number: 1}}}
 	if again, reason := closeAttempt(&held, RetryPolicy{MaxAttempts: 2, BackoffSeconds: 10, MaxBackoffSeconds: 10}, &gatewayAnswer{err: bad("gateway_refused", "refused"), status: 503}, expiry, expiry.Add(-10*time.Second), false); again || reason != occurrenceWaitTooLong {
@@ -253,6 +276,40 @@ func TestAFailureOffTheListIsNotRetried(t *testing.T) {
 	}
 	if _, retried := transient(&gatewayAnswer{err: bad("gateway_refused", "refused"), status: 503}); !retried {
 		t.Fatal("a 503 is not retried")
+	}
+	// Nor is an attempt cut short by its deadline or a stop, whatever it met.
+	cut := Occurrence{Attempts: []Attempt{{Number: 1}}}
+	if again, reason := closeAttempt(&cut, RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}, &gatewayAnswer{err: bad("gateway_refused", "refused"), status: 503}, time.Now().Add(time.Hour), time.Now(), true); again || reason != "" || cut.Attempts[0].Outcome != "failed" {
+		t.Fatalf("a cut attempt: %v %q %+v", again, reason, cut.Attempts[0])
+	}
+}
+
+// An occurrence waiting for its next attempt is passed by: one admitted after
+// it is prepared in its turn, and is not held up by the wait.
+func TestAWaitingOccurrenceHoldsNoOtherUp(t *testing.T) {
+	w := newRetryWorld(t, &RetryPolicy{MaxAttempts: 3, BackoffSeconds: 60, MaxBackoffSeconds: 60}, func(n int) (int, string) {
+		if n == 1 {
+			return 429, ""
+		}
+		return 200, ""
+	})
+	if o := w.step(t); o.State != "accepted" || o.NextAttemptAt == "" {
+		t.Fatalf("%+v", o)
+	}
+	// The legacy path holds the wait itself, whoever hands it the occurrence.
+	must(t, w.s.prepareLegacyOccurrence(context.Background(), w.o.ID))
+	if w.calls.Load() != 1 {
+		t.Fatal("an occurrence was attempted before its time:", w.calls.Load())
+	}
+	second := w.admit(t, "fixture-second")
+	w.step(t)
+	o, e := w.s.occurrence(second.ID)
+	must(t, e)
+	if w.calls.Load() != 2 || len(o.Attempts) != 1 || o.Attempts[0].Outcome != "succeeded" {
+		t.Fatalf("%d calls: %+v", w.calls.Load(), o)
+	}
+	if first, e := w.s.occurrence(w.o.ID); e != nil || len(first.Attempts) != 1 || first.NextAttemptAt == "" {
+		t.Fatalf("%+v %v", first, e)
 	}
 }
 
@@ -691,6 +748,11 @@ func TestARetryIsRefusedForARunNotInterrupted(t *testing.T) {
 		}
 	}
 	refused(r, "0", "run_not_retryable")
+	// Another run of the job, refused the same way within the minute, has
+	// its own entry: the refusal names its run.
+	other, _, e := s.submit(j.ID, "second", journalInput())
+	must(t, e)
+	refused(other, "0", "run_not_retryable")
 	_, e = s.dispatchNext(context.Background())
 	must(t, e)
 	r, e = s.run(r.ID)
