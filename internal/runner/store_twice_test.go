@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -548,4 +549,34 @@ func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
 			t.Fatalf("the chain holds the other finisher's entry at %d and this one's at %d", first, second)
 		}
 	})
+}
+
+// TestTheTwiceModeRunsAFunctionTwice: a transaction under the mode runs its
+// function twice, the change set between the runs made between them, and
+// keeps only what the second run writes.
+func TestTheTwiceModeRunsAFunctionTwice(t *testing.T) {
+	record := newTwiceRecord()
+	st := &twiceStore{runStore: newMemoryStore(), record: record}
+	var seen []string
+	record.betweenRuns(t, "TestTheTwiceModeRunsAFunctionTwice", func(runStore) error {
+		seen = append(seen, "between")
+		return nil
+	})
+	runs := 0
+	err := st.update(func(tx runTx) error {
+		runs++
+		seen = append(seen, "run")
+		// The first run writes one row, the second another.
+		key := map[int]string{1: selectedProfilesKey, 2: registeredProfilesKey}[runs]
+		return tx.putProfileRow(key, `{"run":`+strconv.Itoa(runs)+`}`)
+	})
+	if err != nil || runs != 2 || strings.Join(seen, ",") != "run,between,run" {
+		t.Fatalf("the function ran %d times (%s): %v", runs, strings.Join(seen, ","), err)
+	}
+	if row, err := st.profileRow(selectedProfilesKey); !absent(err) {
+		t.Fatalf("the first run's write is kept: %q %v", row, err)
+	}
+	if row, err := st.profileRow(registeredProfilesKey); err != nil || row != `{"run":2}` {
+		t.Fatalf("the second run's write is not kept: %q %v", row, err)
+	}
 }
