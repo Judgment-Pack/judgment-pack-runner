@@ -87,6 +87,10 @@ type Occurrence struct {
 	// has neither.
 	Attempts      []Attempt `json:"attempts,omitempty"`
 	NextAttemptAt string    `json:"nextAttemptAt,omitempty"`
+	// ErrorClass is the class, from a closed list, of an occurrence that
+	// ended failed or expired (run_results.go), beside its reason. Any other
+	// occurrence, and one that ended before Runner kept it, has none.
+	ErrorClass string `json:"errorClass,omitempty"`
 }
 type EventDelivery struct {
 	ID         string `json:"id"`

@@ -349,8 +349,10 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	if acquisitionError != nil {
 		o.State = "failed"
 		o.Reason = acquisitionError.Error()
+		o.ErrorClass = acquisitionClass(acquisitionError)
 		if ending != "" {
-			o.Reason = ending
+			// The policy's code names its class (run_results.go).
+			o.Reason, o.ErrorClass = ending, ""
 		}
 	} else if !at.Before(expiry) {
 		o.State = "expired"

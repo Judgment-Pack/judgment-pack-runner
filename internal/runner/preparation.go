@@ -183,6 +183,7 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 		if err != nil {
 			o.State = "failed"
 			o.Reason = err.Error()
+			o.ErrorClass = acquisitionClass(err)
 			o.PendingInput = nil
 			e = s.saveOccurrence(o)
 			s.automationMu.Unlock()
@@ -219,6 +220,11 @@ func (s *Service) savePreparation(o Occurrence) error {
 func (s *Service) stopPreparation(o Occurrence, state, reason string) error {
 	o.State = state
 	o.Reason = reason
+	// A durable preparation is stopped expired only when its source wait
+	// ran out: a bound ended it (run_results.go).
+	if state == "expired" {
+		o.ErrorClass = classLimit
+	}
 	o.PendingInput = nil
 	return s.savePreparation(o)
 }

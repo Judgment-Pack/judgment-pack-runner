@@ -580,7 +580,7 @@ func TestEveryRecordAndEntryOfAScopedJobCarriesItsScope(t *testing.T) {
 		t.Fatalf("the upgrade and the refusal wrote %v", got)
 	}
 	for _, e := range entries {
-		if e.Concerns.Job != "" && (e.Scope != "scope-a" || e.EntryVersion != scopedEntryVersion) {
+		if e.Concerns.Job != "" && (e.Scope != "scope-a" || e.EntryVersion != wantEntryVersion(e)) {
 			t.Errorf("an entry about a scoped job: %+v", e)
 		}
 		if e.Concerns.Job == "" && (e.Scope != "" || e.EntryVersion == scopedEntryVersion) {

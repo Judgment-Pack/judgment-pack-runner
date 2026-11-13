@@ -545,6 +545,7 @@ func (s *Service) admitOccurrenceAs(tx *sql.Tx, t Trigger, o *Occurrence, identi
 		o.Input = nil
 		o.PendingInput = nil
 	}
+	*o = withOccurrenceClass(*o)
 	if _, e := tx.Exec("INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES(?,?,?,?,?,?,?)", o.ID, o.JobID, o.TriggerID, identity, payload, o.State, string(encode(o))); e != nil {
 		return e
 	}

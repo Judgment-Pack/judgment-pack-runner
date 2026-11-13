@@ -140,6 +140,7 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 			if e != nil {
 				o.State = "failed"
 				o.Reason = e.Error()
+				o.ErrorClass = acquisitionClass(e)
 			} else {
 				o.Input = &input
 				o.InputDigest = digest(encode(input))
@@ -220,6 +221,7 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	if prepError != nil {
 		o.State = "failed"
 		o.Reason = prepError.Error()
+		o.ErrorClass = acquisitionClass(prepError)
 	} else {
 		o.Input = &input
 		o.InputDigest = digest(encode(input))
@@ -283,6 +285,7 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 	if job.ReleaseID != o.ReleaseID || job.Revision != o.JobRevision {
 		o.State = "failed"
 		o.Reason = "The job release changed before admission."
+		o.ErrorClass = classConfiguration
 		o.Input = nil
 		return s.saveOccurrence(o)
 	}
@@ -296,6 +299,7 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 			}
 			o.State = "failed"
 			o.Reason = api.Message
+			o.ErrorClass = submissionClass(api)
 			o.Input = nil
 			return s.saveOccurrence(o)
 		}

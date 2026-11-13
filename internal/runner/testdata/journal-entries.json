@@ -256,7 +256,7 @@
  },
  {
   "sequence": 14,
-  "entryVersion": "1",
+  "entryVersion": "5",
   "kind": "occurrence.failed",
   "at": "2026-10-06T09:14:00.000001Z",
   "by": {
@@ -284,11 +284,12 @@
    "seen": false,
    "lastKnownRunning": "2026-10-06T09:58:40.771Z",
    "restart": 24
-  }
+  },
+  "errorClass": "interrupted"
  },
  {
   "sequence": 15,
-  "entryVersion": "1",
+  "entryVersion": "5",
   "kind": "occurrence.expired",
   "at": "2026-10-06T09:15:00.000001Z",
   "by": {
@@ -309,7 +310,8 @@
   "scheduledAt": "2026-10-06T09:00:00Z",
   "missedFrom": "2026-10-06T08:58:00Z",
   "missedThrough": "2026-10-06T09:00:00Z",
-  "expiresAt": "2026-10-06T10:00:00Z"
+  "expiresAt": "2026-10-06T10:00:00Z",
+  "errorClass": "limit"
  },
  {
   "sequence": 16,
@@ -417,7 +419,7 @@
  },
  {
   "sequence": 21,
-  "entryVersion": "1",
+  "entryVersion": "5",
   "kind": "run.expired",
   "at": "2026-10-06T09:21:00.000001Z",
   "by": {
@@ -433,11 +435,17 @@
   "revision": 3,
   "from": "queued",
   "to": "failed",
-  "reason": "The automatic run expired in the queue before evaluation."
+  "reason": "The automatic run expired in the queue before evaluation.",
+  "errorClass": "limit",
+  "counts": {
+   "decisions": 0,
+   "byKind": {},
+   "byOutcome": {}
+  }
  },
  {
   "sequence": 22,
-  "entryVersion": "1",
+  "entryVersion": "5",
   "kind": "run.completed",
   "at": "2026-10-06T09:22:00.000001Z",
   "by": {
@@ -454,11 +462,25 @@
   "from": "running",
   "to": "completed",
   "reason": "Completed.",
-  "chainSequence": 7
+  "chainSequence": 7,
+  "disposition": {
+   "kind": "outcome",
+   "outcomeId": "proceed"
+  },
+  "counts": {
+   "sources": 2,
+   "decisions": 1,
+   "byKind": {
+    "outcome": 1
+   },
+   "byOutcome": {
+    "proceed": 1
+   }
+  }
  },
  {
   "sequence": 23,
-  "entryVersion": "1",
+  "entryVersion": "5",
   "kind": "run.failed",
   "at": "2026-10-06T09:23:00.000001Z",
   "by": {
@@ -474,11 +496,17 @@
   "revision": 3,
   "from": "running",
   "to": "failed",
-  "reason": "Runtime refused or could not complete this invocation."
+  "reason": "Runtime refused or could not complete this invocation.",
+  "errorClass": "evaluation",
+  "counts": {
+   "decisions": 0,
+   "byKind": {},
+   "byOutcome": {}
+  }
  },
  {
   "sequence": 24,
-  "entryVersion": "1",
+  "entryVersion": "5",
   "kind": "run.interrupted",
   "at": "2026-10-06T09:24:00.000001Z",
   "by": {
@@ -498,6 +526,12 @@
   "interruption": {
    "seen": true,
    "at": "2026-10-06T09:58:51.12Z"
+  },
+  "errorClass": "interrupted",
+  "counts": {
+   "decisions": 0,
+   "byKind": {},
+   "byOutcome": {}
   }
  },
  {
