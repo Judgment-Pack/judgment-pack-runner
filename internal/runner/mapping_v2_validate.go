@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/derivation"
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/dialect4"
 )
 
 var mappingName = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
@@ -191,6 +192,13 @@ func sortedKeys[V any](m map[string]V) []string {
 	return a
 }
 func readTargets(r SourceRead) ([]FactMapping, []EvidenceMapping, error) {
+	return readTargetsOf(r, false)
+}
+
+// readTargetsOf is readTargets, which in format 4.0.0 (four) also reads a
+// rule of version 2.0.0 (dialect_format4.go). A dialect of another format,
+// or a research source's read, has rules of version 1.0.0 alone.
+func readTargetsOf(r SourceRead, four bool) ([]FactMapping, []EvidenceMapping, error) {
 	if r.Copy != nil && len(r.Rule) > 0 || r.Copy == nil && len(r.Rule) == 0 {
 		return nil, nil, errors.New("choose exactly one copy or rule")
 	}
@@ -207,6 +215,9 @@ func readTargets(r SourceRead) ([]FactMapping, []EvidenceMapping, error) {
 			return nil, nil, err
 		}
 		return r.Copy.Facts, r.Copy.Evidence, nil
+	}
+	if four && dialect4.IsRule2(r.Rule) {
+		return rule2Targets(r.Rule)
 	}
 	if err := derivation.Validate(r.Rule); err != nil {
 		return nil, nil, err
@@ -319,6 +330,12 @@ func validateDialect(m InputMapping, open bool) error { return validateDialectMo
 // VerifyPreparation refuses the kind after. A local file's source parameters
 // are held to the rules of every source's (§3, §4) on every path.
 func validateDialectMode(m InputMapping, open, offline bool) error {
+	four := m.FormatVersion == format4
+	if four {
+		if e := format4Form(m, offline); e != nil {
+			return e
+		}
+	}
 	if e := validateColumnMapping(m); e != nil {
 		return e
 	}
@@ -362,7 +379,7 @@ func validateDialectMode(m InputMapping, open, offline bool) error {
 			if !mappingName.MatchString(n) || types[n] != "" || local[n] != "" {
 				return errors.New("parameter name is invalid, reserved or shadowed")
 			}
-			if p.Type != "string" && p.Type != "integer" && p.Type != "timestamp" {
+			if p.Type != "string" && p.Type != "integer" && p.Type != "timestamp" && !(four && dialect4.AddedType(p.Type)) {
 				return errors.New("unsupported parameter type")
 			}
 			if _, e := pointerTokens(p.Pointer, true); e != nil {
@@ -391,6 +408,17 @@ func validateDialectMode(m InputMapping, open, offline bool) error {
 		}
 		allFacts = append(allFacts, m.Case.Facts...)
 		allEvidence = append(allEvidence, m.Case.Evidence...)
+		// Format 4.0.0's case rule, of version 2.0.0, over the case's
+		// parameters and runAt (spec/dialect.md §2.2.1): its targets are
+		// mapped targets as a copy's are (§8.1).
+		if four && m.caseRule != nil {
+			if _, e := rule2(m.caseRule, types, "the case"); e != nil {
+				return failOn(e)
+			}
+			f, ev, _ := rule2Targets(m.caseRule)
+			allFacts = append(allFacts, f...)
+			allEvidence = append(allEvidence, ev...)
+		}
 	}
 	for _, s := range m.Sources {
 		if !mappingName.MatchString(s.Name) || s.Name == "case" || prior[s.Name] {
@@ -466,7 +494,7 @@ func validateDialectMode(m InputMapping, open, offline bool) error {
 				return failOn(e)
 			}
 		}
-		f, ev, e := readTargets(s.Read)
+		f, ev, e := readTargetsOf(s.Read, four && !research)
 		if e != nil {
 			return failOn(e)
 		}

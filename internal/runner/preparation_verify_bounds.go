@@ -1,5 +1,7 @@
 package runner
 
+import "github.com/Judgment-Pack/judgment-pack-runner/internal/dialect4"
+
 // Count limits before checking forms: malformed siblings must not mask a
 // measurable bound. These are the portable Dialect §12 limits.
 func preparationCountBounds(dialect, acquisitions, profiles, binding any) bool {
@@ -47,6 +49,12 @@ func preparationCountBounds(dialect, acquisitions, profiles, binding any) bool {
 		return true
 	}
 	copyTargets(caseDoc)
+	// Format 4.0.0's case rule, and what it adds to a source's rule: derived
+	// values and literals (spec/dialect.md §2.2.7).
+	four := d["formatVersion"] == format4
+	if four && dialect4.RuleCounts(caseDoc["rule"], facts, evidence) {
+		return true
+	}
 	sources := list(d["sources"])
 	if len(sources) > 16 {
 		return true
@@ -62,6 +70,9 @@ func preparationCountBounds(dialect, acquisitions, profiles, binding any) bool {
 			return true
 		}
 		copyTargets(read["copy"])
+		if four && dialect4.RuleCountsAdded(read["rule"]) {
+			return true
+		}
 		clauses := list(object(read["rule"])["clauses"])
 		if len(clauses) > 64 {
 			return true

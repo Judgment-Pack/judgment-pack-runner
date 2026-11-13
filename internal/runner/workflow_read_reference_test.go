@@ -71,6 +71,13 @@ func TestWorkflowReaderReferenceGlobalPhases(t *testing.T) {
 				}
 			}
 		}},
+		// A stage's dialect of the proposed format 4.0.0 is an unread
+		// version: the selector scan is the reader's one barrier, since the
+		// dialect forms it reads later admit 4.0.0 offline
+		// (dialect_format4.go).
+		{"stage dialect of format 4.0.0 is an unread version", "version-unread", func(t *testing.T, in *workflowReadInput) {
+			in.Files["stages/companies/dialect.json"] = format4File(t, "case-rule-no-sources/dialect.json")
+		}},
 		{"object selector refused without panic", "version-unread", func(t *testing.T, in *workflowReadInput) {
 			doc := decodedJSON(t, in.Files["workflow.json"])
 			doc["workflowVersion"] = map[string]any{}

@@ -661,6 +661,14 @@ a reading establishes recomputation, not the truth of any record. On the vectors
 Exchange's example fixtures its reports are byte for byte those of the specification's
 own reader ([the contract](docs/MAPPING-V2.md#verifying-a-preparation-without-a-run)).
 
+`verify-preparation` also reads the proposed dialect format `4.0.0` (the Spec's v0.5.2),
+and the `sdk/dialect` Go package prepares a dialect of that format that names no source in
+process ([its page](docs/sdk-dialect.md)). Both agree with the Spec's staged vectors at
+v0.5.2; they are by the same maintainer as the Spec's reference reader, not an independent
+implementation, and no conformance claim is made of them. Every other path refuses such a
+dialect, `dialect_format_not_admitted`, until the Spec's workflow and recording schemas admit
+the format (spec issue #324): [format 4.0.0](docs/MAPPING-V2.md#proposed-dialect-format-400).
+
 Desk's **Mapped sources** workflow now supports named-source review, advanced JSON
 mapping edits, explicit acquisition and fixed-release runs through the
 `/v1/inputs/next` planner. Supply trusted installation profiles with Desk's

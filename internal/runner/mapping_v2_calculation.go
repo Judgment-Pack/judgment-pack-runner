@@ -111,8 +111,8 @@ func checkCalculation(source MappingSource, pin CalculatorPin, origins map[strin
 // calculationUnknown is the claim of a calculator that answered it could not
 // compute: no facts, each mapped evidence requirement unknown, under a reason
 // of Runner's, read from the status alone. The source's rule is not applied.
-func calculationUnknown(read SourceRead, status string) (derivedClaim, error) {
-	_, evidence, err := readTargets(read)
+func calculationUnknown(read SourceRead, status string, four bool) (derivedClaim, error) {
+	_, evidence, err := readTargetsOf(read, four)
 	if err != nil {
 		return derivedClaim{}, err
 	}

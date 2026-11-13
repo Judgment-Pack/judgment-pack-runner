@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/derivation"
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/dialect4"
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/retainedcolumns"
 )
 
@@ -215,7 +216,14 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		return i, inputProblem("mapping v2 required")
 	}
 	m := c.Mapping
-	if e := m.validate(); e != nil {
+	// A dialect of format 4.0.0 is read offline alone (dialect_format4.go):
+	// every other path refuses it, dialect_format_not_admitted.
+	four := m.FormatVersion == format4
+	validate := m.validate
+	if four && offline {
+		validate = func() error { return validateDialectMode(m, false, true) }
+	}
+	if e := validate(); e != nil {
 		return i, e
 	}
 	if len(c.Snapshot) > 0 {
@@ -321,6 +329,9 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	caseParams := map[string]any{"runAt": at.UTC().Format("2006-01-02T15:04:05Z")}
 	caseTypes := map[string]string{"runAt": "timestamp"}
 	prep := &Preparation{ConversionContract: c.ConversionContract, Version: m.Version, VerifiedAt: at.UTC().Format("2006-01-02T15:04:05Z"), MappingDigest: hash, Verification: "verified acquisitions; session sealing and input truth are not established", Cites: []Citation{}, Lineage: []TargetLineage{}, Outcomes: []SourceOutcome{}}
+	if four {
+		prep.formatVersion = format4
+	}
 	claims := map[string]derivedClaim{}
 	generated := map[string]bool{}
 	used := map[string]bool{}
@@ -356,12 +367,14 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	// reconciliation reads (spec/dialect.md §6.4).
 	records := map[string]any{}
 	var admissionFailure error
-	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, receipts *[]Citation, calc *CalculationLineage, transformations map[string]*retainedcolumns.Transformation) error {
-		ft, et, err := readTargets(read)
+	merge := func(name, class string, gen bool, read SourceRead, claim derivedClaim, deps []Dependency, cite *Citation, receipts *[]Citation, calc *CalculationLineage, transformations map[string]*retainedcolumns.Transformation, x *read4) error {
+		ft, et, err := readTargetsOf(read, four)
 		if err != nil {
 			return err
 		}
-		if c.ConversionContract != nil && read.Copy != nil && hasColumnCopy(*read.Copy) {
+		// Format 4.0.0 writes a copy's targets in code point order, as it
+		// writes every read's (spec/dialect.md §2.2.6, §9.3).
+		if c.ConversionContract != nil && read.Copy != nil && hasColumnCopy(*read.Copy) || four && read.Copy != nil {
 			// Selected Dialect §9.3 order is independent of authoring order.
 			// Clone: checked document/read identity must not be reordered.
 			ft = append([]FactMapping(nil), ft...)
@@ -375,6 +388,22 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		}
 		b, _ := proofCanon(encode(read))
 		rd := digest(b)
+		if x != nil && x.digest != "" {
+			rd = x.digest
+		}
+		// A target's lineage, with its derivation when its read is a rule of
+		// version 2.0.0 (spec/dialect.md §2.2.6).
+		lineage := func(l TargetLineage) TargetLineage {
+			if x != nil && x.rule != nil {
+				d := x.derivations.Of(l.Kind, l.Target)
+				l.derivation = &d
+				l.Candidates = nil
+				if l.Kind == "fact" {
+					l.Candidates = x.rule.Candidates(l.Target)
+				}
+			}
+			return l
+		}
 		for _, f := range ft {
 			if !admitted(m, "facts", f.Target, class, gen) {
 				problem := withCode(codeAdmission, errors.New("fact target does not admit source class or generated dependency"))
@@ -390,7 +419,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			if present {
 				writeTarget(facts, f.Target, v)
 			}
-			prep.Lineage = append(prep.Lineage, TargetLineage{Target: f.Target, Kind: "fact", Source: name, Class: class, GeneratedInfluence: gen, Present: present, Status: claim.Status, Reason: claim.Reason, ReadDigest: rd, Basis: claim.Basis, Candidates: candidateFrom(read, f.Target), Dependencies: deps, Receipt: cite, Receipts: receipts, Calculation: calc, ColumnTransformation: transformations["fact:"+f.Target]})
+			prep.Lineage = append(prep.Lineage, lineage(TargetLineage{Target: f.Target, Kind: "fact", Source: name, Class: class, GeneratedInfluence: gen, Present: present, Status: claim.Status, Reason: claim.Reason, ReadDigest: rd, Basis: claim.Basis, Candidates: candidateFrom(read, f.Target), Dependencies: deps, Receipt: cite, Receipts: receipts, Calculation: calc, ColumnTransformation: transformations["fact:"+f.Target]}))
 		}
 		for _, f := range et {
 			if !admitted(m, "evidence", f.Requirement, class, gen) {
@@ -406,7 +435,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			if present {
 				evidence[f.Requirement] = v
 			}
-			prep.Lineage = append(prep.Lineage, TargetLineage{Target: f.Requirement, Kind: "evidence", Source: name, Class: class, GeneratedInfluence: gen, Present: present, Status: claim.Status, Reason: claim.Reason, ReadDigest: rd, Basis: claim.Basis, Candidates: candidateFrom(read, f.Requirement), Dependencies: deps, Receipt: cite, Receipts: receipts, Calculation: calc, ColumnTransformation: transformations["evidence:"+f.Requirement]})
+			prep.Lineage = append(prep.Lineage, lineage(TargetLineage{Target: f.Requirement, Kind: "evidence", Source: name, Class: class, GeneratedInfluence: gen, Present: present, Status: claim.Status, Reason: claim.Reason, ReadDigest: rd, Basis: claim.Basis, Candidates: candidateFrom(read, f.Requirement), Dependencies: deps, Receipt: cite, Receipts: receipts, Calculation: calc, ColumnTransformation: transformations["evidence:"+f.Requirement]}))
 		}
 		return nil
 	}
@@ -415,21 +444,33 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			p := m.Case.Parameters[n]
 			tokens, _ := pointerTokens(p.Pointer, true)
 			v, ok := pointerRead(caseValue, tokens)
-			if !ok || !paramValue(v, p.Type) {
+			if ok {
+				if err := paramBounds(four, v, p.Type); err != nil {
+					return i, sourceFailure("case", err)
+				}
+			}
+			if !ok || !paramOf(four, v, p.Type) {
 				return i, sourceFailure("case", withCode(codeParameter, fmt.Errorf("parameter %s is missing or mistyped", n)))
 			}
 			caseParams[n] = v
 			caseTypes[n] = p.Type
 		}
 		read := SourceRead{Copy: &CopyMapping{m.Case.Facts, m.Case.Evidence}}
-		claim, transformations, err := applyColumnCase(read, caseRaw, caseValue, caseParams, c.ConversionContract)
-		if err != nil {
-			return i, sourceFailure("case", err)
+		if four {
+			if err := prepareCase4(m, read, caseValue, caseParams, prep, merge); err != nil {
+				return i, sourceFailure("case", err)
+			}
 		}
-		if err = merge("case", "asserted", false, read, claim, nil, nil, nil, nil, transformations); err != nil {
-			return i, sourceFailure("case", err)
+		if !four {
+			claim, transformations, err := applyColumnCase(read, caseRaw, caseValue, caseParams, c.ConversionContract)
+			if err != nil {
+				return i, sourceFailure("case", err)
+			}
+			if err = merge("case", "asserted", false, read, claim, nil, nil, nil, nil, transformations, nil); err != nil {
+				return i, sourceFailure("case", err)
+			}
+			prep.Outcomes = append(prep.Outcomes, SourceOutcome{Name: "case", Status: claim.Status, Reason: claim.Reason, Parameters: encode(caseParams), Claim: encode(claim)})
 		}
-		prep.Outcomes = append(prep.Outcomes, SourceOutcome{Name: "case", Status: claim.Status, Reason: claim.Reason, Parameters: encode(caseParams), Claim: encode(claim)})
 		if hasColumnCase(m) {
 			retainColumnCase(c, caseRaw)
 			if err := columnInputBounds(c); err != nil {
@@ -463,7 +504,10 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 				unavailable = true
 				continue
 			}
-			if !paramValue(v, p.Type) {
+			if err := paramBounds(four, v, p.Type); err != nil {
+				return fail(err)
+			}
+			if !paramOf(four, v, p.Type) {
 				return fail(withCode(codeParameter, fmt.Errorf("validated parameter %s is mistyped", n)))
 			}
 			params[n] = v
@@ -500,6 +544,16 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		var calc *CalculationLineage
 		var transformations map[string]*retainedcolumns.Transformation
 		var carrier *retainedColumnCarrier
+		// A rule of version 2.0.0, in format 4.0.0: every target it names
+		// carries its derivation, {"by": "none"} when it was not written.
+		var x *read4
+		if four && !research && dialect4.IsRule2(source.Read.Rule) {
+			rule, err := rule2(source.Read.Rule, nil, "source "+source.Name)
+			if err != nil {
+				return fail(err)
+			}
+			x = &read4{rule: rule}
+		}
 		if unavailable {
 			if present && research {
 				return fail(researchFail(codeUnexpected, "a skipped dependent source must not supply a response"))
@@ -654,7 +708,11 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 				}
 			}
 			if calc != nil && calc.Status != calculationComputed {
-				claim, e = calculationUnknown(source.Read, calc.Status)
+				claim, e = calculationUnknown(source.Read, calc.Status, four)
+			} else if x != nil {
+				var ruled dialect4.Claim
+				ruled, x.derivations, e = x.rule.Apply(artifact, params)
+				claim, e = claimOf(ruled), engineError(e)
 			} else if carrier != nil {
 				claim, transformations, e = applyColumnCopy(source.Read, artifact, func(_ string, leaf json.RawMessage, availability bool) (*retainedcolumns.Transformation, error) {
 					plan, err := columnPlan(leaf, availability)
@@ -671,7 +729,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 				return fail(e)
 			}
 		}
-		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite, receipts, calc, transformations); e != nil {
+		if e = merge(source.Name, class, gen, source.Read, claim, deps, cite, receipts, calc, transformations, x); e != nil {
 			return fail(e)
 		}
 		// A verified source that was not skipped had its acquisition's times
@@ -682,7 +740,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			*judged = append(*judged, judgedFreshness{source.Name, calc != nil && calc.Status == calculationComputed})
 		}
 		claims[source.Name] = claim
-		prep.Outcomes = append(prep.Outcomes, SourceOutcome{source.Name, claim.Status, claim.Reason, encode(params), args, encode(claim)})
+		prep.Outcomes = append(prep.Outcomes, SourceOutcome{Name: source.Name, Status: claim.Status, Reason: claim.Reason, Parameters: encode(params), Arguments: args, Claim: encode(claim)})
 	}
 	for n := range c.Sources {
 		if !used[n] {

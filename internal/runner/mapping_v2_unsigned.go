@@ -1,6 +1,10 @@
 package runner
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/dialect4"
+)
 
 // UnsignedParameters names, for one acquired source, the parameters its rule
 // reads that its own receipt does not commit, and how many fact and evidence
@@ -70,6 +74,24 @@ func unsignedParameters(m InputMapping, p *Preparation) []UnsignedParameters {
 	// parameter: its facts carry that parameter's influence to later sources.
 	taint := map[string]string{}
 	var out []UnsignedParameters
+	// Format 4.0.0's case rule reads the case's parameters and runAt, and
+	// no request commits to any (spec/dialect.md §2.2.6, §11): its entry is
+	// first, with the targets the rule writes.
+	if m.FormatVersion == format4 && m.Case != nil && m.caseRule != nil {
+		if rule, err := rule2(m.caseRule, nil, "the case"); err == nil {
+			var ps []UnsignedParameter
+			for _, n := range rule.ParametersNamed() {
+				kind := "case"
+				if n == "runAt" {
+					kind = "runAt"
+				}
+				ps = append(ps, UnsignedParameter{n, kind})
+			}
+			if n := len(rule.FactTargets) + len(rule.EvidenceTargets); len(ps) > 0 && n > 0 {
+				out = append(out, UnsignedParameters{"case", ps, n})
+			}
+		}
+	}
 	for _, s := range m.Sources {
 		local[s.Name] = s.Kind == "selected-file" && s.Provider != "google-drive"
 		var rule ruleDocument
@@ -79,6 +101,15 @@ func unsignedParameters(m InputMapping, p *Preparation) []UnsignedParameters {
 		reads := map[string]bool{}
 		for _, c := range rule.Clauses {
 			conditionParameters(c.When, reads)
+		}
+		// A rule of version 2.0.0 names parameters in its added conditions
+		// and its derived values' operands too (dialect4).
+		if m.FormatVersion == format4 && !isResearch(s) && dialect4.IsRule2(s.Read.Rule) {
+			if r, err := rule2(s.Read.Rule, nil, "source "+s.Name); err == nil {
+				for _, n := range r.ParametersNamed() {
+					reads[n] = true
+				}
+			}
 		}
 		committed, ambiguous := map[string]bool{}, map[string]bool{}
 		if isResearch(s) {
