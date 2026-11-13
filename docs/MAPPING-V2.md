@@ -2064,6 +2064,12 @@ GET /v1/events?after=<sequence>&job=<job>
 - A cursor that is not a decimal integer from 0, or is given twice, is refused
   with 400 `invalid_cursor`, a `job` given twice with 400 `invalid_filter`, and
   a job the store does not hold with 404 `not_found`.
+- `outcome=<outcomeId>`, `errorClass=<class>` and `kind=<kind>`, each up to 10
+  times, keep the entries of a run's end with that outcome, the entries that
+  carry that error class, and the entries of that kind; they combine with `job`,
+  `scope` and each other by AND before the page is cut. A value out of form or
+  outside its closed list is 400 `invalid_filter`
+  ([design record](design/run-results.md)).
 
 ```json
 {
@@ -2090,7 +2096,9 @@ GET /v1/events?after=<sequence>&job=<job>
 
 Every entry has `sequence`, `entryVersion` (`"1"`; `"2"` for an entry whose
 `by` is a caller; `"3"` for an entry about a job created under a scope
-identifier, whoever its `by` names), `kind`, `at`, `by` and `concerns`. An
+identifier, whoever its `by` names; `"4"` for an entry that holds `attempt`;
+`"5"` for an entry that holds `disposition`, `errorClass` or `counts`), `kind`,
+`at`, `by` and `concerns`. An
 entry about a job created under a scope identifier carries it as `scope`, and
 `GET /v1/events?scope=` serves only the entries that carry exactly that one
 ([design record](design/scope-identifiers.md)). `revision` is the trigger revision, where an entry concerns a
@@ -2100,7 +2108,8 @@ change created the record. `reason` is the reason or problem text the record
 serves, cut at 1,024 bytes. The other members belong to particular kinds. The
 API document's `JournalEntry` names the 26 kinds and every member, and
 `internal/runner/testdata/journal-entries.json` holds one entry of each kind,
-with every member its kind can carry. `at` is Runner's clock: order is
+with every member its kind can carry, and beside them one `run.completed` of
+version `"1"`, as a store written before run results holds a run's end. `at` is Runner's clock: order is
 `sequence`, never `at`.
 
 **Who.** `by` names what Runner can know initiated a change, never a person:

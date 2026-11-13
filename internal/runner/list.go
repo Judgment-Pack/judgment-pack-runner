@@ -13,6 +13,9 @@ type recordFilter struct {
 	// Scope, when not empty, keeps the records that carry exactly this scope
 	// identifier (scope.go), compared byte for byte.
 	Scope string
+	// Results keeps the runs of the outcomes and error classes named
+	// (run_results.go).
+	Results resultFilter
 }
 
 // A list is a stable public projection, independent of Run's durable encoding.
@@ -37,6 +40,8 @@ type runListSummary struct {
 	Signing       *RunSigning    `json:"signing,omitempty"`
 	Binding       *RunBinding    `json:"binding,omitempty"`
 	Scope         *string        `json:"scope,omitempty"`
+	ErrorClass    *string        `json:"errorClass,omitempty"`
+	Counts        *RunCounts     `json:"counts,omitempty"`
 	Result        *runListResult `json:"result,omitempty"`
 	JobName       string         `json:"jobName"`
 }
@@ -77,6 +82,8 @@ func (s *Service) filteredRecords(kind, jobID string, after int64, filter record
 			where = append(where, "t.state=?")
 			args = append(args, filter.State)
 		}
+		results, resultArgs := filter.Results.conditions("t.record", "", true)
+		where, args = append(where, results...), append(args, resultArgs...)
 		if filter.Review {
 			where = append(where, `(t.state IN ('failed','interrupted') OR (t.state='completed' AND (json_extract(t.record,'$.result.disposition.kind')='unresolved' OR json_extract(t.record,'$.result.disposition.handoff.state')='requested')))`)
 		}

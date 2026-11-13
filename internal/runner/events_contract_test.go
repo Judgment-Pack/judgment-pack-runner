@@ -225,18 +225,29 @@ func TestAStandInDeskFollowsTheJournal(t *testing.T) {
 		t.Fatal(e)
 	}
 	fixture := map[string][]string{}
+	// A kind may have a second entry, of an earlier version than its first:
+	// a run's end as every store written before run results holds it
+	// (run-results.md, section 4).
+	earlier := map[string]bool{}
 	for i, item := range decodeNumbers(t, raw).([]any) {
 		if problems := doc.check("fixture/"+strconv.Itoa(i), entry, item); len(problems) > 0 {
 			t.Fatalf("the fixture is not the documented entry: %v", problems)
 		}
 		kind := item.(map[string]any)["kind"].(string)
 		if _, twice := fixture[kind]; twice {
-			t.Fatal("the fixture has two entries of", kind)
+			if earlier[kind] || item.(map[string]any)["entryVersion"].(string) >= resultEntryVersion {
+				t.Fatal("the fixture has two entries of", kind)
+			}
+			earlier[kind] = true
+			continue
 		}
 		fixture[kind] = membersOf(t, item)
 	}
 	if len(fixture) != len(eventKinds) {
 		t.Fatalf("the fixture has %d kinds, Runner writes %d", len(fixture), len(eventKinds))
+	}
+	if !earlier["run.completed"] {
+		t.Fatal("the fixture holds no run.completed entry of an earlier version than " + resultEntryVersion)
 	}
 
 	cfg := journalConfig(t)

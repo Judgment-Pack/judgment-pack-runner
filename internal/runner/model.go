@@ -162,6 +162,13 @@ type Run struct {
 	// and served as InterruptedAt is, and not part of a verification export.
 	// A run never retried has none.
 	Attempts []Attempt `json:"-"`
+	// ErrorClass is the class, from a closed list, of a run that ended
+	// failed or interrupted (run_results.go), beside its reason; Counts are
+	// what a run's record holds once it ended, counted. Kept and served as
+	// InterruptedAt is, and not part of a verification export. A run that has
+	// not ended, or that ended before Runner kept them, has neither.
+	ErrorClass string     `json:"-"`
+	Counts     *RunCounts `json:"-"`
 }
 
 // runQueueExpired is the Reason of an automatic run whose queue time ran out
@@ -180,10 +187,12 @@ type storedRun struct {
 	Binding       *RunBinding `json:"binding,omitempty"`
 	Scope         string      `json:"scope,omitempty"`
 	Attempts      []Attempt   `json:"attempts,omitempty"`
+	ErrorClass    string      `json:"errorClass,omitempty"`
+	Counts        *RunCounts  `json:"counts,omitempty"`
 }
 
 func served(r Run) storedRun {
-	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing, Binding: r.Binding, Scope: r.Scope, Attempts: r.Attempts}
+	return storedRun{Run: r, InterruptedAt: r.InterruptedAt, Reason: r.Reason, Signing: r.Signing, Binding: r.Binding, Scope: r.Scope, Attempts: r.Attempts, ErrorClass: r.ErrorClass, Counts: r.Counts}
 }
 
 // The reviewedSetOrigin values. release: the release's own lock. supplied:
@@ -287,7 +296,7 @@ func decodeRun(b []byte) (Run, error) {
 		}
 		held.Run.Input = held.Run.manual.input()
 	}
-	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing, held.Run.Binding, held.Run.Scope, held.Run.Attempts = held.InterruptedAt, held.Reason, held.Signing, held.Binding, held.Scope, held.Attempts
+	held.Run.InterruptedAt, held.Run.Reason, held.Run.Signing, held.Run.Binding, held.Run.Scope, held.Run.Attempts, held.Run.ErrorClass, held.Run.Counts = held.InterruptedAt, held.Reason, held.Signing, held.Binding, held.Scope, held.Attempts, held.ErrorClass, held.Counts
 	if e == nil {
 		e = validateStoredRun(held.Run)
 	}

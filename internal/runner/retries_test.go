@@ -31,6 +31,14 @@ type retryWorld struct {
 
 func newRetryWorld(t *testing.T, policy *RetryPolicy, answer func(n int) (int, string), more ...string) *retryWorld {
 	t.Helper()
+	return newRetryWorldOf(t, testConfig(t), testRelease, policy, answer, more...)
+}
+
+// newRetryWorldOf is newRetryWorld over cfg, with the release release makes:
+// a world whose acquisitions fail needs no Runtime to evaluate (journalConfig,
+// journalRelease).
+func newRetryWorldOf(t *testing.T, cfg Config, release func(*testing.T, *Service) Release, policy *RetryPolicy, answer func(n int) (int, string), more ...string) *retryWorld {
+	t.Helper()
 	input, p, key, _ := v2Fixture(t)
 	for _, name := range more {
 		input.Source.Mapping.Sources = append(input.Source.Mapping.Sources, MappingSource{Name: name, Kind: "operation", Profile: p.ID, ProfileDigest: profileHash(p), MaxAge: 300, Arguments: json.RawMessage(`{"tool":"lookup","arguments":{"of":"` + name + `"}}`), Read: SourceRead{Copy: &CopyMapping{Facts: []FactMapping{{Target: "/" + name, Source: "/" + name}}, Evidence: []EvidenceMapping{}}}})
@@ -77,7 +85,6 @@ func newRetryWorld(t *testing.T, policy *RetryPolicy, answer func(n int) (int, s
 		json.NewEncoder(w).Encode(v)
 	}))
 	t.Cleanup(server.Close)
-	cfg := testConfig(t)
 	cfg.disableAutomation = true
 	cfg.InputRoot = t.TempDir()
 	s, e := Open(cfg)
@@ -85,7 +92,7 @@ func newRetryWorld(t *testing.T, policy *RetryPolicy, answer func(n int) (int, s
 	t.Cleanup(func() { s.Close() })
 	clock := time.Now()
 	s.clock = func() time.Time { return clock }
-	r := testRelease(t, s)
+	r := release(t, s)
 	j, e := s.createJobWith(requester{}, "Retrying", r.ID, "", nil, policy)
 	must(t, e)
 	cfg.InputProfiles = []InputProfile{p}
@@ -191,7 +198,7 @@ func TestAThrottledAcquisitionIsAttemptedAgainAfterItsWait(t *testing.T) {
 	var kinds []string
 	for _, ev := range occurrenceEntries(t, w.s, o.ID) {
 		kinds = append(kinds, ev.Kind)
-		if ev.Attempt != nil && ev.EntryVersion != attemptEntryVersion || ev.Attempt == nil && ev.EntryVersion != EventEntryVersion {
+		if ev.EntryVersion != wantEntryVersion(ev) {
 			t.Errorf("%s at version %s holds %+v", ev.Kind, ev.EntryVersion, ev.Attempt)
 		}
 		if ev.Kind == "occurrence.retry-scheduled" && (ev.Attempt.Number != 1 || ev.Attempt.Outcome != "transient" || ev.NextAt != firstNext) {
@@ -453,7 +460,7 @@ func TestAnAttemptInFlightAtACrashIsNotRetried(t *testing.T) {
 		t.Fatalf("%d calls: %+v", w.calls.Load(), o)
 	}
 	entries := occurrenceEntries(t, s, o.ID)
-	if last := entries[len(entries)-1]; last.Kind != "occurrence.failed" || last.Attempt == nil || last.Attempt.Outcome != "interrupted" || last.EntryVersion != attemptEntryVersion {
+	if last := entries[len(entries)-1]; last.Kind != "occurrence.failed" || last.Attempt == nil || last.Attempt.Outcome != "interrupted" || last.ErrorClass != classInterrupted || last.EntryVersion != resultEntryVersion {
 		t.Fatalf("%+v", last)
 	}
 }
@@ -1001,9 +1008,8 @@ func TestARecordWithoutARetryIsWrittenAsBefore(t *testing.T) {
 			t.Errorf("%s: %d of %d rows hold a retry member", table, held, n)
 		}
 	}
-	var versions string
-	if e := s.db.QueryRow("SELECT group_concat(DISTINCT entry_version) FROM events").Scan(&versions); e != nil || versions != "1" {
-		t.Fatalf("entry versions %q %v", versions, e)
+	if versions := entryVersionsBesideResults(t, s.db); versions != "1" {
+		t.Fatalf("entry versions %q", versions)
 	}
 	if schema := storeSchemaOf(t, s.db); schema != storeSchema {
 		t.Fatalf("schema %s", schema)

@@ -159,6 +159,13 @@ type EventDetail struct {
 	// run.queued from interrupted. An entry that holds it has
 	// attemptEntryVersion.
 	Attempt *Attempt `json:"attempt,omitempty"`
+	// Disposition, ErrorClass and Counts are a run's end (run_results.go):
+	// run.completed its decision, every other end its error class, and each
+	// its counts; and an occurrence's failure or expiry its error class. An
+	// entry that holds any of them has resultEntryVersion.
+	Disposition *EventDisposition `json:"disposition,omitempty"`
+	ErrorClass  string            `json:"errorClass,omitempty"`
+	Counts      *RunCounts        `json:"counts,omitempty"`
 }
 
 // EventInterruption is an interruption's own time: the moment Runner saw the
@@ -270,6 +277,9 @@ func appendEvent(tx *sql.Tx, c change) (int64, error) {
 	if c.detail.Attempt != nil {
 		version = attemptEntryVersion
 	}
+	if c.detail.Disposition != nil || c.detail.ErrorClass != "" || c.detail.Counts != nil {
+		version = resultEntryVersion
+	}
 	res, err := tx.Exec("INSERT INTO events(entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail,job_id,release_id,refusal) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 		version, c.kind, c.at, string(encode(c.by)), string(encode(c.concerns)), revision, from, to, boundedReason(c.reason), string(encode(c.detail)), c.concerns.Job, c.concerns.Release, c.refusal)
 	if err != nil {
@@ -316,6 +326,12 @@ func occurrenceEventKind(from, to string) string {
 func runChange(r Run, from string, by EventActor, detail EventDetail) change {
 	c := change{kind: runEventKind(from, r.State), by: by, concerns: EventConcerns{Job: r.JobID, Release: r.ReleaseID, Run: r.ID}, states: true, from: from, to: r.State, reason: r.Problem, detail: detail}
 	c.detail.Scope = r.Scope
+	if finishedRunState(r.State) {
+		c.detail.Counts, c.detail.ErrorClass = r.Counts, r.ErrorClass
+		if kind, outcome, held := runDisposition(r); held {
+			c.detail.Disposition = &EventDisposition{Kind: kind, OutcomeID: outcome}
+		}
+	}
 	if r.Trigger != nil {
 		c.concerns.Trigger = r.Trigger.TriggerID
 		c.concerns.Occurrence = r.Trigger.OccurrenceID
@@ -345,6 +361,9 @@ func occurrenceChange(o Occurrence, from string, by EventActor) change {
 		c.detail.ReadyUntil = o.ReadyUntil
 	}
 	c.detail.Scope = o.Scope
+	if endedOccurrence(o.State) {
+		c.detail.ErrorClass = o.ErrorClass
+	}
 	return c
 }
 
@@ -370,6 +389,7 @@ func triggerBefore(tx *sql.Tx, id string, revision int) (string, error) {
 // state, if its state changed. With expected other than anyState, the store
 // must hold the run in that state, or nothing is written (faultConflict).
 func recordRun(tx runTx, r Run, expected string, by EventActor, detail EventDetail) error {
+	r = withResults(r)
 	from, err := tx.putRun(r, expected)
 	if err != nil {
 		return err
@@ -406,6 +426,7 @@ func recordOccurrence(tx *sql.Tx, o Occurrence, guard string, by EventActor, int
 	if guard != "" && from != guard {
 		return errPreparationStopped
 	}
+	o = withOccurrenceClass(o)
 	if _, err := tx.Exec("UPDATE occurrences SET state=?,record=? WHERE id=?", o.State, string(encode(o)), o.ID); err != nil {
 		return err
 	}
@@ -484,6 +505,7 @@ func restartOccurrences(tx *sql.Tx, started int64) (err error) {
 		}
 		o.State = "failed"
 		o.Reason = "Source acquisition was interrupted. It was not repeated automatically."
+		o.ErrorClass = classInterrupted
 		o.PendingInput = nil
 		// An attempt of a job with a retry policy is closed, interrupted:
 		// it is not retried (retries.go). Runner did not see it stop.
@@ -682,6 +704,9 @@ type eventRequest struct {
 	backward bool
 	before   int64 // the end, when tail
 	tail     bool
+	// results keeps the entries of the outcomes, error classes and kinds
+	// named (run_results.go).
+	results resultFilter
 }
 
 // eventQuery reads a journal request: at most one of each parameter, in a
@@ -722,7 +747,20 @@ func eventQuery(raw string) (eventRequest, error) {
 	}
 	r.backward = r.tail || hasBefore
 	r.job = q.Get("job")
+	if r.results, err = readResultFilter(raw, true); err != nil {
+		return r, err
+	}
 	return r, nil
+}
+
+// withResults narrows a journal condition to the entries r's filters keep, if
+// it names any.
+func (r eventRequest) withResults(where string, args []any) (string, []any) {
+	if r.results.empty() {
+		return where, args
+	}
+	conditions, more := r.results.conditions("detail", "kind", false)
+	return "(" + where + ") AND " + strings.Join(conditions, " AND "), append(args, more...)
 }
 
 // eventPageAfter is up to eventPage entries after a sequence, oldest first,
@@ -864,7 +902,8 @@ func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	page, err := s.eventPageFor(req, jobEntries, j.ID, j.ID)
+	where, args := req.withResults(jobEntries, []any{j.ID, j.ID})
+	page, err := s.eventPageFor(req, where, args...)
 	if err != nil {
 		failure(w, err)
 		return
@@ -895,6 +934,7 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 	if scope := scopeNamed(r.Context()); scope != "" {
 		where, args = "("+where+") AND json_extract(detail,'$.scope')=?", append(args, scope)
 	}
+	where, args = req.withResults(where, args)
 	page, err := s.eventPageFor(req, where, args...)
 	if err != nil {
 		failure(w, err)

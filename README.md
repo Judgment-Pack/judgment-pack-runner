@@ -226,6 +226,24 @@ does the run's original event id or `Idempotency-Key`. A store's first policy or
 retry raises it to schema `"6"`, which every earlier Runner refuses. `GET
 /v1/status` lists `retries` ([design record](docs/design/retries.md)).
 
+**Run results.** A run that completes, fails or is interrupted carries `counts`:
+`sources` (the sources its preparation records, absent without one),
+`decisions` (1 for a completed run, 0 for any other), `byKind` and `byOutcome`.
+A run that fails or is interrupted, and an occurrence that fails or expires,
+carries `errorClass` beside its `reason`, one of `source`, `preparation`,
+`evaluation`, `configuration`, `limit`, `interrupted` and `internal`; a
+completed run has none, whatever its disposition. A run queued again by a retry
+loses both until its next end, and a run that ended before this release has
+neither. The journal entry of a run's end carries its `counts` and its
+`disposition` (`kind` and `outcomeId`) or its `errorClass`, an occurrence's
+failure its `errorClass`, at `entryVersion` `"5"`; every other entry is written
+as before. `GET /v1/runs`, `GET /v1/jobs/{job}/runs`, `GET /v1/events` and
+`GET /v1/jobs/{job}/events` take `outcome` and `errorClass`, and the journal
+`kind`, each up to 10 times; a value out of form is `400` `invalid_filter`. The
+schema is not raised, and the verification export is unchanged. `GET /v1/status`
+lists `run-results`. A consumer of finished runs follows the journal by `kind`;
+Runner pushes nothing ([design record](docs/design/run-results.md)).
+
 **Health.** `GET /v1/health` answers without a credential, `200 {"healthy":true}` or
 `503 {"healthy":false}`, and says nothing else. `GET /v1/status` keeps its
 credential. A companion serves no health route.
@@ -887,7 +905,9 @@ and offline verification tests run against a reproducible evaluator contract.
 `GET /v1/jobs?q=...` searches job names. Jobs include `packTitle`, `packVersion`
 and up to five `recentRuns` (ID, execution state, creation time).
 `GET /v1/runs` lists all jobs' runs; `GET /v1/jobs/{job}/runs` remains scoped to
-one job. Run lists accept `q` (run ID or job name), `state` and `review=true`.
+one job. Run lists accept `q` (run ID or job name), `state`, `review=true`,
+`outcome` (a completed run's `outcomeId`, exactly) and `errorClass`, the last two
+repeatable for any of their values.
 Search uses literal substrings with SQLite ASCII case folding. Filters apply
 before the existing 50-record cursor pagination; combine them with `after`.
 `scope` keeps the jobs or runs of exactly that scope identifier, compared byte for

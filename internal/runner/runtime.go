@@ -177,6 +177,7 @@ func invokeStarting(ctx context.Context, bin, dir, label string, env []string, s
 	cmd.WaitDelay = 2 * time.Second
 	runErr := start(cmd)
 	if runErr == nil {
+		noteStart(ctx, label)
 		runErr = cmd.Wait()
 	}
 	if err = out.Sync(); err != nil {
@@ -555,6 +556,9 @@ func evaluatorSpecMatches(r Release, spec string) bool {
 	return expected != "" && spec == expected
 }
 
+// evaluationLabel names an evaluation's invocation and its output files.
+const evaluationLabel = "evaluation"
+
 func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input, dir string, rehearsal bool, signing signingInputs, invoke runtimeInvoker, starters ...func(*exec.Cmd) error) (json.RawMessage, json.RawMessage, []byte, *RunBinding, error) {
 	limits, admissionErr := runtimeConversionLimits(ctx, bin, filepath.Dir(dir), inputConversion(input), starters...)
 	if admissionErr != nil {
@@ -617,7 +621,7 @@ func evaluateWithInvoker(ctx context.Context, bin string, r Release, input Input
 	if !rehearsal && signing.path != "" {
 		env = []string{"JPACK_SIGNING_KEY=" + signing.path, "JPACK_SIGNING_PUBLIC_KEY=" + signing.publicKey}
 	}
-	out, err := invoke(ctx, bin, dir, "evaluation", env, args...)
+	out, err := invoke(ctx, bin, dir, evaluationLabel, env, args...)
 	if err != nil && binding != nil && refusedBinding(out) {
 		return nil, nil, nil, nil, errBindingRefused
 	}

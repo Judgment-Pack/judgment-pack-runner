@@ -41,7 +41,7 @@
             }
           }
         },
-        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. scope-identifiers means a job may be created under a scope identifier, which its records carry, the store-wide listings filter by, and every request that names one of them names (ScopeIdentifier). retries means a job may be created with a retry policy (RetryPolicy), and an interrupted run may be retried (retryRun). With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
+        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. scope-identifiers means a job may be created under a scope identifier, which its records carry, the store-wide listings filter by, and every request that names one of them names (ScopeIdentifier). retries means a job may be created with a retry policy (RetryPolicy), and an interrupted run may be retried (retryRun). run-results means a finished run carries counts (RunCounts) and, when it ended without a decision, an errorClass (ErrorClass), as an occurrence that ended without a run carries its errorClass; a run's end is journaled with them; and the runs listings take outcome and errorClass, and the journal routes outcome, errorClass and kind, as filters. A Runner without it ignores those parameters and answers every record. With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
       }
     },
     "/health": {
@@ -133,6 +133,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_filter: a q over 200 bytes; a review other than true or false; a run filter, which a listing of jobs does not take (state, review=true, outcome, errorClass); or a query with a piece that does not decode beside an outcome or errorClass named anywhere in it (docs/design/run-results.md, section 5). invalid_cursor: an after that is not a cursor from 0.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -340,6 +350,36 @@
               "$ref": "#/components/schemas/ScopeIdentifier"
             },
             "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "description": "1 to 256 bytes of UTF-8 with no control character (maxLength counts characters, so none is stated)."
+              }
+            },
+            "description": "Only completed runs whose disposition is of kind outcome with exactly this outcomeId, compared byte for byte; repeated, any of them. A run with no disposition or another kind matches none; a run completed before counts were kept is matched by its result's disposition. Combined with every other filter by AND, before pagination. A well-formed outcome no run has answers an empty page; one out of form, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
+          },
+          {
+            "name": "errorClass",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "$ref": "#/components/schemas/ErrorClass"
+              }
+            },
+            "description": "Only runs of this error class; repeated, any of them. A run that ended before Runner kept a class matches none. Combined with every other filter by AND, before pagination. A class outside the list, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
           }
         ]
       },
@@ -948,6 +988,80 @@
               "$ref": "#/components/schemas/ScopeIdentifier"
             },
             "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "description": "1 to 256 bytes of UTF-8 with no control character (maxLength counts characters, so none is stated)."
+              }
+            },
+            "description": "Only entries whose disposition is of kind outcome with exactly this outcomeId (run.completed), compared byte for byte; repeated, any of them. Combined with every other parameter by AND, before the page is cut; with job, Runner's own entries match none. One out of form, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
+          },
+          {
+            "name": "errorClass",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "$ref": "#/components/schemas/ErrorClass"
+              }
+            },
+            "description": "Only entries that carry this error class; repeated, any of them. Combined with every other parameter by AND, before the page is cut. A class outside the list, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "trigger.configured",
+                  "trigger.paused",
+                  "trigger.resumed",
+                  "trigger.key-rotated",
+                  "occurrence.received",
+                  "occurrence.skipped",
+                  "occurrence.preparing",
+                  "occurrence.ready",
+                  "occurrence.submitted",
+                  "occurrence.failed",
+                  "occurrence.expired",
+                  "occurrence.needs-attention",
+                  "occurrence.cancelled",
+                  "occurrence.reconciled",
+                  "occurrence.retry-scheduled",
+                  "run.queued",
+                  "run.started",
+                  "run.expired",
+                  "run.completed",
+                  "run.failed",
+                  "run.interrupted",
+                  "release.previewed",
+                  "job.created",
+                  "job.upgraded",
+                  "admission.refused",
+                  "journal.began",
+                  "runner.started",
+                  "runner.stopped"
+                ]
+              }
+            },
+            "description": "Only entries of this kind; repeated, any of them: kind=run.completed&kind=run.failed&kind=run.expired&kind=run.interrupted follows every run's end. Combined with every other parameter by AND, before the page is cut. A kind outside the list, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
           }
         ]
       }
@@ -1022,6 +1136,80 @@
               "$ref": "#/components/schemas/ScopeIdentifier"
             },
             "description": "Serve only the entries that carry exactly this scope identifier, compared byte for byte; with job, also the job's scope identifier, as on every route that names a job. Without it every entry is served."
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "description": "1 to 256 bytes of UTF-8 with no control character (maxLength counts characters, so none is stated)."
+              }
+            },
+            "description": "Only entries whose disposition is of kind outcome with exactly this outcomeId (run.completed), compared byte for byte; repeated, any of them. Combined with every other parameter by AND, before the page is cut; with job, Runner's own entries match none. One out of form, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
+          },
+          {
+            "name": "errorClass",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "$ref": "#/components/schemas/ErrorClass"
+              }
+            },
+            "description": "Only entries that carry this error class; repeated, any of them. Combined with every other parameter by AND, before the page is cut. A class outside the list, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "trigger.configured",
+                  "trigger.paused",
+                  "trigger.resumed",
+                  "trigger.key-rotated",
+                  "occurrence.received",
+                  "occurrence.skipped",
+                  "occurrence.preparing",
+                  "occurrence.ready",
+                  "occurrence.submitted",
+                  "occurrence.failed",
+                  "occurrence.expired",
+                  "occurrence.needs-attention",
+                  "occurrence.cancelled",
+                  "occurrence.reconciled",
+                  "occurrence.retry-scheduled",
+                  "run.queued",
+                  "run.started",
+                  "run.expired",
+                  "run.completed",
+                  "run.failed",
+                  "run.interrupted",
+                  "release.previewed",
+                  "job.created",
+                  "job.upgraded",
+                  "admission.refused",
+                  "journal.began",
+                  "runner.started",
+                  "runner.stopped"
+                ]
+              }
+            },
+            "description": "Only entries of this kind; repeated, any of them: kind=run.completed&kind=run.failed&kind=run.expired&kind=run.interrupted follows every run's end. Combined with every other parameter by AND, before the page is cut. A kind outside the list, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
           }
         ]
       }
@@ -1137,6 +1325,36 @@
               "$ref": "#/components/schemas/ScopeIdentifier"
             },
             "description": "Serve only the records that carry exactly this scope identifier, compared byte for byte (no prefix matches, no case folded). Without it every record is served."
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "description": "1 to 256 bytes of UTF-8 with no control character (maxLength counts characters, so none is stated)."
+              }
+            },
+            "description": "Only completed runs whose disposition is of kind outcome with exactly this outcomeId, compared byte for byte; repeated, any of them. A run with no disposition or another kind matches none; a run completed before counts were kept is matched by its result's disposition. Combined with every other filter by AND, before pagination. A well-formed outcome no run has answers an empty page; one out of form, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
+          },
+          {
+            "name": "errorClass",
+            "in": "query",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "$ref": "#/components/schemas/ErrorClass"
+              }
+            },
+            "description": "Only runs of this error class; repeated, any of them. A run that ended before Runner kept a class matches none. Combined with every other filter by AND, before pagination. A class outside the list, or more than 10, is 400 invalid_filter. Capability run-results in GET /v1/status."
           }
         ],
         "summary": "List runs across all jobs",
@@ -3399,6 +3617,13 @@
             },
             "maxItems": 9,
             "description": "The run's attempts before its current one, each kept, interrupted, when a caller retried the run. Absent for a run never retried. Served with the run; not in run lists, verification exports, nor the run's entry in the chain of runs."
+          },
+          "errorClass": {
+            "$ref": "#/components/schemas/ErrorClass"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/RunCounts",
+            "description": "Present on a run that reached completed, failed or interrupted once Runner kept counts; absent on a run not yet ended, one queued again by a retry until its next end, and one that ended before. Served in run lists too. Not part of a verification export."
           }
         }
       },
@@ -5970,6 +6195,9 @@
           "nextAttemptAt": {
             "type": "string",
             "description": "While an occurrence of a job with a retry policy waits for its next attempt (state accepted), the time of that attempt, which Runner does not make sooner. Absent otherwise."
+          },
+          "errorClass": {
+            "$ref": "#/components/schemas/ErrorClass"
           }
         },
         "required": [
@@ -6529,9 +6757,10 @@
               "1",
               "2",
               "3",
-              "4"
+              "4",
+              "5"
             ],
-            "description": "4 for an entry that holds attempt, whatever its by or scope, which an entry of an earlier version never holds; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, and a 4 holds an attempt, whatever its by."
+            "description": "5 for an entry that holds disposition, errorClass or counts, whatever its by, scope or attempt, which an entry of an earlier version never holds; 4 for any other entry that holds attempt, whatever its by or scope; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, a 4 holds an attempt, and a 5 a run's or an occurrence's end with its counts or class, whatever its by."
           },
           "kind": {
             "enum": [
@@ -6749,6 +6978,18 @@
           "attempt": {
             "$ref": "#/components/schemas/Attempt",
             "description": "The attempt the change closed or kept: on occurrence.retry-scheduled, on an occurrence's change from preparing for a job with a retry policy, and on run.queued from interrupted (a retry), the interrupted attempt kept. An entry that holds it has entryVersion 4."
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/JournalDisposition",
+            "description": "On run.completed: the run's decision. An entry that holds it has entryVersion 5."
+          },
+          "errorClass": {
+            "$ref": "#/components/schemas/ErrorClass",
+            "description": "On run.failed, run.expired and run.interrupted, and on occurrence.failed and occurrence.expired: the record's error class. An entry that holds it has entryVersion 5."
+          },
+          "counts": {
+            "$ref": "#/components/schemas/RunCounts",
+            "description": "On run.completed, run.failed, run.expired and run.interrupted: the run's counts. An entry that holds it has entryVersion 5."
           }
         }
       },
@@ -8037,6 +8278,72 @@
             "type": "boolean"
           }
         }
+      },
+      "ErrorClass": {
+        "enum": [
+          "source",
+          "preparation",
+          "evaluation",
+          "configuration",
+          "limit",
+          "interrupted",
+          "internal"
+        ],
+        "description": "The class of a run that ended failed or interrupted, or of an occurrence that ended failed or expired, from a closed list (docs/design/run-results.md, section 3), beside its reason: source, a source acquisition through a Gateway connection failed (no answer, a refusal other than 401 or 403, an answer over its limit, a receipt for another session); preparation, the input could not be read or prepared, or no longer passes its checks (prepared-by-earlier-runner among them); evaluation, the Runtime's evaluation process started and failed, or what it wrote did not pass Runner's checks; configuration, what the work was set up with changed, is not installed or was refused access (profile-set-aside, a release changed before admission, a connection no longer installed, a gateway that refused the acquisition 401 or 403); limit, a time or count bound ended the work (queue-expired, attempt-limit-reached, retry-wait-too-long, a source wait that expired); interrupted, Runner stopped or restarted during the work; internal, Runner's own fault (binding-refused, a release that could not be read, and any failure of a run before the Runtime's evaluation process started, a manual admission authority's reservation or start commitment among them). Every reason code maps to exactly one class. A class says where the failure arose, not whether trying again will help: an acquisition is attempted again by the job's retry policy alone (docs/design/retries.md), and a run only by a caller's retry. Absent on success, on a completed run whatever its disposition, on a skipped, cancelled or waiting occurrence, and on a record that ended before Runner kept it. A class is added only with a change of the design record: a reader may take an unknown class as a newer Runner's."
+      },
+      "RunCounts": {
+        "type": "object",
+        "description": "What a finished run's record holds, counted (docs/design/run-results.md, section 2). A run is one evaluation today, so decisions is 1 or 0 and each map holds at most one member; the shape stays right for a run that holds several.",
+        "properties": {
+          "sources": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The sources the run's preparation records an outcome for (input.preparation.outcomes, the case among them when the mapping reads one). Absent for a run whose input holds no preparation."
+          },
+          "decisions": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The decisions the run's record holds: 1 for a completed run, 0 for any other, an interrupted run among them."
+          },
+          "byKind": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "The decisions by disposition kind (outcome, unresolved or not-applicable, as the Runtime wrote it); {} when there are none."
+          },
+          "byOutcome": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "The decisions of kind outcome, by outcomeId; {} when there are none."
+          }
+        },
+        "required": [
+          "decisions",
+          "byKind",
+          "byOutcome"
+        ],
+        "additionalProperties": false
+      },
+      "JournalDisposition": {
+        "type": "object",
+        "description": "The decision of a completed run, as its journal entry names it: the disposition's kind and, for kind outcome, its outcomeId. The pack's reasons and the handoff are the run's to serve.",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "outcomeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
       }
     }
   }

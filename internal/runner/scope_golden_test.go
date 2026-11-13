@@ -44,7 +44,7 @@ func TestARecordWithoutAScopeIsWrittenAsBefore(t *testing.T) {
 	if e := s.db.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema); e != nil || schema != "3" {
 		t.Fatalf("schema %q %v", schema, e)
 	}
-	if e := s.db.QueryRow("SELECT group_concat(DISTINCT entry_version) FROM events").Scan(&versions); e != nil || versions != "1" {
-		t.Fatalf("entry versions %q %v", versions, e)
+	if versions = entryVersionsBesideResults(t, s.db); versions != "1" {
+		t.Fatalf("entry versions %q", versions)
 	}
 }

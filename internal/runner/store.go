@@ -690,22 +690,37 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	if err = s.changeRun(r); err != nil {
 		return true, err
 	}
+	// class is the error class of a failure met at each step
+	// (run_results.go): a release that cannot be read is Runner's own fault.
+	class := classInternal
 	release, err := s.release(r.ReleaseID)
 	if err == nil && r.Trigger != nil && r.Input.Source != nil && r.Input.Source.Mapping.dialect() {
 		// Queue time must not silently outlive source freshness. Verify now,
 		// while retaining the exact input snapshot frozen at admission.
+		class = classConfiguration
 		err = s.checkReleaseProfiles(release)
 		if err == nil {
+			class = classPreparation
 			_, err = s.normalizeInput(r.Input)
 		}
 	}
 	if err == nil {
+		// Until the Runtime's evaluation process has started, a failure is
+		// Runner's own: what it retained, checked again; the pinned Runtime,
+		// asked what it admits; a manual admission authority's reservation
+		// and start commitment; the start itself. Only a failure after it is
+		// the evaluation's (run_results.go).
+		class = classInternal
+		evaluating, started := markingStart(ctx)
 		var trail, signatures []byte
 		var binding *RunBinding
 		if s.cfg.ExecutorAdmission != nil {
-			r.Result, trail, signatures, binding, err = s.governedEvaluation(ctx, r, release)
+			r.Result, trail, signatures, binding, err = s.governedEvaluation(evaluating, r, release)
 		} else {
-			r.Result, trail, signatures, binding, err = s.evaluate(ctx, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", attemptDirectory(r)), false)
+			r.Result, trail, signatures, binding, err = s.evaluate(evaluating, release, r.Input, filepath.Join(s.cfg.Dir, "attempts", attemptDirectory(r)), false)
+		}
+		if *started {
+			class = classEvaluation
 		}
 		// A sidecar that could not be read, with a signing key, fails the
 		// record's signing and not the run (evaluateWith).
@@ -738,11 +753,17 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	} else {
 		r.State = "failed"
 		r.Problem = err.Error()
+		// A reason code names its own class; every other failure has the
+		// class of the step it was met at.
+		if reasonClasses[r.Reason] == "" {
+			r.ErrorClass = class
+		}
 		if ctx.Err() != nil {
 			// Runner saw this stop: the interruption has its own time.
 			r.State = "interrupted"
 			r.Problem = "The runner stopped during evaluation. This run was not automatically repeated."
 			r.InterruptedAt = r.FinishedAt
+			r.ErrorClass = classInterrupted
 		}
 	}
 	// A completed run is recorded with its entry in the installation's

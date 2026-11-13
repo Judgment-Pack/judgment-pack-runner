@@ -367,6 +367,8 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 		next := r
 		next.Attempts = append(append([]Attempt(nil), r.Attempts...), kept)
 		next.State, next.StartedAt, next.FinishedAt, next.Problem, next.InterruptedAt = "queued", "", "", "", ""
+		// Its counts and class are its end's, which a retry undoes.
+		next.Counts, next.ErrorClass = nil, ""
 		count, err := tx.activeRuns()
 		if err != nil {
 			return err
