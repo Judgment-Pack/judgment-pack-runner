@@ -358,11 +358,15 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 	// (docs/design/store-postgresql.md, D2).
 	setAside := s.refuseSetAsideMapping(r.InputMapping)
 	var made Job
-	err = s.store.update(func(tx runTx) error {
+	// The transaction is held to the scope the job is created under
+	// (docs/design/store-postgresql.md, section 6): its reads see that
+	// scope's jobs, and the keys that hold a release once see every scope's
+	// (D9, releaseTaken).
+	err = s.store.heldTo(scopeHeld(scope)).update(func(tx runTx) error {
 		stored, err := tx.jobCreation(releaseID)
 		if err == nil {
 			if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope || !sameRetryPolicy(stored.Retry, retry) {
-				return &apiError{409, "release_already_used", "This preview already created a different job. Preview again to create another job."}
+				return errReleaseCreated
 			}
 			made = stored
 			return errKeepNothing
@@ -375,7 +379,7 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 			return err
 		}
 		if used != 0 {
-			return &apiError{409, "release_already_used", "This preview already belongs to a job revision. Check a fresh release."}
+			return errReleaseRevised
 		}
 		// Only a new job is refused: a job made before the setting was on is returned
 		// as any repeated creation is, and keeps running.
@@ -448,9 +452,32 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 		return made, nil
 	}
 	if err != nil {
-		return Job{}, err
+		return Job{}, releaseTaken(err)
 	}
 	return made, nil
+}
+
+// errReleaseCreated and errReleaseRevised are release_already_used for a
+// release that created a job, and for one a job revision names.
+var (
+	errReleaseCreated = &apiError{409, "release_already_used", "This preview already created a different job. Preview again to create another job."}
+	errReleaseRevised = &apiError{409, "release_already_used", "This preview already belongs to a job revision. Check a fresh release."}
+)
+
+// releaseTaken is the Runner's answer to a write that met a key holding a
+// release once for every scope (docs/design/store-postgresql.md, D9): what
+// the reads before the write answer on the sqlite kind, which sees every
+// scope, for the key met. A transaction held to one scope reads that scope's
+// jobs alone, and meets another scope's use of the release only at the key.
+// Any other error is returned as it is.
+func releaseTaken(err error) error {
+	switch takenKey(err) {
+	case keyJobCreation:
+		return errReleaseCreated
+	case keyJobRevision, keyJobRelease:
+		return errReleaseRevised
+	}
+	return err
 }
 func (s *Service) submit(jobID, key string, input Input) (Run, bool, error) {
 	return s.submitInternal(jobID, key, input, nil)

@@ -77,6 +77,9 @@ func sqliteFault(op string, err error, write bool) error {
 	if errors.As(err, &e) {
 		switch e.Code() {
 		case sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY, sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+			if key := sqliteKey(err); key != "" {
+				return takenOn(op, key, err)
+			}
 			return storeFailure(faultTaken, op, err)
 		case sqlite3.SQLITE_CONSTRAINT_CHECK:
 			return storeFailure(faultRefused, op, err)
@@ -86,6 +89,27 @@ func sqliteFault(op string, err error, write bool) error {
 		return storeFailure(faultDurability, op, err)
 	}
 	return storeFailure(faultUnavailable, op, err)
+}
+
+// sqliteKeys are the keys a faultTaken names (storeKey), by what SQLite's
+// message names after "UNIQUE constraint failed: ".
+var sqliteKeys = map[string]storeKey{
+	"jobs.release_id":                keyJobRelease,
+	"job_creations.release_id":       keyJobCreation,
+	"job_revisions.release_id":       keyJobRevision,
+	"index 'triggers_cloud_binding'": keyCloudBinding,
+}
+
+// sqliteKey is the key a unique or primary key failure names, or "".
+func sqliteKey(err error) storeKey {
+	_, failed, ok := strings.Cut(err.Error(), "UNIQUE constraint failed: ")
+	if !ok {
+		return ""
+	}
+	if i := strings.LastIndex(failed, " ("); i >= 0 {
+		failed = failed[:i]
+	}
+	return sqliteKeys[failed]
 }
 
 // sqlitePreparedStore checks that a manual-admission store was prepared

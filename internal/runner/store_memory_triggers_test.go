@@ -382,7 +382,7 @@ func (t *memoryTx) createTrigger(tr Trigger) error {
 		if err != nil {
 			return err
 		}
-		return storeFailure(faultTaken, "trigger", errTaken)
+		return takenOn("trigger", keyCloudBinding, errTaken)
 	}
 	a.lastTrigger++
 	a.triggers = append(a.triggers, memoryTrigger{seq: a.lastTrigger, id: tr.ID, job: tr.JobID, record: encode(tr)})
@@ -402,7 +402,7 @@ func (t *memoryTx) putTrigger(tr Trigger, hash string, history bool) error {
 		if err != nil {
 			return err
 		}
-		return storeFailure(faultTaken, "trigger", errTaken)
+		return takenOn("trigger", keyCloudBinding, errTaken)
 	}
 	snapshot := memorySnapshot{tr.ID, tr.Revision}
 	if _, held := a.snapshots[snapshot]; history && held {

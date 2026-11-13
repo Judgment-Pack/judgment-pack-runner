@@ -109,7 +109,9 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	// D2).
 	gateway := s.validateGatewayMapping(next)
 	var upgraded Job
-	err = s.store.update(func(tx runTx) error {
+	// Held to the scope the request names (docs/design/store-postgresql.md,
+	// section 6); a release another scope's job holds is met at its key (D9).
+	err = s.store.heldTo(scopeHeld(scopeNamed(ctx))).update(func(tx runTx) error {
 		// The revision is re-read in the same transaction that updates it.
 		current, err := tx.job(jobID)
 		if err != nil {
@@ -123,7 +125,7 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 			return err
 		}
 		if used > 0 {
-			return &apiError{409, "release_already_used", "This preview already belongs to a job revision. Check a fresh release."}
+			return errReleaseRevised
 		}
 		// Pending source preparation can otherwise finish against an obsolete mapping.
 		// Pausing alone does not cancel accepted work; that work must settle first.
@@ -176,7 +178,7 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 		return nil
 	})
 	if err != nil {
-		return Job{}, err
+		return Job{}, releaseTaken(err)
 	}
 	return upgraded, nil
 }

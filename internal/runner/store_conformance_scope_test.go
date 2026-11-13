@@ -273,6 +273,68 @@ var scopeStoreCases = []storeCase{
 		wantFault(t, held.update(func(tx runTx) error { return tx.createTrigger(fresh) }), faultRefused, "a trigger of scope b made held to scope a")
 		wantFault(t, held.update(func(tx runTx) error { return tx.createOccurrenceKey("occ_b", "sha256:key") }), faultRefused, "a key bound to scope b's occurrence held to scope a")
 	}},
+	{"the keys held for every scope are met at the write, and named", func(t *testing.T, k storeKindUnderTest) {
+		// D9: a release makes one job and a revision names a release once,
+		// and one trigger holds a cloud binding, whatever scope a
+		// transaction is held to. A transaction held to one scope does not
+		// read another's use (absent, none counted); its write meets the key
+		// as faultTaken, naming it, and the Runner answers it as the reads
+		// answer on the sqlite kind (releaseTaken).
+		w := newHeldWorld(t, k)
+		held := w.st.heldTo(scopeHeld("b"))
+		// A job created, as a creation keeps it, under scope a.
+		release := Release{SchemaVersion: "1", ID: "rel_created", PackID: "conformance", PackVersion: "1.0.0", Title: "Conformance", CreatedAt: now(), Tests: "passed"}
+		a := Job{SchemaVersion: "1", ID: "job_created", Name: "Conformance", ReleaseID: release.ID, Revision: 1, CreatedAt: now(), Workspace: "conformance", Owner: "owner", Scope: "a"}
+		must(t, w.st.update(func(tx runTx) error { return tx.createRelease(release) }))
+		must(t, w.st.heldTo(scopeHeld("a")).update(func(tx runTx) error { return tx.createJob(a) }))
+		must(t, held.update(func(tx runTx) error {
+			if _, err := tx.jobCreation(a.ReleaseID); k.holdsScopes && !absent(err) || !k.holdsScopes && err != nil {
+				t.Fatalf("held to scope b, scope a's creation read %v", err)
+			}
+			n, err := tx.releaseUses(a.ReleaseID)
+			if err != nil || k.holdsScopes && n != 0 || !k.holdsScopes && n != 1 {
+				t.Fatalf("held to scope b, scope a's release is used %d times (%v)", n, err)
+			}
+			return nil
+		}))
+		made := Job{SchemaVersion: "1", ID: "job_b2", Name: "Conformance", ReleaseID: a.ReleaseID, Revision: 1, CreatedAt: now(), Workspace: "conformance", Owner: "owner", Scope: "b"}
+		err := held.update(func(tx runTx) error { return tx.createJob(made) })
+		key := takenKey(err)
+		// The sqlite kind meets jobs' key first, which says only that a job
+		// revision names the release.
+		if key != keyJobCreation && !(key == keyJobRelease && !k.holdsScopes) {
+			t.Fatalf("a job from scope a's creation met %q (%v)", key, err)
+		}
+		if k.holdsScopes && releaseTaken(err) != errReleaseCreated {
+			t.Fatalf("a job from scope a's creation was answered %v", releaseTaken(err))
+		}
+		revised := w.jobs["b"]
+		revised.ReleaseID, revised.Revision = a.ReleaseID, 2
+		err = held.update(func(tx runTx) error { return tx.reviseJob(revised, "sha256:revise") })
+		if key := takenKey(err); key != keyJobRevision && key != keyJobRelease || releaseTaken(err) != errReleaseRevised {
+			t.Fatalf("a revision to scope a's release met %q (%v)", key, err)
+		}
+		// One trigger holds a cloud binding.
+		bound := func(id, scope string) Trigger {
+			return Trigger{ID: id, JobID: w.jobs[scope].ID, Revision: 1, Authority: "google-cloud", Config: TriggerConfig{Kind: "cloud", QueueSeconds: 60, Cloud: &CloudBinding{Connection: "conn", Subscription: "sub", Job: "scheduled"}}, Paused: true, CreatedAt: "2026-11-01T10:00:00Z", UpdatedAt: "2026-11-01T10:00:00Z", Scope: scope}
+		}
+		must(t, w.st.heldTo(scopeHeld("a")).update(func(tx runTx) error { return tx.createTrigger(bound("trg_a", "a")) }))
+		n, err := held.cloudBindings("", "conn", "scheduled")
+		if err != nil || k.holdsScopes && n != 0 || !k.holdsScopes && n != 1 {
+			t.Fatalf("held to scope b, scope a's binding is counted %d (%v)", n, err)
+		}
+		err = held.update(func(tx runTx) error { return tx.createTrigger(bound("trg_b", "b")) })
+		if key := takenKey(err); key != keyCloudBinding {
+			t.Fatalf("a trigger bound as scope a's met %q (%v)", key, err)
+		}
+		// Nothing was written.
+		if _, err := w.st.job(made.ID); !absent(err) {
+			t.Fatal("the refused job was kept:", err)
+		}
+		if _, _, err := w.st.trigger("trg_b"); !absent(err) {
+			t.Fatal("the refused trigger was kept:", err)
+		}
+	}},
 	{"the rules across scopes count every scope's records", func(t *testing.T, k storeKindUnderTest) {
 		// D9: the queue's limit is the installation's, whatever scope a
 		// transaction is held to.

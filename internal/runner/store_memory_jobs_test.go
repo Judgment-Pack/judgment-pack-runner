@@ -116,23 +116,35 @@ func (m *memoryStore) dialectConflicts(dialect, version, digest string) (int, er
 	return m.reads().dialectConflicts(dialect, version, digest)
 }
 
-// revisionTaken says whether a revision of job, or one naming release, is
-// held: job_revisions' primary key and its unique release.
-func (t *memoryTx) revisionTaken(job string, revision int, release string) bool {
-	return slices.ContainsFunc(t.s.revisions, func(v memoryRevision) bool {
-		return v.job == job && v.revision == revision || v.release == release
-	})
+// revisionFree refuses a revision held under job and revision, or naming
+// release, in any scope (D9): the latter names job_revisions' key.
+func (t *memoryTx) revisionFree(job string, revision int, release string) error {
+	if slices.ContainsFunc(t.s.revisions, func(v memoryRevision) bool { return v.job == job && v.revision == revision }) {
+		return storeFailure(faultTaken, "job", errTaken)
+	}
+	if slices.ContainsFunc(t.s.revisions, func(v memoryRevision) bool { return v.release == release }) {
+		return takenOn("job", keyJobRevision, errTaken)
+	}
+	return nil
 }
 
-// createJob holds jobs' unique id and job_revisions' keys. The key of
-// job_creations, a release, follows from the unique release of job_revisions:
-// every creation is kept with a revision naming its release.
+// createJob holds jobs' unique id, job_creations' key and job_revisions'
+// keys, for every scope (D9), meeting the creation's key before the
+// revision's, so that a release that made a job is named as the creation's.
+// jobs' release follows from job_revisions': a job's release is its current
+// revision's.
 func (t *memoryTx) createJob(j Job) error {
 	if err := t.admits("job", encode(j)); err != nil {
 		return err
 	}
-	if _, held := t.s.jobs[j.ID]; held || t.revisionTaken(j.ID, j.Revision, j.ReleaseID) {
+	if _, held := t.s.jobs[j.ID]; held {
 		return storeFailure(faultTaken, "job", errTaken)
+	}
+	if _, held := t.s.creations[j.ReleaseID]; held {
+		return takenOn("job", keyJobCreation, errTaken)
+	}
+	if err := t.revisionFree(j.ID, j.Revision, j.ReleaseID); err != nil {
+		return err
 	}
 	t.s.jobs[j.ID] = encode(j)
 	t.s.creations[j.ReleaseID] = encode(j)
@@ -147,8 +159,8 @@ func (t *memoryTx) reviseJob(j Job, request string) error {
 	if err := t.admits("job", encode(j)); err != nil {
 		return err
 	}
-	if t.revisionTaken(j.ID, j.Revision, j.ReleaseID) {
-		return storeFailure(faultTaken, "job", errTaken)
+	if err := t.revisionFree(j.ID, j.Revision, j.ReleaseID); err != nil {
+		return err
 	}
 	t.s.jobs[j.ID] = encode(j)
 	t.s.revisions = append(t.s.revisions, memoryRevision{job: j.ID, revision: j.Revision, release: j.ReleaseID, record: encode(j), request: request})
@@ -193,7 +205,7 @@ func (t *memoryTx) reviseTrigger(tr Trigger) error {
 		if err != nil {
 			return err
 		}
-		return storeFailure(faultTaken, "trigger", errTaken)
+		return takenOn("trigger", keyCloudBinding, errTaken)
 	}
 	snapshot := memorySnapshot{tr.ID, tr.Revision}
 	if _, held := a.snapshots[snapshot]; held {

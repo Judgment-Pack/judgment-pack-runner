@@ -83,6 +83,51 @@ func faultOf(err error) storeFault {
 	return ""
 }
 
+// storeKey names a key a write meets as faultTaken where the Runner tells
+// keys apart: the keys that hold a release once and a cloud binding once for
+// every scope (docs/design/store-postgresql.md, D9). Each is named as the
+// sqlite kind's schema names it.
+type storeKey string
+
+const (
+	// keyJobRelease is a job's current release (jobs.release_id).
+	keyJobRelease storeKey = "jobs.release_id"
+	// keyJobCreation is the release a job was created from
+	// (job_creations.release_id).
+	keyJobCreation storeKey = "job_creations.release_id"
+	// keyJobRevision is the release of a job's revision
+	// (job_revisions.release_id).
+	keyJobRevision storeKey = "job_revisions.release_id"
+	// keyCloudBinding is a cloud trigger's binding to a scheduler job
+	// (the index triggers_cloud_binding).
+	keyCloudBinding storeKey = "triggers_cloud_binding"
+)
+
+// keyTaken is the cause of a faultTaken that names its key: its text is its
+// cause's, so that the error reads as it did.
+type keyTaken struct {
+	key storeKey
+	err error
+}
+
+func (e keyTaken) Error() string { return e.err.Error() }
+func (e keyTaken) Unwrap() error { return e.err }
+
+// takenOn is faultTaken on key, with its cause.
+func takenOn(op string, key storeKey, err error) error {
+	return storeFailure(faultTaken, op, keyTaken{key: key, err: err})
+}
+
+// takenKey is the key a faultTaken names, or "" when err is no faultTaken or
+// names none.
+func takenKey(err error) storeKey {
+	var k keyTaken
+	if faultOf(err) != faultTaken || !errors.As(err, &k) {
+		return ""
+	}
+	return k.key
+}
+
 // absent says whether err says nothing is held: a contract read's
 // faultAbsent, or the no-rows error of a statement of the sqlite kind's that
 // reaches the Runner as it is (store_sqlite_manual.go).
