@@ -32,6 +32,10 @@ type InputMapping struct {
 	// Only offline verification retains the original legacy document encoding.
 	originalDocument   json.RawMessage
 	selectedConversion *ConversionContract
+	// caseRule is the case's rule as written, in format 4.0.0 alone
+	// (dialect_format4.go): read and written with the case by the named
+	// form's UnmarshalJSON and marshalArtifact.
+	caseRule json.RawMessage
 
 	Profile          string            `json:"profile,omitempty"`
 	FormatVersion    string            `json:"-"`

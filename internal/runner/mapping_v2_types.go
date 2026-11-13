@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 
+	"github.com/Judgment-Pack/judgment-pack-runner/internal/dialect4"
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/retainedcolumns"
 )
 
@@ -187,6 +188,10 @@ type TargetLineage struct {
 	Receipts             *[]Citation                     `json:"receipts,omitempty"`
 	Calculation          *CalculationLineage             `json:"calculation,omitempty"`
 	ColumnTransformation *retainedcolumns.Transformation `json:"columnTransformation,omitempty"`
+	// derivation is how a target of a rule of version 2.0.0 was written, in
+	// format 4.0.0 (dialect_format4.go): written by MarshalJSON, and never
+	// read from a document.
+	derivation *dialect4.Derivation
 }
 
 // CalculationLineage records, for a calculated source, which calculator answered,
@@ -210,6 +215,9 @@ type SourceOutcome struct {
 	Parameters json.RawMessage `json:"parameters"`
 	Arguments  json.RawMessage `json:"arguments,omitempty"`
 	Claim      json.RawMessage `json:"claim"`
+	// rule is the case's rule's outcome, on the case's outcome in format
+	// 4.0.0 (dialect_format4.go): written by MarshalJSON, and never read.
+	rule json.RawMessage
 }
 type Preparation struct {
 	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`
@@ -220,6 +228,9 @@ type Preparation struct {
 	Cites              []Citation          `json:"cites"`
 	Lineage            []TargetLineage     `json:"lineage"`
 	Outcomes           []SourceOutcome     `json:"outcomes"`
+	// formatVersion is "4.0.0" for a preparation through a dialect of that
+	// format, which writes it in place of version (dialect_format4.go).
+	formatVersion string
 }
 type ruleDocument struct {
 	Version    string            `json:"ruleVersion"`

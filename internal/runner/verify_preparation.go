@@ -236,7 +236,10 @@ func VerifyPreparation(f PreparationFixture) PreparationReport {
 
 // Public verification always uses the full acquisition reader; the private
 // dependency permits exact preparation-only corpus tests with prevalidated inputs.
-func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionReader) PreparationReport {
+//
+// Given recomputed, it also sets it to the preparation recomputed, when
+// there is one, which a reading that finds preparation-differs has too.
+func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionReader, recomputed ...**Preparation) PreparationReport {
 	stop := func(code, reason string) PreparationReport {
 		result := ResultFinding
 		if refusalCodes[code] {
@@ -367,6 +370,11 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 	if err = exactDialectForm(f.Dialect, dialect); err != nil {
 		return stop(codeMalformed, "the dialect has invalid members")
 	}
+	// A dialect of format 4.0.0 is read as it is given: this release binds
+	// none with a binding document (§4.4).
+	if dialect.FormatVersion == format4 && f.Binding != nil {
+		return stop("capability-unsupported", "a dialect of format 4.0.0 is read with no binding document: this verifier does not bind one")
+	}
 	if err = preparationAcquisitionForms(dialect, source.Sources); err != nil {
 		return failed(err)
 	}
@@ -405,6 +413,9 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 	if err != nil {
 		return failed(err)
 	}
+	if len(recomputed) > 0 {
+		*recomputed[0] = prepared.Preparation
+	}
 	computed, err := canonical(encode(prepared.Preparation))
 	if err != nil {
 		panic(err)
@@ -430,7 +441,7 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 // PreparationVerifierVersion is the version of verify-preparation's
 // interface: its flags, its report and its capabilities. It changes when any
 // of them does.
-const PreparationVerifierVersion = 2
+const PreparationVerifierVersion = 3
 
 // PreparationVerifierCapabilities is what verify-preparation --capabilities
 // prints, so that a caller can check what the command reads before it calls
@@ -449,7 +460,7 @@ func PreparationVerifierCapabilities(release string) []byte {
 		"version":             PreparationVerifierVersion,
 		"runner":              release,
 		"dialectVersions":     []int{2, 3},
-		"formatVersions":      []string{"2.0.0", "3.0.0"},
+		"formatVersions":      []string{"2.0.0", "3.0.0", format4},
 		"sourceKinds":         sortedKeys(verifiedKinds),
 		"shapes":              shapes,
 		"instant":             freshnessAgainst,

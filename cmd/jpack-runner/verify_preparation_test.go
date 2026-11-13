@@ -213,7 +213,7 @@ func TestVerifyPreparationCapabilities(t *testing.T) {
 		t.Fatalf("%d %s %s", status, stdout, stderr)
 	}
 	report := reportOf(t, stdout)
-	if string(report["command"]) != `"verify-preparation"` || string(report["version"]) != "2" || string(report["dialectVersions"]) != "[2,3]" || string(report["sourceKinds"]) != `["operation","research"]` {
+	if string(report["command"]) != `"verify-preparation"` || string(report["version"]) != "3" || string(report["dialectVersions"]) != "[2,3]" || string(report["sourceKinds"]) != `["operation","research"]` {
 		t.Fatal(stdout)
 	}
 	var description struct {

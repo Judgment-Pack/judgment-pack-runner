@@ -70,7 +70,7 @@ func preflightV2(m InputMapping, profiles []InputProfile) error {
 func preflightPreparation(m InputMapping, profiles []InputProfile, admission bool) error {
 	generated := map[string]bool{}
 	check := func(read SourceRead, class string, gen bool) error {
-		facts, evidence, err := readTargets(read)
+		facts, evidence, err := readTargetsOf(read, m.FormatVersion == format4)
 		if err != nil {
 			return err
 		}

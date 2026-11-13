@@ -20,7 +20,7 @@ func (m InputMapping) validateArtifactIdentity() error {
 		}
 		return nil
 	}
-	if (m.FormatVersion != "2.0.0" || m.Version != 2) && (m.FormatVersion != "3.0.0" || m.Version != 3) {
+	if (m.FormatVersion != "2.0.0" || m.Version != 2) && (m.FormatVersion != "3.0.0" || m.Version != 3) && (m.FormatVersion != format4 || m.Version != 3) {
 		return inputProblem("Unsupported Dialect formatVersion.")
 	}
 	if m.ArtifactID == "" || len(m.ArtifactID) > 1024 || strings.IndexFunc(m.ArtifactID, func(c rune) bool { return c <= 32 || c == 127 }) >= 0 || !artifactVersionGrammar.MatchString(m.ArtifactVersion) {
@@ -35,17 +35,26 @@ func (m InputMapping) marshalArtifact() ([]byte, error) {
 	if err := m.validateArtifactIdentity(); err != nil {
 		return nil, err
 	}
+	// Format 4.0.0's case has a rule (spec/dialect.md §2.2.1), kept as
+	// written; no other format's case has one.
+	var caseDocument any = m.Case
+	if m.FormatVersion == format4 && m.caseRule != nil {
+		caseDocument = struct {
+			*CaseMapping
+			Rule json.RawMessage `json:"rule"`
+		}{m.Case, m.caseRule}
+	}
 	return json.Marshal(struct {
 		Profile          string          `json:"profile,omitempty"`
 		FormatVersion    string          `json:"formatVersion"`
 		ID               string          `json:"id"`
 		Version          string          `json:"version"`
-		Case             *CaseMapping    `json:"case"`
+		Case             any             `json:"case"`
 		Sources          []MappingSource `json:"sources,omitempty"`
 		Admits           *Admission      `json:"admits,omitempty"`
 		Unmapped         []string        `json:"unmapped,omitempty"`
 		UnmappedEvidence []string        `json:"unmappedEvidence,omitempty"`
-	}{m.Profile, m.FormatVersion, m.ArtifactID, m.ArtifactVersion, m.Case, m.Sources, m.Admits, m.Unmapped, m.UnmappedEvidence})
+	}{m.Profile, m.FormatVersion, m.ArtifactID, m.ArtifactVersion, caseDocument, m.Sources, m.Admits, m.Unmapped, m.UnmappedEvidence})
 }
 func (m *InputMapping) UnmarshalJSON(raw []byte) error {
 	// DisallowUnknownFields still applies inside this custom decoder.
@@ -86,8 +95,26 @@ func (m *InputMapping) UnmarshalJSON(raw []byte) error {
 		family = 2
 	case "3.0.0":
 		family = 3
+	case format4:
+		// Read as format 3.0.0 is, its case's rule apart: no other format's
+		// case has one, so the strict reading of the rest refuses it there.
+		family = 3
 	default:
 		return errors.New("unsupported Dialect formatVersion")
+	}
+	var caseRule json.RawMessage
+	if format == format4 {
+		if held, ok := members["case"]; ok {
+			if caseMembers, err := exactMembers(held); err == nil {
+				if rule, ok := caseMembers["rule"]; ok {
+					caseRule = append(json.RawMessage(nil), rule...)
+					delete(caseMembers, "rule")
+					if members["case"], err = json.Marshal(caseMembers); err != nil {
+						return err
+					}
+				}
+			}
+		}
 	}
 	for _, key := range []string{"provider", "facts", "evidence"} {
 		if _, ok := members[key]; ok {
@@ -107,6 +134,7 @@ func (m *InputMapping) UnmarshalJSON(raw []byte) error {
 	}
 	candidate := InputMapping(decoded)
 	candidate.FormatVersion, candidate.ArtifactID, candidate.ArtifactVersion = format, id, version
+	candidate.caseRule = caseRule
 	if err = candidate.validateArtifactIdentity(); err != nil {
 		return err
 	}
@@ -136,6 +164,11 @@ func releaseDialectIdentity(r Release) (*DialectIdentity, error) {
 	}
 	if mapping.FormatVersion == "" {
 		return nil, nil
+	}
+	// No release, job or workflow is on a dialect of format 4.0.0 until the
+	// Spec's workflow and recording schemas admit it (dialect_format4.go).
+	if mapping.FormatVersion == format4 {
+		return nil, formatNotAdmitted()
 	}
 	if err := mapping.validateArtifactIdentity(); err != nil {
 		return nil, err
