@@ -361,7 +361,8 @@ func newResultsWorld(t *testing.T) *resultsWorld {
 }
 
 // end queues a run of j and records its end: completed with disposition, or
-// failed or interrupted with class, and reason when it is not "".
+// failed or interrupted with class, and reason when it is not "", and with a
+// result of disposition when it is not "".
 func (w *resultsWorld) end(t *testing.T, j Job, state, disposition, class, reason string) Run {
 	t.Helper()
 	w.n++
@@ -378,9 +379,13 @@ func (w *resultsWorld) end(t *testing.T, j Job, state, disposition, class, reaso
 	r.StartedAt, r.State, r.Attempt = now(), "running", 1
 	must(t, w.s.changeRun(r))
 	r.FinishedAt, r.State = now(), state
+	if disposition != "" {
+		// An evaluation whose output did not pass Runner's checks fails with
+		// the output it wrote.
+		r.Result = json.RawMessage(`{"outputVersion":"2","status":"evaluated","packId":"journal","packVersion":"1.0.0","evaluatorSpecVersion":"0.2.0-draft","rehearsal":false,"disposition":` + disposition + `}`)
+	}
 	switch state {
 	case "completed":
-		r.Result = json.RawMessage(`{"outputVersion":"2","status":"evaluated","packId":"journal","packVersion":"1.0.0","evaluatorSpecVersion":"0.2.0-draft","rehearsal":false,"disposition":` + disposition + `}`)
 		r.AuditBytes = []byte(`{"recordVersion":"1","run":"` + r.ID + `"}`)
 	case "interrupted":
 		r.InterruptedAt, r.Problem = r.FinishedAt, "Stopped."
@@ -475,6 +480,7 @@ func TestTheRunsListingsFilterByOutcomeAndErrorClass(t *testing.T) {
 	c2 := w.end(t, w.c, "failed", "", classPreparation, "")
 	c3 := w.end(t, w.c, "completed", journalDisposition, "", "")
 	c4 := w.end(t, w.c, "failed", "", classPreparation, "")
+	c5 := w.end(t, w.c, "failed", journalDisposition, classEvaluation, "")
 	w.old(t, c3)
 	w.old(t, c4)
 	queued, _, e := w.s.submit(w.c.ID, "queued", journalInput())
@@ -492,15 +498,16 @@ func TestTheRunsListingsFilterByOutcomeAndErrorClass(t *testing.T) {
 		{"/v1/runs?outcome=proceed%20", ids()},
 		{"/v1/runs?outcome=never-given", ids()},
 		{"/v1/runs?outcome=unresolved", ids()},
-		{"/v1/runs?errorClass=evaluation", ids(a4)},
+		{"/v1/runs?errorClass=evaluation", ids(c5, a4)},
 		{"/v1/runs?errorClass=interrupted", ids(a5)},
 		{"/v1/runs?errorClass=limit&errorClass=preparation", ids(c2, b2)},
 		{"/v1/runs?errorClass=source", ids()},
 		{"/v1/runs?outcome=proceed&errorClass=evaluation", ids()},
 		{"/v1/runs?outcome=proceed&state=completed", ids(c3, c1, b1, a1)},
 		{"/v1/runs?outcome=proceed&state=failed", ids()},
-		{"/v1/runs?errorClass=evaluation&state=failed", ids(a4)},
-		{"/v1/runs?errorClass=evaluation&review=true", ids(a4)},
+		{"/v1/runs?outcome=proceed&errorClass=evaluation&state=failed", ids()},
+		{"/v1/runs?errorClass=evaluation&state=failed", ids(c5, a4)},
+		{"/v1/runs?errorClass=evaluation&review=true", ids(c5, a4)},
 		{"/v1/runs?outcome=proceed&review=true", ids()},
 		{"/v1/runs?outcome=proceed&q=Bravo", ids(b1)},
 		{"/v1/runs?outcome=proceed&scope=a", ids(a1)},
@@ -514,7 +521,7 @@ func TestTheRunsListingsFilterByOutcomeAndErrorClass(t *testing.T) {
 		{"/v1/jobs/" + w.a.ID + "/runs?errorClass=interrupted&errorClass=evaluation&scope=a", ids(a5, a4)},
 		{"/v1/jobs/" + w.c.ID + "/runs?outcome=proceed", ids(c3, c1)},
 		{"/v1/jobs/" + w.c.ID + "/runs?errorClass=preparation", ids(c2)},
-		{"/v1/jobs/" + w.c.ID + "/runs", ids(queued, c4, c3, c2, c1)},
+		{"/v1/jobs/" + w.c.ID + "/runs", ids(queued, c5, c4, c3, c2, c1)},
 	} {
 		if got, next, _ := listedRuns(t, w.s, c.path); !slices.Equal(got, c.want) || next != 0 {
 			t.Errorf("%s: %v next %d, want %v", c.path, got, next, c.want)
@@ -523,7 +530,7 @@ func TestTheRunsListingsFilterByOutcomeAndErrorClass(t *testing.T) {
 	// What a listing serves of each: the counts and the class of a run that
 	// ended since, and neither of one before, or of one not yet ended.
 	_, _, items := listedRuns(t, w.s, "/v1/jobs/"+w.c.ID+"/runs")
-	for i, want := range []string{"", "", "", `"preparation" {"decisions":0,"byKind":{},"byOutcome":{}}`, `"" {"decisions":1,"byKind":{"outcome":1},"byOutcome":{"proceed":1}}`} {
+	for i, want := range []string{"", `"evaluation" {"decisions":0,"byKind":{},"byOutcome":{}}`, "", "", `"preparation" {"decisions":0,"byKind":{},"byOutcome":{}}`, `"" {"decisions":1,"byKind":{"outcome":1},"byOutcome":{"proceed":1}}`} {
 		got := ""
 		if items[i]["counts"] != nil {
 			got = string(items[i]["errorClass"])
@@ -564,12 +571,12 @@ func TestTheRunsListingsFilterByOutcomeAndErrorClass(t *testing.T) {
 		{"/v1/events?outcome=proceed", ended(completed, a1, b1, c1)},
 		{"/v1/events?outcome=proceed&outcome=decline", ended(completed, a1, a2, b1, c1)},
 		{"/v1/events?outcome=never-given", ended(completed)},
-		{"/v1/events?errorClass=evaluation", ended("run.failed", a4)},
+		{"/v1/events?errorClass=evaluation", ended("run.failed", a4, c5)},
 		{"/v1/events?errorClass=interrupted", ended("run.interrupted", a5)},
 		{"/v1/events?errorClass=limit", ended("run.expired", b2)},
 		{"/v1/events?errorClass=preparation", ended("run.failed", c2)},
 		{"/v1/events?kind=run.completed", ended(completed, a1, a2, a3, b1, c1, c3)},
-		{"/v1/events?kind=run.failed&kind=run.expired", append(append(ended("run.failed", a4), ended("run.expired", b2)...), ended("run.failed", c2, c4)...)},
+		{"/v1/events?kind=run.failed&kind=run.expired", append(append(ended("run.failed", a4), ended("run.expired", b2)...), ended("run.failed", c2, c4, c5)...)},
 		{"/v1/events?kind=run.completed&outcome=decline", ended(completed, a2)},
 		{"/v1/events?kind=run.failed&outcome=proceed", ended(completed)},
 		{"/v1/events?kind=run.completed&scope=b", ended(completed, b1)},
