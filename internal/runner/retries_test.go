@@ -108,10 +108,7 @@ func newRetryWorldOf(t *testing.T, cfg Config, release func(*testing.T, *Service
 	must(t, e)
 	o := newOccurrence(tr, j, time.Now())
 	o.PendingInput = c.Input
-	tx, e := s.db.Begin()
-	must(t, e)
-	must(t, s.admitOccurrence(tx, tr, &o, "fixture", ""))
-	must(t, tx.Commit())
+	must(t, s.store.update(func(tx runTx) error { return s.admitOccurrence(tx, tr, &o, "fixture", "") }))
 	return &retryWorld{s: s, cfg: cfg, o: o, calls: calls, clock: &clock, tr: tr, job: j}
 }
 
@@ -120,10 +117,7 @@ func (w *retryWorld) admit(t *testing.T, key string) Occurrence {
 	t.Helper()
 	o := newOccurrence(w.tr, w.job, time.Now())
 	o.PendingInput = w.o.PendingInput
-	tx, e := w.s.db.Begin()
-	must(t, e)
-	must(t, w.s.admitOccurrence(tx, w.tr, &o, key, ""))
-	must(t, tx.Commit())
+	must(t, w.s.store.update(func(tx runTx) error { return w.s.admitOccurrence(tx, w.tr, &o, key, "") }))
 	return o
 }
 

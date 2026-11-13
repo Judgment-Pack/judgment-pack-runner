@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,11 +29,11 @@ type storeKindUnderTest struct {
 	name string
 	// open is a new, empty store of the kind.
 	open func(t *testing.T) runStore
-	// seedJob keeps a job, made outside the contract.
+	// seedJob keeps a job and its first revision, without the record of
+	// its creation: the world's job, made directly.
 	seedJob func(t *testing.T, st runStore, j Job)
-	// journal is the kinds of the journal's entries the contract wrote, in
-	// order.
-	journal func(t *testing.T, st runStore) []string
+	// schema is the schema the store is at, as the sqlite kind names it.
+	schema func(t *testing.T, st runStore) string
 	// failCommits makes every later commit fail with err, or succeed again
 	// for nil.
 	failCommits func(st runStore, err error)
@@ -80,29 +81,21 @@ func storeKindsUnderTest() []storeKindUnderTest {
 				return k
 			},
 			seedJob: func(t *testing.T, st runStore, j Job) {
-				// The statement job creation makes (store.go).
-				if _, err := st.(*sqliteStore).db.Exec("INSERT INTO jobs(id,release_id,record)VALUES(?,?,?)", j.ID, j.ReleaseID, string(encode(j))); err != nil {
+				// Two of the statements createJob makes (store_sqlite_jobs.go).
+				db := st.(*sqliteStore).db
+				if _, err := db.Exec("INSERT INTO jobs(id,release_id,record)VALUES(?,?,?)", j.ID, j.ReleaseID, string(encode(j))); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.Exec("INSERT INTO job_revisions(job_id,revision,release_id,record) VALUES (?,?,?,?)", j.ID, j.Revision, j.ReleaseID, string(encode(j))); err != nil {
 					t.Fatal(err)
 				}
 			},
-			journal: func(t *testing.T, st runStore) []string {
-				rows, err := st.(*sqliteStore).db.Query("SELECT kind FROM events WHERE kind<>'journal.began' ORDER BY sequence")
-				if err != nil {
+			schema: func(t *testing.T, st runStore) string {
+				var schema string
+				if err := st.(*sqliteStore).db.QueryRow("SELECT value FROM metadata WHERE key='schema'").Scan(&schema); err != nil {
 					t.Fatal(err)
 				}
-				defer rows.Close()
-				var kinds []string
-				for rows.Next() {
-					var kind string
-					if err = rows.Scan(&kind); err != nil {
-						t.Fatal(err)
-					}
-					kinds = append(kinds, kind)
-				}
-				if err = rows.Err(); err != nil {
-					t.Fatal(err)
-				}
-				return kinds
+				return schema
 			},
 			failCommits: func(st runStore, err error) {
 				k := st.(*sqliteStore)
@@ -123,7 +116,7 @@ func storeKindsUnderTest() []storeKindUnderTest {
 			name:        "memory",
 			open:        func(t *testing.T) runStore { return newMemoryStore() },
 			seedJob:     func(t *testing.T, st runStore, j Job) { st.(*memoryStore).seedJob(j) },
-			journal:     func(t *testing.T, st runStore) []string { return st.(*memoryStore).journalKinds() },
+			schema:      func(t *testing.T, st runStore) string { return st.(*memoryStore).heldSchema() },
 			failCommits: func(st runStore, err error) { st.(*memoryStore).failCommits(err) },
 			spoil:       func(t *testing.T, st runStore, run string) { st.(*memoryStore).spoilRun(run) },
 		},
@@ -134,7 +127,7 @@ func storeKindsUnderTest() []storeKindUnderTest {
 func TestStoreKindsConform(t *testing.T) {
 	for _, k := range storeKindsUnderTest() {
 		t.Run(k.name, func(t *testing.T) {
-			for _, c := range append(slices.Clone(storeCases), k.own...) {
+			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, k.own) {
 				t.Run(c.name, func(t *testing.T) { c.run(t, k) })
 			}
 		})
@@ -245,8 +238,8 @@ var storeCases = []storeCase{
 		wantFault(t, err, faultTaken, "a second run under one request key")
 		held, err := w.st.requestedRun(w.job.ID, "owner", "key-a")
 		must(t, err)
-		if held.digest != "sha256:key-a" {
-			t.Fatal("the request's digest is not the first's:", held.digest)
+		if held.digest != "sha256:key-a" || held.id != first.ID {
+			t.Fatal("the request's digest or run is not the first's:", held.digest, held.id)
 		}
 		if r, err := held.run(); err != nil || r.ID != first.ID {
 			t.Fatal("the run held under the key is not the first:", r.ID, err)
@@ -255,7 +248,7 @@ var storeCases = []storeCase{
 			_, err = w.st.requestedRun(other[0], other[1], other[2])
 			wantFault(t, err, faultAbsent, fmt.Sprint("another request key ", other))
 		}
-		if got := kindCount(k.journal(t, w.st), "run.queued"); got != 1 {
+		if got := kindCount(journalKindsOf(t, w.st), "run.queued"); got != 1 {
 			t.Fatal("run.queued entries:", got)
 		}
 	}},
@@ -336,7 +329,7 @@ var storeCases = []storeCase{
 		if held, err = w.st.run("run_a"); err != nil || held.State != "running" || held.Problem != "" {
 			t.Fatal("a conflicting update wrote:", held.State, held.Problem, err)
 		}
-		kinds := k.journal(t, w.st)
+		kinds := journalKindsOf(t, w.st)
 		if kindCount(kinds, "run.started") != 1 || kindCount(kinds, "run.expired") != 0 {
 			t.Fatal("entries for one claim:", kinds)
 		}
@@ -407,7 +400,7 @@ var storeCases = []storeCase{
 				t.Fatal(id, held.State, err)
 			}
 		}
-		kinds := k.journal(t, w.st)
+		kinds := journalKindsOf(t, w.st)
 		if kindCount(kinds, "run.queued") != producers*perProducer || kindCount(kinds, "run.started") != producers*perProducer {
 			t.Fatal("entries:", kindCount(kinds, "run.queued"), kindCount(kinds, "run.started"))
 		}
@@ -486,7 +479,7 @@ var storeCases = []storeCase{
 	}},
 	{"a transaction that fails keeps nothing", func(t *testing.T, k storeKindUnderTest) {
 		w := newStoreWorld(t, k)
-		before := k.journal(t, w.st)
+		before := journalKindsOf(t, w.st)
 		abandoned := errors.New("the transaction is abandoned")
 		for _, end := range []error{abandoned, errKeepNothing} {
 			err := w.st.update(func(tx runTx) error {
@@ -523,7 +516,7 @@ var storeCases = []storeCase{
 			if _, err = w.st.entrySequence("run_kept"); !absent(err) {
 				t.Fatal("an entry was kept:", err)
 			}
-			if after := k.journal(t, w.st); !slices.Equal(after, before) {
+			if after := journalKindsOf(t, w.st); !slices.Equal(after, before) {
 				t.Fatal("journal entries were kept:", after)
 			}
 		}
@@ -535,7 +528,7 @@ var storeCases = []storeCase{
 		w := newStoreWorld(t, k)
 		_, err := w.enqueue("run_a", "key-a")
 		must(t, err)
-		before := k.journal(t, w.st)
+		before := journalKindsOf(t, w.st)
 		failed := errors.New("the disk refused the commit")
 		k.failCommits(w.st, failed)
 		_, err = w.enqueue("run_b", "key-b")
@@ -559,7 +552,7 @@ var storeCases = []storeCase{
 		if _, err = w.st.release("rel_b"); !absent(err) {
 			t.Fatal("a release whose commit failed was kept:", err)
 		}
-		if after := k.journal(t, w.st); !slices.Equal(after, before) {
+		if after := journalKindsOf(t, w.st); !slices.Equal(after, before) {
 			t.Fatal("journal entries whose commit failed were kept:", after)
 		}
 		k.failCommits(w.st, nil)
@@ -635,7 +628,7 @@ var storeCases = []storeCase{
 		if held, err := w.st.run(r.ID); err != nil || held.State != "completed" {
 			t.Fatal(held.State, err)
 		}
-		if got := kindCount(k.journal(t, w.st), "run.completed"); got != 1 {
+		if got := kindCount(journalKindsOf(t, w.st), "run.completed"); got != 1 {
 			t.Fatal("run.completed entries:", got)
 		}
 	}},
@@ -737,7 +730,7 @@ var sqliteOwnCases = []storeCase{
 		must(t, finishRunIn(st, done))
 		line, err := st.entryLine(done.ID)
 		must(t, err)
-		journal := k.journal(t, st)
+		journal := journalKindsOf(t, st)
 		must(t, st.close())
 
 		st = openSQLiteForTest(t, dir)
@@ -760,7 +753,7 @@ var sqliteOwnCases = []storeCase{
 		if held, err := st.requestedRun(w.job.ID, "owner", "run_a"); err != nil || held.digest != "sha256:run_a" {
 			t.Fatal("the request is not where it was:", err)
 		}
-		if after := k.journal(t, st); !slices.Equal(after, journal) {
+		if after := journalKindsOf(t, st); !slices.Equal(after, journal) {
 			t.Fatal("the journal is not where it was:", after, journal)
 		}
 		must(t, st.update(func(tx runTx) error {
@@ -785,4 +778,91 @@ var sqliteOwnCases = []storeCase{
 		again := openSQLiteForTest(t, dir)
 		must(t, again.close())
 	}},
+	{"a transaction that fails or whose commit fails keeps no journal entry in the database", func(t *testing.T, k storeKindUnderTest) {
+		// Read from the events table itself, not through journalPage.
+		w := newStoreWorld(t, k)
+		db := w.st.(*sqliteStore).db
+		rows := func() (count int, last int64) {
+			t.Helper()
+			must(t, db.QueryRow("SELECT count(*),coalesce(max(sequence),0) FROM events").Scan(&count, &last))
+			return count, last
+		}
+		count, last := rows()
+		err := w.st.update(func(tx runTx) error {
+			if _, err := tx.appendJournal(change{kind: "runner.started", by: runnerActor}); err != nil {
+				return err
+			}
+			return errors.New("the transaction is abandoned")
+		})
+		if err == nil {
+			t.Fatal("an abandoned transaction succeeded")
+		}
+		k.failCommits(w.st, errors.New("the disk refused the commit"))
+		wantFault(t, w.st.update(func(tx runTx) error {
+			_, err := tx.appendJournal(change{kind: "runner.started", by: runnerActor})
+			return err
+		}), faultDurability, "an entry whose commit failed")
+		k.failCommits(w.st, nil)
+		if c, l := rows(); c != count || l != last {
+			t.Fatalf("the events table holds %d entries to %d, where it held %d to %d", c, l, count, last)
+		}
+	}},
+	{"a read that fails is unavailable, and a record that does not decode unreadable", func(t *testing.T, k storeKindUnderTest) {
+		w := newStoreWorld(t, k)
+		st := w.st.(*sqliteStore)
+		held := st.sqliteReads
+		st.sqliteReads = sqliteReads{failingReads{held.q, ""}}
+		reads := map[string]func() error{
+			"release":          func() error { _, err := st.release(w.release.ID); return err },
+			"job":              func() error { _, err := st.job(w.job.ID); return err },
+			"jobCreation":      func() error { _, err := st.jobCreation(w.release.ID); return err },
+			"jobRevision":      func() error { _, _, err := st.jobRevision(w.job.ID, 1); return err },
+			"releaseUses":      func() error { _, err := st.releaseUses(w.release.ID); return err },
+			"packConflicts":    func() error { _, err := st.packConflicts("p", "1", "d"); return err },
+			"dialectConflicts": func() error { _, err := st.dialectConflicts("d", "1", "d"); return err },
+			"trigger":          func() error { _, _, err := st.trigger("trg_1"); return err },
+			"occurrence":       func() error { _, err := st.occurrence("occ_1"); return err },
+			"brief":            func() error { _, err := st.brief("job:" + w.job.ID); return err },
+			"profileRow":       func() error { _, err := st.profileRow(registeredProfilesKey); return err },
+			"recordScope":      func() error { _, err := st.recordScope("jobs", w.job.ID); return err },
+			"journalPage":      func() error { _, _, err := st.journalPage(journalFilter{}, journalRange{limit: 1}); return err },
+		}
+		for name, read := range reads {
+			wantFault(t, read(), faultUnavailable, "a failed read of "+name)
+		}
+		st.sqliteReads = held
+		// Within a transaction, the rows of a query that fails, and a record
+		// that does not decode.
+		tx, err := st.db.Begin()
+		must(t, err)
+		defer tx.Rollback()
+		wantFault(t, eachRecord(tx, "queue", "SELECT record FROM a_table_never_made", func([]byte) error { return nil }), faultUnavailable, "a failed query of records")
+		wantFault(t, eachRecord(tx, "queue", "SELECT '{'", func(b []byte) error { _, err := decodeRun(b); return err }), faultUnreadable, "a record that does not decode")
+	}},
+}
+
+// failingReads answers each read whose statement names table, or every read
+// for "", with a statement that fails, as a store that is busy, damaged or
+// closed answers it.
+type failingReads struct {
+	sqliteQuerier
+	table string
+}
+
+func (f failingReads) fails(query string) bool {
+	return f.table == "" || strings.Contains(query, " "+f.table+" ") || strings.HasSuffix(query, " "+f.table)
+}
+
+func (f failingReads) QueryRow(query string, args ...any) *sql.Row {
+	if f.fails(query) {
+		return f.sqliteQuerier.QueryRow("SELECT record FROM a_table_never_made")
+	}
+	return f.sqliteQuerier.QueryRow(query, args...)
+}
+
+func (f failingReads) Query(query string, args ...any) (*sql.Rows, error) {
+	if f.fails(query) {
+		return f.sqliteQuerier.Query("SELECT record FROM a_table_never_made")
+	}
+	return f.sqliteQuerier.Query(query, args...)
 }

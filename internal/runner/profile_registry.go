@@ -4,7 +4,6 @@ package runner
 // This is installation configuration, never imported Dialect authority. The
 // private control listener's bearer and Origin checks apply before this handler.
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,9 +81,8 @@ func (s *Service) inputProfiles() []InputProfile {
 // set-aside one counted; an id stored twice; and a stored profile, admitted or
 // set aside, whose id a configured profile of another definition has.
 func (s *Service) loadRegisteredProfiles() error {
-	var raw string
-	err := s.db.QueryRow("SELECT value FROM metadata WHERE key=?", registeredProfilesKey).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
+	raw, err := s.store.profileRow(registeredProfilesKey)
+	if absent(err) {
 		return nil
 	}
 	if err != nil {
@@ -226,9 +224,9 @@ func (s *Service) registerInputProfile(p InputProfile) (bool, error) {
 	if len(row) > registeredProfilesBound {
 		return false, bad("input_profile_limit", "The registered input profiles would exceed their storage bound. Existing profiles were retained.")
 	}
-	// One atomic, synchronous SQLite write precedes making the profile visible.
+	// One atomic, synchronous write precedes making the profile visible.
 	// A retry after an uncertain response can only observe this same definition.
-	if _, err := s.db.Exec("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", registeredProfilesKey, row); err != nil {
+	if err := s.store.update(func(tx runTx) error { return tx.putProfileRow(registeredProfilesKey, row) }); err != nil {
 		return false, err
 	}
 	s.storedProfiles = stored

@@ -27,8 +27,9 @@ type storeFault string
 const (
 	// faultAbsent: no record is held under the id or key asked for.
 	faultAbsent storeFault = "absent"
-	// faultTaken: a create-once id or key is held already. Nothing is
-	// written.
+	// faultTaken: a create-once id or key is held already. An operation of
+	// one statement writes nothing; one of several may have made its first
+	// statements in the transaction, which its caller then abandons (runTx).
 	faultTaken storeFault = "taken"
 	// faultConflict: a versioned update found the record at another version
 	// than the one its writer read. Nothing is written.
@@ -38,8 +39,12 @@ const (
 	// A failed statement keeps nothing of the transaction; a failed commit
 	// may or may not have kept it.
 	faultDurability storeFault = "durability"
-	// faultUnreadable: a read failed, or what is held does not read as the
-	// record it should be.
+	// faultUnavailable: a read failed: the store did not answer, and nothing
+	// is known of what it holds. A caller never takes it for a record, or for
+	// none.
+	faultUnavailable storeFault = "unavailable"
+	// faultUnreadable: what is held does not read as the record it should
+	// be.
 	faultUnreadable storeFault = "unreadable"
 	// faultRefused: an argument outside the contract, refused before
 	// anything is written.
@@ -92,10 +97,12 @@ var errKeepNothing = errors.New("store: the transaction keeps nothing")
 // state the store holds it in.
 const anyState = ""
 
-// heldRequest is a run as the queue holds it under its request key: the
-// digest of the request that made it, and its record, read when asked, so
-// that a caller compares the digest before it reads the record.
+// heldRequest is a run as the queue holds it under its request key: its id,
+// the digest of the request that made it, and its record, read when asked,
+// so that a caller compares the digest before it reads the record, and a
+// caller that needs only the id never reads it.
 type heldRequest struct {
+	id     string
 	digest string
 	record []byte
 }
@@ -109,9 +116,23 @@ func (h heldRequest) run() (Run, error) { return decodeRun(h.record) }
 type storeReads interface {
 	// release is the release held under id, or faultAbsent.
 	release(id string) (Release, error)
-	// job is the job held under id, or faultAbsent. Jobs are made and
-	// revised outside the contract (store_sqlite.go).
+	// job is the job held under id, or faultAbsent.
 	job(id string) (Job, error)
+	// jobCreation is the job a release made, as it was made, or faultAbsent:
+	// a release makes one job, and a repeated creation returns it.
+	jobCreation(release string) (Job, error)
+	// releaseUses counts the job revisions that name a release.
+	releaseUses(release string) (int, error)
+	// jobRevision is a job's revision as it was made, with the digest of the
+	// upgrade request that made it ("" for a job's creation), or
+	// faultAbsent.
+	jobRevision(job string, revision int) (Job, string, error)
+	// packConflicts counts the job revisions whose release names the pack
+	// identity and version with other content than digest.
+	packConflicts(pack, version, digest string) (int, error)
+	// dialectConflicts counts the job revisions whose release names the
+	// dialect identity and version with other content than digest.
+	dialectConflicts(dialect, version, digest string) (int, error)
 	// requestedRun is the run held under its request key, the job, the
 	// caller and the caller's idempotency key, or faultAbsent.
 	requestedRun(jobID, caller, key string) (heldRequest, error)
@@ -122,12 +143,98 @@ type storeReads interface {
 	// is the run as the transaction holds it, so that a retry's checks and
 	// its write see one record (retries.go).
 	run(id string) (Run, error)
+	// recordScope is the scope identifier the record of a kind of record
+	// (scopeCarriers) held under id carries, "" for none, or faultAbsent.
+	// faultRefused for another kind of record.
+	recordScope(records, id string) (string, error)
+	// profileRow is the row of input profiles held under key
+	// (profileRowKeys), as it was written, or faultAbsent. faultRefused for
+	// another key.
+	profileRow(key string) (string, error)
+	// brief is the brief history held for subject, as it was written, or
+	// faultAbsent.
+	brief(subject string) ([]byte, error)
+	// trigger is the trigger held under id, with its file observer's cursor
+	// and the revision its delivery key was issued at, and the digest of
+	// that key ("" for none), or faultAbsent.
+	trigger(id string) (Trigger, string, error)
+	// triggerCount counts the triggers held.
+	triggerCount() (int, error)
+	// cloudBindings counts the triggers other than except whose cloud
+	// binding names connection and job.
+	cloudBindings(except, connection, job string) (int, error)
+	// occurrence is the occurrence held under id, or faultAbsent.
+	occurrence(id string) (Occurrence, error)
+	// identifiedOccurrence is the occurrence trigger admitted under identity
+	// (its event, schedule time, file change or signal), with the digest of
+	// the payload it was admitted with, or faultAbsent.
+	identifiedOccurrence(trigger, identity string) (Occurrence, string, error)
+}
+
+// scopeCarriers are the kinds of record that carry a scope identifier, by
+// the name recordScope takes.
+var scopeCarriers = map[string]bool{"jobs": true, "runs": true, "triggers": true, "occurrences": true}
+
+// profileRowKeys are the keys profile rows are held under.
+var profileRowKeys = map[string]bool{registeredProfilesKey: true, selectedProfilesKey: true}
+
+// journalReads are the journal's reads, outside a transaction.
+type journalReads interface {
+	// journalPage is up to r.limit entries f keeps, in the order r reads
+	// them, and whether f keeps another beyond them, which is not decoded.
+	journalPage(f journalFilter, r journalRange) ([]Event, bool, error)
+	// journalBegan is when the journal began: its first journal.began
+	// entry's time, or faultAbsent.
+	journalBegan() (string, error)
+}
+
+// journalFilter selects the journal's entries a read keeps; the zero filter
+// keeps every entry. A kind applies it where it reads, so that a page holds
+// only entries the filter keeps.
+type journalFilter struct {
+	// job keeps the entries naming the job, and those naming no job and one
+	// of the job's revisions' releases (a preview, a refused creation).
+	job string
+	// runnerOwn keeps, beside job's, the Runner's own entries (journal.began,
+	// runner.started, runner.stopped). It means nothing without job.
+	runnerOwn bool
+	// scope keeps, of those, only the entries whose detail carries this
+	// scope identifier, compared byte for byte.
+	scope string
+	// results keeps, of those, the entries of the outcomes, error classes
+	// and kinds named (run_results.go).
+	results resultFilter
+}
+
+// journalRange is where a read of the journal starts and which way it goes:
+// forward, the entries after after, oldest first; backward, the newest
+// (tail) or those before before, newest first.
+type journalRange struct {
+	after    int64
+	backward bool
+	tail     bool
+	before   int64
+	limit    int
+}
+
+// journalRow is an entry as every kind keeps it: a change encoded once
+// (journalRowOf), in the sqlite kind's columns, so that the journal reads
+// the same whatever kind keeps it.
+type journalRow struct {
+	version, kind, at, by, concerns string
+	revision                        sql.NullInt64
+	from, to                        sql.NullString
+	reason, detail                  string
+	// job, release and refusal are what a read selects on: the concerned
+	// job and release, and a refusal's key (journalRefusal).
+	job, release, refusal string
 }
 
 // runStore is the Runner's durable state for the queue, releases, inputs and
 // run records, behind one contract.
 type runStore interface {
 	storeReads
+	journalReads
 	// update runs fn in one transaction and keeps what it wrote only if fn
 	// returns nil and the commit succeeds. Transactions are serializable: one
 	// sees every write of each that committed before it began, and none of
@@ -145,12 +252,43 @@ type runStore interface {
 	// chainPage is up to limit entry lines with a sequence after after, in
 	// order of sequence, and the sequence of the last (after when none).
 	chainPage(after int64, limit int) ([][]byte, int64, error)
+	// enabledTriggers are the ids of the triggers held not paused, in the
+	// order they were made.
+	enabledTriggers() ([]string, error)
+	// readyOccurrence is the accepted occurrence admitted first that has no
+	// input left to prepare, or faultAbsent.
+	readyOccurrence() (Occurrence, error)
+	// preparableOccurrences gives each, in the order they were admitted,
+	// the occurrences accepted with input left to prepare and those waiting,
+	// until each returns true or an error, which it returns. each must not
+	// call the store.
+	preparableOccurrences(each func(Occurrence) (bool, error)) error
+	// cloudBoundTrigger is the id of a trigger whose cloud binding names
+	// connection and job, or faultAbsent.
+	cloudBoundTrigger(connection, job string) (string, error)
+	// jobTriggers are a job's triggers, in the order they were made, each
+	// saying whether it holds a delivery key.
+	jobTriggers(job string) ([]Trigger, error)
+	// occurrencePage is up to limit of a job's occurrences admitted before
+	// the order before, newest first, and with preparations only those that
+	// hold a preparation and are not submitted; and, when the job has
+	// another beyond them, which is not decoded, the order of the last one
+	// read, the next page's before, and 0 otherwise.
+	occurrencePage(job string, before int64, preparations bool, limit int) ([]Occurrence, int64, error)
+	// keyedOccurrence is the occurrence held under id, admitted by trigger
+	// and bound to the delivery key whose digest is hash, while that key is
+	// the trigger's, or faultAbsent: one read, so that a key rotated after
+	// its caller checked it still refuses (eventResult).
+	keyedOccurrence(id, trigger, hash string) (Occurrence, error)
 	// close gives the store up. A kind that holds the store exclusively
 	// releases it last.
 	close() error
 }
 
-// runTx is one transaction of a store.
+// runTx is one transaction of a store. A write that returns a fault may have
+// made part of its statements in the transaction: its caller abandons the
+// transaction, returning the fault (or another error) from update's
+// function, and update keeps nothing of it.
 type runTx interface {
 	storeReads
 	// activeRuns counts the runs queued or running.
@@ -158,6 +296,14 @@ type runTx interface {
 	// createRun queues r under its id and its request key (r.JobID, caller,
 	// key), with the request's digest: faultTaken when either is held.
 	createRun(r Run, caller, key, requestDigest string) error
+	// lastRefusal is the time of the newest entry journaled under a
+	// refusal's key, which is never empty (journalRefusal), or faultAbsent.
+	lastRefusal(key string) (string, error)
+	// putProfileRow writes the row of input profiles held under key,
+	// whatever it held. faultRefused for a key outside profileRowKeys.
+	putProfileRow(key, row string) error
+	// putBrief writes the brief history held for subject, whatever it held.
+	putBrief(subject string, record []byte) error
 	// putRun writes r's state and record over the run held under r.ID, and
 	// returns the state it held before. With expected other than anyState,
 	// the run must be held in that state, or nothing is written and the
@@ -176,14 +322,75 @@ type runTx interface {
 	createEntry(sequence int64, run string, line []byte) error
 	// createRelease keeps r under its id: faultTaken when one is held.
 	createRelease(r Release) error
+	// createTrigger keeps t under its id, with no delivery key and no file
+	// cursor: faultTaken when one is held, or when t is a cloud trigger
+	// whose binding another cloud trigger holds.
+	createTrigger(t Trigger) error
+	// putTrigger writes t, its delivery key's digest hash and its file
+	// cursor over the trigger held under t.ID, and with history keeps the
+	// snapshot of t's revision: faultTaken when that snapshot, or t's cloud
+	// binding, is held already, and faultAbsent when no trigger is held
+	// under t.ID. On either its caller abandons the transaction: the
+	// trigger's columns may be written in it already.
+	putTrigger(t Trigger, hash string, history bool) error
+	// createOccurrence keeps o, admitted under identity with the payload
+	// whose digest is payload: faultTaken when its id, or the identity for
+	// its trigger, is held.
+	createOccurrence(o Occurrence, identity, payload string) error
+	// putOccurrence writes o's state and record over the occurrence held
+	// under o.ID, and returns the state it held before. With expected other
+	// than anyState, the occurrence must be held in that state, or nothing
+	// is written and the fault is faultConflict: a final state is not
+	// overwritten by a preparation still in flight. faultAbsent when no
+	// occurrence is held under o.ID.
+	putOccurrence(o Occurrence, expected string) (string, error)
+	// createOccurrenceKey binds an occurrence to the delivery key that
+	// created it, by the key's digest: faultTaken when it is bound.
+	createOccurrenceKey(occurrence, hash string) error
+	// pendingOccurrences counts the occurrences accepted, preparing or
+	// waiting: the automatic queue (queueLimit).
+	pendingOccurrences() (int, error)
+	// jobActivity counts a job's runs queued or running and its occurrences
+	// accepted, preparing, waiting or needing attention.
+	jobActivity(job string) (int, error)
+	// preparingOccurrences are the occurrences held preparing, in the order
+	// they were admitted.
+	preparingOccurrences() ([]Occurrence, error)
+	// lastPreparing is the time of the newest occurrence.preparing entry
+	// concerning an occurrence, or faultAbsent.
+	lastPreparing(occurrence string) (string, error)
+	// createJob keeps j, made from j.ReleaseID: the job, its creation and
+	// its first revision. faultTaken when its id, its release's creation or
+	// a revision naming its release is held; its caller then abandons the
+	// transaction, in which the job's row may be made already.
+	createJob(j Job) error
+	// reviseJob writes j over the job held under j.ID and keeps its
+	// revision j.Revision, made by the upgrade request whose digest is
+	// request: faultAbsent when no job is held under j.ID, and faultTaken
+	// when that revision, or one naming j's release, is held; its caller
+	// then abandons the transaction, in which the job may be written
+	// already.
+	reviseJob(j Job, request string) error
+	// openOccurrences counts a job's occurrences accepted, preparing,
+	// waiting or needing attention.
+	openOccurrences(job string) (int, error)
+	// triggerRecords are a job's triggers, each as its record was written,
+	// in the order they were made.
+	triggerRecords(job string) ([]Trigger, error)
+	// reviseTrigger writes t's record over the trigger held under t.ID, its
+	// key and file cursor left as they are, and keeps the snapshot of t's
+	// revision: faultAbsent when no trigger is held under t.ID, faultTaken
+	// when the snapshot is held; its caller then abandons the transaction,
+	// in which the record may be written already.
+	reviseTrigger(t Trigger) error
 	// appendJournal appends a change's entry to the journal of job activity,
 	// and returns its sequence; entries are only ever appended.
 	appendJournal(c change) (int64, error)
 	// raiseSchema marks the store as holding records that only a Runner
 	// that knows schema keeps, so that no earlier Runner opens it: the
-	// sqlite kind raises its schema (retryStoreSchema is the one raised
-	// through the contract). faultRefused for a schema the kind does not
-	// know.
+	// sqlite kind raises its schema to scopedStoreSchema from storeSchema,
+	// and to retryStoreSchema from either; a store raised already is left
+	// as it is. faultRefused for a schema the kind does not know.
 	raiseSchema(schema string) error
 }
 

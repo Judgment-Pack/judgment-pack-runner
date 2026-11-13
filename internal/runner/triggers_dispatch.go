@@ -2,8 +2,6 @@ package runner
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -34,22 +32,7 @@ func (s *Service) automationTick(at time.Time) error {
 	if s.unhealthy.Load() {
 		return nil
 	}
-	rows, e := s.db.Query("SELECT id FROM triggers WHERE json_extract(record,'$.paused')=0 ORDER BY seq")
-	if e != nil {
-		return e
-	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if e = rows.Scan(&id); e != nil {
-			break
-		}
-		ids = append(ids, id)
-	}
-	if e == nil {
-		e = rows.Err()
-	}
-	rows.Close()
+	ids, e := s.store.enabledTriggers()
 	if e != nil {
 		return e
 	}
@@ -72,16 +55,11 @@ func (s *Service) automationTick(at time.Time) error {
 	// Each iteration handles a bounded number of accepted occurrences; the
 	// evaluator has its own durable queue and cannot block the scheduler clock.
 	for range 10 {
-		var raw string
-		e := s.db.QueryRow("SELECT record FROM occurrences WHERE state='accepted' AND json_extract(record,'$.pendingInput') IS NULL ORDER BY seq LIMIT 1").Scan(&raw)
-		if errors.Is(e, sql.ErrNoRows) {
+		o, e := s.store.readyOccurrence()
+		if absent(e) {
 			break
 		}
 		if e != nil {
-			return e
-		}
-		var o Occurrence
-		if e = json.Unmarshal([]byte(raw), &o); e != nil {
 			return e
 		}
 		if e = s.dispatchOccurrence(o, at); e != nil {
@@ -152,18 +130,12 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 	if !next.IsZero() {
 		t.NextAt = next.Format(time.RFC3339Nano)
 	}
-	tx, e := s.db.Begin()
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	if e = s.admitOccurrence(tx, t, &o, identity, digest(encode(t.Config))); e != nil {
-		return e
-	}
-	if e = saveTrigger(tx, t, hash, false); e != nil {
-		return e
-	}
-	return tx.Commit()
+	return s.store.update(func(tx runTx) error {
+		if err := s.admitOccurrence(tx, t, &o, identity, digest(encode(t.Config))); err != nil {
+			return err
+		}
+		return tx.putTrigger(t, hash, false)
+	})
 }
 func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {
@@ -231,18 +203,12 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	t.pending = ""
 	t.pendingAt = ""
 	t.Problem = ""
-	tx, e := s.db.Begin()
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	if e = s.admitOccurrence(tx, t, &o, identity, changed); e != nil {
-		return e
-	}
-	if e = saveTrigger(tx, t, hash, false); e != nil {
-		return e
-	}
-	return tx.Commit()
+	return s.store.update(func(tx runTx) error {
+		if err := s.admitOccurrence(tx, t, &o, identity, changed); err != nil {
+			return err
+		}
+		return tx.putTrigger(t, hash, false)
+	})
 }
 func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {
@@ -250,15 +216,17 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 	}
 	// Reconcile admission first: a crash after run creation must not become a
 	// second evaluation or an expiry, even if source receipts have since aged.
-	var runID string
-	e := s.db.QueryRow("SELECT id FROM runs WHERE caller=? AND idem=? AND job_id=?", "trigger:"+o.TriggerID, o.ID, o.JobID).Scan(&runID)
+	// The run's id alone is read, as before the contract: a run whose record
+	// does not decode is still the occurrence's run, and holds no occurrence
+	// behind it on every tick.
+	held, e := s.store.requestedRun(o.JobID, "trigger:"+o.TriggerID, o.ID)
 	if e == nil {
-		o.RunID = runID
+		o.RunID = held.id
 		o.State = "submitted"
 		o.Input = nil
 		return s.saveOccurrence(o)
 	}
-	if !errors.Is(e, sql.ErrNoRows) {
+	if !absent(e) {
 		return e
 	}
 	expires := o.ExpiresAt

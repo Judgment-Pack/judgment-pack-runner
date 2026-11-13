@@ -3,10 +3,8 @@ package runner
 import (
 	"crypto/rand"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"time"
 )
 
@@ -20,46 +18,9 @@ const triggerSchema = `
  CREATE INDEX IF NOT EXISTS occurrences_job ON occurrences(job_id,seq);
  CREATE UNIQUE INDEX IF NOT EXISTS triggers_cloud_binding ON triggers(json_extract(record,'$.config.cloud.connection'),json_extract(record,'$.config.cloud.job')) WHERE json_extract(record,'$.config.kind')='cloud';`
 
-func (s *Service) trigger(id string) (Trigger, string, error) {
-	var t Trigger
-	var raw, hash, observed, pending, pendingAt string
-	var keyRevision sql.NullInt64
-	e := s.db.QueryRow("SELECT record,key_hash,observed,pending,pending_at,key_revision FROM triggers WHERE id=?", id).Scan(&raw, &hash, &observed, &pending, &pendingAt, &keyRevision)
-	if e == nil {
-		e = json.Unmarshal([]byte(raw), &t)
-		t.HasKey = hash != ""
-		t.observed, t.pending, t.pendingAt = observed, pending, pendingAt
-		if keyRevision.Valid {
-			v := int(keyRevision.Int64)
-			t.keyRevision = &v
-		}
-	}
-	return t, hash, e
-}
-func saveTrigger(tx *sql.Tx, t Trigger, hash string, history bool) error {
-	var keyRevision any
-	if t.keyRevision != nil {
-		keyRevision = *t.keyRevision
-	}
-	_, e := tx.Exec("UPDATE triggers SET record=?,key_hash=?,observed=?,pending=?,pending_at=?,key_revision=? WHERE id=?", string(encode(t)), hash, t.observed, t.pending, t.pendingAt, keyRevision, t.ID)
-	if e != nil {
-		return e
-	}
-	if history {
-		_, e = tx.Exec("INSERT INTO trigger_revisions VALUES(?,?,?)", t.ID, t.Revision, string(encode(t)))
-	}
-	return e
-}
+func (s *Service) trigger(id string) (Trigger, string, error) { return s.store.trigger(id) }
 func (s *Service) writeTrigger(t Trigger, hash string, history bool) error {
-	tx, e := s.db.Begin()
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	if e = saveTrigger(tx, t, hash, history); e != nil {
-		return e
-	}
-	return tx.Commit()
+	return s.store.update(func(tx runTx) error { return tx.putTrigger(t, hash, history) })
 }
 func (s *Service) configureTrigger(jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
 	return s.configureTriggerBy(requester{}, jobID, triggerID, revision, c)
@@ -92,7 +53,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 			return t, e
 		}
 		if t.JobID != jobID {
-			return t, sql.ErrNoRows
+			return t, storeFailure(faultAbsent, "trigger", errNoTrigger)
 		}
 		if t.Revision != revision {
 			return t, &apiError{409, "trigger_changed", "The trigger changed. Reload before saving."}
@@ -103,8 +64,8 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		previous = t.Revision
 		t.Revision++
 	} else {
-		var count int
-		if e = s.db.QueryRow("SELECT count(*) FROM triggers").Scan(&count); e != nil {
+		count, e := s.store.triggerCount()
+		if e != nil {
 			return t, e
 		}
 		if count >= 128 {
@@ -113,8 +74,8 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		t = Trigger{ID: id("trg_"), JobID: jobID, Revision: 1, Authority: "local", CreatedAt: now(), Scope: job.Scope}
 	}
 	if c.Cloud != nil {
-		var other int
-		if e = s.db.QueryRow(`SELECT count(*) FROM triggers WHERE id<>? AND json_extract(record,'$.config.cloud.connection')=? AND json_extract(record,'$.config.cloud.job')=?`, t.ID, c.Cloud.Connection, c.Cloud.Job).Scan(&other); e != nil {
+		other, e := s.store.cloudBindings(t.ID, c.Cloud.Connection, c.Cloud.Job)
+		if e != nil {
 			return t, e
 		}
 		if other > 0 {
@@ -129,25 +90,20 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 	t.Problem = ""
 	t.pending = ""
 	t.pendingAt = ""
-	tx, e := s.db.Begin()
-	if e != nil {
-		return t, e
-	}
-	defer tx.Rollback()
-	if triggerID == "" {
-		if _, e = tx.Exec("INSERT INTO triggers(id,job_id,record)VALUES(?,?,?)", t.ID, t.JobID, string(encode(t))); e != nil {
-			return t, e
+	return t, s.store.update(func(tx runTx) (err error) {
+		if triggerID == "" {
+			if err = tx.createTrigger(t); err != nil {
+				return err
+			}
+		} else if from, err = triggerBefore(tx, t.ID, previous); err != nil {
+			return err
 		}
-	} else if from, e = triggerBefore(tx, t.ID, previous); e != nil {
-		return t, e
-	}
-	if e = saveTrigger(tx, t, hash, true); e != nil {
-		return t, e
-	}
-	if _, e = appendEvent(tx, change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}}); e != nil {
-		return t, e
-	}
-	return t, tx.Commit()
+		if err = tx.putTrigger(t, hash, true); err != nil {
+			return err
+		}
+		_, err = tx.appendJournal(change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}})
+		return err
+	})
 }
 func (s *Service) setTriggerState(triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
 	return s.setTriggerStateBy(requester{}, triggerID, revision, paused, reviewed)
@@ -253,21 +209,16 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 // writeTriggerChange writes a trigger's new revision, its snapshot and the
 // change's entry in one transaction.
 func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
-	tx, e := s.db.Begin()
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	if c.from, e = triggerBefore(tx, t.ID, t.Revision-1); e != nil {
-		return e
-	}
-	if e = saveTrigger(tx, t, hash, true); e != nil {
-		return e
-	}
-	if _, e = appendEvent(tx, c); e != nil {
-		return e
-	}
-	return tx.Commit()
+	return s.store.update(func(tx runTx) (err error) {
+		if c.from, err = triggerBefore(tx, t.ID, t.Revision-1); err != nil {
+			return err
+		}
+		if err = tx.putTrigger(t, hash, true); err != nil {
+			return err
+		}
+		_, err = tx.appendJournal(c)
+		return err
+	})
 }
 func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, string, error) {
 	return s.rotateTriggerKeyBy(requester{}, triggerID, revision)
@@ -390,7 +341,7 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 		old.Input = nil
 		return old, true, nil
 	}
-	if !errors.Is(e, sql.ErrNoRows) {
+	if !absent(e) {
 		return old, false, e
 	}
 	if s.unhealthy.Load() {
@@ -427,41 +378,41 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 	o.EventID = event.ID
 	o.Input = &event.Input
 	o.InputDigest = digest(encode(event.Input))
-	tx, e := s.db.Begin()
-	if e != nil {
-		return o, false, e
-	}
-	defer tx.Rollback()
 	var publisher *EventActor
 	if expectedRelease != "" {
 		actor := s.actor(by)
 		publisher = &actor
 	}
-	if e = s.admitOccurrenceAs(tx, t, &o, "event:"+event.ID, payload, publisher); e != nil {
-		return o, false, e
-	}
-	// An event delivery is refused while the queue is full, not recorded as
-	// skipped: a skipped occurrence would answer its event ID for good, and
-	// the event, a record revision or a sender's, could never be delivered.
-	// The transaction is not committed, so nothing is admitted and the ID
-	// stays unused; the caller journals the refusal. The same bytes delivered
-	// again are admitted once the queue has room, a credential's while its
-	// occurredAt is in the window above. A schedule, a file change or a cloud
-	// signal has no sender to refuse, and is still recorded skipped.
-	if o.State == "skipped" && o.Reason == "queue-full" {
-		if expectedRelease != "" {
-			return Occurrence{}, false, &apiError{429, "queue_full", "The local queue is full. Deliver the same record again after queued occurrences are submitted."}
+	var full error
+	e = s.store.update(func(tx runTx) error {
+		if err := s.admitOccurrenceAs(tx, t, &o, "event:"+event.ID, payload, publisher); err != nil {
+			return err
 		}
-		return Occurrence{}, false, &apiError{429, "queue_full", "The local queue is full. Deliver the same event again after queued occurrences are submitted, while its occurredAt is within the last five minutes."}
-	}
-	// The occurrence is bound to the credential that created it, for that
-	// credential's read of its result.
-	if hash != "" {
-		if _, e = tx.Exec("INSERT INTO occurrence_keys(occurrence_id,key_hash) VALUES(?,?)", o.ID, hash); e != nil {
-			return o, false, e
+		// An event delivery is refused while the queue is full, not recorded as
+		// skipped: a skipped occurrence would answer its event ID for good, and
+		// the event, a record revision or a sender's, could never be delivered.
+		// The transaction is not committed, so nothing is admitted and the ID
+		// stays unused; the caller journals the refusal. The same bytes delivered
+		// again are admitted once the queue has room, a credential's while its
+		// occurredAt is in the window above. A schedule, a file change or a cloud
+		// signal has no sender to refuse, and is still recorded skipped.
+		if o.State == "skipped" && o.Reason == "queue-full" {
+			full = &apiError{429, "queue_full", "The local queue is full. Deliver the same event again after queued occurrences are submitted, while its occurredAt is within the last five minutes."}
+			if expectedRelease != "" {
+				full = &apiError{429, "queue_full", "The local queue is full. Deliver the same record again after queued occurrences are submitted."}
+			}
+			return full
 		}
+		// The occurrence is bound to the credential that created it, for that
+		// credential's read of its result.
+		if hash != "" {
+			return tx.createOccurrenceKey(o.ID, hash)
+		}
+		return nil
+	})
+	if full != nil {
+		return Occurrence{}, false, full
 	}
-	e = tx.Commit()
 	o.Input = nil
 	return o, false, e
 }
@@ -478,14 +429,9 @@ func (s *Service) eventResult(triggerID, occurrenceID, token string) (map[string
 		return nil, &apiError{401, "invalid_trigger_token", "The event credential is invalid."}
 	}
 	// One statement, so a rotation after the check above still refuses.
-	var raw string
-	e = s.db.QueryRow("SELECT o.record FROM occurrences o JOIN occurrence_keys k ON k.occurrence_id=o.id JOIN triggers t ON t.id=o.trigger_id WHERE o.id=? AND o.trigger_id=? AND k.key_hash=? AND t.key_hash=k.key_hash", occurrenceID, triggerID, hash).Scan(&raw)
-	if errors.Is(e, sql.ErrNoRows) {
+	o, e := s.store.keyedOccurrence(occurrenceID, triggerID, hash)
+	if absent(e) {
 		return nil, &apiError{404, "occurrence_not_found", "No occurrence with this ID was created with this credential."}
-	}
-	var o Occurrence
-	if e == nil {
-		e = json.Unmarshal([]byte(raw), &o)
 	}
 	if e != nil {
 		return nil, e
@@ -513,24 +459,19 @@ func newOccurrence(t Trigger, j Job, at time.Time) Occurrence {
 	return Occurrence{PreparationSeconds: t.Config.PreparationSeconds, QueueSeconds: t.Config.QueueSeconds, ID: id("occ_"), JobID: j.ID, ReleaseID: j.ReleaseID, JobRevision: j.Revision, TriggerID: t.ID, TriggerRevision: t.Revision, Kind: t.Config.Kind, ReceivedAt: at.UTC().Format(time.RFC3339Nano), ExpiresAt: at.Add(time.Duration(t.Config.QueueSeconds) * time.Second).UTC().Format(time.RFC3339Nano), State: "accepted", Scope: j.Scope}
 }
 func (s *Service) findOccurrence(trigger, identity string) (Occurrence, string, error) {
-	var o Occurrence
-	var raw, hash string
-	e := s.db.QueryRow("SELECT record,payload_digest FROM occurrences WHERE trigger_id=? AND identity=?", trigger, identity).Scan(&raw, &hash)
-	if e == nil {
-		e = json.Unmarshal([]byte(raw), &o)
-	}
-	return o, hash, e
+	return s.store.identifiedOccurrence(trigger, identity)
 }
-func (s *Service) admitOccurrence(tx *sql.Tx, t Trigger, o *Occurrence, identity, payload string) error {
+func (s *Service) admitOccurrence(tx runTx, t Trigger, o *Occurrence, identity, payload string) error {
 	return s.admitOccurrenceAs(tx, t, o, identity, payload, nil)
 }
-func (s *Service) admitOccurrenceAs(tx *sql.Tx, t Trigger, o *Occurrence, identity, payload string, publisher *EventActor) error {
+func (s *Service) admitOccurrenceAs(tx runTx, t Trigger, o *Occurrence, identity, payload string, publisher *EventActor) error {
 	if o.State == "accepted" {
-		var pending, active int
-		if e := tx.QueryRow("SELECT count(*) FROM occurrences WHERE state IN ('accepted','preparing','waiting')").Scan(&pending); e != nil {
+		pending, e := tx.pendingOccurrences()
+		if e != nil {
 			return e
 		}
-		if e := tx.QueryRow("SELECT (SELECT count(*) FROM runs WHERE job_id=? AND state IN ('queued','running'))+(SELECT count(*) FROM occurrences WHERE job_id=? AND state IN ('accepted','preparing','waiting','needs-attention'))", o.JobID, o.JobID).Scan(&active); e != nil {
+		active, e := tx.jobActivity(o.JobID)
+		if e != nil {
 			return e
 		}
 		if pending >= queueLimit {
@@ -546,7 +487,7 @@ func (s *Service) admitOccurrenceAs(tx *sql.Tx, t Trigger, o *Occurrence, identi
 		o.PendingInput = nil
 	}
 	*o = withOccurrenceClass(*o)
-	if _, e := tx.Exec("INSERT INTO occurrences(id,job_id,trigger_id,identity,payload_digest,state,record) VALUES(?,?,?,?,?,?,?)", o.ID, o.JobID, o.TriggerID, identity, payload, o.State, string(encode(o))); e != nil {
+	if e := tx.createOccurrence(*o, identity, payload); e != nil {
 		return e
 	}
 	// An event delivery is the credential's that the delivery carried, the
@@ -559,7 +500,7 @@ func (s *Service) admitOccurrenceAs(tx *sql.Tx, t Trigger, o *Occurrence, identi
 	if publisher != nil {
 		by = *publisher
 	}
-	_, e := appendEvent(tx, occurrenceChange(*o, "", by))
+	_, e := tx.appendJournal(occurrenceChange(*o, "", by))
 	return e
 }
 

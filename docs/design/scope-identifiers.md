@@ -207,7 +207,7 @@ writes. A store in which no job was created under a scope stays at schema
 `"3"`, unchanged.
 
 **A store's first job under a scope raises its schema to `"5"`**, in the
-transaction that creates the job (`raiseScopedSchema`); this Runner opens a
+transaction that creates the job (`raiseSchema`); this Runner opens a
 store at `"3"` or `"5"` alike and migrates nothing. (`"4"` is the schema of a
 store prepared for the manual-admission gate, which a Runner without that gate
 still refuses.) The raise is made because

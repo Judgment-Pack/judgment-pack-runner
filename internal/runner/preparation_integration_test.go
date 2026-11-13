@@ -109,11 +109,9 @@ func TestDurablePreparationRealGatewayMCPAndRunnerRestart(t *testing.T) {
 	}
 	o := newOccurrence(trigger, job, time.Now())
 	o.PendingInput = config.Input
-	tx, _ := s.db.Begin()
-	if e = s.admitOccurrence(tx, trigger, &o, "real-mcp", ""); e != nil {
-		t.Fatal(e)
-	}
-	if e = tx.Commit(); e != nil {
+	if e = s.store.update(func(tx runTx) error {
+		return s.admitOccurrence(tx, trigger, &o, "real-mcp", "")
+	}); e != nil {
 		t.Fatal(e)
 	}
 	os.WriteFile(filepath.Join(dir, "hold"), []byte("hold"), 0600)

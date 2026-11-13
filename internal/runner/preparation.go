@@ -52,15 +52,7 @@ func publicOccurrence(o Occurrence) Occurrence {
 	}
 	return o
 }
-func (s *Service) occurrence(id string) (Occurrence, error) {
-	var raw string
-	var o Occurrence
-	e := s.db.QueryRow("SELECT record FROM occurrences WHERE id=?", id).Scan(&raw)
-	if e == nil {
-		e = json.Unmarshal([]byte(raw), &o)
-	}
-	return o, e
-}
+func (s *Service) occurrence(id string) (Occurrence, error) { return s.store.occurrence(id) }
 func (s *Service) durableMapping(r Release) bool {
 	if r.InputMapping == nil || !r.InputMapping.dialect() {
 		return false
@@ -92,54 +84,29 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 		s.automationMu.Unlock()
 		return nil
 	}
-	rows, e := s.db.Query(`SELECT record FROM occurrences WHERE (state='accepted' AND json_extract(record,'$.pendingInput') IS NOT NULL) OR state='waiting' ORDER BY seq`)
-	if e != nil {
-		s.automationMu.Unlock()
-		return e
-	}
 	var chosen *Occurrence
 	if s.preparing == nil {
 		s.preparing = map[string]bool{}
 	}
-	for rows.Next() {
-		var raw string
-		var o Occurrence
-		if e = rows.Scan(&raw); e != nil {
-			break
-		}
-		if e = json.Unmarshal([]byte(raw), &o); e != nil {
-			break
-		}
+	e := s.store.preparableOccurrences(func(o Occurrence) (bool, error) {
 		if s.preparing[o.ID] {
-			continue
+			return false, nil
 		}
 		// One waiting for its next attempt is passed by until its time
 		// (retries.go).
 		waiting, err := waitingForAttempt(o, s.instant())
-		if err != nil {
-			e = err
-			break
-		}
-		if waiting {
-			continue
+		if err != nil || waiting {
+			return false, err
 		}
 		if o.Preparation != nil && o.Preparation.NextCheck != "" {
 			next, err := time.Parse(time.RFC3339Nano, o.Preparation.NextCheck)
-			if err != nil {
-				e = err
-				break
-			}
-			if time.Now().Before(next) {
-				continue
+			if err != nil || time.Now().Before(next) {
+				return false, err
 			}
 		}
 		chosen = &o
-		break
-	}
-	if e == nil {
-		e = rows.Err()
-	}
-	rows.Close()
+		return true, nil
+	})
 	if e != nil || chosen == nil {
 		s.automationMu.Unlock()
 		return e

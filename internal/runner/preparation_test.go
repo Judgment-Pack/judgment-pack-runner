@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -103,14 +104,9 @@ func preparationFixture(t *testing.T) (*Service, Config, Occurrence, *asyncFixtu
 	}
 	o := newOccurrence(tr, j, time.Now())
 	o.PendingInput = c.Input
-	tx, e := s.db.Begin()
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = s.admitOccurrence(tx, tr, &o, "fixture", ""); e != nil {
-		t.Fatal(e)
-	}
-	if e = tx.Commit(); e != nil {
+	if e = s.store.update(func(tx runTx) error {
+		return s.admitOccurrence(tx, tr, &o, "fixture", "")
+	}); e != nil {
 		t.Fatal(e)
 	}
 	return s, cfg, o, f
@@ -358,12 +354,12 @@ func TestUncertainPreparationBlocksSkipOverlap(t *testing.T) {
 		t.Fatal(e)
 	}
 	next := newOccurrence(tr, job, time.Now())
-	tx, e := s.db.Begin()
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer tx.Rollback()
-	if e = s.admitOccurrence(tx, tr, &next, "uncertain-overlap", ""); e != nil {
+	if e = s.store.update(func(tx runTx) error {
+		if err := s.admitOccurrence(tx, tr, &next, "uncertain-overlap", ""); err != nil {
+			return err
+		}
+		return errKeepNothing
+	}); !errors.Is(e, errKeepNothing) {
 		t.Fatal(e)
 	}
 	if next.State != "skipped" || next.Reason != "overlap" {

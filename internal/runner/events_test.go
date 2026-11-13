@@ -123,7 +123,7 @@ func journalEntries(t *testing.T, cfg Config) []Event {
 	defer db.Close()
 	var all []Event
 	for after := int64(0); ; {
-		page, e := eventPageFrom(db, after, "1=1")
+		page, e := eventPageFrom(sqliteReads{db}, after, journalFilter{})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -174,15 +174,9 @@ func storedTrigger(t *testing.T, s *Service, id string) (Trigger, string) {
 
 func admit(t *testing.T, s *Service, tr Trigger, o *Occurrence, identity string) {
 	t.Helper()
-	tx, e := s.db.Begin()
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer tx.Rollback()
-	if e = s.admitOccurrence(tx, tr, o, identity, ""); e != nil {
-		t.Fatal(e)
-	}
-	if e = tx.Commit(); e != nil {
+	if e := s.store.update(func(tx runTx) error {
+		return s.admitOccurrence(tx, tr, o, identity, "")
+	}); e != nil {
 		t.Fatal(e)
 	}
 }

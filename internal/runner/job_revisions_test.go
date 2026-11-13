@@ -298,3 +298,28 @@ func TestUpgradeReceiptReadOnlyRecovery(t *testing.T) {
 		t.Fatal("different intent accepted", r.Code)
 	}
 }
+
+// A receipt whose revision the store fails to read answers the store's
+// failure (500 store_error), not a revision of another upgrade (409
+// job_changed): a read that failed read no digest to compare.
+func TestAReceiptWhoseReadFailsAnswersTheStoresFailure(t *testing.T) {
+	s := openJournal(t, journalConfig(t))
+	defer s.Close()
+	first := journalRelease(t, s, s.runtimeDigest)
+	j, err := s.createJob("Receipt", first.ID)
+	must(t, err)
+	next := journalRelease(t, s, s.runtimeDigest)
+	_, err = s.upgradeJob(context.Background(), j.ID, UpgradeJobRequest{ReleaseID: next.ID, BaseReleaseID: first.ID, BaseRevision: 1, Reviewed: true})
+	must(t, err)
+	path := "/v1/jobs/" + j.ID + "/upgrade-receipt?baseRevision=1&baseReleaseId=" + first.ID + "&releaseId=" + next.ID
+	if r := serve(t, s, "GET", path, "", nil); r.Code != 200 {
+		t.Fatal("the receipt before the failure:", r.Code, r.Body.String())
+	}
+	st := s.store.(*sqliteStore)
+	held := st.sqliteReads
+	st.sqliteReads = sqliteReads{failingReads{held.q, "job_revisions"}}
+	defer func() { st.sqliteReads = held }()
+	if r := serve(t, s, "GET", path, "", nil); r.Code != 500 || !strings.Contains(r.Body.String(), `"store_error"`) {
+		t.Fatal("a receipt whose read failed:", r.Code, r.Body.String())
+	}
+}

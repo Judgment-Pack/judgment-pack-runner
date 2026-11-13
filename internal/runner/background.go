@@ -3,7 +3,6 @@ package runner
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -273,18 +272,12 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		s.automationMu.Unlock()
 		return nil
 	}
-	var raw string
-	e := s.db.QueryRow(`SELECT record FROM occurrences WHERE id=? AND state='accepted'`, occurrenceID).Scan(&raw)
-	if errors.Is(e, sql.ErrNoRows) {
+	o, e := s.store.occurrence(occurrenceID)
+	if absent(e) || e == nil && o.State != "accepted" {
 		s.automationMu.Unlock()
 		return nil
 	}
 	if e != nil {
-		s.automationMu.Unlock()
-		return e
-	}
-	var o Occurrence
-	if e = json.Unmarshal([]byte(raw), &o); e != nil {
 		s.automationMu.Unlock()
 		return e
 	}

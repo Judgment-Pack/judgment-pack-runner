@@ -15,9 +15,7 @@ package runner
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -235,9 +233,8 @@ func unheld(r *http.Request, name string) *http.Request {
 // heldScope is the scope identifier the record held under id in table
 // carries, "" for none, and whether the store holds the record.
 func (s *Service) heldScope(table, id string) (string, bool, error) {
-	var scope string
-	err := s.db.QueryRow("SELECT coalesce(json_extract(record,'$.scope'),'') FROM "+table+" WHERE id=?", id).Scan(&scope)
-	if errors.Is(err, sql.ErrNoRows) {
+	scope, err := s.store.recordScope(table, id)
+	if absent(err) {
 		return "", false, nil
 	}
 	return scope, err == nil, err
@@ -269,12 +266,4 @@ func jobScope(raw []byte, scope *string) (string, error) {
 		return "", errScopeForm
 	}
 	return *scope, nil
-}
-
-// raiseScopedSchema raises the store's schema, inside the transaction that
-// creates its first job under a scope identifier, to scopedStoreSchema. A
-// store at it already is left as it is.
-func raiseScopedSchema(tx *sql.Tx) error {
-	_, err := tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value=?", scopedStoreSchema, storeSchema)
-	return err
 }

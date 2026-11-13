@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -19,20 +18,13 @@ import (
 
 // retryStoreSchema is the schema of a store that holds a job with a retry
 // policy or a run retried, raised in the transaction that creates the first
-// or makes the first (raiseRetrySchema), from storeSchema or
+// or makes the first (raiseSchema), from storeSchema or
 // scopedStoreSchema. An earlier Runner would drop the policy, an occurrence's
 // attempts and a run's attempts from every record it rewrites, and would
 // evaluate a retried run into its first attempt's directory; every earlier
 // Runner refuses a store at a schema not its own. A store that holds neither
 // keeps its schema, byte for byte.
 const retryStoreSchema = "6"
-
-// raiseRetrySchema raises the store's schema to retryStoreSchema inside tx.
-// A store at it already is left as it is.
-func raiseRetrySchema(tx *sql.Tx) error {
-	_, err := tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value IN (?,?)", retryStoreSchema, storeSchema, scopedStoreSchema)
-	return err
-}
 
 // attemptEntryVersion is the shape of an entry whose detail holds attempt,
 // a member an entry of an earlier version never holds. Such an entry may

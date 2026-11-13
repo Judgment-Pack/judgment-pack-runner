@@ -531,6 +531,30 @@ func TestADeliveryWhoseRunWasMadeBeforeAStopIsNeitherRunAgainNorExpired(t *testi
 	}
 }
 
+// An occurrence whose run was made before a stop is submitted to that run
+// even when the run's record does not decode, as before the store contract:
+// the dispatcher reads the run's id alone, so that the occurrence, and every
+// occurrence queued behind it, is not held up on every tick.
+func TestAnOccurrenceWhoseRunRecordDoesNotDecodeIsSubmittedToItsRun(t *testing.T) {
+	w := newRecordWorld(t)
+	code, a := w.deliver(w.persist("collection-a:record-8:revision-1", 0, w.release.ID))
+	if code != 202 {
+		t.Fatal(code, a)
+	}
+	o := storedOccurrence(t, w.s, a.Occurrence.ID)
+	origin := &TriggerOrigin{OccurrenceID: o.ID, TriggerID: o.TriggerID, TriggerRevision: o.TriggerRevision, Kind: o.Kind, EventID: o.EventID, InputDigest: o.InputDigest, ExpiresAt: o.ExpiresAt}
+	made, _, e := w.s.submitInternal(o.JobID, o.ID, *o.Input, origin)
+	must(t, e)
+	w.restart()
+	if _, e = w.s.db.Exec("UPDATE runs SET record='{' WHERE id=?", made.ID); e != nil {
+		t.Fatal(e)
+	}
+	must(t, w.s.dispatchOccurrence(o, time.Now()))
+	if held := storedOccurrence(t, w.s, o.ID); held.State != "submitted" || held.RunID != made.ID {
+		t.Fatal("the occurrence of a run whose record does not decode:", held.State, held.Reason, held.RunID)
+	}
+}
+
 // The same event ID with another payload is refused by name, event_conflict,
 // whichever member changed, the bound release included, through either
 // route, before and after a restart; the retained occurrence is unchanged and

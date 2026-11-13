@@ -32,24 +32,48 @@ type memoryEntry struct {
 	line     []byte
 }
 
+// memoryRevision is a job's revision, by the release it names, as it was
+// made, with the digest of the upgrade request that made it.
+type memoryRevision struct {
+	job      string
+	revision int
+	release  string
+	record   []byte
+	request  string
+}
+
 // memoryState is everything the kind holds. Byte slices are never changed
 // in place, so a copy shares them.
 type memoryState struct {
 	releases map[string][]byte
 	jobs     map[string][]byte
+	// revisions are every job's revisions, in the order they were made;
+	// creations the jobs as their releases made them, by release.
+	revisions []memoryRevision
+	creations map[string][]byte
 	// runs are in the order they were queued; lastSeq is the last order
 	// given, which a transaction that fails gives back.
 	runs    []memoryRun
 	lastSeq int64
 	// chain is in order of sequence.
-	chain   []memoryEntry
-	journal []change
+	chain []memoryEntry
+	// journal is in order of sequence, the sequence of journal[i] being
+	// i+1.
+	journal []journalRow
+	// profiles are the rows of input profiles, by key; briefs the brief
+	// histories, by subject.
+	profiles map[string]string
+	briefs   map[string][]byte
+	// automation is the triggers and occurrences
+	// (store_memory_triggers_test.go).
+	automation memoryAutomation
 	// schema is the last schema raised, or none.
 	schema string
 }
 
 func (m memoryState) clone() memoryState {
-	return memoryState{releases: maps.Clone(m.releases), jobs: maps.Clone(m.jobs), runs: slices.Clone(m.runs), lastSeq: m.lastSeq, chain: slices.Clone(m.chain), journal: slices.Clone(m.journal), schema: m.schema}
+	return memoryState{releases: maps.Clone(m.releases), jobs: maps.Clone(m.jobs), revisions: slices.Clone(m.revisions), creations: maps.Clone(m.creations), runs: slices.Clone(m.runs), lastSeq: m.lastSeq, chain: slices.Clone(m.chain), journal: slices.Clone(m.journal),
+		profiles: maps.Clone(m.profiles), briefs: maps.Clone(m.briefs), automation: m.automation.clone(), schema: m.schema}
 }
 
 // memoryStore is the in-memory kind.
@@ -61,15 +85,20 @@ type memoryStore struct {
 	failCommit error
 }
 
+// newMemoryStore is a new store, its journal begun, as a new sqlite store's
+// is at opening.
 func newMemoryStore() *memoryStore {
-	return &memoryStore{state: memoryState{releases: map[string][]byte{}, jobs: map[string][]byte{}}}
+	began := journalRowOf(change{kind: "journal.began", by: runnerActor, detail: EventDetail{Held: &EventHeld{}}})
+	return &memoryStore{state: memoryState{releases: map[string][]byte{}, jobs: map[string][]byte{}, creations: map[string][]byte{}, profiles: map[string]string{}, briefs: map[string][]byte{}, automation: newMemoryAutomation(), journal: []journalRow{began}}}
 }
 
-// seedJob keeps a job, as one made outside the contract.
+// seedJob keeps a job and its first revision, without the record of its
+// creation, as the sqlite kind's seedJob does.
 func (m *memoryStore) seedJob(j Job) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.state.jobs[j.ID] = encode(j)
+	m.state.revisions = append(m.state.revisions, memoryRevision{job: j.ID, revision: j.Revision, release: j.ReleaseID, record: encode(j)})
 }
 
 // failCommits makes every later commit fail with err, or succeed again for
@@ -78,17 +107,6 @@ func (m *memoryStore) failCommits(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.failCommit = err
-}
-
-// journalKinds are the kinds of the journal's entries, in order.
-func (m *memoryStore) journalKinds() []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var kinds []string
-	for _, c := range m.state.journal {
-		kinds = append(kinds, c.kind)
-	}
-	return kinds
 }
 
 // spoilRun replaces a run's record with bytes that do not read as one.
@@ -242,7 +260,7 @@ func (r memoryReads) job(id string) (Job, error) {
 func (r memoryReads) requestedRun(jobID, caller, key string) (heldRequest, error) {
 	for _, held := range r.s.runs {
 		if held.job == jobID && held.caller == caller && held.idem == key {
-			return heldRequest{digest: held.digest, record: held.record}, nil
+			return heldRequest{id: held.id, digest: held.digest, record: held.record}, nil
 		}
 	}
 	return heldRequest{}, storeFailure(faultAbsent, "run", errNotHeld)
@@ -303,12 +321,28 @@ func (t *memoryTx) putRun(r Run, expected string) (string, error) {
 	return "", storeFailure(faultAbsent, "run", errNotHeld)
 }
 
+// raiseSchema raises as the sqlite kind does: a new store is at storeSchema
+// (""), the scoped schema is raised only from it, and the retry schema from
+// it or the scoped schema.
 func (t *memoryTx) raiseSchema(schema string) error {
-	if schema != retryStoreSchema {
+	switch {
+	case schema == scopedStoreSchema && t.s.schema == "", schema == retryStoreSchema && (t.s.schema == "" || t.s.schema == scopedStoreSchema):
+		t.s.schema = schema
+	case schema != scopedStoreSchema && schema != retryStoreSchema:
 		return storeFailure(faultRefused, "schema", errors.New("the schema is not raised through the contract"))
 	}
-	t.s.schema = schema
 	return nil
+}
+
+// heldSchema is the schema the kind holds, as the sqlite kind's metadata
+// names it.
+func (m *memoryStore) heldSchema() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.state.schema == "" {
+		return storeSchema
+	}
+	return m.state.schema
 }
 
 func (t *memoryTx) runningRuns() ([]Run, error) {
@@ -363,9 +397,206 @@ func (t *memoryTx) createRelease(r Release) error {
 }
 
 func (t *memoryTx) appendJournal(c change) (int64, error) {
-	if c.at == "" {
-		c.at = now()
-	}
-	t.s.journal = append(t.s.journal, c)
+	t.s.journal = append(t.s.journal, journalRowOf(c))
 	return int64(len(t.s.journal)), nil
+}
+
+func (t *memoryTx) lastRefusal(key string) (string, error) {
+	for i := len(t.s.journal) - 1; i >= 0; i-- {
+		if t.s.journal[i].refusal == key {
+			return t.s.journal[i].at, nil
+		}
+	}
+	return "", storeFailure(faultAbsent, "journal", errNotHeld)
+}
+
+func (t *memoryTx) putProfileRow(key, row string) error {
+	if !profileRowKeys[key] {
+		return storeFailure(faultRefused, "profiles", errors.New("no profile row is held under that key"))
+	}
+	t.s.profiles[key] = row
+	return nil
+}
+
+func (t *memoryTx) putBrief(subject string, record []byte) error {
+	t.s.briefs[subject] = slices.Clone(record)
+	return nil
+}
+
+func (r memoryReads) profileRow(key string) (string, error) {
+	if !profileRowKeys[key] {
+		return "", storeFailure(faultRefused, "profiles", errors.New("no profile row is held under that key"))
+	}
+	row, ok := r.s.profiles[key]
+	if !ok {
+		return "", storeFailure(faultAbsent, "profiles", errNotHeld)
+	}
+	return row, nil
+}
+
+func (r memoryReads) brief(subject string) ([]byte, error) {
+	b, ok := r.s.briefs[subject]
+	if !ok {
+		return nil, storeFailure(faultAbsent, "brief", errNotHeld)
+	}
+	return b, nil
+}
+
+// recordScope reads the record's scope member as SQLite's json_extract
+// does: a text member is its value, and none is "".
+func (r memoryReads) recordScope(records, id string) (string, error) {
+	if !scopeCarriers[records] {
+		return "", storeFailure(faultRefused, "scope", errors.New("no record of that kind carries a scope"))
+	}
+	var record []byte
+	switch records {
+	case "jobs":
+		record = r.s.jobs[id]
+	case "runs":
+		for _, held := range r.s.runs {
+			if held.id == id {
+				record = held.record
+			}
+		}
+	case "triggers":
+		for _, held := range r.s.automation.triggers {
+			if held.id == id {
+				record = held.record
+			}
+		}
+	case "occurrences":
+		for _, held := range r.s.automation.occurrences {
+			if held.id == id {
+				record = held.record
+			}
+		}
+	}
+	if record == nil {
+		return "", storeFailure(faultAbsent, "scope", errNotHeld)
+	}
+	scope, _, err := memberText(record, "scope")
+	return scope, err
+}
+
+// memberText is a record's member as text, and whether the record has it as
+// text: json_extract's value, which a condition on it compares as text.
+func memberText(record []byte, name string) (string, bool, error) {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(record, &members); err != nil {
+		return "", false, storeFailure(faultUnreadable, "record", err)
+	}
+	var text string
+	raw, ok := members[name]
+	if !ok || json.Unmarshal(raw, &text) != nil {
+		return "", false, nil
+	}
+	return text, true, nil
+}
+
+func (m *memoryStore) recordScope(records, id string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.reads().recordScope(records, id)
+}
+
+func (m *memoryStore) profileRow(key string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.reads().profileRow(key)
+}
+
+func (m *memoryStore) brief(subject string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.reads().brief(subject)
+}
+
+func (m *memoryStore) journalBegan() (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, e := range m.state.journal {
+		if e.kind == "journal.began" {
+			return e.at, nil
+		}
+	}
+	return "", storeFailure(faultAbsent, "journal", errNotHeld)
+}
+
+// journalPage keeps what sqliteJournalCondition selects: the filter's job by
+// the releases of its revisions, a scope and the results by the detail's
+// members, as json_extract reads them.
+func (m *memoryStore) journalPage(f journalFilter, g journalRange) ([]Event, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	releases := map[string]bool{}
+	for _, rev := range m.state.revisions {
+		if rev.job == f.job {
+			releases[rev.release] = true
+		}
+	}
+	var items []Event
+	read := func(i int) (bool, error) {
+		row, sequence := m.state.journal[i], int64(i+1)
+		if !memoryKeeps(f, row, releases) {
+			return false, nil
+		}
+		if len(items) == g.limit {
+			return true, nil
+		}
+		e, err := row.event(sequence)
+		if err != nil {
+			return false, storeFailure(faultUnreadable, "journal", err)
+		}
+		items = append(items, e)
+		return false, nil
+	}
+	if !g.backward {
+		for i := int(max(g.after, 0)); i < len(m.state.journal); i++ {
+			if more, err := read(i); more || err != nil {
+				return items, more, err
+			}
+		}
+		return items, false, nil
+	}
+	from := len(m.state.journal) - 1
+	if !g.tail {
+		from = int(min(g.before-1, int64(len(m.state.journal)))) - 1
+	}
+	for i := from; i >= 0; i-- {
+		if more, err := read(i); more || err != nil {
+			return items, more, err
+		}
+	}
+	return items, false, nil
+}
+
+// memoryKeeps says whether f keeps row.
+func memoryKeeps(f journalFilter, row journalRow, releases map[string]bool) bool {
+	if f.job != "" {
+		mine := row.job == f.job || row.job == "" && releases[row.release]
+		own := f.runnerOwn && (row.kind == "journal.began" || row.kind == "runner.started" || row.kind == "runner.stopped")
+		if !mine && !own {
+			return false
+		}
+	}
+	detail := []byte(row.detail)
+	if f.scope != "" {
+		if scope, held, err := memberText(detail, "scope"); err != nil || !held || scope != f.scope {
+			return false
+		}
+	}
+	if len(f.results.Outcomes) > 0 {
+		var d struct {
+			Disposition *EventDisposition `json:"disposition"`
+		}
+		if json.Unmarshal(detail, &d) != nil || d.Disposition == nil || d.Disposition.Kind != "outcome" || !slices.Contains(f.results.Outcomes, d.Disposition.OutcomeID) {
+			return false
+		}
+	}
+	if len(f.results.Classes) > 0 {
+		if class, held, err := memberText(detail, "errorClass"); err != nil || !held || !slices.Contains(f.results.Classes, class) {
+			return false
+		}
+	}
+	return len(f.results.Kinds) == 0 || slices.Contains(f.results.Kinds, row.kind)
 }
