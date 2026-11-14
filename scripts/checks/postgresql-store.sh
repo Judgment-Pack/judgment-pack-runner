@@ -16,7 +16,16 @@ if [ -z "${JPACK_TEST_POSTGRESQL:-}" ]; then
   exit 0
 fi
 export JPACK_TEST_POSTGRESQL_REQUIRED=1
-out="$(go test -race -count=1 -v -timeout 20m -run '^(TestStoreKindsConform|TestPostgreSQL)' ./internal/runner)" || { printf '%s\n' "$out"; exit 1; }
+# On a failure the tests that failed come first, each with the lines after it,
+# then the end of the output: the whole output of a -v run is long, and a log
+# that keeps only its start names no failing test (#273).
+out="$(go test -race -count=1 -v -timeout 20m -run '^(TestStoreKindsConform|TestPostgreSQL)' ./internal/runner 2>&1)" || {
+  echo "postgresql-store: the tests failed; the failing tests, then the last 60 lines of the output:"
+  printf '%s\n' "$out" | grep -E -A 20 -- '^[[:space:]]*--- FAIL: |^panic: |^FAIL|WARNING: DATA RACE' | head -n 300 || true
+  echo "postgresql-store: the last 60 lines:"
+  printf '%s\n' "$out" | tail -n 60
+  exit 1
+}
 printf '%s\n' "$out" | grep -E '^(ok|FAIL|---) ' || true
 # The other kinds' cases skip what a kind does not hold; the postgresql kind's
 # and the TestPostgreSQL tests skip only without a server.
