@@ -79,6 +79,7 @@ The program's commands:
 | --- | --- |
 | none | Desk's companion: reads one boot line on stdin and serves `jobs/1`, as the next paragraphs say |
 | `serve --config <path>` | service mode: serves `jobs/1` from a private configuration file until it is stopped ([below](#service-mode)) |
+| `store migrate --connection <path>` | applies the postgresql store kind's migrations, as its migration login ([docs/postgresql-store.md](docs/postgresql-store.md)) |
 | `version` | names the release the program was built from |
 | `verify-run` | verifies a run's export offline ([below](#verified-mapping-v2-runner-and-desk)) |
 | `verify-preparation` | verifies one preparation offline, an Exchange fixture's among them, with no run ([below](#verified-mapping-v2-runner-and-desk)) |
@@ -144,6 +145,12 @@ starts it), and:
   2048 bits or more, EC P-256 or Ed25519; no private member), read once at start. Others may read that
   file; no one but its owner, Runner's user or root, may write it.
 - `acceptOtherHostsOverPlainHTTP`, optional, `true` or `false`.
+- `store`, optional: `{"kind":"postgresql","connection":"<absolute path>"}` keeps the queue and
+  records in PostgreSQL 16 instead of the SQLite database under `dir`. The connection file is
+  held to this file's rules and refused inside the state directory. That kind serves the routes
+  that make and run a job and refuses the rest with `501 store_route_unsupported`;
+  [docs/postgresql-store.md](docs/postgresql-store.md) has its roles, migration and limits.
+  Without `store`, nothing changes.
 
 ```json
 {"dir":"/srv/jobs/state","runtime":"/srv/jobs/bin/jpack","workspace":"ops","owner":"ops-installation","listen":"127.0.0.1:8470",

@@ -80,3 +80,15 @@ it is built.
   `docs/design/store-postgresql.md` (the second kind); `docs/design/scope-identifiers.md`;
   `docs/design/service-mode.md`.
 - The form is the one the Runtime repository's decision records use.
+
+## Status in the build
+
+2026-11-14: the kind is built in part, as `docs/design/store-postgresql.md` (section 11, step 5)
+records. The record's status stays `proposed` until a maintainer accepts it. The decisions the
+build took, each the note's recommendation: D1, D2, D3, D4, D5, D6, D7, D8, D9 (but for the
+cloud binding's answer), D13, D14 and D15. Not yet taken by a build: D10 (the removal is not
+built), D11 (the missing attempt directory is read as unknown; the volume rows are not built) and
+D12. Where the build differs from the note, the note says so: the identity rows keyed on the
+release, a failed renewal stopping the Runtime at once, a refusal's entry written held to its
+job's scope, and `422` for `trigger_limit` and `cloud_binding_used`. Every route the note does
+not yet hold to its scope is refused on the kind with `501 store_route_unsupported`.

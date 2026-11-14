@@ -1,8 +1,10 @@
 # A second storage kind on PostgreSQL
 
-Issue #244. Status: design. The kind is not built; the Runner's changes before it (section 11,
-steps 1 to 4) are, but for what step 3 and step 4 list as left. The decision is recorded in
-[ADR 0001](../adr/0001-second-storage-kind.md).
+Issue #244. Status: built in part. The Runner's changes before the kind (section 11, steps 1 to
+4) are built, and the kind (step 5) is built for the routes section 6 lists as held; section 11
+says what step 5 built, where it differs from this note, and what is left. The decision is
+recorded in [ADR 0001](../adr/0001-second-storage-kind.md); the operator's page is
+[docs/postgresql-store.md](../postgresql-store.md).
 
 A Runner keeps its state in one SQLite database and a few directories under its state directory
 ([store-interface.md](store-interface.md), section 9). This note fixes the second storage kind,
@@ -160,7 +162,15 @@ The lease, as (a) builds it:
   holds runs at least 60 seconds from it, and the Runtime is being stopped at least 30 seconds
   before the lease can run out, whatever the Runner's wall clock says. A Runner that loses a claim
   stops its dispatcher, as a failed finish does now; the run is interrupted one lease later and is
-  retried only as D11 allows.
+  retried only as D11 allows. As built (`claims.go`), a renewal that fails stops the Runtime at
+  once, not 30 seconds after the last success; the 30 seconds bound the case where no renewal
+  answers at all. The claimant then writes no finish, and its dispatch returns `errClaimLost`,
+  which stops the dispatcher and makes the health route report it.
+- **The tick's interruption, as built.** On a kind that leases claims, the dispatcher's tick,
+  every 15 seconds, writes each run held running whose lease ran out as interrupted, with the
+  expectation `lapsed` and an `interruption` whose `lastKnownRunning` is the run's start; unlike
+  the restart's, it names no `restart`. The sqlite kind leases nothing, so its tick interrupts
+  nothing.
 
 ## 3. The schema
 
@@ -178,8 +188,8 @@ columns and keys, and these changes:
 | `claim_id`, `claim_attempt`, `lease_until` | `runs` | D3. |
 | `journal_head(last)` and `chain_head(last)`, one row each | | D13, D14. |
 | `counts(name, value)`: `triggers`, `active-runs`, `pending-occurrences` | | D9. |
-| `pack_identities(pack, version, digest)` and `dialect_identities(dialect, version, digest)`, keyed on their first two columns | | D9. |
-| `attempt_volumes(run, attempt, volume, scope)` | | D11: diagnostics only. |
+| `pack_identities(release_id, pack, version, digest)` and `dialect_identities(release_id, dialect, version, digest)`, keyed on `release_id`, indexed on the identity's two columns | | D9. As built: one row for each revision's release, so that a conflict is counted over the revisions as the sqlite kind counts it, rather than one row per identity keyed on its first two columns. |
+| `attempt_volumes(run, attempt, volume, scope)` | | D11: diagnostics only. Not built in step 5. |
 | `schema_migrations(version, digest, applied_at, request_login, worker_login)` | | Section 5; the logins the grants were made to (D6). |
 | No `workflow_executions`, `workflow_artifacts`, `manual_attempts` | | Section 9 of the store note: the workflow store is reached by no route; manual admission is single-host and stays on SQLite (D4). |
 
@@ -293,7 +303,16 @@ Neither run-time login is the owner, so neither reaches them by setting the valu
 
 **A migration checks its own rows.** A statement that changes rows is marked in its file
 (`-- jpack: rows`), and the command fails the file's transaction, naming the file and the
-statement, when such a statement changes no row while its table holds any.
+statement, when such a statement changes no row while its table holds any. (Not built in step 5:
+the two files of the first set change rows only in tables they create.)
+
+**As built.** The command is `jpack-runner store migrate --connection <path>`, the file holding
+the migration login's connection string and the names of the owner and the two run-time logins
+(the operator's page has its form); it prints the versions it applied. It takes the owner's role
+with `SET LOCAL ROLE` in each file's transaction. It reads whether the set was ever applied from
+the catalog, since the migration login holds no privilege on the schema that `to_regclass` would
+need. A Runner's start applies nothing: it refuses a store whose applied set is not exactly its
+own, an earlier one included.
 
 **D6. Grants to roles named at migration.** (a) A grants file, part of the set and its digest, with
 two placeholders, the request login and the worker login, which the command fills with quoted
@@ -390,6 +409,22 @@ set for it; which scopes a caller may name is not this issue's.
 | `GET /v1/status`, `GET /v1/health`, `GET /v1/background-connections`, `POST /v1/inputs/next`, `/v1/inputs/preview`, `/v1/selected-inputs/next` | None | They read no row |
 | `GET /v1/jobs/{job}/execution-binding` | | Manual admission, refused with this kind (D4) |
 
+**The routes held in step 5.** On a kind that holds scopes (`holdsScopes`), the scope middleware
+(`scoped`, `scope.go`) puts on each request's context the store held to the scope it names (none
+when it names none), or the store itself for a listing that names no scope, and the routes below
+reach rows only through it (`storeFor`), the scope check's read included:
+`GET /v1/status`, `POST /v1/previews`, `POST /v1/jobs`, `GET /v1/jobs`, `GET /v1/runs`,
+`GET /v1/jobs/{job}`, `GET /v1/jobs/{job}/runs`, `POST /v1/jobs/{job}/runs`, `GET /v1/runs/{run}`,
+`POST /v1/jobs/{job}/upgrade` and `GET /v1/jobs/{job}/upgrade-receipt` (`heldRoutes`);
+`GET /v1/health` reads no row. Every other route is refused on such a kind,
+`501 store_route_unsupported`, before it reads anything, until it is held to its scope as the
+table says. `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` serves each held
+route on a store that panics on any read or write not made through a held view, and each refused
+route. A refusal's entry (`journalRefusal`) is written held to the scope of the job it names, a
+cloud signal's included, so on the request login, not the worker login the table names; a
+release's save is held to none. On the sqlite kind `heldTo` is the store itself and nothing
+changes.
+
 **Sequences, views, functions.** Identity columns take their next value without a privilege on
 their sequence, and neither run-time login is granted one, so neither reads a sequence's value
 (condition f). Sequence values are shared across scopes: a reader held to one scope sees its
@@ -418,8 +453,8 @@ Every read in the code whose rows can lie in more than one scope:
 |---|---|---|---|
 | `jobCreation(release)` (a repeated creation) and `releaseUses(release)` | `POST /v1/jobs` (`store.go:357`, `:368`); `POST /v1/jobs/{job}/upgrade` (`job_revisions.go:119`) | The keys on `jobs.release_id`, `job_creations.release_id` and `job_revisions.release_id`, which no policy narrows: another scope's row reads `absent`, and the write meets the key as `taken` | `409 release_already_used`, with SQLite's message for the key that holds the release, a creation's or a revision's. The Runner answers those keys' `taken` so (`releaseTaken`); the sqlite kind, whose reads before the write see every scope, never meets one |
 | `packConflicts`, `dialectConflicts` | Both routes (`admitJobPack`, `job_revisions.go:34`; `dialect_artifact.go:159`) | `pack_identities` and `dialect_identities`, unscoped: each revision's release's identities are inserted (`ON CONFLICT DO NOTHING`) in its transaction, and their held digests read back | `409 artifact_identity_conflict`, as on SQLite |
-| `triggerCount()` | `POST /v1/jobs` with a trigger (`store.go:396`); `POST /v1/jobs/{job}/triggers` (`triggers_store.go:67`, outside the transaction) | `counts.triggers`, raised by `createTrigger` only while below 128 | `400 trigger_limit` at the installation's 128th trigger |
-| `cloudBindings(except, connection, job)` | `POST /v1/jobs/{job}/triggers` (`triggers_store.go:77`, outside the transaction) | The binding's unique index on `triggers`, which no policy narrows: the write meets it as `taken` | `400 cloud_binding_used`, the Runner answering the index's `taken` so |
+| `triggerCount()` | `POST /v1/jobs` with a trigger (`store.go:396`); `POST /v1/jobs/{job}/triggers` (`triggers_store.go:67`, outside the transaction) | `counts.triggers`, raised by `createTrigger` only while below 128 | `422 trigger_limit` at the installation's 128th trigger, as the Runner answers on SQLite |
+| `cloudBindings(except, connection, job)` | `POST /v1/jobs/{job}/triggers` (`triggers_store.go:77`, outside the transaction) | The binding's unique index on `triggers`, which no policy narrows: the write meets it as `taken` | `422 cloud_binding_used`, as the Runner answers on SQLite. Left: the Runner does not yet answer the index's `taken` so, and the trigger routes are refused on the kind; `POST /v1/jobs` with a cloud trigger meets the index as it does on the sqlite kind, which checks no binding before that write either |
 | `activeRuns()` | `POST /v1/jobs/{job}/runs` (`store.go:591`); `POST /v1/runs/{run}/retry` (`retries.go:364`) | `counts.active-runs`, moved by `createRun` and `putRun` as a run enters or leaves `queued` and `running` | `429 queue_full` at the installation's limit |
 | `pendingOccurrences()` | `POST /v1/triggers/{trigger}/events` and `/deliveries` (`triggers_store.go:469`) | `counts.pending-occurrences`, moved by `createOccurrence` and `putOccurrence` as an occurrence enters or leaves `accepted`, `preparing` and `waiting` | `429 queue_full` at the installation's limit |
 | `journalPage` with a job; `journalBegan()` | `GET /v1/jobs/{job}/events`, `GET /v1/events` | The read policy on `events` above | The page SQLite gives |
@@ -440,6 +475,10 @@ never meets a key.
 No read is per scope with an answer that differs from SQLite's. The counts are the kind's: it moves
 them in the statements of the operations named, so neither the contract nor the in-memory kind
 changes, and the removal (section 7) takes a scope's rows out of them.
+
+Section 11, step 4, read the `400` of the table above, as first written, as a change to make; the
+Runner answers `trigger_limit` and `cloud_binding_used` with `422` on every kind, and the table
+now says so rather than change what the sqlite kind answers.
 
 ## 7. Privileges, append-only tables, removal
 
@@ -484,7 +523,7 @@ rows and no other's. It leaves every unscoped table: the chain (D10), the pack a
 identities (a removed scope's identity stays bound to its bytes, as the rule intends), and the
 releases. Journal entries about a scoped job that carry no scope (its releases' previews and
 refused creations, and the Runner's own entries) are rows of the none scope, and the removal leaves
-them too.
+them too. (Not built in step 5: `jpack-runner store` takes `migrate` alone.)
 
 **D10. The chain of runs.** The chain is one chain for the installation: each entry names the
 previous entry's digest, so removing a scope's entries breaks every later link. (a) `run_chain` is
@@ -515,7 +554,9 @@ diagnostics only: it decides nothing. (b) The attempt directories on a durable s
 keeps local state the issue removes. (c) The Runtime's audit trail copied into the database as it
 is written, which needs the Runtime's cooperation. (a) is the smallest that keeps the refusal; it
 costs the retry of every interrupted run whose directories, an earlier attempt's among them, the
-host does not hold. The sqlite kind keeps today's reading.
+host does not hold. The sqlite kind keeps today's reading. (Step 5 built the reading, the kind's
+`missingAttemptHoldsNoAudit` answering no; not the volume rows. The retry route is refused on the
+kind in any case.)
 
 **The pinned Runtime.** A release names the digest of the Runtime it was made with, and every
 evaluation reads `runtimes/<digest>` and refuses a file that is missing or changed
@@ -526,12 +567,13 @@ health route names the digests held releases need that are not pinned. **D12.** 
 start from executables the image ships, by digest. (b) The executables in the database, up to
 128 MiB each. (c) An object store behind a small interface. (a) adds no storage and no interface,
 and keeps the digest check where it is; its cost is that an image must carry every Runtime a held
-job's release names, or the job is revised to a release of a Runtime it carries.
+job's release names, or the job is revised to a release of a Runtime it carries. (Not built in
+step 5: a Runner on the kind pins the one Runtime it is started with, as on the sqlite kind.)
 
 ## 9. The driver
 
-**Decision: `github.com/jackc/pgx/v5`, through its `database/sql` adapter (`pgx/v5/stdlib`).** Not
-built in this slice. Its licence is MIT, with a licence file at the module root, as
+**Decision: `github.com/jackc/pgx/v5`, through its `database/sql` adapter (`pgx/v5/stdlib`).**
+Built in step 5 at v5.12.0, each run-time login's pool a `pgxpool` opened through the adapter. Its licence is MIT, with a licence file at the module root, as
 `tools/third_party_notices.py` requires of every linked module; it is maintained and pure Go, so
 the release programs stay statically linked. It brings a handful of modules (its connection
 string and password file readers, and `golang.org/x/crypto`, `x/sync` and `x/text`), each with a
@@ -574,6 +616,28 @@ The decisions' own tests, on the same container:
 Beside them, the kind runs `TestStoreKindsConform` with the sqlite and in-memory kinds, and
 `unit-tests.sh` requires it to run and pass when a database is named.
 
+**As built in step 5.** The server is named to the tests by `JPACK_TEST_POSTGRESQL`, an
+administrator's connection string (a login with `CREATEROLE` and `CREATEDB`, not a superuser);
+each test makes roles and a database of its own and drops them. CI runs them in a job of their
+own, `PostgreSQL store`, on a `postgres:16` service container, through the `postgresql-store`
+step of `dev.json` (`scripts/checks/postgresql-store.sh`), which sets
+`JPACK_TEST_POSTGRESQL_REQUIRED` so that a skip fails, and requires the `postgresql` and
+`postgresql-twice` conformance runs and every `TestPostgreSQL` test to pass. `unit-tests.sh` is
+unchanged; the Runner legs skip the step.
+
+| Test | State |
+|---|---|
+| `TestStoreKindsConform/postgresql` and `/postgresql-twice` | Built. |
+| `TestPostgreSQLHoldsATransactionToItsScope` (f) | Built, with a scope set by the kind itself not outliving its transaction on a pooled connection. |
+| `TestPostgreSQLRuntimeLoginsCannotRemove` (g) | Built. |
+| `TestPostgreSQLRolesHoldOnlyWhatTheyNeed` (b) | Built. A login that bypasses row security cannot be made by an administrator that is not a superuser, so the refusal of one is held by the start's query alone, not by a test. |
+| `TestPostgreSQLMigrationIsIdempotent` (c, with a and d) | Built: the conditions of a and d are cases of it, not tests of their own. |
+| `TestPostgreSQLMigrationSetMatchesItsDigest` (i) | Built for the files and their digest; release notes are not read. |
+| `TestPostgreSQLDefinesNoSecurityDefinerFunction` (e) | Built. |
+| `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files read no process clock and compare a lease only with `now()`. |
+| `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
+| h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
+
 ## 11. What the slice after this one builds
 
 In this order. The first four change the Runner, are tested on the sqlite and in-memory kinds, and
@@ -595,19 +659,25 @@ leave SQLite's statements and rows as they are; the kind is written only after t
    suite tests both. The interruption's expectation, `runExpected.lapsed`, by which the restart
    interrupts only the runs no live claim holds (D3), and the fence of a `running` expectation
    that holds no claim, each with a conformance case, and one case over every read of a scope's
-   rows, held to one scope (#263). Left: holding each route of the table in section 6 to its
-   scope, of which `POST /v1/jobs` and `POST /v1/jobs/{job}/upgrade` are held; the tick's
-   interruption; and the renewal loop and the margin, which only a kind that holds a lease
-   needs.)
+   rows, held to one scope (#263). The routes of section 6's table held so far, the tick's
+   interruption, and the renewal loop and the margin are step 5's.)
 4. The Runner's answers to the keys across scopes (D9): `taken` on a release's keys as
-   `409 release_already_used`, on the cloud binding's index as `400 cloud_binding_used`. (The
+   `409 release_already_used`, on the cloud binding's index as `cloud_binding_used`. (The
    release's keys are built, #244's third slice: a `taken` names its key, `storeKey`, and
-   `releaseTaken` answers it. Left: the binding's answer. Its key is named, but the Runner's own
+   `releaseTaken` answers it. Left: the binding's answer. Its key is named; the Runner's own
    check of the binding answers `422 cloud_binding_used`, and `trigger_limit` is `422` too,
-   where section 6 says `400`.)
+   which section 6 now states.)
 5. The kind: its migrations and commands, the rows of section 3, its policies, the lease and its
    renewal, the attempts' volume rows (D11), the pinned Runtime directory (D12), the CI service
-   container, and the tests of section 10.
+   container, and the tests of section 10. (Built, #244's fourth slice: the kind
+   (`store_postgresql*.go`) with its two migration files, its digests and
+   `jpack-runner store migrate`; selection by the service configuration's `store` member (D1);
+   the policies of sections 6 and 7; the lease, its renewal every 15 seconds and the stop on a
+   lost claim (`claims.go`), and the tick's interruption of lapsed runs; the routes of section 6
+   listed there as held, every other route refused on the kind; the CI job; the tests section 10
+   marks built. Left: the routes not yet held, the attempts' volume rows, the pinned Runtime
+   directory, `store remove-scope`, the migration's row marker, the binding's answer, and the
+   tests section 10 marks not built.)
 
 SQLite's bytes and schema are not changed by any of it: the claim's columns and the tables of
 section 3 are the second kind's own, and `store_sqlite_rows_test.go` holds the rows.
