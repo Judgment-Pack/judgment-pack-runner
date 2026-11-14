@@ -457,7 +457,10 @@ const pgTableKinds = "('r','p','v','m','f')"
 // DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of the schema or CREATE
 // on it. A login's privileges are those it holds through any role it is a
 // member of, by inheritance or by SET ROLE, the predefined roles and
-// default privileges among them, and PUBLIC's.
+// default privileges among them, and PUBLIC's. REFERENCES is read on any
+// column of the table as well (has_any_column_privilege), since a grant on
+// one column is enough to declare a foreign key to it; the other three have
+// no column form.
 func (k *pgStore) checkSchema(owner string) error {
 	schema := "'" + postgresqlSchema + "'::regnamespace"
 	var stray string
@@ -479,7 +482,7 @@ func (k *pgStore) checkSchema(owner string) error {
 	for _, db := range []*sql.DB{k.p.request, k.p.worker} {
 		err = db.QueryRowContext(pgContext, `WITH held AS (SELECT r.oid FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'MEMBER'))
 SELECT coalesce((SELECT current_user||': '||p.privilege||' on '||c.relname FROM pg_class c CROSS JOIN unnest(ARRAY['DELETE','TRUNCATE','REFERENCES','TRIGGER']) p(privilege)
-    WHERE c.relnamespace=`+schema+` AND c.relkind IN `+pgTableKinds+` AND EXISTS (SELECT 1 FROM held WHERE has_table_privilege(held.oid, c.oid, p.privilege))
+    WHERE c.relnamespace=`+schema+` AND c.relkind IN `+pgTableKinds+` AND EXISTS (SELECT 1 FROM held WHERE CASE p.privilege WHEN 'REFERENCES' THEN has_any_column_privilege(held.oid, c.oid, p.privilege) ELSE has_table_privilege(held.oid, c.oid, p.privilege) END)
     ORDER BY c.relname, p.privilege LIMIT 1),
   (SELECT current_user||': CREATE on schema `+postgresqlSchema+`' WHERE EXISTS (SELECT 1 FROM held WHERE has_schema_privilege(held.oid, `+schema+`, 'CREATE'))), '')`).Scan(&stray)
 		if err != nil {

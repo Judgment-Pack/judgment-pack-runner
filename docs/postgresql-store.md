@@ -111,8 +111,8 @@ At start the Runner refuses to open the store when:
   security enabled and forced", naming the table): `NO FORCE ROW LEVEL SECURITY` set by hand is
   refused;
 - either run-time login holds `DELETE`, `TRUNCATE`, `REFERENCES` or `TRIGGER` on a table of the
-  schema, or `CREATE` on the schema ("holds DELETE, TRUNCATE, REFERENCES or TRIGGER ...", naming
-  the login, the privilege and the table). What counts is what the login can use: privileges
+  schema, `REFERENCES` on any column of one, or `CREATE` on the schema ("holds DELETE, TRUNCATE,
+  REFERENCES or TRIGGER ...", naming the login, the privilege and the table). What counts is what the login can use: privileges
   granted to it, to `PUBLIC`, or to any role it is a member of, whether it inherits that role or
   may only `SET ROLE` to it, a predefined role such as `pg_write_all_data` and a default privilege
   among them. Revoke the grant, or the membership, and start again;

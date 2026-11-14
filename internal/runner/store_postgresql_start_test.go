@@ -106,9 +106,9 @@ func TestPostgreSQLStartRefusesATableWithoutForcedRowSecurity(t *testing.T) {
 }
 
 // Neither run-time login holds DELETE, TRUNCATE, REFERENCES or TRIGGER on a
-// table of the schema, or CREATE on it: granted to it, to a role it inherits
-// or may SET, to a predefined role it is a member of, or by a default
-// privilege.
+// table of the schema, REFERENCES on a column of one, or CREATE on the
+// schema: granted to it, to a role it inherits or may SET, to a predefined
+// role it is a member of, or by a default privilege.
 func TestPostgreSQLStartRefusesARuntimeLoginWithWiderPrivileges(t *testing.T) {
 	s := pgServer(t)
 	worker, request := pgx.Identifier{s.role(pgRoleWorker)}.Sanitize(), pgx.Identifier{s.role(pgRoleRequest)}.Sanitize()
@@ -119,6 +119,11 @@ func TestPostgreSQLStartRefusesARuntimeLoginWithWiderPrivileges(t *testing.T) {
 			wantStartRefused(t, pgStartOn(s, db, s.role(pgRoleOwner)), errLoginPrivilegeTooWide, privilege+" on runs")
 		})
 	}
+	t.Run("REFERENCES on a column granted to the worker login", func(t *testing.T) {
+		db := s.database(t)
+		pgOwnerDoes(t, s, db, "GRANT REFERENCES (id) ON jpack_runner.runs TO "+worker)
+		wantStartRefused(t, pgStartOn(s, db, s.role(pgRoleOwner)), errLoginPrivilegeTooWide, "REFERENCES on runs")
+	})
 	t.Run("DELETE granted to the request login", func(t *testing.T) {
 		db := s.database(t)
 		pgOwnerDoes(t, s, db, "GRANT DELETE ON jpack_runner.jobs TO "+request)
