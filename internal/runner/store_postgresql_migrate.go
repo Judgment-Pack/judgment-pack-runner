@@ -231,3 +231,24 @@ func PostgreSQLConnectionsFile(raw []byte) (PostgreSQLConnections, error) {
 	}
 	return PostgreSQLConnections{Request: *c.Request, Worker: *c.Worker, Owner: *c.Owner}, nil
 }
+
+// PostgreSQLMigrationFile reads `jpack-runner store migrate`'s connection
+// file: one JSON object, {"migration": ..., "owner": ..., "request": ...,
+// "worker": ...}, the migration login's connection string and the names of
+// the owner role and the two run-time logins, each a string, and nothing else.
+func PostgreSQLMigrationFile(raw []byte) (PostgreSQLMigration, error) {
+	refused := errors.New(`the migration's connection file is one JSON object with migration, owner, request and worker, each a string, and nothing else`)
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil || len(members) != 4 {
+		return PostgreSQLMigration{}, refused
+	}
+	values := map[string]string{}
+	for _, name := range []string{"migration", "owner", "request", "worker"} {
+		var v string
+		if json.Unmarshal(members[name], &v) != nil {
+			return PostgreSQLMigration{}, refused
+		}
+		values[name] = v
+	}
+	return PostgreSQLMigration{Connection: values["migration"], Owner: values["owner"], Request: values["request"], Worker: values["worker"]}, nil
+}

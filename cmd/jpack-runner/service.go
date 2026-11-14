@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -37,7 +38,7 @@ import (
 
 // serviceMembers are the members a service configuration holds beside the
 // boot line's.
-var serviceMembers = []string{"listen", "identity", "acceptOtherHostsOverPlainHTTP"}
+var serviceMembers = []string{"listen", "identity", "acceptOtherHostsOverPlainHTTP", "store"}
 
 // companionMembers are boot members a service configuration does not take:
 // both bind Runner to the host that starts it (docs/design/
@@ -152,7 +153,76 @@ func readServiceConfig(path string) (serviceConfig, error) {
 	if err = runner.ServiceConfigOutsideState(path, c.runner.Dir); err != nil {
 		return serviceConfig{}, fmt.Errorf("the service configuration is refused: %w", err)
 	}
+	if v, present := members["store"]; present {
+		connections, err := storeMember(v, c.runner.Dir)
+		if err != nil {
+			return serviceConfig{}, err
+		}
+		c.runner.PostgreSQL = &connections
+	}
 	return c, nil
+}
+
+// storeMember reads a service configuration's store member, the second
+// storage kind (docs/design/store-postgresql.md, D1):
+// {"kind":"postgresql","connection":"<absolute path>"}, each member once and
+// nothing else. The connection file is held to the rules the configuration is
+// held to, and refused inside the state directory, as it holds the run-time
+// logins' passwords. Without the member the store is the sqlite kind in the
+// state directory, as it always was.
+func storeMember(v json.RawMessage, stateDir string) (runner.PostgreSQLConnections, error) {
+	refused := errors.New(`store, when present, is {"kind":"postgresql","connection":"<the absolute path of its connection file>"} and nothing else`)
+	var m map[string]json.RawMessage
+	if json.Unmarshal(v, &m) != nil || len(m) != 2 {
+		return runner.PostgreSQLConnections{}, refused
+	}
+	var kind, connection string
+	if json.Unmarshal(m["kind"], &kind) != nil || kind != "postgresql" || json.Unmarshal(m["connection"], &connection) != nil || !filepath.IsAbs(connection) {
+		return runner.PostgreSQLConnections{}, refused
+	}
+	raw, err := runner.ReadServiceConfig(connection)
+	if err != nil {
+		return runner.PostgreSQLConnections{}, fmt.Errorf("the store's connection file is refused: %w", err)
+	}
+	if err = runner.ServiceConfigOutsideState(connection, stateDir); err != nil {
+		return runner.PostgreSQLConnections{}, fmt.Errorf("the store's connection file is refused: %w", err)
+	}
+	return runner.PostgreSQLConnectionsFile(raw)
+}
+
+// storeCommand is `jpack-runner store migrate --connection <path>`: the
+// postgresql store's migrations, applied as the migration login, never at a
+// Runner's start (docs/design/store-postgresql.md, section 5). The file is
+// {"migration": ..., "owner": ..., "request": ..., "worker": ...}, held to the
+// rules a service configuration is held to. It prints the versions it applied,
+// none on a second run.
+func storeCommand(args []string, stdout io.Writer) error {
+	if len(args) != 3 || args[0] != "migrate" || args[1] != "--connection" || !filepath.IsAbs(args[2]) {
+		return errors.New("store takes migrate, --connection and the absolute path of the migration's connection file, and nothing else")
+	}
+	raw, err := runner.ReadServiceConfig(args[2])
+	if err != nil {
+		return fmt.Errorf("the migration's connection file is refused: %w", err)
+	}
+	m, err := runner.PostgreSQLMigrationFile(raw)
+	if err != nil {
+		return err
+	}
+	applied, err := runner.MigratePostgreSQL(m)
+	if err != nil {
+		return err
+	}
+	if applied == nil {
+		applied = []string{}
+	}
+	_, err = fmt.Fprintln(stdout, string(mustJSON(map[string]any{"applied": applied})))
+	return err
+}
+
+// mustJSON is v encoded; v is a value that always encodes.
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 // serviceObject reads a service configuration as one JSON object, each member
