@@ -522,7 +522,9 @@ func (s *Service) saveRelease(r Release) error { return s.saveReleaseBy(requeste
 
 // saveReleaseBy is saveRelease, for a preview by.
 func (s *Service) saveReleaseBy(by requester, r Release) error {
-	return s.store.update(func(tx runTx) error {
+	// A release and its entry carry no scope: the transaction is held to
+	// none (docs/design/store-postgresql.md, section 6).
+	return s.store.heldTo(scopeHeld("")).update(func(tx runTx) error {
 		if err := tx.createRelease(r); err != nil {
 			return err
 		}
@@ -572,7 +574,9 @@ func (s *Service) journalRefusal(c change) {
 	c.refusal = strings.Join(key, "\x00")
 	// A refusal that cannot be journaled is not reported: the request was
 	// refused all the same.
-	s.store.update(func(tx runTx) error {
+	// The refusal is journaled held to the scope of the job it names, none
+	// for one that names no job (docs/design/store-postgresql.md, section 6).
+	s.store.heldTo(scopeHeld(c.detail.Scope)).update(func(tx runTx) error {
 		last, err := tx.lastRefusal(c.refusal)
 		switch {
 		case err == nil:
@@ -594,7 +598,13 @@ func (s *Service) refusedRun(jobID string, err error) { s.refusedRunBy(requester
 
 // refusedRunBy is refusedRun, for a submission by.
 func (s *Service) refusedRunBy(by requester, jobID string, err error) {
-	if j, e := s.job(jobID); e == nil {
+	s.refusedRunIn(s.store, by, jobID, err)
+}
+
+// refusedRunIn is refusedRunBy, the job read in st: a job st does not reach is
+// one the store does not hold.
+func (s *Service) refusedRunIn(st runStore, by requester, jobID string, err error) {
+	if j, e := st.job(jobID); e == nil {
 		s.refused("submit-run", err, s.actor(by), EventConcerns{Job: j.ID, Release: j.ReleaseID}, j.Scope)
 	}
 }
@@ -645,7 +655,7 @@ func (s *Service) refusedJob(releaseID string, err error) {
 
 // refusedJobBy is refusedJob, for a job creation by.
 func (s *Service) refusedJobBy(by requester, releaseID string, err error) {
-	if _, e := s.release(releaseID); e == nil {
+	if _, e := s.store.heldTo(scopeHeld("")).release(releaseID); e == nil {
 		s.refused("create-job", err, s.actor(by), EventConcerns{Release: releaseID}, "")
 	}
 }

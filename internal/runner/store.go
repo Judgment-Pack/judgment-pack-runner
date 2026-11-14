@@ -342,7 +342,12 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	r, err := s.release(releaseID)
+	// Its reads and its transaction are held to the scope the job is
+	// created under (docs/design/store-postgresql.md, section 6): its reads
+	// see that scope's jobs, and the keys that hold a release once see every
+	// scope's (D9, releaseTaken).
+	held := s.store.heldTo(scopeHeld(scope))
+	r, err := held.release(releaseID)
 	if err != nil {
 		return Job{}, err
 	}
@@ -365,11 +370,7 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 	// (docs/design/store-postgresql.md, D2).
 	setAside := s.refuseSetAsideMapping(r.InputMapping)
 	var made Job
-	// The transaction is held to the scope the job is created under
-	// (docs/design/store-postgresql.md, section 6): its reads see that
-	// scope's jobs, and the keys that hold a release once see every scope's
-	// (D9, releaseTaken).
-	err = s.store.heldTo(scopeHeld(scope)).update(func(tx runTx) error {
+	err = held.update(func(tx runTx) error {
 		stored, err := tx.jobCreation(releaseID)
 		if err == nil {
 			if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope || !sameRetryPolicy(stored.Retry, retry) {
@@ -501,6 +502,12 @@ func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *T
 // requestedBy, the scope its idempotency key is held in, and its first
 // entry's actor.
 func (s *Service) submitBy(by requester, jobID, key string, input Input, origin *TriggerOrigin, manual *manualIntentInput) (Run, bool, error) {
+	return s.submitIn(s.store, by, jobID, key, input, origin, manual)
+}
+
+// submitIn is submitBy, its reads and its transaction made in st: the view
+// of the store a request is held to (storeFor).
+func (s *Service) submitIn(st runStore, by requester, jobID, key string, input Input, origin *TriggerOrigin, manual *manualIntentInput) (Run, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		if origin != nil || input.Source != nil || input.Preparation != nil || manual == nil || manual.key != key || !bytes.Equal(input.Facts, []byte(manual.facts)) || !bytes.Equal(input.Evidence, []byte(manual.evidence)) {
 			return Run{}, false, manualUnsupported()
@@ -545,7 +552,7 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 		}
 		requestHash = digest(raw)
 		// Identical retries return their original acceptance, even after freshness expires.
-		held, e := s.store.requestedRun(jobID, caller, key)
+		held, e := st.requestedRun(jobID, caller, key)
 		if e == nil {
 			if held.digest != requestHash {
 				return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
@@ -563,11 +570,11 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 		if e = s.refuseSelectedIDs(mappingProfileIDs(input.Source.Mapping)); e != nil {
 			return Run{}, false, e
 		}
-		job, e := s.job(jobID)
+		job, e := st.job(jobID)
 		if e != nil {
 			return Run{}, false, e
 		}
-		release, e := s.release(job.ReleaseID)
+		release, e := st.release(job.ReleaseID)
 		if e != nil {
 			return Run{}, false, e
 		}
@@ -597,7 +604,7 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 	var r Run
 	var replayed bool
 	var replayErr error
-	err = s.store.update(func(tx runTx) error {
+	err = st.update(func(tx runTx) error {
 		held, err := tx.requestedRun(jobID, caller, key)
 		if err == nil {
 			if held.digest != hash {

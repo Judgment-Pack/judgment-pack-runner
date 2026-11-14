@@ -589,3 +589,6 @@ func TestTheTwiceModeRunsAFunctionTwice(t *testing.T) {
 
 // leasesClaims is the wrapped kind's.
 func (t twiceStore) leasesClaims() bool { return leases(t.runStore) }
+
+// holdsScopes is the wrapped kind's.
+func (t twiceStore) holdsScopes() bool { return holdsScopes(t.runStore) }

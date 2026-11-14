@@ -489,3 +489,7 @@ func pgSubject(subject string) (table, id string) {
 // leasesClaims is yes: a claim holds for its lease by the database's clock,
 // renewed by its holder (D3).
 func (k *pgStore) leasesClaims() bool { return true }
+
+// holdsScopes is yes: each view's transactions and reads are held to its
+// scope by the row policy (section 6).
+func (k *pgStore) holdsScopes() bool { return true }

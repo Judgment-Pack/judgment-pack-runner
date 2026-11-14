@@ -342,12 +342,13 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 	mux.HandleFunc("GET /v1/runs", func(w http.ResponseWriter, r *http.Request) { s.list(w, r, "runs", "") })
 	mux.HandleFunc("GET /v1/jobs", func(w http.ResponseWriter, r *http.Request) { s.list(w, r, "jobs", "") })
 	mux.HandleFunc("GET /v1/jobs/{job}", func(w http.ResponseWriter, r *http.Request) {
-		j, err := s.job(r.PathValue("job"))
+		st := s.storeFor(r.Context())
+		j, err := st.job(r.PathValue("job"))
 		if err != nil {
 			failure(w, err)
 			return
 		}
-		release, err := s.release(j.ReleaseID)
+		release, err := st.release(j.ReleaseID)
 		if err != nil {
 			failure(w, err)
 			return
@@ -355,30 +356,30 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 		write(w, 200, map[string]any{"job": j, "release": release})
 	})
 	mux.HandleFunc("GET /v1/jobs/{job}/runs", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := s.job(r.PathValue("job")); err != nil {
+		if _, err := s.storeFor(r.Context()).job(r.PathValue("job")); err != nil {
 			failure(w, err)
 			return
 		}
 		s.list(w, r, "runs", r.PathValue("job"))
 	})
 	mux.HandleFunc("POST /v1/jobs/{job}/runs", func(w http.ResponseWriter, r *http.Request) {
-		by := requesterFrom(r.Context())
+		by, st := requesterFrom(r.Context()), s.storeFor(r.Context())
 		key := r.Header.Get("Idempotency-Key")
 		if len(key) < 1 || len(key) > 128 || strings.IndexFunc(key, func(c rune) bool { return c < 33 || c > 126 }) >= 0 {
 			err := &apiError{400, "idempotency_key_required", "Supply an Idempotency-Key of 1 to 128 visible ASCII characters."}
-			s.refusedRunBy(by, r.PathValue("job"), err)
+			s.refusedRunIn(st, by, r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
 		input, manual, err := s.manualOwnerInput(w, r, key)
 		if err != nil {
-			s.refusedRunBy(by, r.PathValue("job"), err)
+			s.refusedRunIn(st, by, r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
-		run, replayed, err := s.submitBy(by, r.PathValue("job"), key, input, nil, manual)
+		run, replayed, err := s.submitIn(st, by, r.PathValue("job"), key, input, nil, manual)
 		if err != nil {
-			s.refusedRunBy(by, r.PathValue("job"), err)
+			s.refusedRunIn(st, by, r.PathValue("job"), err)
 			failure(w, err)
 			return
 		}
@@ -386,7 +387,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 		if replayed {
 			status = 200
 		}
-		response, err := s.servedRun(run)
+		response, err := s.servedRunIn(st, run)
 		if err != nil {
 			failure(w, err)
 			return
@@ -394,12 +395,13 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 		write(w, status, response)
 	})
 	mux.HandleFunc("GET /v1/runs/{run}", func(w http.ResponseWriter, r *http.Request) {
-		run, err := s.run(r.PathValue("run"))
+		st := s.storeFor(r.Context())
+		run, err := st.run(r.PathValue("run"))
 		if err != nil {
 			failure(w, err)
 			return
 		}
-		response, err := s.servedRun(run)
+		response, err := s.servedRunIn(st, run)
 		if err != nil {
 			failure(w, err)
 			return
@@ -483,7 +485,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string)
 		failure(w, errInvalidResultFilter)
 		return
 	}
-	items, next, err := s.filteredRecords(kind, job, after, filter)
+	items, next, err := s.filteredRecordsIn(s.storeFor(r.Context()), kind, job, after, filter)
 	if err != nil {
 		failure(w, err)
 		return
