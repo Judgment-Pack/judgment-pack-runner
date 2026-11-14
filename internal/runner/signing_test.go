@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -103,7 +102,10 @@ func TestTheSigningKeyIsHeldOutsideTheStore(t *testing.T) {
 			for _, path := range []string{"/usr/bin/env", "/bin/sh", "/usr/bin/true", "/etc/hosts"} {
 				info, err := os.Lstat(path)
 				real, _ := filepath.EvalSymlinks(path)
-				if st, ok := info.Sys().(*syscall.Stat_t); err == nil && ok && os.Getuid() != 0 && real == path && info.Mode().IsRegular() && st.Nlink == 1 && st.Uid != uint32(os.Getuid()) {
+				if err != nil {
+					continue
+				}
+				if uid, links, ok := fileOwner(info); ok && os.Getuid() != 0 && real == path && info.Mode().IsRegular() && links == 1 && uid != uint32(os.Getuid()) {
 					return path
 				}
 			}

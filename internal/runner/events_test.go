@@ -91,6 +91,15 @@ func waitingRuntime(t *testing.T, dir, pidFile string) string {
 	return fakeRuntime(t, dir, "echo $$ > '"+pidFile+"'\nexec sleep 30")
 }
 
+// gatedRuntime is completingRuntime held until the file gate exists: a run
+// it evaluates stays running in the executor until the test opens the gate.
+func gatedRuntime(t *testing.T, dir, gate string) string {
+	return fakeRuntime(t, dir, `while [ ! -e '`+gate+`' ]; do sleep 0.1; done
+mkdir -p audit
+printf '{"recordVersion":"1","kind":"evaluation","run":"fake","reviewed":true,"pack":{"digest":"%s"},"inputs":{"facts":%s,"evidenceSupplied":false},"disposition":`+journalDisposition+`}\n' '`+digest([]byte(journalPack))+`' "$(cat facts.json)" > audit/evaluations.jsonl
+printf '%s\n' '{"outputVersion":"2","status":"evaluated","packId":"journal","packVersion":"1.0.0","evaluatorSpecVersion":"0.2.0-draft","rehearsal":false,"disposition":`+journalDisposition+`}'`)
+}
+
 func journalRelease(t *testing.T, s *Service, runtime string) Release {
 	t.Helper()
 	r := Release{SchemaVersion: "1", ID: id("release_"), Pack: journalPack, PackDigest: digest([]byte(journalPack)), PackID: "journal", PackVersion: "1.0.0", Title: "Journal", RuntimeDigest: runtime, CreatedAt: now(), Sample: journalInput(), Tests: "not-run"}

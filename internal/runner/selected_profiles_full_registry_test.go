@@ -12,15 +12,6 @@ import (
 	"testing"
 )
 
-// gatedRuntime is completingRuntime held until the file gate exists: a run
-// it evaluates stays running in the executor until the test opens the gate.
-func gatedRuntime(t *testing.T, dir, gate string) string {
-	return fakeRuntime(t, dir, `while [ ! -e '`+gate+`' ]; do sleep 0.1; done
-mkdir -p audit
-printf '{"recordVersion":"1","kind":"evaluation","run":"fake","reviewed":true,"pack":{"digest":"%s"},"inputs":{"facts":%s,"evidenceSupplied":false},"disposition":`+journalDisposition+`}\n' '`+digest([]byte(journalPack))+`' "$(cat facts.json)" > audit/evaluations.jsonl
-printf '%s\n' '{"outputVersion":"2","status":"evaluated","packId":"journal","packVersion":"1.0.0","evaluatorSpecVersion":"0.2.0-draft","rehearsal":false,"disposition":`+journalDisposition+`}'`)
-}
-
 // Runner #190, the host Judgment-Pack/judgment-pack-desk#599 describes. Its
 // ordinary registry is full: 15 configured profiles and its installed
 // ordinary generated-input profile. It still prepares inputs for an
