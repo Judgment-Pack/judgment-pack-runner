@@ -143,7 +143,10 @@ func exportedRunKeyed(t *testing.T, input runner.Input, profiles []runner.InputP
 	json.Unmarshal(call("POST", "/v1/previews", map[string]any{"pack": string(pack), "input": input}, "", 201), &id)
 	json.Unmarshal(call("POST", "/v1/jobs", map[string]any{"name": "Verified", "releaseId": id.ID, "reviewed": true}, "", 201), &id)
 	json.Unmarshal(call("POST", "/v1/jobs/"+id.ID+"/runs", input, "one", 202), &id)
-	for deadline := time.Now().Add(10 * time.Second); id.State != "completed"; time.Sleep(10 * time.Millisecond) {
+	// The wait is long because the groups of unit tests run side by side under
+	// the race detector: a run with an 8 MiB export took over 10 s on a hosted
+	// macOS machine. A run that fails or is interrupted still ends the wait at once.
+	for deadline := time.Now().Add(60 * time.Second); id.State != "completed"; time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) || id.State == "failed" || id.State == "interrupted" {
 			t.Fatal("run did not complete:", id.State)
 		}
