@@ -131,7 +131,10 @@ The lease, as (a) builds it:
 - **The claim's token.** A claim writes `claim_id` (16 random bytes, new for each claim),
   `claim_attempt` (the run's attempt) and `lease_until` on the run's row, in the claim's statement,
   fenced by the run's state as now: `UPDATE runs SET state='running', record=$1, claim_id=$2,
-  claim_attempt=$3, lease_until=now() + $4 WHERE id=$5 AND state='queued'`.
+  claim_attempt=$3, lease_until=now() + $4 WHERE id=$5 AND state='queued'`. As built, two
+  dispatchers that read one queued run meet here: the second claim is `conflict`, and its
+  dispatcher works nothing and goes on (`dispatchNext`), not stopping as for a failure of the
+  store; any other conflict still stops it.
 - **Expiry is the database's clock.** Every comparison with `lease_until` is with `now()` in the
   statement that makes it. No Runner's clock is compared with it or written into it. As built, a
   claimant's fence (`lease_until >`, a finish's and a renewal's) is with `statement_timestamp()`
@@ -651,6 +654,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLMigrationSetMatchesItsDigest` (i) | Built for the files and their digest; release notes are not read. |
 | `TestPostgreSQLDefinesNoSecurityDefinerFunction` (e) | Built. |
 | `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files read no process clock, compare a lease only with the database's clock, and fence no claimant's write by `now()`. |
+| `TestPostgreSQLADispatcherThatLosesAClaimGoesOn` (D3) | Built: two Runners on one store read one queued run; exactly one works it, the other returns no error and works the next run. |
 | `TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease` (D3) | Built: a finish and a renewal that wait for `journal_head`'s lock past their lease's end write nothing. |
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
 | `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; with another connection holding `journal_head`'s lock, a write is refused within the lock bound, a renewal within its deadline, its wait on the server ended, the claim reported lost; a transaction left idle is ended by the server and the writer behind it goes on. |

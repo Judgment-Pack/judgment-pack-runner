@@ -132,12 +132,16 @@ scopes' entries are.
 
 There is no process-wide lock. A run is held by its claim: a token and a lease of 60 seconds,
 compared with the database's clock when each write's statement starts, so a finish or a renewal
-that waited for another writer past its lease's end writes nothing. The Runner renews the lease every 15 seconds while the
-attempt runs. When a renewal fails, conflicts, or takes longer than 15 seconds, or none has
-succeeded within 30 seconds of the last that did, the Runner stops the attempt's Runtime, writes
-nothing more for that run, and stops its dispatcher: `GET /v1/health` then reports it unhealthy,
-and the Runner needs a restart. A run left running by a Runner that stopped is interrupted by the
-dispatcher's tick once its lease has run out, about a minute later, not at the next start.
+that waited for another writer past its lease's end writes nothing. The Runner renews the lease
+every 15 seconds while the attempt runs. When a renewal fails, conflicts, or takes longer than 15
+seconds, or none has succeeded within 30 seconds of the last that did, the Runner stops the
+attempt's Runtime, writes nothing more for that run, and stops its dispatcher: `GET /v1/health`
+then reports it unhealthy, and the Runner needs a restart. A run left running by a Runner that
+stopped is interrupted by the dispatcher's tick once its lease has run out, about a minute later,
+not at the next start.
+
+Runners on one store may read the same queued run. The one whose claim comes second finds the run
+no longer queued: it works nothing, stays healthy and goes on to the next run.
 
 ## Time bounds
 

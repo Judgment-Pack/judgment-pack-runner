@@ -707,7 +707,7 @@ func (s *Service) worker(ctx context.Context) {
 
 // dispatchNext takes the oldest queued run, if any, through evaluation to its
 // end, and says whether there was one. An error is a storage error, which
-// stops the dispatcher.
+// stops the dispatcher. A run another dispatcher claimed first is not one.
 func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	r, err := s.store.oldestQueued()
 	if absent(err) {
@@ -753,6 +753,12 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	}
 	claimed := time.Now()
 	if err = s.changeRun(r); err != nil {
+		// The run left the queue between the read and the claim: another
+		// dispatcher on the same store claimed it first. Not this one's to
+		// work, and no failure of the store's: the dispatcher goes on.
+		if faultOf(err) == faultConflict {
+			return false, nil
+		}
 		return true, err
 	}
 	// On a kind that leases claims the claim is renewed while the attempt
