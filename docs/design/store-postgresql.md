@@ -165,7 +165,11 @@ The lease, as (a) builds it:
   retried only as D11 allows. As built (`claims.go`), a renewal that fails stops the Runtime at
   once, not 30 seconds after the last success; the 30 seconds bound the case where no renewal
   answers at all. The claimant then writes no finish, and its dispatch returns `errClaimLost`,
-  which stops the dispatcher and makes the health route report it.
+  which stops the dispatcher and makes the health route report it. Stopping the Runtime is the
+  attempt's context cancelled, as every other stop of a Runtime is: the Runtime's process is
+  killed and waited for before the dispatch returns. No Runtime is started in a process group of
+  its own, so "its process group" above is not built: a process the Runtime itself started is
+  not ended.
 - **The tick's interruption, as built.** On a kind that leases claims, the dispatcher's tick,
   every 15 seconds, writes each run held running whose lease ran out as interrupted, with the
   expectation `lapsed` and an `interruption` whose `lastKnownRunning` is the run's start; unlike

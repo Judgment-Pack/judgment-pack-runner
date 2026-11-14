@@ -1,3 +1,5 @@
+//go:build linux || darwin || freebsd
+
 package runner
 
 import (
@@ -60,10 +62,13 @@ func shortClaimTimes(t *testing.T, renewal, stop time.Duration) {
 }
 
 // leasingRun queues a run of a Runtime that waits at gate, on w's store
-// wrapped as l, and dispatches it in the background.
+// wrapped as l, and dispatches it in the background. The Runtime writes its
+// process id to pid; it also ends by itself once the gate's directory is gone
+// or after 30 seconds, so that no test, failed or killed, leaves it running.
+// The test's cleanup ends what it started (endLeasingRun).
 func leasingRun(t *testing.T, w *coverWorld, l *leasingWrapper, gate, pid string) (string, chan error) {
 	t.Helper()
-	runtime := fakeRuntime(t, w.cfg.Dir, "echo $$ > '"+pid+"'\nwhile [ ! -e '"+gate+"' ]; do sleep 0.05; done\nexit 3")
+	runtime := fakeRuntime(t, w.cfg.Dir, "echo $$ > '"+pid+"'\nn=0\nwhile [ ! -e '"+gate+"' ] && [ -d '"+filepath.Dir(gate)+"' ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n+1)); done\nexit 3")
 	r := journalRelease(t, w.s, runtime)
 	j, e := w.s.createJob("Leased", r.ID)
 	must(t, e)
@@ -71,9 +76,54 @@ func leasingRun(t *testing.T, w *coverWorld, l *leasingWrapper, gate, pid string
 	must(t, e)
 	l.runStore = w.s.store
 	w.s.store = l
-	done := make(chan error, 1)
-	go func() { _, e := w.s.dispatchNext(context.Background()); done <- e }()
+	done, finished := make(chan error, 1), make(chan struct{})
+	go func() {
+		defer close(finished)
+		_, e := w.s.dispatchNext(context.Background())
+		done <- e
+	}()
+	t.Cleanup(func() { endLeasingRun(t, gate, pid, finished) })
 	return run.ID, done
+}
+
+// endLeasingRun ends what leasingRun started, whatever the test did: it opens
+// the gate, and if the dispatcher has not returned within a second, kills the
+// Runtime by its process id (the dispatcher has not reaped it, so the id is
+// still its), then waits for the dispatcher and fails the test if the Runtime
+// is still running.
+func endLeasingRun(t *testing.T, gate, pid string, finished <-chan struct{}) {
+	select {
+	case <-finished:
+		return
+	default:
+	}
+	os.WriteFile(gate, nil, 0o600)
+	select {
+	case <-finished:
+		return
+	case <-time.After(time.Second):
+	}
+	if n, ok := pidIn(pid); ok {
+		syscall.Kill(n, syscall.SIGKILL)
+	}
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Error("the dispatcher did not return after its Runtime was ended")
+	}
+	if alive(t, pid) {
+		t.Error("the test's Runtime is still running after its cleanup")
+	}
+}
+
+// pidIn is the process id the file pid holds, if it holds one.
+func pidIn(pid string) (int, bool) {
+	b, err := os.ReadFile(pid)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	return n, err == nil && n > 0
 }
 
 // waitFor waits up to ten seconds for ok.
@@ -86,15 +136,11 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-// alive says whether the process named in the file pid is still running.
+// alive says whether the process named in the file pid still exists, not
+// yet reaped included.
 func alive(t *testing.T, pid string) bool {
-	b, err := os.ReadFile(pid)
-	if err != nil {
-		return false
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
-	must(t, err)
-	return syscall.Kill(n, 0) == nil
+	n, ok := pidIn(pid)
+	return ok && syscall.Kill(n, 0) == nil
 }
 
 // D3: on a kind that leases claims, the dispatcher renews its claim while the
@@ -165,8 +211,11 @@ func TestAClaimantWhoseRenewalFailsStopsItsRuntimeAndWritesNothingMore(t *testin
 	if !errors.Is(err, errClaimLost) {
 		t.Fatal("a failed renewal is not a lost claim:", err)
 	}
+	// The claimant reports its lost claim only once its Runtime is gone:
+	// ended and reaped, not only signalled. A process not yet reaped still
+	// answers alive, so this is checked at once, with no wait.
 	if alive(t, pid) {
-		t.Fatal("the Runtime of a lost claim is still running")
+		t.Fatal("the Runtime of a lost claim is still running when its claimant reports the loss")
 	}
 	got, e := w.s.run(id)
 	must(t, e)
