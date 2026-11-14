@@ -97,8 +97,9 @@ var pgContext = context.Background()
 // set as the session's start parameters (docs/postgresql-store.md, "Time
 // bounds"). lock is lock_timeout: a statement waits no longer for a lock,
 // journal_head's that every write takes first among them; a third of the
-// renewal's interval, so that a renewal that meets a lock held fails in
-// time for the claimant to stop its Runtime well inside the lease.
+// renewal's interval, so that a renewal that meets a lock held is refused,
+// and tried again, in time for the claimant to stop its Runtime well inside
+// the lease.
 // statement is statement_timeout, above lock so that a wait for a lock is
 // reported as one, and a bound on any statement that holds a pooled
 // connection. idle is idle_in_transaction_session_timeout: a session left
@@ -106,6 +107,28 @@ var pgContext = context.Background()
 // server, so that the writers waiting behind it meet at most two lock
 // timeouts. Tests shorten them.
 var pgBounds = struct{ lock, statement, idle time.Duration }{5 * time.Second, 30 * time.Second, 10 * time.Second}
+
+// pgBound is one of pgBounds by the name of its setting.
+type pgBound struct {
+	name string
+	d    time.Duration
+}
+
+// pgBoundSettings are pgBounds by the names of their settings.
+func pgBoundSettings() []pgBound {
+	return []pgBound{{"lock_timeout", pgBounds.lock}, {"statement_timeout", pgBounds.statement}, {"idle_in_transaction_session_timeout", pgBounds.idle}}
+}
+
+// pgSearchPath is the search path every pooled connection starts with: the
+// system's catalog first, then the kind's schema.
+var pgSearchPath = []string{"pg_catalog", postgresqlSchema}
+
+// errPostgreSQLSettingNotHeld is the refusal of a start whose pooled
+// connection does not hold a setting the kind starts every connection with
+// (pgOpenPool), naming it: a connection pooler between the Runner and the
+// server that drops start parameters, for one, would leave the writers
+// without their time bounds.
+var errPostgreSQLSettingNotHeld = errors.New("a pooled connection of the postgresql store does not hold a setting the Runner starts it with; a connection pooler that drops start parameters is not supported")
 
 // The refusals of a statement or a transaction that met a time bound, each
 // within the bound it names (pgFault, updateWithin).
@@ -322,20 +345,30 @@ func (k *pgStore) close() error {
 // the driver, which sends the server a cancel request first, so that the
 // statement does not go on waiting there for a lock.
 func pgOpenPool(conn string) (*sql.DB, func(), error) {
-	cfg, err := pgxpool.ParseConfig(conn)
+	cfg, err := pgPoolConfig(conn)
 	if err != nil {
-		return nil, nil, errors.New("a connection string of the postgresql store does not read")
-	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = "pg_catalog, " + postgresqlSchema
-	cfg.ConnConfig.RuntimeParams["application_name"] = "jpack-runner"
-	for name, d := range map[string]time.Duration{"lock_timeout": pgBounds.lock, "statement_timeout": pgBounds.statement, "idle_in_transaction_session_timeout": pgBounds.idle} {
-		cfg.ConnConfig.RuntimeParams[name] = strconv.FormatInt(d.Milliseconds(), 10)
+		return nil, nil, err
 	}
 	pool, err := pgxpool.NewWithConfig(pgContext, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 	return stdlib.OpenDBFromPool(pool), pool.Close, nil
+}
+
+// pgPoolConfig is the driver's configuration of a pool for the login conn
+// names, with the kind's start parameters over what conn says.
+func pgPoolConfig(conn string) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(conn)
+	if err != nil {
+		return nil, errors.New("a connection string of the postgresql store does not read")
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = strings.Join(pgSearchPath, ", ")
+	cfg.ConnConfig.RuntimeParams["application_name"] = "jpack-runner"
+	for _, b := range pgBoundSettings() {
+		cfg.ConnConfig.RuntimeParams[b.name] = strconv.FormatInt(b.d.Milliseconds(), 10)
+	}
+	return cfg, nil
 }
 
 // newPostgreSQLStore is a store over two pools, every scope's, closing
@@ -371,19 +404,57 @@ func openPostgreSQLStore(o storeOpening) (_ *pgStore, err error) {
 			k.close()
 		}
 	}()
-	if err = k.checkLogins(c.Owner); err != nil {
-		return nil, err
-	}
-	if err = k.checkMigrations(); err != nil {
-		return nil, err
-	}
-	if err = k.checkSchema(c.Owner); err != nil {
-		return nil, err
-	}
-	if err = k.start(o); err != nil {
+	if err = k.open(c.Owner, o); err != nil {
 		return nil, err
 	}
 	return k, nil
+}
+
+// open checks the store over its pools as a Runner's start does, each
+// refusal by name, and then starts it: the settings its connections hold,
+// the logins, the migrations and the live schema.
+func (k *pgStore) open(owner string, o storeOpening) error {
+	if err := k.checkSettings(); err != nil {
+		return err
+	}
+	if err := k.checkLogins(owner); err != nil {
+		return err
+	}
+	if err := k.checkMigrations(); err != nil {
+		return err
+	}
+	if err := k.checkSchema(owner); err != nil {
+		return err
+	}
+	return k.start(o)
+}
+
+// checkSettings refuses a store whose pooled connections, one of each pool,
+// do not hold the search path and the time bounds pgOpenPool starts them
+// with: a start parameter something between the Runner and the server
+// dropped leaves the session the login's or the server's own.
+func (k *pgStore) checkSettings() error {
+	for _, pool := range []struct {
+		login string
+		db    *sql.DB
+	}{{"request", k.p.request}, {"worker", k.p.worker}} {
+		var held bool
+		if err := pool.db.QueryRowContext(pgContext, "SELECT current_schemas(false) = $1::name[]", pgSearchPath).Scan(&held); err != nil {
+			return pgFault("open", err, false)
+		}
+		if !held {
+			return storeFailure(faultRefused, "open", fmt.Errorf("%w: search_path on the %s login's connection is not %s", errPostgreSQLSettingNotHeld, pool.login, strings.Join(pgSearchPath, ", ")))
+		}
+		for _, b := range pgBoundSettings() {
+			if err := pool.db.QueryRowContext(pgContext, "SELECT current_setting($1)::interval = make_interval(secs => $2)", b.name, b.d.Seconds()).Scan(&held); err != nil {
+				return pgFault("open", err, false)
+			}
+			if !held {
+				return storeFailure(faultRefused, "open", fmt.Errorf("%w: %s on the %s login's connection is not %s", errPostgreSQLSettingNotHeld, b.name, pool.login, b.d))
+			}
+		}
+	}
+	return nil
 }
 
 // start runs the Runner's afterLock, holds the store to its identity and,

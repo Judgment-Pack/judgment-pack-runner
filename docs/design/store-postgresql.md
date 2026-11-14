@@ -265,8 +265,10 @@ Built with time bounds as well, which this note did not give: every pooled conne
 (`pgBounds`; docs/postgresql-store.md, "Time bounds"). A writer held up by another session waits
 at most the lock bound and is refused; a session left idle inside a transaction that holds the
 lock is ended by the server; and the claim's renewal is held to a deadline of its interval
-(`updateWithin`), so that an attempt's end never waits on one without a bound. A request's write
-refused for the lock is not run again. The dispatcher takes the refusal for a store that is busy,
+(`updateWithin`), so that an attempt's end never waits on one without a bound. The start reads the
+bounds and the search path back on a connection of each pool and refuses one not held, by name
+(`checkSettings`, `errPostgreSQLSettingNotHeld`), as a connection pooler that drops start
+parameters would leave them. A request's write refused for the lock is not run again. The dispatcher takes the refusal for a store that is busy,
 not failing (`lockWaited`): its claim, its end of a run in the queue and its tick for lapsed
 leases made nothing and are tried at a later tick; its renewal is run again until its deadline;
 and its finish is made again while the claim's lease is live, which its token and lease fence
@@ -686,7 +688,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease` (D3) | Built: a finish and a renewal that wait for `journal_head`'s lock past their lease's end write nothing. |
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
 | `TestPostgreSQLResolvesABuiltinBeforeTheSchema` | Built: with `now()`, `statement_timestamp()` and `set_config` made in the schema, by the owner, to fail, a claim, a renewal, a finish and a read held to a scope still call the built-ins; no relation of the schema has a name the catalog holds. |
-| `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLADispatcherBehindAHeldLockGoesOn`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; with another connection holding `journal_head`'s lock, a write is refused within the lock bound; a renewal is tried again, keeps the claim when the lock is let go before its deadline, and is refused at its deadline, its wait on the server ended, the claim reported lost; a dispatcher's end of a run in the queue, its tick for lapsed leases and its claim make nothing and its loop goes on, its finish lands once the lock is let go, the run completed and not interrupted, and the Runner stays healthy; a transaction left idle is ended by the server and the writer behind it goes on. |
+| `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLStartRefusesAConnectionWithoutItsSettings`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLADispatcherBehindAHeldLockGoesOn`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; a start over a pool whose connection was opened without the search path or one of the bounds is refused, naming it and the login; with another connection holding `journal_head`'s lock, a write is refused within the lock bound; a renewal is tried again, keeps the claim when the lock is let go before its deadline, and is refused at its deadline, its wait on the server ended, the claim reported lost; a dispatcher's end of a run in the queue, its tick for lapsed leases and its claim make nothing and its loop goes on, its finish lands once the lock is let go, the run completed and not interrupted, and the Runner stays healthy; a transaction left idle is ended by the server and the writer behind it goes on. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
 
 ## 11. What the slice after this one builds

@@ -119,6 +119,10 @@ At start the Runner refuses to open the store when:
   granted to it, to `PUBLIC`, or to any role it is a member of, whether it inherits that role or
   may only `SET ROLE` to it, a predefined role such as `pg_write_all_data` and a default privilege
   among them. Revoke the grant, or the membership, and start again;
+- a connection of either pool does not hold the search path or a time bound the Runner starts it
+  with ("does not hold a setting the Runner starts it with", naming the setting and the login): a
+  connection pooler between the Runner and the server that drops start parameters is not
+  supported;
 - the store's identity (workspace, owner, input root) is another Runner's;
 - the configuration asks for manual admission, which stays on the sqlite kind.
 
@@ -161,7 +165,9 @@ queued: it works nothing, stays healthy and goes on to the next run.
 ## Time bounds
 
 Every connection of the two run-time pools starts with three settings. They are the session's
-start parameters, so they override what the connection string or the login's own settings name:
+start parameters, so they override what the connection string or the login's own settings name.
+At start the Runner reads them back, with the search path, on a connection of each pool, and
+refuses to open the store when one is not held (below):
 
 | Setting | Value | Why |
 |---|---|---|

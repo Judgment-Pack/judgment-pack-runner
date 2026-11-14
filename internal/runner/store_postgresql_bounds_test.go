@@ -23,6 +23,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -128,6 +129,39 @@ func TestPostgreSQLHoldsEveryConnectionToItsTimeBounds(t *testing.T) {
 		if err = pgFault("read", &pgconn.PgError{Code: code}, false); !errors.Is(err, want) || faultOf(err) != faultUnavailable {
 			t.Errorf("SQLSTATE %s on a read is %v (%s), not %v", code, err, faultOf(err), want)
 		}
+	}
+}
+
+// A start whose pooled connection does not hold a setting the kind starts it
+// with, as a connection pooler that drops start parameters leaves it, is
+// refused, naming the setting and the login; the same pools with every
+// setting held start.
+func TestPostgreSQLStartRefusesAConnectionWithoutItsSettings(t *testing.T) {
+	s := pgServer(t)
+	db := s.database(t)
+	without := func(login, setting string) *sql.DB {
+		t.Helper()
+		cfg, err := pgPoolConfig(s.url(login, db))
+		must(t, err)
+		delete(cfg.ConnConfig.RuntimeParams, setting)
+		pool, err := pgxpool.NewWithConfig(pgContext, cfg)
+		must(t, err)
+		conn := stdlib.OpenDBFromPool(pool)
+		t.Cleanup(func() {
+			conn.Close()
+			pool.Close()
+		})
+		return conn
+	}
+	owner := s.role(pgRoleOwner)
+	must(t, newPostgreSQLStore(without(pgRoleRequest, "application_name"), without(pgRoleWorker, "application_name")).open(owner, pgTestOpening))
+	for _, setting := range []string{"search_path", "lock_timeout", "statement_timeout", "idle_in_transaction_session_timeout"} {
+		t.Run(setting, func(t *testing.T) {
+			k := newPostgreSQLStore(s.pool(t, pgRoleRequest, db), without(pgRoleWorker, setting))
+			wantStartRefused(t, k.open(owner, pgTestOpening), errPostgreSQLSettingNotHeld, setting+" on the worker login's connection")
+			k = newPostgreSQLStore(without(pgRoleRequest, setting), s.pool(t, pgRoleWorker, db))
+			wantStartRefused(t, k.open(owner, pgTestOpening), errPostgreSQLSettingNotHeld, setting+" on the request login's connection")
+		})
 	}
 }
 
