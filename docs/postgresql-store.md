@@ -105,6 +105,17 @@ At start the Runner refuses to open the store when:
 - the store is not migrated, or its applied migrations are not exactly this Runner's set: run
   `jpack-runner store migrate` with the matching `jpack-runner` first;
 - the grants were made to other logins than the ones configured;
+- the owner the configuration names does not own the schema, or a relation in it ("not owned by
+  the owner role the configuration names", naming the object);
+- a table of the schema does not have row security both enabled and forced ("does not have row
+  security enabled and forced", naming the table): `NO FORCE ROW LEVEL SECURITY` set by hand is
+  refused;
+- either run-time login holds `DELETE`, `TRUNCATE`, `REFERENCES` or `TRIGGER` on a table of the
+  schema, or `CREATE` on the schema ("holds DELETE, TRUNCATE, REFERENCES or TRIGGER ...", naming
+  the login, the privilege and the table). What counts is what the login can use: privileges
+  granted to it, to `PUBLIC`, or to any role it is a member of, whether it inherits that role or
+  may only `SET ROLE` to it, a predefined role such as `pg_write_all_data` and a default privilege
+  among them. Revoke the grant, or the membership, and start again;
 - the store's identity (workspace, owner, input root) is another Runner's;
 - the configuration asks for manual admission, which stays on the sqlite kind.
 

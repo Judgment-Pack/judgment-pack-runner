@@ -304,6 +304,17 @@ attributes and memberships, and refuses to start if either is a superuser, bypas
 can create roles or databases, or is a member of the owner: a login that could read every scope is
 never taken for one that cannot.
 
+As built, the start also reads the live schema, which this note did not ask (`checkSchema`): it
+refuses a schema or a relation in it that the owner the configuration names does not own
+(`errSchemaNotOwned`), a table without row security enabled and forced (`errRowSecurityOff`), and
+a run-time login that can use `DELETE`, `TRUNCATE`, `REFERENCES` or `TRIGGER` on a table of the
+schema, or `CREATE` on it (`errLoginPrivilegeTooWide`). The privileges are read with
+`has_table_privilege` and `has_schema_privilege` for the login and every role it is a member of,
+so that a grant made after the migration, to a predefined role such as `pg_write_all_data`, by a
+default privilege, or to a role reached only by `SET ROLE`, is refused, not only one made to the
+login by name. A wrong owner name in the configuration, which the membership check above passes,
+is refused by the first.
+
 **Migrations** are plain SQL files, `internal/runner/postgresql/migrations/NNNN_name.sql`, applied in
 order by one command, `jpack-runner store migrate`, that release tooling runs as a release step
 (condition c). The command connects as the migration login, runs `SET ROLE` to the owner, and
@@ -654,6 +665,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLMigrationSetMatchesItsDigest` (i) | Built for the files and their digest; release notes are not read. |
 | `TestPostgreSQLDefinesNoSecurityDefinerFunction` (e) | Built. |
 | `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files read no process clock, compare a lease only with the database's clock, and fence no claimant's write by `now()`. |
+| `TestPostgreSQLStartRefusesASchemaNotOwnedByTheNamedOwner`, `TestPostgreSQLStartRefusesATableWithoutForcedRowSecurity`, `TestPostgreSQLStartRefusesARuntimeLoginWithWiderPrivileges` (section 5) | Built: a start is refused for another owner named, a relation another role owns, a table with row security not forced or disabled, and each of the four table privileges and `CREATE` on the schema, granted by name, through a role inherited or reached by `SET ROLE`, by a default privilege and through `pg_write_all_data`. The last needs the administrator to grant `pg_write_all_data` (CI's is given `ADMIN TRUE, INHERIT FALSE, SET FALSE`). |
 | `TestPostgreSQLADispatcherThatLosesAClaimGoesOn` (D3) | Built: two Runners on one store read one queued run; exactly one works it, the other returns no error and works the next run. |
 | `TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease` (D3) | Built: a finish and a renewal that wait for `journal_head`'s lock past their lease's end write nothing. |
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |

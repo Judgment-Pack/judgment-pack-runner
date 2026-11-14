@@ -361,6 +361,9 @@ func openPostgreSQLStore(o storeOpening) (_ *pgStore, err error) {
 	if err = k.checkMigrations(); err != nil {
 		return nil, err
 	}
+	if err = k.checkSchema(c.Owner); err != nil {
+		return nil, err
+	}
 	if err = k.start(o); err != nil {
 		return nil, err
 	}
@@ -420,6 +423,58 @@ func (k *pgStore) checkLogins(owner string) error {
 	}
 	if request != names[k.p.request] || worker != names[k.p.worker] {
 		return storeFailure(faultRefused, "open", errors.New("the postgresql store's grants were made to other logins than the ones configured"))
+	}
+	return nil
+}
+
+// The refusals of a start whose live schema is not as the migration left it
+// (checkSchema), each naming the object it found.
+var (
+	errSchemaNotOwned        = errors.New("the postgresql store's schema, or a relation in it, is not owned by the owner role the configuration names")
+	errRowSecurityOff        = errors.New("a table of the postgresql store does not have row security enabled and forced")
+	errLoginPrivilegeTooWide = errors.New("a run-time login of the postgresql store holds DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of its schema, or CREATE on the schema")
+)
+
+// pgTableKinds are the relation kinds that hold a table's privileges.
+const pgTableKinds = "('r','p','v','m','f')"
+
+// checkSchema refuses a store whose live schema is not as the migration
+// left it: the schema or a relation in it not owned by owner, a table
+// without row security enabled and forced, or a run-time login that holds
+// DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of the schema or CREATE
+// on it. A login's privileges are those it holds through any role it is a
+// member of, by inheritance or by SET ROLE, the predefined roles and
+// default privileges among them, and PUBLIC's.
+func (k *pgStore) checkSchema(owner string) error {
+	schema := "'" + postgresqlSchema + "'::regnamespace"
+	var stray string
+	err := k.p.worker.QueryRowContext(pgContext, `SELECT coalesce((SELECT 'schema '||n.nspname FROM pg_namespace n WHERE n.oid=`+schema+` AND n.nspowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=$1)),
+  (SELECT c.relname FROM pg_class c WHERE c.relnamespace=`+schema+` AND c.relowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=$1) ORDER BY c.relname LIMIT 1), '')`, owner).Scan(&stray)
+	if err != nil {
+		return pgFault("open", err, false)
+	}
+	if stray != "" {
+		return storeFailure(faultRefused, "open", fmt.Errorf("%w: %s", errSchemaNotOwned, stray))
+	}
+	err = k.p.worker.QueryRowContext(pgContext, `SELECT coalesce((SELECT c.relname FROM pg_class c WHERE c.relnamespace=`+schema+` AND c.relkind IN ('r','p') AND NOT (c.relrowsecurity AND c.relforcerowsecurity) ORDER BY c.relname LIMIT 1), '')`).Scan(&stray)
+	if err != nil {
+		return pgFault("open", err, false)
+	}
+	if stray != "" {
+		return storeFailure(faultRefused, "open", fmt.Errorf("%w: %s", errRowSecurityOff, stray))
+	}
+	for _, db := range []*sql.DB{k.p.request, k.p.worker} {
+		err = db.QueryRowContext(pgContext, `WITH held AS (SELECT r.oid FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'MEMBER'))
+SELECT coalesce((SELECT current_user||': '||p.privilege||' on '||c.relname FROM pg_class c CROSS JOIN unnest(ARRAY['DELETE','TRUNCATE','REFERENCES','TRIGGER']) p(privilege)
+    WHERE c.relnamespace=`+schema+` AND c.relkind IN `+pgTableKinds+` AND EXISTS (SELECT 1 FROM held WHERE has_table_privilege(held.oid, c.oid, p.privilege))
+    ORDER BY c.relname, p.privilege LIMIT 1),
+  (SELECT current_user||': CREATE on schema `+postgresqlSchema+`' WHERE EXISTS (SELECT 1 FROM held WHERE has_schema_privilege(held.oid, `+schema+`, 'CREATE'))), '')`).Scan(&stray)
+		if err != nil {
+			return pgFault("open", err, false)
+		}
+		if stray != "" {
+			return storeFailure(faultRefused, "open", fmt.Errorf("%w: %s", errLoginPrivilegeTooWide, stray))
+		}
 	}
 	return nil
 }

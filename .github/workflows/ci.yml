@@ -133,7 +133,10 @@ jobs:
       - name: An administrator that is not a superuser
         env:
           PGPASSWORD: ci-superuser-only
-        run: psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE jpack_ci_admin LOGIN CREATEROLE CREATEDB PASSWORD 'ci-admin-only'"
+        run: >-
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1
+          -c "CREATE ROLE jpack_ci_admin LOGIN CREATEROLE CREATEDB PASSWORD 'ci-admin-only'"
+          -c "GRANT pg_write_all_data TO jpack_ci_admin WITH ADMIN TRUE, INHERIT FALSE, SET FALSE"
       - name: The postgresql store's step of dev.json
         env:
           JPACK_TEST_POSTGRESQL: postgres://jpack_ci_admin:ci-admin-only@127.0.0.1:5432/postgres?sslmode=disable
