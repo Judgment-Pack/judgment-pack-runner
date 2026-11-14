@@ -142,10 +142,17 @@ The lease, as (a) builds it:
   2's claim holds another token. The sqlite kind takes the token and ignores it, its lock being the
   fence; the in-memory kind checks it, so the suite tests it.
 - **Interruption.** The dispatcher's tick, and the restart, interrupt each running run whose lease
-  ran out: they read those `WHERE state='running' AND lease_until <= now()`, and write each with
-  the token read expected and `lease_until <= now()` again, so a renewal that landed between the
-  two keeps the run. An interruption clears the token. A run whose lease is live is its holder's,
-  whoever starts.
+  ran out: they read the runs held running, and write each with the expectation `lapsed`
+  (`runExpected.lapsed`), which the write's statement holds: `WHERE id=$1 AND state='running' AND
+  (claim_id IS NULL OR lease_until <= now())`. A run whose lease is live is `conflict` and is left
+  as it is, so a renewal that landed between the read and the write keeps the run. An interruption
+  clears the token. A run whose lease is live is its holder's, whoever starts. The sqlite kind
+  holds no run under a claim, and answers `lapsed` for every run held running: it is asked only at
+  the restart, when its lock keeps every other dispatcher out and its own has claimed nothing.
+- **No claim is not every claim.** A run read from the store carries no claim (the token is never
+  read back). A write that expects a run `running` and holds no claim finds it under no claim
+  (`claim_id IS NULL`), or is `conflict`: a writer that is not the claimant does not overwrite the
+  claimant's run.
 - **The margin.** The lease is 60 seconds, renewed every 15. A renewal fails when it returns an
   error or `conflict`, or takes longer than 15 seconds. The Runner begins stopping the run's
   Runtime (its process group) 30 seconds, by its monotonic clock, after the start of the last claim
@@ -422,6 +429,14 @@ Every read in the code whose rows can lie in more than one scope:
 | `jobActivity`, `openOccurrences`, `triggerRecords`, `jobTriggers`, `identifiedOccurrence`, `keyedOccurrence`, `occurrencePage` | Their routes | Per scope by construction: each is keyed by a job or a trigger of the scope | The same |
 | `oldestQueued`, `runningRuns`, `enabledTriggers`, `readyOccurrence`, `preparableOccurrences`, `preparingOccurrences`, `lastPreparing`, `cloudBoundTrigger`, `lastEntry`; the listings naming no scope | The dispatcher, the ticks, preparation, cloud signals, the restart, the chain, the listings | The worker login | The same |
 
+**The order of the release's keys.** A creation meets the release's keys in the order
+`job_creations`, `job_revisions`, `jobs`: the second kind inserts the creation's row first, so that a
+release another scope made a job from meets `job_creations.release_id` and is answered with the
+creation's message (`errReleaseCreated`), and a revision's release meets
+`job_revisions.release_id` before `jobs.release_id` and is answered with the revision's. The sqlite
+kind inserts into `jobs` first and is unchanged: its reads before the write see every scope, so it
+never meets a key.
+
 No read is per scope with an answer that differs from SQLite's. The counts are the kind's: it moves
 them in the statements of the operations named, so neither the contract nor the in-memory kind
 changes, and the removal (section 7) takes a scope's rows out of them.
@@ -577,9 +592,13 @@ leave SQLite's statements and rows as they are; the kind is written only after t
    as a kind opens it doing the work for every scope; `runClaim`, `runExpected` and
    `renewClaim`, the dispatcher's claim fencing its finish; `missingAttemptHoldsNoAudit`. The
    in-memory kind holds the scope's policy and the claim's lease by a clock of its own, and the
-   suite tests both. Left: holding each route of the table in section 6 to its scope, of which
-   `POST /v1/jobs` and `POST /v1/jobs/{job}/upgrade` are held; and the renewal loop and the
-   margin, which only a kind that holds a lease needs.)
+   suite tests both. The interruption's expectation, `runExpected.lapsed`, by which the restart
+   interrupts only the runs no live claim holds (D3), and the fence of a `running` expectation
+   that holds no claim, each with a conformance case, and one case over every read of a scope's
+   rows, held to one scope (#263). Left: holding each route of the table in section 6 to its
+   scope, of which `POST /v1/jobs` and `POST /v1/jobs/{job}/upgrade` are held; the tick's
+   interruption; and the renewal loop and the margin, which only a kind that holds a lease
+   needs.)
 4. The Runner's answers to the keys across scopes (D9): `taken` on a release's keys as
    `409 release_already_used`, on the cloud binding's index as `400 cloud_binding_used`. (The
    release's keys are built, #244's third slice: a `taken` names its key, `storeKey`, and

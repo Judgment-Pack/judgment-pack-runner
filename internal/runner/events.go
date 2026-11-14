@@ -453,7 +453,15 @@ func (s *Service) restart() error {
 			r.State = "interrupted"
 			r.FinishedAt = at
 			r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
-			if err = recordRun(contract, r, runExpected{state: anyState}, runnerActor, EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}}); err != nil {
+			// Only a run no claimant holds is interrupted (D3): one whose
+			// lease is live is its holder's, and is left as it is. The sqlite
+			// kind, whose lock is the fence, holds every run running here as
+			// no claimant's.
+			err = recordRun(contract, r, runExpected{state: "running", lapsed: true}, runnerActor, EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}})
+			if faultOf(err) == faultConflict {
+				continue
+			}
+			if err != nil {
 				return err
 			}
 		}
