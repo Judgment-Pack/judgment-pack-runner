@@ -32,13 +32,14 @@ fetch_pin() {
 # which the binding tests need (#55). A pin moved to a Runtime without
 # `jpack audit` or `--binding` would skip them again, and the step after
 # the tests fails if any of them does not pass.
-# The tested Runtime: merged citation session identifier of any string (runtime #291).
-fetch_pin judgment-pack-runtime 09206e743cdf410d7b5ee970f1c9d09ca7c015ca "$root/.ci/runtime"
+# The tested Runtime: published v0.46.0 (the signed tag's commit), moved
+# from 09206e7 (main at runtime #291, contained in v0.38.0).
+fetch_pin judgment-pack-runtime d780245fbc5545b70aeebf7e4d6f5493234a644a "$root/.ci/runtime"
 # The build names the pin's release, as the release build does, so a
 # test can tell what the Runtime under test answers by its release
 # (TestTheRuntimesVerifierReadsTheChainOfRuns). Whoever moves the pin
 # moves the version with it.
-(cd "$root/.ci/runtime" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.33.0-dev.09206e7" -o "$bin/jpack" ./cmd/jpack)
+(cd "$root/.ci/runtime" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.46.0" -o "$bin/jpack" ./cmd/jpack)
 
 # Dedicated retained-column companion: published v0.39.0 (the signed tag's
 # commit). Its exact Spec v0.3.0/Base report (selector retained-column/1@27cb29bf)
@@ -89,11 +90,11 @@ fetch_pin judgment-pack-runner 1cc6b29885b344716a970cd21fefeaca0a4edaeb "$root/.
 fetch_pin judgment-pack-runtime 7a2fcfe20cedba5f164246fc544c4920971d2c56 "$root/.ci/runtime-earlier"
 (cd "$root/.ci/runtime-earlier" && go build -trimpath -ldflags "-X github.com/Judgment-Pack/judgment-pack-runtime/internal/result.CLIVersion=0.27.1" -o "$bin/jpack-earlier" ./cmd/jpack)
 
-# The durable Gateway contract. The commit is v0.23.0 (the signed tag's
-# commit), moved from v0.9.1 (#192). Its receipts may carry an
+# The durable Gateway contract. The commit is v0.28.0 (the signed tag's
+# commit), moved from v0.23.0, which was moved from v0.9.1 (#192). Its receipts may carry an
 # acquisition's descriptorProvenance (gateway SPEC.md section 9), which
 # the Runner's verifier accepts as a signed member it does not check
 # against artifacts it does not hold.
-fetch_pin judgment-pack-gateway 82d4f8ad9c5b38e5f27e9031c289d06434d1fab1 "$root/.ci/gateway"
+fetch_pin judgment-pack-gateway c5b12d2b84b68c2da43bdf1e72de4fae82640b40 "$root/.ci/gateway"
 (cd "$root/.ci/gateway/go" && go build -trimpath -o "$bin/gateway" .)
 (cd "$root/.ci/gateway/adapters" && go build -trimpath -o "$bin/adapter-mcp" ./cmd/adapter-mcp)
