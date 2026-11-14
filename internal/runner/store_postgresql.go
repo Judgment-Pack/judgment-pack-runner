@@ -448,7 +448,7 @@ func (k *pgStore) checkLogins(owner string) error {
 var (
 	errSchemaNotOwned        = errors.New("the postgresql store's schema, or a relation, function, operator or type in it, is not owned by the owner role the configuration names")
 	errRowSecurityOff        = errors.New("a table of the postgresql store does not have row security enabled and forced")
-	errLoginPrivilegeTooWide = errors.New("a run-time login of the postgresql store holds DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of its schema, or CREATE on the schema")
+	errLoginPrivilegeTooWide = errors.New("a run-time login of the postgresql store holds DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of its schema, a privilege on a sequence of it, or CREATE on the schema")
 )
 
 // pgTableKinds are the relation kinds that hold a table's privileges.
@@ -458,8 +458,10 @@ const pgTableKinds = "('r','p','v','m','f')"
 // left it: the schema, or a relation, function, operator or type in it, not
 // owned by owner (a table's own row type is its relation's), a table
 // without row security enabled and forced, or a run-time login that holds
-// DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of the schema or CREATE
-// on it. A login's privileges are those it holds through any role it is a
+// DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of the schema, any
+// privilege on a sequence of it (the grants give none: an identity column
+// takes its next value without one, and a sequence's value is shared across
+// scopes), or CREATE on it. A login's privileges are those it holds through any role it is a
 // member of, by inheritance or by SET ROLE, the predefined roles and
 // default privileges among them, and PUBLIC's. REFERENCES is read on any
 // column of the table as well (has_any_column_privilege), since a grant on
@@ -490,6 +492,9 @@ func (k *pgStore) checkSchema(owner string) error {
 		err = db.QueryRowContext(pgContext, `WITH held AS (SELECT r.oid FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'MEMBER'))
 SELECT coalesce((SELECT current_user||': '||p.privilege||' on '||c.relname FROM pg_class c CROSS JOIN unnest(ARRAY['DELETE','TRUNCATE','REFERENCES','TRIGGER']) p(privilege)
     WHERE c.relnamespace=`+schema+` AND c.relkind IN `+pgTableKinds+` AND EXISTS (SELECT 1 FROM held WHERE CASE p.privilege WHEN 'REFERENCES' THEN has_any_column_privilege(held.oid, c.oid, p.privilege) ELSE has_table_privilege(held.oid, c.oid, p.privilege) END)
+    ORDER BY c.relname, p.privilege LIMIT 1),
+  (SELECT current_user||': '||p.privilege||' on sequence '||c.relname FROM pg_class c CROSS JOIN unnest(ARRAY['SELECT','UPDATE','USAGE']) p(privilege)
+    WHERE c.relnamespace=`+schema+` AND c.relkind='S' AND EXISTS (SELECT 1 FROM held WHERE has_sequence_privilege(held.oid, c.oid, p.privilege))
     ORDER BY c.relname, p.privilege LIMIT 1),
   (SELECT current_user||': CREATE on schema `+postgresqlSchema+`' WHERE EXISTS (SELECT 1 FROM held WHERE has_schema_privilege(held.oid, `+schema+`, 'CREATE'))), '')`).Scan(&stray)
 		if err != nil {

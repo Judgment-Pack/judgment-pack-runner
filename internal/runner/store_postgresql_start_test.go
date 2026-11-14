@@ -123,8 +123,8 @@ func TestPostgreSQLStartRefusesATableWithoutForcedRowSecurity(t *testing.T) {
 }
 
 // Neither run-time login holds DELETE, TRUNCATE, REFERENCES or TRIGGER on a
-// table of the schema, REFERENCES on a column of one, or CREATE on the
-// schema: granted to it, to a role it inherits or may SET, to a predefined
+// table of the schema, REFERENCES on a column of one, a privilege on a
+// sequence of it, or CREATE on the schema: granted to it, to a role it inherits or may SET, to a predefined
 // role it is a member of, or by a default privilege.
 func TestPostgreSQLStartRefusesARuntimeLoginWithWiderPrivileges(t *testing.T) {
 	s := pgServer(t)
@@ -134,6 +134,13 @@ func TestPostgreSQLStartRefusesARuntimeLoginWithWiderPrivileges(t *testing.T) {
 			db := s.database(t)
 			pgOwnerDoes(t, s, db, "GRANT "+privilege+" ON jpack_runner.runs TO "+worker)
 			wantStartRefused(t, pgStartOn(s, db, s.role(pgRoleOwner)), errLoginPrivilegeTooWide, privilege+" on runs")
+		})
+	}
+	for _, privilege := range []string{"SELECT", "UPDATE", "USAGE"} {
+		t.Run(privilege+" on a sequence granted to the worker login", func(t *testing.T) {
+			db := s.database(t)
+			pgOwnerDoes(t, s, db, "GRANT "+privilege+" ON SEQUENCE jpack_runner.runs_seq_seq TO "+worker)
+			wantStartRefused(t, pgStartOn(s, db, s.role(pgRoleOwner)), errLoginPrivilegeTooWide, privilege+" on sequence runs_seq_seq")
 		})
 	}
 	t.Run("REFERENCES on a column granted to the worker login", func(t *testing.T) {

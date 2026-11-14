@@ -315,12 +315,13 @@ refuses a schema, or a relation, function, operator or type in it (a table's own
 which is its relation's), that the owner the configuration names does not own
 (`errSchemaNotOwned`), a table without row security enabled and forced (`errRowSecurityOff`), and
 a run-time login that can use `DELETE`, `TRUNCATE`, `REFERENCES` or `TRIGGER` on a table of the
-schema, or `CREATE` on it (`errLoginPrivilegeTooWide`). The privileges are read with
+schema, any privilege on a sequence of it (the grants give none, and a sequence's value is shared
+across scopes, D8), or `CREATE` on it (`errLoginPrivilegeTooWide`). The privileges are read with
 `has_table_privilege`, with `has_any_column_privilege` for `REFERENCES` (a grant on one column is
-enough for a foreign key to it), and with `has_schema_privilege`, for the login and every role it
-is a member of, so that a grant made after the migration, to a predefined role such as
-`pg_write_all_data`, by a default privilege, or to a role reached only by `SET ROLE`, is refused,
-not only one made to the login by name. A wrong owner name in the configuration, which the
+enough for a foreign key to it), with `has_sequence_privilege`, and with `has_schema_privilege`,
+for the login and every role it is a member of, so that a grant made after the migration, to a
+predefined role such as `pg_write_all_data`, by a default privilege, or to a role reached only by
+`SET ROLE`, is refused, not only one made to the login by name. A wrong owner name in the configuration, which the
 membership check above passes, is refused by the first.
 
 **Migrations** are plain SQL files, `internal/runner/postgresql/migrations/NNNN_name.sql`, applied in
@@ -679,7 +680,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLMigrationSetMatchesItsDigest` (i) | Built for the files and their digest; release notes are not read. |
 | `TestPostgreSQLDefinesNoSecurityDefinerFunction` (e) | Built. |
 | `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files read no process clock, compare a lease only with the database's clock, and fence no claimant's write by `now()`. |
-| `TestPostgreSQLStartRefusesASchemaNotOwnedByTheNamedOwner`, `TestPostgreSQLStartRefusesATableWithoutForcedRowSecurity`, `TestPostgreSQLStartRefusesARuntimeLoginWithWiderPrivileges` (section 5) | Built: a start is refused for another owner named, a relation, function, operator or type another role owns, a table with row security not forced or disabled, and each of the four table privileges, `REFERENCES` on one column, and `CREATE` on the schema, granted by name, through a role inherited or reached by `SET ROLE`, by a default privilege and through `pg_write_all_data`. The last needs the administrator to grant `pg_write_all_data` (CI's is given `ADMIN TRUE, INHERIT FALSE, SET FALSE`). |
+| `TestPostgreSQLStartRefusesASchemaNotOwnedByTheNamedOwner`, `TestPostgreSQLStartRefusesATableWithoutForcedRowSecurity`, `TestPostgreSQLStartRefusesARuntimeLoginWithWiderPrivileges` (section 5) | Built: a start is refused for another owner named, a relation, function, operator or type another role owns, a table with row security not forced or disabled, and each of the four table privileges, `REFERENCES` on one column, each of the three sequence privileges, and `CREATE` on the schema, granted by name, through a role inherited or reached by `SET ROLE`, by a default privilege and through `pg_write_all_data`. The last needs the administrator to grant `pg_write_all_data` (CI's is given `ADMIN TRUE, INHERIT FALSE, SET FALSE`). |
 | `TestPostgreSQLADispatcherThatLosesAClaimGoesOn` (D3) | Built: two Runners on one store read one queued run; exactly one works it, the other returns no error and works the next run. |
 | `TestPostgreSQLADispatcherThatLosesARunEndedInTheQueueGoesOn` (D3) | Built: the same race on a run expired in the queue and on one whose release names a profile set aside; exactly one ends it, the other returns no error. |
 | `TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease` (D3) | Built: a finish and a renewal that wait for `journal_head`'s lock past their lease's end write nothing. |
