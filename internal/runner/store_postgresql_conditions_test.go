@@ -461,27 +461,68 @@ func TestPostgreSQLFencesEveryClaimantWriteByItsToken(t *testing.T) {
 	}
 	// The kind compares a lease only with the database's clock: no
 	// statement of its files is given the process's time, and a claimant's
-	// fence (lease_until >) is not the transaction's start, now(), which is
-	// before its wait for journal_head's lock.
-	for _, name := range []string{"store_postgresql.go", "store_postgresql_writes.go", "store_postgresql_reads.go"} {
+	// fence (a live lease: lease_until > X, or X < lease_until) is not the
+	// transaction's start, now(), which is before its wait for journal_head's
+	// lock. The check first finds what it is to find.
+	for src, faulty := range map[string]bool{
+		"lease_until>statement_timestamp()":   false,
+		"lease_until > clock_timestamp()":     false,
+		"lease_until<=now()":                  false,
+		"statement_timestamp() < lease_until": false,
+		"now() >= lease_until":                false,
+		"lease_until>now()":                   true,
+		"lease_until >= now()":                true,
+		"now() < lease_until":                 true,
+		"now()<=lease_until":                  true,
+		"lease_until > $3":                    true,
+		"$3 < lease_until":                    true,
+	} {
+		if got := pgLeaseFaults(src); len(got) > 0 != faulty {
+			t.Errorf("the lease check of %q finds %v", src, got)
+		}
+	}
+	names, err := filepath.Glob("store_postgresql*.go")
+	must(t, err)
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
 		b, err := os.ReadFile(name)
 		must(t, err)
 		if strings.Contains(string(b), "time.Now") {
 			t.Errorf("%s reads the process's clock", name)
 		}
-		for _, use := range regexp.MustCompile(`lease_until\s*(<=|>|<|>=)\s*[^ ),]+`).FindAllString(string(b), -1) {
-			clock := use[strings.LastIndexAny(use, "<=> ")+1:]
-			switch clock = strings.TrimSuffix(clock, "()"); strings.TrimSuffix(clock, "(") {
-			case "statement_timestamp", "clock_timestamp":
-			case "now":
-				if strings.Contains(use, ">") {
-					t.Errorf("%s fences a claimant's write by the transaction's start: %s", name, use)
-				}
-			default:
-				t.Errorf("%s compares a lease with something else than the database's clock: %s", name, use)
-			}
+		for _, fault := range pgLeaseFaults(string(b)) {
+			t.Errorf("%s %s", name, fault)
 		}
 	}
+}
+
+// pgLeaseFaults are the comparisons of a lease in src, lease_until <op> X
+// or X <op> lease_until, that are not with the database's clock, or that
+// fence a claimant's write (a lease still live) by the transaction's start.
+func pgLeaseFaults(src string) []string {
+	var faults []string
+	check := func(use, op, clock string) {
+		switch strings.TrimRight(clock, "()") {
+		case "statement_timestamp", "clock_timestamp":
+		case "now":
+			if op == ">" || op == ">=" {
+				faults = append(faults, "fences a claimant's write by the transaction's start: "+use)
+			}
+		default:
+			faults = append(faults, "compares a lease with something else than the database's clock: "+use)
+		}
+	}
+	for _, m := range regexp.MustCompile(`lease_until\s*(<=|>=|<|>)\s*([^\s),]+)`).FindAllStringSubmatch(src, -1) {
+		check(m[0], m[1], m[2])
+	}
+	// X <op> lease_until is lease_until <op'> X, the operator turned round.
+	turned := map[string]string{"<": ">", "<=": ">=", ">": "<", ">=": "<="}
+	for _, m := range regexp.MustCompile(`([A-Za-z_$][\w$.]*(?:\(\))?)\s*(<=|>=|<|>)\s*lease_until`).FindAllStringSubmatch(src, -1) {
+		check(m[0], turned[m[2]], m[1])
+	}
+	return faults
 }
 
 // A claimant's write that waits for journal_head's lock past its lease's
