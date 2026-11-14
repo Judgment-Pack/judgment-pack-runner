@@ -9,7 +9,20 @@ bin=$root/.ci/bin
 # disjoint and exhaustive, including future names, examples and fuzz seed corpus.
 # Every invocation keeps race instrumentation and the default package timeout.
 retained='^(TestColumn|TestSelectedLeaf)'
+# Each group prints one line with its time when it ends, and the last line of
+# the groups (the one check.sh's summary shows) lists every group, numbered in
+# the order below, with its result and time.
+groups=0 began=$SECONDS line=
 run_unit() {
+  local start=$SECONDS status=0
+  groups=$((groups + 1))
+  unit_go "$@" || status=$?
+  [ "$status" = 0 ] && result=ok || result="FAIL ($status)"
+  echo "group $groups $result in $((SECONDS - start))s: $*"
+  line="$line${line:+, }$groups $result $((SECONDS - start))s"
+  [ "$status" = 0 ] || { echo "unit-tests: $line; stopped after group $groups"; exit "$status"; }
+}
+unit_go() {
   JPACK_TEST_BIN="$bin/jpack" \
   JPACK_RETAINED_TEST_BIN="$bin/jpack-retained" \
   JPACK_COVERS_TEST_BIN="$bin/jpack-covers" \
@@ -35,6 +48,7 @@ run_unit -run "$retained" -skip '^TestColumnRole'
 run_unit -run '^TestWorkflow'
 run_unit -run '^Test[A-M]' -skip "$retained"
 run_unit -skip '^(TestColumn|TestSelectedLeaf|TestWorkflow|Test[A-M])'
+echo "unit-tests: $groups groups one after another in $((SECONDS - began))s: $line"
 # The store contract's conformance suite runs against every kind
 # (docs/design/store-interface.md), and against the in-memory kind with every
 # transaction run twice (docs/design/store-postgresql.md, D2): a kind whose
