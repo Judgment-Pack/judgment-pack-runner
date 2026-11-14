@@ -15,7 +15,12 @@ import (
 	"time"
 )
 
-// pgLeaseUntil is a lease from the database's clock.
+// pgLeaseUntil is a lease from the database's clock, from the start of the
+// transaction that sets it: the earlier time, so the shorter lease. A
+// claimant's write is fenced by a live lease at the start of its statement
+// (statement_timestamp()), after any wait for journal_head's lock, so that
+// one that waited past its lease's end writes nothing (D3); the tick's test
+// of a lease run out keeps now(), which takes it to run out later.
 var pgLeaseUntil = "now() + interval '" + strconv.Itoa(int(claimLease/time.Second)) + " seconds'"
 
 // pgTriggerLimit is the installation's trigger limit, which the Runner
@@ -112,7 +117,7 @@ func (t *pgTx) putRun(r Run, want runExpected) (string, error) {
 	case want.state == "running" && want.claim == (runClaim{}):
 		where += " AND claim_id IS NULL"
 	case want.claim != (runClaim{}):
-		where += " AND claim_id=" + a.add(want.claim.token) + " AND claim_attempt=" + a.add(want.claim.attempt) + " AND lease_until>now()"
+		where += " AND claim_id=" + a.add(want.claim.token) + " AND claim_attempt=" + a.add(want.claim.attempt) + " AND lease_until>statement_timestamp()"
 	}
 	n, err := t.exec("run", "UPDATE runs SET "+set+" WHERE "+where, a...)
 	if err != nil {
@@ -126,12 +131,12 @@ func (t *pgTx) putRun(r Run, want runExpected) (string, error) {
 
 // renewClaim holds the claim's lease for claimLease from the database's
 // clock, while the run is held running under the claim and its lease is
-// live.
+// live when the statement starts.
 func (t *pgTx) renewClaim(run string, claim runClaim) error {
 	if claim == (runClaim{}) {
 		return storeFailure(faultConflict, "run", errors.New("the run is not held running under a claim"))
 	}
-	n, err := t.exec("run", "UPDATE runs SET lease_until="+pgLeaseUntil+" WHERE id=$1 AND state='running' AND claim_id=$2 AND claim_attempt=$3 AND lease_until>now()", run, claim.token, claim.attempt)
+	n, err := t.exec("run", "UPDATE runs SET lease_until="+pgLeaseUntil+" WHERE id=$1 AND state='running' AND claim_id=$2 AND claim_attempt=$3 AND lease_until>statement_timestamp()", run, claim.token, claim.attempt)
 	if err != nil {
 		return err
 	}

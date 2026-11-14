@@ -460,7 +460,9 @@ func TestPostgreSQLFencesEveryClaimantWriteByItsToken(t *testing.T) {
 		t.Fatal("the first claimant wrote its run after losing it:", got.State)
 	}
 	// The kind compares a lease only with the database's clock: no
-	// statement of its files is given the process's time.
+	// statement of its files is given the process's time, and a claimant's
+	// fence (lease_until >) is not the transaction's start, now(), which is
+	// before its wait for journal_head's lock.
 	for _, name := range []string{"store_postgresql.go", "store_postgresql_writes.go", "store_postgresql_reads.go"} {
 		b, err := os.ReadFile(name)
 		must(t, err)
@@ -468,9 +470,57 @@ func TestPostgreSQLFencesEveryClaimantWriteByItsToken(t *testing.T) {
 			t.Errorf("%s reads the process's clock", name)
 		}
 		for _, use := range regexp.MustCompile(`lease_until\s*(<=|>|<|>=)\s*[^ ),]+`).FindAllString(string(b), -1) {
-			if !strings.HasSuffix(use, "now()") && !strings.HasSuffix(use, "now(") {
-				t.Errorf("%s compares a lease with something else than now(): %s", name, use)
+			clock := use[strings.LastIndexAny(use, "<=> ")+1:]
+			switch clock = strings.TrimSuffix(clock, "()"); strings.TrimSuffix(clock, "(") {
+			case "statement_timestamp", "clock_timestamp":
+			case "now":
+				if strings.Contains(use, ">") {
+					t.Errorf("%s fences a claimant's write by the transaction's start: %s", name, use)
+				}
+			default:
+				t.Errorf("%s compares a lease with something else than the database's clock: %s", name, use)
 			}
+		}
+	}
+}
+
+// A claimant's write that waits for journal_head's lock past its lease's
+// end writes nothing: the fence reads the database's clock when its
+// statement starts, after the wait, not when its transaction began. A
+// finish and a renewal alike.
+func TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease(t *testing.T) {
+	s, db, w, real := pgConditionWorld(t)
+	suite := s.pool(t, pgRoleSuite, db)
+	r, ok, err := claimRun(real, w.runs["a"].ID)
+	if err != nil || !ok {
+		t.Fatal("the run was not claimed:", ok, err)
+	}
+	for _, write := range []struct {
+		what string
+		do   func() error
+	}{
+		{"a finish", func() error { return finishRunIn(real, completed(r)) }},
+		{"a renewal", func() error { return real.update(func(tx runTx) error { return tx.renewClaim(r.ID, r.claim) }) }},
+	} {
+		pgExec(t, suite, "UPDATE runs SET lease_until=clock_timestamp()+interval '1 second' WHERE id=$1", r.ID)
+		end := pgHoldJournal(t, s, db)
+		done := make(chan error, 1)
+		go func() { done <- write.do() }()
+		waitWaiting(t, s, db, pgRoleWorker, 1, write.what+" behind a held lock")
+		var live bool
+		for {
+			if err := suite.QueryRowContext(pgContext, "SELECT lease_until>clock_timestamp() FROM runs WHERE id=$1", r.ID).Scan(&live); err != nil {
+				t.Fatal(err)
+			}
+			if !live {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		end()
+		wantFault(t, <-done, faultConflict, write.what+" that waited past its lease's end")
+		if got, _ := real.run(r.ID); got.State != "running" {
+			t.Fatalf("%s that waited past its lease's end wrote the run: %s", write.what, got.State)
 		}
 	}
 }

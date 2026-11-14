@@ -133,7 +133,12 @@ The lease, as (a) builds it:
   fenced by the run's state as now: `UPDATE runs SET state='running', record=$1, claim_id=$2,
   claim_attempt=$3, lease_until=now() + $4 WHERE id=$5 AND state='queued'`.
 - **Expiry is the database's clock.** Every comparison with `lease_until` is with `now()` in the
-  statement that makes it. No Runner's clock is compared with it or written into it.
+  statement that makes it. No Runner's clock is compared with it or written into it. As built, a
+  claimant's fence (`lease_until >`, a finish's and a renewal's) is with `statement_timestamp()`
+  instead: `now()` is the transaction's start, before its wait for `journal_head`'s lock (D13), so
+  a finish that waited past its lease's end would still commit. A lease set (a claim's, a
+  renewal's) keeps `now()`, the earlier time and so the shorter lease, and so does the
+  interruption's test of a lease run out, which then runs out later.
 - **Every write a claimant makes is fenced by its token.** `putRun` gains an expected claim beside
   its expected state: the contract's change, its `expected` carrying both. A finish, with its chain
   entry and its journal entry, writes only `WHERE id=$1 AND state='running' AND claim_id=$2 AND
@@ -645,7 +650,8 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLMigrationIsIdempotent` (c, with a and d) | Built: the conditions of a and d are cases of it, not tests of their own. |
 | `TestPostgreSQLMigrationSetMatchesItsDigest` (i) | Built for the files and their digest; release notes are not read. |
 | `TestPostgreSQLDefinesNoSecurityDefinerFunction` (e) | Built. |
-| `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files read no process clock and compare a lease only with `now()`. |
+| `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files read no process clock, compare a lease only with the database's clock, and fence no claimant's write by `now()`. |
+| `TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease` (D3) | Built: a finish and a renewal that wait for `journal_head`'s lock past their lease's end write nothing. |
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
 | `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; with another connection holding `journal_head`'s lock, a write is refused within the lock bound, a renewal within its deadline, its wait on the server ended, the claim reported lost; a transaction left idle is ended by the server and the writer behind it goes on. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
