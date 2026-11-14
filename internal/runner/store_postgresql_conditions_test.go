@@ -85,10 +85,27 @@ func inScope(t *testing.T, db *sql.DB, scope string, unset bool, fn func(*sql.Tx
 // not there in the next on the same connection. Every table has row security
 // enabled and forced, and the kind defines no view.
 func TestPostgreSQLHoldsATransactionToItsScope(t *testing.T) {
-	s, db, w, _ := pgConditionWorld(t)
+	s, db, w, kind := pgConditionWorld(t)
 	suite := s.pool(t, pgRoleSuite, db)
 	request := s.pool(t, pgRoleRequest, db)
 	request.SetMaxOpenConns(1)
+
+	// The kind sets the scope for its transaction alone: after a read and a
+	// transaction held to a, the same pooled connection reaches nothing.
+	kind.p.request.SetMaxOpenConns(1)
+	held := kind.heldTo(scopeHeld("a"))
+	if _, err := held.run(w.runs["a"].ID); err != nil {
+		t.Fatal(err)
+	}
+	must(t, held.update(func(tx runTx) error {
+		_, err := tx.run(w.runs["a"].ID)
+		return err
+	}))
+	var after int
+	must(t, kind.p.request.QueryRowContext(pgContext, "SELECT count(*) FROM runs").Scan(&after))
+	if after != 0 {
+		t.Fatal("the kind's scope outlived its transaction on the pooled connection:", after)
+	}
 
 	var unforced []string
 	rows, err := suite.QueryContext(pgContext, "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p') AND NOT (c.relrowsecurity AND c.relforcerowsecurity)", postgresqlSchema)
