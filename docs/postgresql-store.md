@@ -151,8 +151,9 @@ then reports it unhealthy, and the Runner needs a restart. A run left running by
 stopped is interrupted by the dispatcher's tick once its lease has run out, about a minute later,
 not at the next start.
 
-Runners on one store may read the same queued run. The one whose claim comes second finds the run
-no longer queued: it works nothing, stays healthy and goes on to the next run.
+Runners on one store may read the same queued run. The one whose write comes second, a claim or
+the end of a run that expired in the queue or names a profile set aside, finds the run no longer
+queued: it works nothing, stays healthy and goes on to the next run.
 
 ## Time bounds
 

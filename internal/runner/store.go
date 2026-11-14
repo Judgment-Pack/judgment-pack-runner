@@ -705,9 +705,24 @@ func (s *Service) worker(ctx context.Context) {
 	}
 }
 
+// endInQueue writes r, read queued, as it ends before it starts, and says
+// whether it was this dispatcher's to end: a run another dispatcher on the
+// same store took out of the queue first (faultConflict) is not, and is no
+// failure of the store's.
+func (s *Service) endInQueue(r Run) (bool, error) {
+	if err := s.changeRun(r); err != nil {
+		if faultOf(err) == faultConflict {
+			return false, nil
+		}
+		return true, err
+	}
+	return true, nil
+}
+
 // dispatchNext takes the oldest queued run, if any, through evaluation to its
 // end, and says whether there was one. An error is a storage error, which
-// stops the dispatcher. A run another dispatcher claimed first is not one.
+// stops the dispatcher. A run another dispatcher claimed or ended first is
+// not one.
 func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	r, err := s.store.oldestQueued()
 	if absent(err) {
@@ -726,7 +741,7 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.FinishedAt = now()
 			r.Problem = "The automatic run expired in the queue before evaluation."
 			r.Reason = runQueueExpired
-			return true, s.changeRun(r)
+			return s.endInQueue(r)
 		}
 	}
 	// A run queued before a profile its release names was set aside never
@@ -737,7 +752,7 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.FinishedAt = now()
 			r.Problem = e.Error()
 			r.Reason = runProfileSetAside
-			return true, s.changeRun(r)
+			return s.endInQueue(r)
 		}
 	}
 	r.State = "running"
