@@ -66,9 +66,9 @@ fetch_pin judgment-pack-runtime 6a210acea89c4c71dadf5cf3d024f6f09434d5e7 "$root/
 # supportedSpecVersions and as an evaluator capability with no stage, which
 # Runner asks for before it gives a Runtime a 0.5.0 pack (#232), so
 # TestOrdinaryCore050RealRuntimeSideBySide runs 0.2.0-draft, 0.3.0 and 0.5.0
-# side by side through it. The pins above stay where they are: the tested
-# Runtime and the retained-column companion evaluate Core 0.3.0 at most, and
-# TestCore050RefusedByARealRuntimeThatDoesNotSayItEvaluatesIt needs them to.
+# side by side through it. The earlier Runtime and the retained-column
+# companion stay where they are: neither says it evaluates Core 0.5.0, and
+# TestCore050RefusedByARealRuntimeThatDoesNotSayItEvaluatesIt needs them not to.
 # A pin moved to a Runtime that does not say it evaluates 0.5.0 fails the
 # test, and the step after the tests fails if it does not pass.
 fetch_pin judgment-pack-runtime 8955c9f3eb1faaf52378c292329f2b476d528d94 "$root/.ci/runtime-core050"
