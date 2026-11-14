@@ -60,15 +60,21 @@ func validRunState(state string) bool {
 // Filter before pagination, where the store reads (listedRecord). Lists
 // retain only public summaries, with no input snapshots or audit bodies.
 func (s *Service) filteredRecords(kind, jobID string, after int64, filter recordFilter) ([]json.RawMessage, int64, error) {
+	return s.filteredRecordsIn(s.store, kind, jobID, after, filter)
+}
+
+// filteredRecordsIn is filteredRecords, read in st: the view of the store a
+// request is held to (storeFor).
+func (s *Service) filteredRecordsIn(st runStore, kind, jobID string, after int64, filter recordFilter) ([]json.RawMessage, int64, error) {
 	if after == 0 {
 		after = math.MaxInt64
 	}
 	var rows []listedRecord
 	var err error
 	if kind == "runs" {
-		rows, err = s.store.listedRuns(jobID, after, filter, 51)
+		rows, err = st.listedRuns(jobID, after, filter, 51)
 	} else {
-		rows, err = s.store.listedJobs(after, filter, 51)
+		rows, err = st.listedJobs(after, filter, 51)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -113,7 +119,7 @@ func (s *Service) filteredRecords(kind, jobID string, after int64, filter record
 			byID[id] = item
 			recent[id] = []json.RawMessage{}
 		}
-		runs, e := s.store.recentRuns(ids, 5)
+		runs, e := st.recentRuns(ids, 5)
 		if e != nil {
 			return nil, 0, e
 		}
@@ -123,7 +129,7 @@ func (s *Service) filteredRecords(kind, jobID string, after int64, filter record
 		for id, item := range byID {
 			item["recentRuns"] = encode(recent[id])
 		}
-		held, e := s.store.listedTriggers(ids)
+		held, e := st.listedTriggers(ids)
 		if e != nil {
 			return nil, 0, e
 		}

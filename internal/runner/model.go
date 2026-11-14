@@ -236,11 +236,14 @@ func servedRun(r Run, release Release) runResponse {
 // when r makes the reviewed claim. One that cannot be read, or whose supplied
 // lock is no longer the bytes its digest names, refuses the answer rather than
 // serve the claim as resting on either lock.
-func (s *Service) servedRun(r Run) (runResponse, error) {
+func (s *Service) servedRun(r Run) (runResponse, error) { return s.servedRunIn(s.store, r) }
+
+// servedRunIn is servedRun, the run's release read in st.
+func (s *Service) servedRunIn(st runStore, r Run) (runResponse, error) {
 	var release Release
 	if reviewedSetOrigin(r) != "" {
 		var err error
-		if release, err = s.release(r.ReleaseID); err != nil {
+		if release, err = st.release(r.ReleaseID); err != nil {
 			return runResponse{}, err
 		}
 		if release.SuppliedReviewedSet != nil && !heldToSuppliedReviewedSet(release) {

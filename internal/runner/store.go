@@ -19,7 +19,10 @@ type Config struct {
 	ExecutorAdmission *ManualAdmissionBinding
 	// ExecutorOwnership opts this workspace into trusted external ownership.
 	// Open snapshots it before taking the lease; nil preserves legacy behavior.
-	ExecutorOwnership              *ExecutorOwnership
+	ExecutorOwnership *ExecutorOwnership
+	// PostgreSQL selects the postgresql kind, with its logins
+	// (docs/design/store-postgresql.md, D1). nil is the sqlite kind, in Dir.
+	PostgreSQL                     *PostgreSQLConnections
 	Dir, Runtime, Workspace, Owner string
 	InputProfiles                  []InputProfile
 	InputRoot                      string
@@ -219,8 +222,12 @@ func Open(cfg Config) (_ *Service, err error) {
 	// The boot line's directory reaches the store only through the store
 	// kind's constructor, which takes the store's lock, then runs afterLock,
 	// then opens the database, and applies the schema after manual.
-	s.store, err = openStore(defaultStoreKind, storeOpening{
-		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot,
+	kind, connections := defaultStoreKind, PostgreSQLConnections{}
+	if cfg.PostgreSQL != nil {
+		kind, connections = postgresqlKind, *cfg.PostgreSQL
+	}
+	s.store, err = openStore(kind, storeOpening{
+		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot, postgresql: connections,
 		migrate: cfg.ExecutorAdmission == nil, manualAdmission: cfg.ExecutorAdmission != nil,
 		afterLock: func() error {
 			for _, n := range []string{"releases", "attempts", "runtimes"} {
@@ -335,7 +342,12 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	r, err := s.release(releaseID)
+	// Its reads and its transaction are held to the scope the job is
+	// created under (docs/design/store-postgresql.md, section 6): its reads
+	// see that scope's jobs, and the keys that hold a release once see every
+	// scope's (D9, releaseTaken).
+	held := s.store.heldTo(scopeHeld(scope))
+	r, err := held.release(releaseID)
 	if err != nil {
 		return Job{}, err
 	}
@@ -358,11 +370,7 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 	// (docs/design/store-postgresql.md, D2).
 	setAside := s.refuseSetAsideMapping(r.InputMapping)
 	var made Job
-	// The transaction is held to the scope the job is created under
-	// (docs/design/store-postgresql.md, section 6): its reads see that
-	// scope's jobs, and the keys that hold a release once see every scope's
-	// (D9, releaseTaken).
-	err = s.store.heldTo(scopeHeld(scope)).update(func(tx runTx) error {
+	err = held.update(func(tx runTx) error {
 		stored, err := tx.jobCreation(releaseID)
 		if err == nil {
 			if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope || !sameRetryPolicy(stored.Retry, retry) {
@@ -494,6 +502,12 @@ func (s *Service) submitInternalIntent(jobID, key string, input Input, origin *T
 // requestedBy, the scope its idempotency key is held in, and its first
 // entry's actor.
 func (s *Service) submitBy(by requester, jobID, key string, input Input, origin *TriggerOrigin, manual *manualIntentInput) (Run, bool, error) {
+	return s.submitIn(s.store, by, jobID, key, input, origin, manual)
+}
+
+// submitIn is submitBy, its reads and its transaction made in st: the view
+// of the store a request is held to (storeFor).
+func (s *Service) submitIn(st runStore, by requester, jobID, key string, input Input, origin *TriggerOrigin, manual *manualIntentInput) (Run, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		if origin != nil || input.Source != nil || input.Preparation != nil || manual == nil || manual.key != key || !bytes.Equal(input.Facts, []byte(manual.facts)) || !bytes.Equal(input.Evidence, []byte(manual.evidence)) {
 			return Run{}, false, manualUnsupported()
@@ -538,7 +552,7 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 		}
 		requestHash = digest(raw)
 		// Identical retries return their original acceptance, even after freshness expires.
-		held, e := s.store.requestedRun(jobID, caller, key)
+		held, e := st.requestedRun(jobID, caller, key)
 		if e == nil {
 			if held.digest != requestHash {
 				return Run{}, false, &apiError{409, "idempotency_conflict", "This idempotency key was already used with different inputs."}
@@ -556,11 +570,11 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 		if e = s.refuseSelectedIDs(mappingProfileIDs(input.Source.Mapping)); e != nil {
 			return Run{}, false, e
 		}
-		job, e := s.job(jobID)
+		job, e := st.job(jobID)
 		if e != nil {
 			return Run{}, false, e
 		}
-		release, e := s.release(job.ReleaseID)
+		release, e := st.release(job.ReleaseID)
 		if e != nil {
 			return Run{}, false, e
 		}
@@ -590,7 +604,7 @@ func (s *Service) submitBy(by requester, jobID, key string, input Input, origin 
 	var r Run
 	var replayed bool
 	var replayErr error
-	err = s.store.update(func(tx runTx) error {
+	err = st.update(func(tx runTx) error {
 		held, err := tx.requestedRun(jobID, caller, key)
 		if err == nil {
 			if held.digest != hash {
@@ -662,9 +676,19 @@ func (s *Service) worker(ctx context.Context) {
 	}()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	// On a kind that leases claims, the tick interrupts the runs whose lease
+	// ran out: a run left by a Runner that stopped, or that lost its claim,
+	// is interrupted one lease later, not at the next start (D3).
+	var lapsedAt time.Time
 	for {
 		if ctx.Err() != nil {
 			return
+		}
+		if leases(s.store) && time.Since(lapsedAt) >= claimTimes.renewal {
+			lapsedAt = time.Now()
+			if s.interruptLapsed() != nil {
+				return
+			}
 		}
 		worked, err := s.dispatchNext(ctx)
 		if err != nil {
@@ -727,9 +751,15 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	if r.claim, err = newRunClaim(r.Attempt); err != nil {
 		return true, err
 	}
+	claimed := time.Now()
 	if err = s.changeRun(r); err != nil {
 		return true, err
 	}
+	// On a kind that leases claims the claim is renewed while the attempt
+	// goes on, and the attempt is stopped when it is not (claims.go).
+	held, releaseClaim := s.holdClaim(ctx, r.ID, r.claim, claimed)
+	defer releaseClaim()
+	ctx = held
 	// class is the error class of a failure met at each step
 	// (run_results.go): a release that cannot be read is Runner's own fault.
 	class := classInternal
@@ -805,6 +835,11 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.InterruptedAt = r.FinishedAt
 			r.ErrorClass = classInterrupted
 		}
+	}
+	// A claimant whose claim was lost writes nothing more of the run, and
+	// stops the dispatcher.
+	if err = releaseClaim(); err != nil {
+		return true, err
 	}
 	// A completed run is recorded with its entry in the installation's
 	// chain of runs, or not at all: a failed append stops the dispatcher as

@@ -50,6 +50,10 @@ type storeKindUnderTest struct {
 	// being the fence.
 	fencesClaims bool
 	passTime     func(st runStore, d time.Duration)
+	// migratedSchema is a kind whose migration writes the latest schema the
+	// Runner knows, which raiseSchema then finds raised (the postgresql
+	// kind: store-postgresql.md, D15).
+	migratedSchema bool
 	// own are the kind's own cases.
 	own []storeCase
 }
@@ -83,7 +87,7 @@ func openSQLiteForTest(t *testing.T, dir string) *sqliteStore {
 }
 
 func storeKindsUnderTest() []storeKindUnderTest {
-	return []storeKindUnderTest{
+	return append([]storeKindUnderTest{
 		{
 			name: "sqlite",
 			open: func(t *testing.T) runStore {
@@ -147,7 +151,7 @@ func storeKindsUnderTest() []storeKindUnderTest {
 			failCommits:  func(st runStore, err error) { memoryOf(st).failCommits(err) },
 			spoil:        func(t *testing.T, st runStore, run string) { memoryOf(st).spoilRun(run) },
 		},
-	}
+	}, pgKindsUnderTest()...)
 }
 
 // memoryOf is the in-memory kind st is, or runs on under the twice mode.
@@ -157,7 +161,7 @@ func memoryOf(st runStore) *memoryStore { return underlying(st).(*memoryStore) }
 func TestStoreKindsConform(t *testing.T) {
 	for _, k := range storeKindsUnderTest() {
 		t.Run(k.name, func(t *testing.T) {
-			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, claimStoreCases, k.own) {
+			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, readsStoreCases, claimStoreCases, k.own) {
 				t.Run(c.name, func(t *testing.T) { c.run(t, k) })
 			}
 		})

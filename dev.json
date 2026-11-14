@@ -17,7 +17,8 @@
     {"name": "release-toolchain", "run": "scripts/checks/release-toolchain.sh", "toolchain": "go", "timeout": 600},
     {"name": "third-party-notices", "run": "python3 tools/third_party_notices.py --check", "toolchain": "go", "timeout": 3000},
     {"name": "release-archives", "run": "python3 tools/test_release_archives.py", "toolchain": "go", "summary": "^(Ran |OK|FAILED)", "timeout": 3000},
-    {"name": "release-programs", "run": "scripts/checks/release-programs.sh", "toolchain": "shell"}
+    {"name": "release-programs", "run": "scripts/checks/release-programs.sh", "toolchain": "shell"},
+    {"name": "postgresql-store", "run": "scripts/checks/postgresql-store.sh", "toolchain": "go", "summary": "^(ok|FAIL|---|postgresql-store:) ", "timeout": 1800}
   ],
   "handover": {
     "boundary_paths": ["internal/runner", "internal/derivation"],

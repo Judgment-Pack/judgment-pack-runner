@@ -171,10 +171,18 @@ func newRunClaim(attempt int) (runClaim, error) {
 }
 
 // runExpected is what putRun must find held before it writes: the run's state,
-// or anyState, and the claim the writer holds, or none.
+// or anyState, and the claim the writer holds, or none; or, with lapsed, a run
+// held running whose claim no one holds any longer.
 type runExpected struct {
 	state string
 	claim runClaim
+	// lapsed expects the run held running under no live claim: under none,
+	// or under one whose lease ran out by the store's clock. It is the
+	// interruption's expectation (docs/design/store-postgresql.md, D3): the
+	// restart interrupts only the runs no claimant holds, and leaves a run
+	// whose lease is live to its holder. It means nothing without state
+	// "running" and with a claim.
+	lapsed bool
 }
 
 // heldRequest is a run as the queue holds it under its request key: its id,
@@ -501,12 +509,21 @@ type runTx interface {
 	// retry (retries.go). With expected.claim, the run must also be held under
 	// that claim, its lease not run out by the store's clock, or nothing is
 	// written and the fault is faultConflict: a claimant's write after its
-	// claim was lost. faultAbsent when no run is held under r.ID.
+	// claim was lost. With expected.state "running" and no claim, the run
+	// must be held under no claim either, or the fault is faultConflict: a
+	// writer that holds no claim does not overwrite a claimant's run. With
+	// expected.lapsed, the run must be held running under no claim or under
+	// one whose lease ran out, or the fault is faultConflict: an
+	// interruption leaves a live claim's run to its holder. faultAbsent when
+	// no run is held under r.ID.
 	//
 	// After the write the run is held under r.claim: a claim other than the
 	// one held starts its lease, the one held keeps it, and none clears it, as
 	// an interruption does. The sqlite kind takes the claim and ignores it:
-	// its lock keeps every other dispatcher out, and is the fence.
+	// its lock keeps every other dispatcher out, and is the fence. So it
+	// holds no run under a claim, and answers expected.lapsed for every run
+	// held running: at a restart, the one time it is asked, no dispatcher
+	// holds one.
 	putRun(r Run, expected runExpected) (string, error)
 	// renewClaim holds the run's claim for another claimLease from now, by the
 	// store's clock, if the run is held running under claim and its lease has
@@ -620,6 +637,9 @@ type storeOpening struct {
 	// manualAdmission is set when the Runner runs under manual admission:
 	// a kind that hands it no manual-admission state is then refused.
 	manualAdmission bool
+	// postgresql are the postgresql kind's logins. Only that kind reads
+	// them.
+	postgresql PostgreSQLConnections
 }
 
 // manualState is the manual-admission state the sqlite kind keeps beside
@@ -675,14 +695,21 @@ const (
 	askRunAttempts
 )
 
-// defaultStoreKind is the kind every Runner opens. The boot line names no
-// kind, so no other is selectable yet.
+// defaultStoreKind is the kind a Runner opens unless its service
+// configuration names another (store-postgresql.md, D1).
 const defaultStoreKind = "sqlite"
 
 // storeKinds are the kinds a store can be opened as, by name.
 var storeKinds = map[string]func(storeOpening) (runStore, error){
 	"sqlite": func(o storeOpening) (runStore, error) {
 		k, err := openSQLiteStore(o)
+		if err != nil {
+			return nil, err
+		}
+		return k, nil
+	},
+	postgresqlKind: func(o storeOpening) (runStore, error) {
+		k, err := openPostgreSQLStore(o)
 		if err != nil {
 			return nil, err
 		}

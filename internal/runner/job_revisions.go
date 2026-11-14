@@ -37,6 +37,9 @@ func admitJobPack(tx runTx, r Release) error {
 }
 
 func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRequest) (Job, error) {
+	// Its reads and its transaction are held to the scope the request names
+	// (docs/design/store-postgresql.md, section 6).
+	st := s.storeFor(ctx)
 	if s.cfg.ExecutorAdmission != nil {
 		return Job{}, manualUnsupported()
 	}
@@ -49,13 +52,13 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	// Reconcile a completed request before current readiness or automation checks.
 	// Returning its immutable receipt does not replay the upgrade, even if the job
 	// has since advanced again.
-	if prior, found, err := s.upgradeReceipt(jobID, req); err != nil || found {
+	if prior, found, err := s.upgradeReceipt(st, jobID, req); err != nil || found {
 		return prior, err
 	}
 	if s.unhealthy.Load() {
 		return Job{}, &apiError{503, "dispatcher_stopped", "Check Runner storage before changing a job."}
 	}
-	j, err := s.job(jobID)
+	j, err := st.job(jobID)
 	if err != nil {
 		return Job{}, err
 	}
@@ -65,11 +68,11 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	if req.ReleaseID == j.ReleaseID {
 		return Job{}, bad("release_unchanged", "Choose a different checked release.")
 	}
-	old, err := s.release(j.ReleaseID)
+	old, err := st.release(j.ReleaseID)
 	if err != nil {
 		return Job{}, err
 	}
-	next, err := s.release(req.ReleaseID)
+	next, err := st.release(req.ReleaseID)
 	if err != nil {
 		return Job{}, err
 	}
@@ -216,8 +219,8 @@ func (s *Service) upgradeJobHandler(w http.ResponseWriter, r *http.Request) {
 
 // upgradeReceipt never performs readiness checks or changes a job. Hosts use it
 // to reconcile a lost acknowledgement without granting a new write.
-func (s *Service) upgradeReceipt(jobID string, req UpgradeJobRequest) (Job, bool, error) {
-	job, hash, err := s.store.jobRevision(jobID, req.BaseRevision+1)
+func (s *Service) upgradeReceipt(st runStore, jobID string, req UpgradeJobRequest) (Job, bool, error) {
+	job, hash, err := st.jobRevision(jobID, req.BaseRevision+1)
 	if absent(err) {
 		return Job{}, false, nil
 	}
@@ -250,7 +253,7 @@ func (s *Service) upgradeReceiptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	req := UpgradeJobRequest{ReleaseID: q.Get("releaseId"), BaseReleaseID: q.Get("baseReleaseId"), BaseRevision: revision, Reviewed: true}
-	job, found, err := s.upgradeReceipt(r.PathValue("job"), req)
+	job, found, err := s.upgradeReceipt(s.storeFor(r.Context()), r.PathValue("job"), req)
 	if err != nil {
 		failure(w, err)
 		return

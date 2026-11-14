@@ -19,6 +19,7 @@
     "scripts/checks/manual-gate.sh",
     "scripts/checks/chain-tests.sh",
     "scripts/checks/unit-tests.sh",
+    "scripts/checks/postgresql-store.sh",
     "scripts/checks/release-toolchain.sh",
     "scripts/dev/check.sh",
     ".github/workflows/release.yml",
@@ -170,6 +171,17 @@
             "third-party-notices",
             "release-archives",
             "release-programs"
+          ]
+        },
+        "postgresql-store": {
+          "name": "PostgreSQL store",
+          "job_id": "postgresql-store",
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "profile": "linux",
+          "checks": [
+            "postgresql-store"
           ]
         }
       }

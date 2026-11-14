@@ -196,6 +196,10 @@ var widenedStoreCases = []storeCase{
 	}},
 	{"a brief is written whole and read as written", func(t *testing.T, k storeKindUnderTest) {
 		st := k.open(t)
+		// The brief's subject is held, as the brief route reads it first: a
+		// kind that keeps a brief with its subject's scope reads it from the
+		// subject's row (store-postgresql.md, D5).
+		k.seedJob(t, st, Job{SchemaVersion: "1", ID: "job_one", Name: "One", ReleaseID: "rel_one", Revision: 1, CreatedAt: now(), Workspace: "conformance", Owner: "owner"})
 		_, err := st.brief("job:job_one")
 		wantFault(t, err, faultAbsent, "a brief never written")
 		first, second := []byte(`{"version":1,"subjects":{}}`), []byte(`{"version":1,"subjects":{"job:job_one":{}}}`)
@@ -245,11 +249,19 @@ var widenedStoreCases = []storeCase{
 				t.Fatalf("raising %s leaves the store at %s, want %s", schema, got, want)
 			}
 		}
-		if got := k.schema(t, st); got != storeSchema {
-			t.Fatalf("a new store is at %s", got)
+		if k.migratedSchema {
+			// The migration wrote the latest schema: a raise finds it raised.
+			if got := k.schema(t, st); got != retryStoreSchema {
+				t.Fatalf("a migrated store is at %s", got)
+			}
+			raise(scopedStoreSchema, retryStoreSchema)
+		} else {
+			if got := k.schema(t, st); got != storeSchema {
+				t.Fatalf("a new store is at %s", got)
+			}
+			raise(scopedStoreSchema, scopedStoreSchema)
+			raise(scopedStoreSchema, scopedStoreSchema)
 		}
-		raise(scopedStoreSchema, scopedStoreSchema)
-		raise(scopedStoreSchema, scopedStoreSchema)
 		raise(retryStoreSchema, retryStoreSchema)
 		raise(scopedStoreSchema, retryStoreSchema)
 		for _, schema := range []string{storeSchema, manualStoreSchema, "7", ""} {

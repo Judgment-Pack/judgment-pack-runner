@@ -215,7 +215,7 @@ func transactionOpeners(t *testing.T) []string {
 	var openers []string
 	fset := token.NewFileSet()
 	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") || strings.HasPrefix(file, "store_sqlite") {
+		if strings.HasSuffix(file, "_test.go") || strings.HasPrefix(file, "store_sqlite") || strings.HasPrefix(file, "store_postgresql") {
 			continue
 		}
 		src, err := os.ReadFile(file)
@@ -279,6 +279,8 @@ func TestEveryTransactionIsSafeToRunTwice(t *testing.T) {
 		{"registered profiles", TestRegisteredProfilesPersistWithoutRestartingOrMutatingPins},
 		{"runs finished at once", TestConcurrentRunsAreEachChainedOnce},
 		{"a change between the runs", TestAClosureRunAgainDecidesFromTheStore},
+		{"a leased claim renewed", TestALeasingKindsClaimIsRenewedWhileItsAttemptGoesOn},
+		{"the tick's interruption", TestTheTickInterruptsALapsedRunAndNamesNoRestart},
 	} {
 		t.Run(flow.name, flow.run)
 	}
@@ -586,3 +588,9 @@ func TestTheTwiceModeRunsAFunctionTwice(t *testing.T) {
 		t.Fatalf("the second run's write is not kept: %q %v", row, err)
 	}
 }
+
+// leasesClaims is the wrapped kind's.
+func (t twiceStore) leasesClaims() bool { return leases(t.runStore) }
+
+// holdsScopes is the wrapped kind's.
+func (t twiceStore) holdsScopes() bool { return holdsScopes(t.runStore) }

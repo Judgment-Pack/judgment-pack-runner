@@ -436,7 +436,7 @@ func (t *memoryTx) putRun(r Run, expected runExpected) (string, error) {
 		if expected.state != anyState && from != expected.state {
 			return from, storeFailure(faultConflict, "run", errors.New("the run is held in another state"))
 		}
-		if err := t.holdsClaim(*held, expected.claim); err != nil {
+		if err := t.holdsExpected(*held, expected); err != nil {
 			return from, err
 		}
 		switch r.claim {
@@ -450,6 +450,24 @@ func (t *memoryTx) putRun(r Run, expected runExpected) (string, error) {
 		return from, nil
 	}
 	return "", storeFailure(faultAbsent, "run", errNotHeld)
+}
+
+// holdsExpected says whether held is held as a putRun's expected claim says,
+// as the second kind's statements say it: under the claim expected
+// (holdsClaim); with lapsed, under no claim or one whose lease ran out
+// (lease_until <= now()); and, with a running expectation and no claim, under
+// no claim (claim_id IS NULL).
+func (t *memoryTx) holdsExpected(held memoryRun, expected runExpected) error {
+	switch {
+	case expected.lapsed:
+		if held.claim != (runClaim{}) && t.now.Before(held.leaseUntil) {
+			return storeFailure(faultConflict, "run", errors.New("the run is held under a live claim"))
+		}
+		return nil
+	case expected.state == "running" && expected.claim == (runClaim{}) && held.claim != (runClaim{}):
+		return storeFailure(faultConflict, "run", errors.New("the run is held under a claim the writer does not hold"))
+	}
+	return t.holdsClaim(held, expected.claim)
 }
 
 // holdsClaim says whether held is held under claim, its lease not run out by
@@ -777,3 +795,7 @@ func memoryKeeps(f journalFilter, row journalRow, releases map[string]bool) bool
 	}
 	return len(f.results.Kinds) == 0 || slices.Contains(f.results.Kinds, row.kind)
 }
+
+// leasesClaims is yes, as the second kind's: a claim holds for its lease by
+// the kind's clock.
+func (m *memoryStore) leasesClaims() bool { return true }

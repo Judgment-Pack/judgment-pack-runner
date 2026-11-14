@@ -155,6 +155,96 @@ var claimStoreCases = []storeCase{
 		must(t, finishRunIn(w.st, completed(second)))
 		heldAs(t, w, first.ID, "completed", second.Attempt, entries+1)
 	}},
+	{"the restart interrupts only the runs whose lease ran out", func(t *testing.T, k storeKindUnderTest) {
+		// D3: the restart interrupts a run held running under no live claim,
+		// and leaves one whose lease is live to its holder. The sqlite kind
+		// answers every run held running as no claimant's: its lock is the
+		// fence, and no dispatcher of its one process has claimed a run yet.
+		w, r := claimWorld(t, k)
+		s := &Service{store: w.st}
+		must(t, s.restart())
+		if !k.fencesClaims {
+			got, err := w.st.run(r.ID)
+			must(t, err)
+			if got.State != "interrupted" {
+				t.Fatal("the restart left a run held running:", got.State)
+			}
+			return
+		}
+		got, err := w.st.run(r.ID)
+		must(t, err)
+		if got.State != "running" {
+			t.Fatal("the restart interrupted a run whose lease is live:", got.State)
+		}
+		// The holder's claim is untouched: it renews and its lease runs on.
+		must(t, w.st.update(func(tx runTx) error { return tx.renewClaim(r.ID, r.claim) }))
+		k.passTime(w.st, claimLease)
+		must(t, s.restart())
+		if got, err = w.st.run(r.ID); err != nil || got.State != "interrupted" {
+			t.Fatal("the restart left a run whose lease ran out:", got.State, err)
+		}
+		// The interruption cleared the claim: its first claimant writes
+		// nothing.
+		wantFault(t, finishRunIn(w.st, completed(r)), faultConflict, "the first claimant's finish after the interruption")
+		wantFault(t, w.st.update(func(tx runTx) error { return tx.renewClaim(r.ID, r.claim) }), faultConflict, "the first claimant's renewal after the interruption")
+	}},
+	{"the tick interrupts only the runs whose lease ran out", func(t *testing.T, k storeKindUnderTest) {
+		// D3: on a kind that leases claims, the dispatcher's tick
+		// interrupts a run whose lease ran out, one lease after its holder
+		// stopped renewing it, and leaves one whose lease is live. It is
+		// never asked of a kind that leases nothing.
+		if !k.fencesClaims {
+			return
+		}
+		w, r := claimWorld(t, k)
+		s := &Service{store: w.st}
+		if !leases(w.st) {
+			t.Fatal("a kind that fences claims by their lease does not say it leases them")
+		}
+		entries := storeJournalLength(t, w.st)
+		must(t, s.interruptLapsed())
+		heldAs(t, w, r.ID, "running", r.Attempt, entries)
+		k.passTime(w.st, claimLease)
+		must(t, s.interruptLapsed())
+		got, err := w.st.run(r.ID)
+		if err != nil || got.State != "interrupted" {
+			t.Fatal("the tick left a run whose lease ran out:", got.State, err)
+		}
+		if n := storeJournalLength(t, w.st); n != entries+1 {
+			t.Fatal("the tick's interruption wrote", n-entries, "entries")
+		}
+		wantFault(t, finishRunIn(w.st, completed(r)), faultConflict, "the first claimant's finish after the tick's interruption")
+	}},
+	{"a write that expects a run running holds no claim over a claimant's", func(t *testing.T, k storeKindUnderTest) {
+		// A run read from the store carries no claim (its claim is never read
+		// back): a writer that finishes it with none does not overwrite a run
+		// held under a claim. The sqlite kind holds no run under a claim.
+		w, r := claimWorld(t, k)
+		entries := storeJournalLength(t, w.st)
+		read, err := w.st.run(r.ID)
+		must(t, err)
+		if read.claim != (runClaim{}) {
+			t.Fatal("a run read back carries a claim:", read.claim)
+		}
+		if !k.fencesClaims {
+			must(t, finishRunIn(w.st, completed(read)))
+			return
+		}
+		wantFault(t, finishRunIn(w.st, completed(read)), faultConflict, "a finish under no claim of a claimed run")
+		wantFault(t, w.st.update(func(tx runTx) error {
+			_, err := tx.putRun(completed(read), runExpected{state: "running"})
+			return err
+		}), faultConflict, "a running expectation under no claim of a claimed run")
+		heldAs(t, w, r.ID, "running", r.Attempt, entries)
+		// An interruption's expectation is not that: a live claim is kept
+		// from it too.
+		wantFault(t, w.st.update(func(tx runTx) error {
+			_, err := tx.putRun(completed(read), runExpected{state: "running", lapsed: true})
+			return err
+		}), faultConflict, "an interruption of a run whose lease is live")
+		heldAs(t, w, r.ID, "running", r.Attempt, entries)
+		must(t, finishRunIn(w.st, completed(r)))
+	}},
 	{"a claim the kind ignores still meets the state's fence", func(t *testing.T, k storeKindUnderTest) {
 		// Every kind: a claim is made once, from queued, and a finish is of
 		// a run held running.

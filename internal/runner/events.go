@@ -445,20 +445,39 @@ func (s *Service) restart() error {
 		if err != nil {
 			return err
 		}
-		runs, err := contract.runningRuns()
-		if err != nil {
+		if err = interruptRunning(contract, at, func(r Run) EventDetail {
+			return EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}}
+		}); err != nil {
 			return err
-		}
-		for _, r := range runs {
-			r.State = "interrupted"
-			r.FinishedAt = at
-			r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
-			if err = recordRun(contract, r, runExpected{state: anyState}, runnerActor, EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}}); err != nil {
-				return err
-			}
 		}
 		return restartOccurrences(contract, started)
 	})
+}
+
+// interruptRunning interrupts, inside tx, each run held running that no
+// claimant holds, at at, its entry's detail being detail's for the run.
+func interruptRunning(tx runTx, at string, detail func(Run) EventDetail) error {
+	runs, err := tx.runningRuns()
+	if err != nil {
+		return err
+	}
+	for _, r := range runs {
+		r.State = "interrupted"
+		r.FinishedAt = at
+		r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
+		// Only a run no claimant holds is interrupted (D3): one whose lease
+		// is live is its holder's, and is left as it is. The sqlite kind,
+		// whose lock is the fence, holds every run running here as no
+		// claimant's.
+		err = recordRun(tx, r, runExpected{state: "running", lapsed: true}, runnerActor, detail(r))
+		if faultOf(err) == faultConflict {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // restartOccurrences marks, inside tx, each legacy preparation the last
@@ -503,7 +522,9 @@ func (s *Service) saveRelease(r Release) error { return s.saveReleaseBy(requeste
 
 // saveReleaseBy is saveRelease, for a preview by.
 func (s *Service) saveReleaseBy(by requester, r Release) error {
-	return s.store.update(func(tx runTx) error {
+	// A release and its entry carry no scope: the transaction is held to
+	// none (docs/design/store-postgresql.md, section 6).
+	return s.store.heldTo(scopeHeld("")).update(func(tx runTx) error {
 		if err := tx.createRelease(r); err != nil {
 			return err
 		}
@@ -553,7 +574,9 @@ func (s *Service) journalRefusal(c change) {
 	c.refusal = strings.Join(key, "\x00")
 	// A refusal that cannot be journaled is not reported: the request was
 	// refused all the same.
-	s.store.update(func(tx runTx) error {
+	// The refusal is journaled held to the scope of the job it names, none
+	// for one that names no job (docs/design/store-postgresql.md, section 6).
+	s.store.heldTo(scopeHeld(c.detail.Scope)).update(func(tx runTx) error {
 		last, err := tx.lastRefusal(c.refusal)
 		switch {
 		case err == nil:
@@ -575,7 +598,13 @@ func (s *Service) refusedRun(jobID string, err error) { s.refusedRunBy(requester
 
 // refusedRunBy is refusedRun, for a submission by.
 func (s *Service) refusedRunBy(by requester, jobID string, err error) {
-	if j, e := s.job(jobID); e == nil {
+	s.refusedRunIn(s.store, by, jobID, err)
+}
+
+// refusedRunIn is refusedRunBy, the job read in st: a job st does not reach is
+// one the store does not hold.
+func (s *Service) refusedRunIn(st runStore, by requester, jobID string, err error) {
+	if j, e := st.job(jobID); e == nil {
 		s.refused("submit-run", err, s.actor(by), EventConcerns{Job: j.ID, Release: j.ReleaseID}, j.Scope)
 	}
 }
@@ -626,7 +655,7 @@ func (s *Service) refusedJob(releaseID string, err error) {
 
 // refusedJobBy is refusedJob, for a job creation by.
 func (s *Service) refusedJobBy(by requester, releaseID string, err error) {
-	if _, e := s.release(releaseID); e == nil {
+	if _, e := s.store.heldTo(scopeHeld("")).release(releaseID); e == nil {
 		s.refused("create-job", err, s.actor(by), EventConcerns{Release: releaseID}, "")
 	}
 }

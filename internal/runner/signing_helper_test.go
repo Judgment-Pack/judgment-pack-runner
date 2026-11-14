@@ -32,7 +32,9 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	pgTestTeardown()
+	os.Exit(code)
 }
 
 // signAttempt signs the record of the attempt in dir with the guide's first

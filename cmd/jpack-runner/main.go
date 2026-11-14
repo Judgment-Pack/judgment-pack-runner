@@ -36,6 +36,8 @@ func runnerCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		err = serve(stdin, stdout, stderr)
 	case args[0] == "serve":
 		err = serveCommand(args[1:], stdout, stderr)
+	case args[0] == "store":
+		err = storeCommand(args[1:], stdout)
 	case args[0] == "capabilities":
 		err = printCapabilities(args[1:], stdout)
 	case args[0] == "version":

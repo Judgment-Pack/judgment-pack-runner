@@ -164,15 +164,34 @@ const unheldRecord = "unheld"
 // the route applies. Any other route refuses a scope.
 func (s *Service) scoped(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		holding := holdsScopes(s.store)
+		if holding && !heldRoutes[r.Pattern] {
+			failure(w, errRouteNotHeld)
+			return
+		}
 		scope, named, err := scopeParameter(r.URL.RawQuery)
 		if err != nil {
 			failure(w, err)
 			return
 		}
+		if holding {
+			// On a kind that holds scopes, the route reaches rows only through
+			// the view of the store held to the scope named, "" for none; a
+			// store-wide listing naming none, through the store for every
+			// scope, as it lists every scope's records.
+			view := s.store
+			if named || !scopeListings[r.Pattern] {
+				view = s.store.heldTo(scopeHeld(scope))
+			}
+			r = r.WithContext(context.WithValue(r.Context(), heldStoreContext{}, view))
+		}
 		name, table, id := addressedRecord(r)
 		switch {
 		case table != "":
-			held, found, err := s.heldScope(table, id)
+			// The scope check's own read is the request's: on a kind that
+			// holds scopes, a record of another scope reads absent, and the
+			// route answers it as one the store does not hold.
+			held, found, err := s.heldScope(s.storeFor(r.Context()), table, id)
 			if err != nil {
 				// A scope that cannot be read is not taken to match.
 				failure(w, err)
@@ -230,10 +249,10 @@ func unheld(r *http.Request, name string) *http.Request {
 	return r
 }
 
-// heldScope is the scope identifier the record held under id in table
-// carries, "" for none, and whether the store holds the record.
-func (s *Service) heldScope(table, id string) (string, bool, error) {
-	scope, err := s.store.recordScope(table, id)
+// heldScope is the scope identifier the record held under id in table, read
+// in st, carries, "" for none, and whether the store holds the record.
+func (s *Service) heldScope(st runStore, table, id string) (string, bool, error) {
+	scope, err := st.recordScope(table, id)
 	if absent(err) {
 		return "", false, nil
 	}
@@ -266,4 +285,54 @@ func jobScope(raw []byte, scope *string) (string, error) {
 		return "", errScopeForm
 	}
 	return *scope, nil
+}
+
+// scopeHolding is a kind whose row policy holds each transaction and read to
+// the scope its view was held to (docs/design/store-postgresql.md, section 6):
+// the postgresql kind. On it, a request reaches rows only through the view the
+// scoped middleware holds it to (storeFor), and a route not held so is refused
+// (heldRoutes).
+type scopeHolding interface {
+	runStore
+	holdsScopes() bool
+}
+
+// holdsScopes says whether st holds its views to their scopes by a row policy.
+func holdsScopes(st runStore) bool {
+	h, ok := st.(scopeHolding)
+	return ok && h.holdsScopes()
+}
+
+// heldRoutes are the routes a Runner on a kind that holds scopes serves, each
+// reaching rows only through storeFor, or reading none. Every other route is
+// refused on such a kind before it reads anything, as errRouteNotHeld.
+var heldRoutes = map[string]bool{
+	"GET /v1/status":                     true,
+	"POST /v1/previews":                  true,
+	"POST /v1/jobs":                      true,
+	"GET /v1/jobs":                       true,
+	"GET /v1/runs":                       true,
+	"GET /v1/jobs/{job}":                 true,
+	"GET /v1/jobs/{job}/runs":            true,
+	"POST /v1/jobs/{job}/runs":           true,
+	"GET /v1/runs/{run}":                 true,
+	"POST /v1/jobs/{job}/upgrade":        true,
+	"GET /v1/jobs/{job}/upgrade-receipt": true,
+}
+
+// errRouteNotHeld is the refusal of a route a Runner on a kind that holds
+// scopes does not serve: one not yet held to a request's scope.
+var errRouteNotHeld = &apiError{501, "store_route_unsupported", "This route is not served by a Runner on the postgresql store kind."}
+
+// heldStoreContext is the key of a request's held view, in its context.
+type heldStoreContext struct{}
+
+// storeFor is the view of the store a request is held to: on a kind that
+// holds scopes, the one the scoped middleware held it to; otherwise, and
+// outside a request, the store.
+func (s *Service) storeFor(ctx context.Context) runStore {
+	if st, ok := ctx.Value(heldStoreContext{}).(runStore); ok {
+		return st
+	}
+	return s.store
 }
