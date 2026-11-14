@@ -215,7 +215,7 @@ func transactionOpeners(t *testing.T) []string {
 	var openers []string
 	fset := token.NewFileSet()
 	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") || strings.HasPrefix(file, "store_sqlite") {
+		if strings.HasSuffix(file, "_test.go") || strings.HasPrefix(file, "store_sqlite") || strings.HasPrefix(file, "store_postgresql") {
 			continue
 		}
 		src, err := os.ReadFile(file)
@@ -279,6 +279,8 @@ func TestEveryTransactionIsSafeToRunTwice(t *testing.T) {
 		{"registered profiles", TestRegisteredProfilesPersistWithoutRestartingOrMutatingPins},
 		{"runs finished at once", TestConcurrentRunsAreEachChainedOnce},
 		{"a change between the runs", TestAClosureRunAgainDecidesFromTheStore},
+		{"a leased claim renewed", TestALeasingKindsClaimIsRenewedWhileItsAttemptGoesOn},
+		{"the tick's interruption", TestTheTickInterruptsALapsedRunAndNamesNoRestart},
 	} {
 		t.Run(flow.name, flow.run)
 	}

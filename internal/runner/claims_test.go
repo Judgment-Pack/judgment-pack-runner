@@ -1,5 +1,3 @@
-//go:build linux || darwin || freebsd
-
 package runner
 
 import (
@@ -74,8 +72,7 @@ func leasingRun(t *testing.T, w *coverWorld, l *leasingWrapper, gate, pid string
 	must(t, e)
 	run, _, e := w.s.submit(j.ID, "one", journalInput())
 	must(t, e)
-	l.runStore = w.s.store
-	w.s.store = l
+	underLeasing(w, l)
 	done, finished := make(chan error, 1), make(chan struct{})
 	go func() {
 		defer close(finished)
@@ -104,7 +101,10 @@ func endLeasingRun(t *testing.T, gate, pid string, finished <-chan struct{}) {
 	case <-time.After(time.Second):
 	}
 	if n, ok := pidIn(pid); ok {
-		syscall.Kill(n, syscall.SIGKILL)
+		if p, err := os.FindProcess(n); err == nil {
+			p.Kill()
+			p.Release()
+		}
 	}
 	select {
 	case <-finished:
@@ -140,7 +140,28 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 // yet reaped included.
 func alive(t *testing.T, pid string) bool {
 	n, ok := pidIn(pid)
-	return ok && syscall.Kill(n, 0) == nil
+	if !ok {
+		return false
+	}
+	p, err := os.FindProcess(n)
+	if err != nil {
+		return false
+	}
+	defer p.Release()
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
+// underLeasing puts l between w's Service and its store: inside the twice
+// mode when the store is under it, so that the mode still names the
+// function that opened each transaction.
+func underLeasing(w *coverWorld, l *leasingWrapper) {
+	if k, ok := w.s.store.(*twiceStore); ok {
+		l.runStore = k.runStore
+		w.s.store = &twiceStore{runStore: l, record: k.record}
+		return
+	}
+	l.runStore = w.s.store
+	w.s.store = l
 }
 
 // D3: on a kind that leases claims, the dispatcher renews its claim while the
@@ -252,5 +273,37 @@ func TestAClaimantStopsItsRuntimeWhenNoRenewalSucceedsInTime(t *testing.T) {
 	must(t, e)
 	if got.State != "running" {
 		t.Fatal("the claimant of a lost claim wrote its run:", got.State)
+	}
+}
+
+// The dispatcher's tick, on a kind that leases claims, interrupts a run held
+// running whose lease ran out (on the sqlite kind, under the wrapper, every
+// run held running): the run reads interrupted, and its entry names when it
+// was last known running and names no restart; only a restart's entry names
+// one.
+func TestTheTickInterruptsALapsedRunAndNamesNoRestart(t *testing.T) {
+	w := newCoverWorld(t)
+	queued, _, err := w.s.submit(w.job.ID, "lapsed", journalInput())
+	must(t, err)
+	running := queued
+	running.State, running.StartedAt = "running", now()
+	must(t, w.s.store.update(func(tx runTx) error {
+		_, err := tx.putRun(running, runExpected{state: "queued"})
+		return err
+	}))
+	underLeasing(w, &leasingWrapper{leasing: true})
+	before := len(journalEntries(t, w.cfg))
+	must(t, w.s.interruptLapsed())
+	got, err := w.s.run(queued.ID)
+	must(t, err)
+	if got.State != "interrupted" {
+		t.Fatal("the tick left a lapsed run:", got.State)
+	}
+	entries := journalEntries(t, w.cfg)
+	if len(entries) != before+1 {
+		t.Fatal("the tick wrote", len(entries)-before, "entries")
+	}
+	if i := entries[len(entries)-1].Interruption; entries[len(entries)-1].Kind != "run.interrupted" || i == nil || i.LastKnownRunning != running.StartedAt || i.Restart != 0 {
+		t.Fatalf("the tick's interruption entry: %+v", entries[len(entries)-1])
 	}
 }
