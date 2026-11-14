@@ -445,28 +445,39 @@ func (s *Service) restart() error {
 		if err != nil {
 			return err
 		}
-		runs, err := contract.runningRuns()
-		if err != nil {
+		if err = interruptRunning(contract, at, func(r Run) EventDetail {
+			return EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}}
+		}); err != nil {
 			return err
-		}
-		for _, r := range runs {
-			r.State = "interrupted"
-			r.FinishedAt = at
-			r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
-			// Only a run no claimant holds is interrupted (D3): one whose
-			// lease is live is its holder's, and is left as it is. The sqlite
-			// kind, whose lock is the fence, holds every run running here as
-			// no claimant's.
-			err = recordRun(contract, r, runExpected{state: "running", lapsed: true}, runnerActor, EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}})
-			if faultOf(err) == faultConflict {
-				continue
-			}
-			if err != nil {
-				return err
-			}
 		}
 		return restartOccurrences(contract, started)
 	})
+}
+
+// interruptRunning interrupts, inside tx, each run held running that no
+// claimant holds, at at, its entry's detail being detail's for the run.
+func interruptRunning(tx runTx, at string, detail func(Run) EventDetail) error {
+	runs, err := tx.runningRuns()
+	if err != nil {
+		return err
+	}
+	for _, r := range runs {
+		r.State = "interrupted"
+		r.FinishedAt = at
+		r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
+		// Only a run no claimant holds is interrupted (D3): one whose lease
+		// is live is its holder's, and is left as it is. The sqlite kind,
+		// whose lock is the fence, holds every run running here as no
+		// claimant's.
+		err = recordRun(tx, r, runExpected{state: "running", lapsed: true}, runnerActor, detail(r))
+		if faultOf(err) == faultConflict {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // restartOccurrences marks, inside tx, each legacy preparation the last

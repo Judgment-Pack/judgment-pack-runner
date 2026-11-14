@@ -795,3 +795,7 @@ func memoryKeeps(f journalFilter, row journalRow, releases map[string]bool) bool
 	}
 	return len(f.results.Kinds) == 0 || slices.Contains(f.results.Kinds, row.kind)
 }
+
+// leasesClaims is yes, as the second kind's: a claim holds for its lease by
+// the kind's clock.
+func (m *memoryStore) leasesClaims() bool { return true }

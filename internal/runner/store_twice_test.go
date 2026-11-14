@@ -586,3 +586,6 @@ func TestTheTwiceModeRunsAFunctionTwice(t *testing.T) {
 		t.Fatalf("the second run's write is not kept: %q %v", row, err)
 	}
 }
+
+// leasesClaims is the wrapped kind's.
+func (t twiceStore) leasesClaims() bool { return leases(t.runStore) }

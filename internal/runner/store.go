@@ -669,9 +669,19 @@ func (s *Service) worker(ctx context.Context) {
 	}()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	// On a kind that leases claims, the tick interrupts the runs whose lease
+	// ran out: a run left by a Runner that stopped, or that lost its claim,
+	// is interrupted one lease later, not at the next start (D3).
+	var lapsedAt time.Time
 	for {
 		if ctx.Err() != nil {
 			return
+		}
+		if leases(s.store) && time.Since(lapsedAt) >= claimTimes.renewal {
+			lapsedAt = time.Now()
+			if s.interruptLapsed() != nil {
+				return
+			}
 		}
 		worked, err := s.dispatchNext(ctx)
 		if err != nil {
@@ -734,9 +744,15 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	if r.claim, err = newRunClaim(r.Attempt); err != nil {
 		return true, err
 	}
+	claimed := time.Now()
 	if err = s.changeRun(r); err != nil {
 		return true, err
 	}
+	// On a kind that leases claims the claim is renewed while the attempt
+	// goes on, and the attempt is stopped when it is not (claims.go).
+	held, releaseClaim := s.holdClaim(ctx, r.ID, r.claim, claimed)
+	defer releaseClaim()
+	ctx = held
 	// class is the error class of a failure met at each step
 	// (run_results.go): a release that cannot be read is Runner's own fault.
 	class := classInternal
@@ -812,6 +828,11 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.InterruptedAt = r.FinishedAt
 			r.ErrorClass = classInterrupted
 		}
+	}
+	// A claimant whose claim was lost writes nothing more of the run, and
+	// stops the dispatcher.
+	if err = releaseClaim(); err != nil {
+		return true, err
 	}
 	// A completed run is recorded with its entry in the installation's
 	// chain of runs, or not at all: a failed append stops the dispatcher as

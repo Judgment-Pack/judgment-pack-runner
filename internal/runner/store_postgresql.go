@@ -485,3 +485,7 @@ func pgSubject(subject string) (table, id string) {
 	}
 	return "", ""
 }
+
+// leasesClaims is yes: a claim holds for its lease by the database's clock,
+// renewed by its holder (D3).
+func (k *pgStore) leasesClaims() bool { return true }

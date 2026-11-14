@@ -188,6 +188,33 @@ var claimStoreCases = []storeCase{
 		wantFault(t, finishRunIn(w.st, completed(r)), faultConflict, "the first claimant's finish after the interruption")
 		wantFault(t, w.st.update(func(tx runTx) error { return tx.renewClaim(r.ID, r.claim) }), faultConflict, "the first claimant's renewal after the interruption")
 	}},
+	{"the tick interrupts only the runs whose lease ran out", func(t *testing.T, k storeKindUnderTest) {
+		// D3: on a kind that leases claims, the dispatcher's tick
+		// interrupts a run whose lease ran out, one lease after its holder
+		// stopped renewing it, and leaves one whose lease is live. It is
+		// never asked of a kind that leases nothing.
+		if !k.fencesClaims {
+			return
+		}
+		w, r := claimWorld(t, k)
+		s := &Service{store: w.st}
+		if !leases(w.st) {
+			t.Fatal("a kind that fences claims by their lease does not say it leases them")
+		}
+		entries := storeJournalLength(t, w.st)
+		must(t, s.interruptLapsed())
+		heldAs(t, w, r.ID, "running", r.Attempt, entries)
+		k.passTime(w.st, claimLease)
+		must(t, s.interruptLapsed())
+		got, err := w.st.run(r.ID)
+		if err != nil || got.State != "interrupted" {
+			t.Fatal("the tick left a run whose lease ran out:", got.State, err)
+		}
+		if n := storeJournalLength(t, w.st); n != entries+1 {
+			t.Fatal("the tick's interruption wrote", n-entries, "entries")
+		}
+		wantFault(t, finishRunIn(w.st, completed(r)), faultConflict, "the first claimant's finish after the tick's interruption")
+	}},
 	{"a write that expects a run running holds no claim over a claimant's", func(t *testing.T, k storeKindUnderTest) {
 		// A run read from the store carries no claim (its claim is never read
 		// back): a writer that finishes it with none does not overwrite a run
