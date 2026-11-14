@@ -119,7 +119,9 @@ func MigratePostgreSQL(m PostgreSQLMigration) ([]string, error) {
 	type recorded struct{ digest, request, worker string }
 	held := map[string]recorded{}
 	var exists bool
-	if err = db.QueryRowContext(pgContext, "SELECT to_regclass('jpack_runner.schema_migrations') IS NOT NULL").Scan(&exists); err != nil {
+	// Read from the catalog: the migration login holds no privilege on the
+	// kind's schema, which to_regclass would need.
+	if err = db.QueryRowContext(pgContext, "SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='schema_migrations')", postgresqlSchema).Scan(&exists); err != nil {
 		return nil, err
 	}
 	if exists {
