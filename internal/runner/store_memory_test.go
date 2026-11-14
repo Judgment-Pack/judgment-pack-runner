@@ -14,7 +14,9 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
+	"time"
 )
 
 // errNotHeld is the cause of the in-memory kind's faultAbsent.
@@ -24,6 +26,11 @@ type memoryRun struct {
 	seq                                  int64
 	id, job, caller, idem, digest, state string
 	record                               []byte
+	// claim is the claim the run is held under, its lease held until
+	// leaseUntil by the store's clock (D3): the second kind's claim_id,
+	// claim_attempt and lease_until.
+	claim      runClaim
+	leaseUntil time.Time
 }
 
 type memoryEntry struct {
@@ -76,20 +83,117 @@ func (m memoryState) clone() memoryState {
 		profiles: maps.Clone(m.profiles), briefs: maps.Clone(m.briefs), automation: m.automation.clone(), schema: m.schema}
 }
 
-// memoryStore is the in-memory kind.
-type memoryStore struct {
+// memoryHeld is what every view of one in-memory store shares: its state,
+// under its lock, and its seams.
+type memoryHeld struct {
 	mu    sync.RWMutex
 	state memoryState
 	// failCommit, when set, is the cause every commit fails with: the
 	// kind's durability seam.
 	failCommit error
+	// ahead is how far the store's clock runs ahead of the process's: the
+	// clock a claim's lease is held by, as the second kind's is the
+	// database's now(), which no Runner's clock is compared with (D3).
+	ahead time.Duration
+}
+
+// storeNow is the store's clock.
+func (m *memoryHeld) storeNow() time.Time { return time.Now().Add(m.ahead) }
+
+// passTime moves the store's clock d ahead, and not the process's.
+func (m *memoryStore) passTime(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ahead += d
+}
+
+// memoryStore is the in-memory kind: a view of a store, held to a scope
+// (heldTo), every scope's as it is opened. It holds the row policy of
+// docs/design/store-postgresql.md, section 6, so that the conformance suite
+// tests the policy on a kind that holds one: each operation reads and writes
+// the records its scope reaches, and the rules held for the installation
+// (D9) read every scope's.
+type memoryStore struct {
+	*memoryHeld
+	scope storeScope
 }
 
 // newMemoryStore is a new store, its journal begun, as a new sqlite store's
 // is at opening.
 func newMemoryStore() *memoryStore {
 	began := journalRowOf(change{kind: "journal.began", by: runnerActor, detail: EventDetail{Held: &EventHeld{}}})
-	return &memoryStore{state: memoryState{releases: map[string][]byte{}, jobs: map[string][]byte{}, creations: map[string][]byte{}, profiles: map[string]string{}, briefs: map[string][]byte{}, automation: newMemoryAutomation(), journal: []journalRow{began}}}
+	return &memoryStore{memoryHeld: &memoryHeld{state: memoryState{releases: map[string][]byte{}, jobs: map[string][]byte{}, creations: map[string][]byte{}, profiles: map[string]string{}, briefs: map[string][]byte{}, automation: newMemoryAutomation(), journal: []journalRow{began}}}, scope: everyScope}
+}
+
+// heldTo is a view of the same store, held to sc.
+func (m *memoryStore) heldTo(sc storeScope) runStore {
+	return &memoryStore{memoryHeld: m.memoryHeld, scope: sc}
+}
+
+// missingAttemptHoldsNoAudit is no, as the second kind's: the in-memory kind
+// holds no attempt directory of its own (D11).
+func (m *memoryStore) missingAttemptHoldsNoAudit() bool { return false }
+
+// errOtherScope is the cause of the in-memory kind's faultRefused for a
+// record written under a scope its transaction is not held to: a row
+// policy's check.
+var errOtherScope = errors.New("the record carries a scope the transaction is not held to")
+
+// sees says whether the reads' scope reaches a record, by its scope member as
+// json_extract reads it: the record's own scope, never a second copy (D5).
+func (r memoryReads) sees(record []byte) bool {
+	if r.scope.every {
+		return true
+	}
+	scope, _, err := memberText(record, "scope")
+	return err == nil && r.scope.reaches(scope)
+}
+
+// admits refuses a record written under a scope the transaction is not held
+// to.
+func (r memoryReads) admits(op string, record []byte) error {
+	if r.sees(record) {
+		return nil
+	}
+	return storeFailure(faultRefused, op, errOtherScope)
+}
+
+// seesEntry is the journal's read policy (section 6): a scope's entries, and
+// the none scope's entries that name no job.
+func (r memoryReads) seesEntry(row journalRow) bool {
+	if r.scope.every {
+		return true
+	}
+	scope, _, err := memberText([]byte(row.detail), "scope")
+	return err == nil && (scope == r.scope.id || scope == "" && row.job == "")
+}
+
+// subjectRecord is the record a brief's subject names (job:<id>, run:<id>),
+// or nil: a brief carries its subject's scope.
+func (r memoryReads) subjectRecord(subject string) []byte {
+	kind, id, _ := strings.Cut(subject, ":")
+	switch kind {
+	case "job":
+		return r.s.jobs[id]
+	case "run":
+		for _, held := range r.s.runs {
+			if held.id == id {
+				return held.record
+			}
+		}
+	}
+	return nil
+}
+
+// seesSubject says whether the reads' scope reaches a brief's subject. A
+// subject not held carries no scope a held transaction can be shown to
+// reach.
+func (r memoryReads) seesSubject(subject string) bool {
+	if r.scope.every {
+		return true
+	}
+	record := r.subjectRecord(subject)
+	return record != nil && r.sees(record)
 }
 
 // seedJob keeps a job and its first revision, without the record of its
@@ -124,7 +228,7 @@ func (m *memoryStore) update(fn func(runTx) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	next := m.state.clone()
-	if err := fn(&memoryTx{memoryReads{&next}}); err != nil {
+	if err := fn(&memoryTx{memoryReads: memoryReads{&next, m.scope}, now: m.storeNow()}); err != nil {
 		return err
 	}
 	if m.failCommit != nil {
@@ -136,7 +240,7 @@ func (m *memoryStore) update(fn func(runTx) error) error {
 
 func (m *memoryStore) close() error { return nil }
 
-func (m *memoryStore) reads() memoryReads { return memoryReads{&m.state} }
+func (m *memoryStore) reads() memoryReads { return memoryReads{&m.state, m.scope} }
 
 func (m *memoryStore) release(id string) (Release, error) {
 	m.mu.RLock()
@@ -170,7 +274,7 @@ func (m *memoryStore) run(id string) (Run, error) {
 
 func (r memoryReads) run(id string) (Run, error) {
 	for _, held := range r.s.runs {
-		if held.id == id {
+		if held.id == id && r.sees(held.record) {
 			return decodeHeld("run", held.record)
 		}
 	}
@@ -181,7 +285,7 @@ func (m *memoryStore) oldestQueued() (Run, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, r := range m.state.runs {
-		if r.state == "queued" {
+		if r.state == "queued" && m.reads().sees(r.record) {
 			return decodeHeld("queue", r.record)
 		}
 	}
@@ -226,9 +330,12 @@ func decodeHeld(op string, record []byte) (Run, error) {
 	return r, nil
 }
 
-// memoryReads are the reads over one state: the kind's, under its read
-// lock, or a transaction's copy.
-type memoryReads struct{ s *memoryState }
+// memoryReads are the reads over one state, the kind's, under its read lock,
+// or a transaction's copy, held to scope.
+type memoryReads struct {
+	s     *memoryState
+	scope storeScope
+}
 
 func (r memoryReads) release(id string) (Release, error) {
 	var rel Release
@@ -248,7 +355,7 @@ func (r memoryReads) release(id string) (Release, error) {
 func (r memoryReads) job(id string) (Job, error) {
 	var j Job
 	b, ok := r.s.jobs[id]
-	if !ok {
+	if !ok || !r.sees(b) {
 		return j, storeFailure(faultAbsent, "job", errNotHeld)
 	}
 	if err := json.Unmarshal(b, &j); err != nil {
@@ -259,7 +366,7 @@ func (r memoryReads) job(id string) (Job, error) {
 
 func (r memoryReads) requestedRun(jobID, caller, key string) (heldRequest, error) {
 	for _, held := range r.s.runs {
-		if held.job == jobID && held.caller == caller && held.idem == key {
+		if held.job == jobID && held.caller == caller && held.idem == key && r.sees(held.record) {
 			return heldRequest{id: held.id, digest: held.digest, record: held.record}, nil
 		}
 	}
@@ -276,8 +383,16 @@ func (r memoryReads) entrySequence(run string) (int64, error) {
 }
 
 // memoryTx is one transaction of the in-memory kind, over its copy.
-type memoryTx struct{ memoryReads }
+// memoryTx is a transaction: its reads, and the store's clock as it read at
+// the transaction's start, as the database's now() reads in each of its
+// statements.
+type memoryTx struct {
+	memoryReads
+	now time.Time
+}
 
+// activeRuns counts every scope's runs: the queue's limit is the
+// installation's (D9).
 func (t *memoryTx) activeRuns() (int, error) {
 	count := 0
 	for _, r := range t.s.runs {
@@ -292,6 +407,9 @@ func (t *memoryTx) createRun(r Run, caller, key, requestDigest string) error {
 	if e := validateStoredRun(r); e != nil {
 		return e
 	}
+	if err := t.admits("run", []byte(runText(r))); err != nil {
+		return err
+	}
 	for _, held := range t.s.runs {
 		if held.id == r.ID || held.job == r.JobID && held.caller == caller && held.idem == key {
 			return storeFailure(faultTaken, "run", errors.New("a run is held under that id or request key"))
@@ -302,23 +420,70 @@ func (t *memoryTx) createRun(r Run, caller, key, requestDigest string) error {
 	return nil
 }
 
-func (t *memoryTx) putRun(r Run, expected string) (string, error) {
+func (t *memoryTx) putRun(r Run, expected runExpected) (string, error) {
 	if e := validateStoredRun(r); e != nil {
 		return "", e
 	}
 	for i := range t.s.runs {
 		held := &t.s.runs[i]
-		if held.id != r.ID {
+		if held.id != r.ID || !t.sees(held.record) {
 			continue
 		}
+		if err := t.admits("run", []byte(runText(r))); err != nil {
+			return held.state, err
+		}
 		from := held.state
-		if expected != anyState && from != expected {
+		if expected.state != anyState && from != expected.state {
 			return from, storeFailure(faultConflict, "run", errors.New("the run is held in another state"))
+		}
+		if err := t.holdsClaim(*held, expected.claim); err != nil {
+			return from, err
+		}
+		switch r.claim {
+		case runClaim{}:
+			held.claim, held.leaseUntil = runClaim{}, time.Time{}
+		case held.claim:
+		default:
+			held.claim, held.leaseUntil = r.claim, t.now.Add(claimLease)
 		}
 		held.state, held.record = r.State, []byte(runText(r))
 		return from, nil
 	}
 	return "", storeFailure(faultAbsent, "run", errNotHeld)
+}
+
+// holdsClaim says whether held is held under claim, its lease not run out by
+// the store's clock, as the second kind's statement says it: claim_id and
+// claim_attempt equal, and lease_until > now(). No claim expected holds.
+func (t *memoryTx) holdsClaim(held memoryRun, claim runClaim) error {
+	if claim == (runClaim{}) {
+		return nil
+	}
+	if held.claim != claim {
+		return storeFailure(faultConflict, "run", errors.New("the run is held under another claim"))
+	}
+	if !t.now.Before(held.leaseUntil) {
+		return storeFailure(faultConflict, "run", errors.New("the run's claim ran out"))
+	}
+	return nil
+}
+
+func (t *memoryTx) renewClaim(run string, claim runClaim) error {
+	for i := range t.s.runs {
+		held := &t.s.runs[i]
+		if held.id != run || !t.sees(held.record) {
+			continue
+		}
+		if held.state != "running" || claim == (runClaim{}) {
+			return storeFailure(faultConflict, "run", errors.New("the run is not held running under a claim"))
+		}
+		if err := t.holdsClaim(*held, claim); err != nil {
+			return err
+		}
+		held.leaseUntil = t.now.Add(claimLease)
+		return nil
+	}
+	return storeFailure(faultConflict, "run", errNotHeld)
 }
 
 // raiseSchema raises as the sqlite kind does: a new store is at storeSchema
@@ -348,7 +513,7 @@ func (m *memoryStore) heldSchema() string {
 func (t *memoryTx) runningRuns() ([]Run, error) {
 	var runs []Run
 	for _, held := range t.s.runs {
-		if held.state != "running" {
+		if held.state != "running" || !t.sees(held.record) {
 			continue
 		}
 		r, err := decodeHeld("queue", held.record)
@@ -396,14 +561,23 @@ func (t *memoryTx) createRelease(r Release) error {
 	return nil
 }
 
+// appendJournal writes an entry only under the scope its transaction is held
+// to: the read policy's second branch, the none scope's entries naming no
+// job, admits no write.
 func (t *memoryTx) appendJournal(c change) (int64, error) {
-	t.s.journal = append(t.s.journal, journalRowOf(c))
+	row := journalRowOf(c)
+	if !t.scope.every {
+		if scope, _, err := memberText([]byte(row.detail), "scope"); err != nil || scope != t.scope.id {
+			return 0, storeFailure(faultRefused, "journal", errOtherScope)
+		}
+	}
+	t.s.journal = append(t.s.journal, row)
 	return int64(len(t.s.journal)), nil
 }
 
 func (t *memoryTx) lastRefusal(key string) (string, error) {
 	for i := len(t.s.journal) - 1; i >= 0; i-- {
-		if t.s.journal[i].refusal == key {
+		if t.s.journal[i].refusal == key && t.seesEntry(t.s.journal[i]) {
 			return t.s.journal[i].at, nil
 		}
 	}
@@ -419,6 +593,9 @@ func (t *memoryTx) putProfileRow(key, row string) error {
 }
 
 func (t *memoryTx) putBrief(subject string, record []byte) error {
+	if !t.seesSubject(subject) {
+		return storeFailure(faultRefused, "brief", errOtherScope)
+	}
 	t.s.briefs[subject] = slices.Clone(record)
 	return nil
 }
@@ -436,7 +613,7 @@ func (r memoryReads) profileRow(key string) (string, error) {
 
 func (r memoryReads) brief(subject string) ([]byte, error) {
 	b, ok := r.s.briefs[subject]
-	if !ok {
+	if !ok || !r.seesSubject(subject) {
 		return nil, storeFailure(faultAbsent, "brief", errNotHeld)
 	}
 	return b, nil
@@ -471,7 +648,7 @@ func (r memoryReads) recordScope(records, id string) (string, error) {
 			}
 		}
 	}
-	if record == nil {
+	if record == nil || !r.sees(record) {
 		return "", storeFailure(faultAbsent, "scope", errNotHeld)
 	}
 	scope, _, err := memberText(record, "scope")
@@ -515,7 +692,7 @@ func (m *memoryStore) journalBegan() (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, e := range m.state.journal {
-		if e.kind == "journal.began" {
+		if e.kind == "journal.began" && m.reads().seesEntry(e) {
 			return e.at, nil
 		}
 	}
@@ -537,7 +714,7 @@ func (m *memoryStore) journalPage(f journalFilter, g journalRange) ([]Event, boo
 	var items []Event
 	read := func(i int) (bool, error) {
 		row, sequence := m.state.journal[i], int64(i+1)
-		if !memoryKeeps(f, row, releases) {
+		if !m.reads().seesEntry(row) || !memoryKeeps(f, row, releases) {
 			return false, nil
 		}
 		if len(items) == g.limit {

@@ -169,6 +169,10 @@ type Run struct {
 	// not ended, or that ended before Runner kept them, has neither.
 	ErrorClass string     `json:"-"`
 	Counts     *RunCounts `json:"-"`
+	// claim is the dispatcher's claim of the run it is evaluating (D3),
+	// which fences its writes: held by the claimant alone, never in the
+	// record, never read back from a store.
+	claim runClaim `json:"-"`
 }
 
 // runQueueExpired is the Reason of an automatic run whose queue time ran out

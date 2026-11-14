@@ -401,7 +401,7 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 		if err = tx.raiseSchema(retryStoreSchema); err != nil {
 			return err
 		}
-		if err = recordRun(tx, next, "interrupted", s.actor(by), EventDetail{Attempt: &kept}); err != nil {
+		if err = recordRun(tx, next, runExpected{state: "interrupted"}, s.actor(by), EventDetail{Attempt: &kept}); err != nil {
 			return err
 		}
 		result = next
@@ -436,16 +436,27 @@ var errAuditKept = &apiError{409, "run_not_retryable", "This interrupted run's a
 // completed its evaluation: an attempt directory holding an audit trail with
 // any content, or whose state cannot be read. A run found running at a
 // restart, or whose end was not recorded, has no audit record in its record
-// though its Runtime may have written one. An attempt directory that does not
-// exist holds none.
+// though its Runtime may have written one. A trail that does not exist in an
+// attempt directory that does holds none. An attempt directory that does not
+// exist holds none only where the store says so (missingAttemptHoldsNoAudit,
+// D11): elsewhere the attempt may have run on another host's disk, and
+// whether it left a record cannot be read.
 func (s *Service) attemptsHoldNoAudit(r Run) error {
 	if s.attempts == nil {
 		return errAuditUnknown
 	}
+	missingHoldsNone := s.store.missingAttemptHoldsNoAudit()
 	for n := 1; n <= max(r.Attempt, 1); n++ {
-		trail := filepath.Join(attemptDirectory(Run{ID: r.ID, Attempt: n}), "audit", "evaluations.jsonl")
+		directory := attemptDirectory(Run{ID: r.ID, Attempt: n})
+		trail := filepath.Join(directory, "audit", "evaluations.jsonl")
 		looked, err := s.attempts.Lstat(trail)
 		if errors.Is(err, fs.ErrNotExist) {
+			if missingHoldsNone {
+				continue
+			}
+			if held, err := s.attempts.Lstat(directory); err != nil || !held.IsDir() {
+				return errAuditUnknown
+			}
 			continue
 		}
 		if err != nil || !looked.Mode().IsRegular() {

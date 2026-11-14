@@ -85,7 +85,7 @@ func (m *memoryStore) listedJobs(before int64, f recordFilter, limit int) ([]lis
 		seq, id := int64(i+1), order[i]
 		record, held := m.state.jobs[id]
 		release, released := m.state.releases[releases[id]]
-		if seq >= before || !held || !released {
+		if seq >= before || !held || !released || !m.reads().sees(record) {
 			continue
 		}
 		if keep, err := listingScoped(record, f.Scope); err != nil || !keep {
@@ -121,7 +121,7 @@ func (m *memoryStore) listedRuns(job string, before int64, f recordFilter, limit
 	for i := len(m.state.runs) - 1; i >= 0 && len(items) < limit; i-- {
 		r := m.state.runs[i]
 		jobRecord, held := m.state.jobs[r.job]
-		if r.seq >= before || !held || job != "" && r.job != job || f.State != "" && r.state != f.State {
+		if r.seq >= before || !held || job != "" && r.job != job || f.State != "" && r.state != f.State || !m.reads().sees(r.record) || !m.reads().sees(jobRecord) {
 			continue
 		}
 		keep, err := memoryRunKept(r, f)
@@ -193,7 +193,7 @@ func (m *memoryStore) recentRuns(jobs []string, per int) ([]recentRun, error) {
 		taken := 0
 		for i := len(m.state.runs) - 1; i >= 0 && taken < per; i-- {
 			r := m.state.runs[i]
-			if r.job != job {
+			if r.job != job || !m.reads().sees(r.record) {
 				continue
 			}
 			created, err := listingLabel(r.record, "createdAt")
@@ -212,7 +212,7 @@ func (m *memoryStore) listedTriggers(jobs []string) ([]listedTrigger, error) {
 	defer m.mu.RUnlock()
 	items := []listedTrigger{}
 	for _, h := range m.state.automation.triggers {
-		if !slices.Contains(jobs, h.job) {
+		if !slices.Contains(jobs, h.job) || !m.reads().sees(h.record) {
 			continue
 		}
 		item := listedTrigger{job: h.job}

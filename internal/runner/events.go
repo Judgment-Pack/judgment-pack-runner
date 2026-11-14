@@ -376,9 +376,9 @@ func triggerBefore(tx runTx, id string, revision int) (string, error) {
 }
 
 // recordRun writes a run's record inside tx, and the entry of its change of
-// state, if its state changed. With expected other than anyState, the store
-// must hold the run in that state, or nothing is written (faultConflict).
-func recordRun(tx runTx, r Run, expected string, by EventActor, detail EventDetail) error {
+// state, if its state changed. The store must hold the run as expected says
+// (putRun), or nothing is written (faultConflict).
+func recordRun(tx runTx, r Run, expected runExpected, by EventActor, detail EventDetail) error {
 	r = withResults(r)
 	from, err := tx.putRun(r, expected)
 	if err != nil {
@@ -400,7 +400,7 @@ func (s *Service) changeRun(r Run) error { return changeQueuedRun(s.store, r) }
 // that read it queued meets faultConflict.
 func changeQueuedRun(st runStore, r Run) error {
 	return st.update(func(tx runTx) error {
-		return recordRun(tx, r, "queued", runnerActor, EventDetail{})
+		return recordRun(tx, r, runExpected{state: "queued"}, runnerActor, EventDetail{})
 	})
 }
 
@@ -453,7 +453,7 @@ func (s *Service) restart() error {
 			r.State = "interrupted"
 			r.FinishedAt = at
 			r.Problem = "The runner stopped during evaluation. Retained attempt files may contain an audit record. This run was not automatically repeated."
-			if err = recordRun(contract, r, anyState, runnerActor, EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}}); err != nil {
+			if err = recordRun(contract, r, runExpected{state: anyState}, runnerActor, EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt, Restart: started}}); err != nil {
 				return err
 			}
 		}

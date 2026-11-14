@@ -77,6 +77,9 @@ func sqliteFault(op string, err error, write bool) error {
 	if errors.As(err, &e) {
 		switch e.Code() {
 		case sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY, sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+			if key := sqliteKey(err); key != "" {
+				return takenOn(op, key, err)
+			}
 			return storeFailure(faultTaken, op, err)
 		case sqlite3.SQLITE_CONSTRAINT_CHECK:
 			return storeFailure(faultRefused, op, err)
@@ -86,6 +89,27 @@ func sqliteFault(op string, err error, write bool) error {
 		return storeFailure(faultDurability, op, err)
 	}
 	return storeFailure(faultUnavailable, op, err)
+}
+
+// sqliteKeys are the keys a faultTaken names (storeKey), by what SQLite's
+// message names after "UNIQUE constraint failed: ".
+var sqliteKeys = map[string]storeKey{
+	"jobs.release_id":                keyJobRelease,
+	"job_creations.release_id":       keyJobCreation,
+	"job_revisions.release_id":       keyJobRevision,
+	"index 'triggers_cloud_binding'": keyCloudBinding,
+}
+
+// sqliteKey is the key a unique or primary key failure names, or "".
+func sqliteKey(err error) storeKey {
+	_, failed, ok := strings.Cut(err.Error(), "UNIQUE constraint failed: ")
+	if !ok {
+		return ""
+	}
+	if i := strings.LastIndex(failed, " ("); i >= 0 {
+		failed = failed[:i]
+	}
+	return sqliteKeys[failed]
 }
 
 // sqlitePreparedStore checks that a manual-admission store was prepared
@@ -245,6 +269,15 @@ func (k *sqliteStore) migrate() error {
 	return tx.Commit()
 }
 
+// heldTo ignores the scope: the kind holds no row policy, and its lock keeps
+// every other process out (docs/design/store-postgresql.md, section 2).
+func (k *sqliteStore) heldTo(storeScope) runStore { return k }
+
+// missingAttemptHoldsNoAudit is yes: the attempt directories are kept in the
+// state directory beside the database, and one that does not exist was never
+// written (D11).
+func (k *sqliteStore) missingAttemptHoldsNoAudit() bool { return true }
+
 // close closes the database, then gives the lock up.
 func (k *sqliteStore) close() error {
 	err := k.db.Close()
@@ -383,7 +416,8 @@ func (t *sqliteTx) createRun(r Run, caller, key, requestDigest string) error {
 	return sqliteFault("run", err, true)
 }
 
-func (t *sqliteTx) putRun(r Run, expected string) (string, error) {
+func (t *sqliteTx) putRun(r Run, want runExpected) (string, error) {
+	expected := want.state
 	if e := validateStoredRun(r); e != nil {
 		return "", e
 	}
@@ -399,6 +433,10 @@ func (t *sqliteTx) putRun(r Run, expected string) (string, error) {
 	}
 	return from, nil
 }
+
+// renewClaim renews nothing: the kind holds no lease, its lock keeping every
+// other dispatcher out (putRun).
+func (t *sqliteTx) renewClaim(string, runClaim) error { return nil }
 
 func (t *sqliteTx) runningRuns() ([]Run, error) {
 	var runs []Run

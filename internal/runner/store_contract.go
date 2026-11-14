@@ -14,8 +14,11 @@ package runner
 // for one.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // storeFault is the kind of failure a storage operation met. A caller
@@ -80,6 +83,51 @@ func faultOf(err error) storeFault {
 	return ""
 }
 
+// storeKey names a key a write meets as faultTaken where the Runner tells
+// keys apart: the keys that hold a release once and a cloud binding once for
+// every scope (docs/design/store-postgresql.md, D9). Each is named as the
+// sqlite kind's schema names it.
+type storeKey string
+
+const (
+	// keyJobRelease is a job's current release (jobs.release_id).
+	keyJobRelease storeKey = "jobs.release_id"
+	// keyJobCreation is the release a job was created from
+	// (job_creations.release_id).
+	keyJobCreation storeKey = "job_creations.release_id"
+	// keyJobRevision is the release of a job's revision
+	// (job_revisions.release_id).
+	keyJobRevision storeKey = "job_revisions.release_id"
+	// keyCloudBinding is a cloud trigger's binding to a scheduler job
+	// (the index triggers_cloud_binding).
+	keyCloudBinding storeKey = "triggers_cloud_binding"
+)
+
+// keyTaken is the cause of a faultTaken that names its key: its text is its
+// cause's, so that the error reads as it did.
+type keyTaken struct {
+	key storeKey
+	err error
+}
+
+func (e keyTaken) Error() string { return e.err.Error() }
+func (e keyTaken) Unwrap() error { return e.err }
+
+// takenOn is faultTaken on key, with its cause.
+func takenOn(op string, key storeKey, err error) error {
+	return storeFailure(faultTaken, op, keyTaken{key: key, err: err})
+}
+
+// takenKey is the key a faultTaken names, or "" when err is no faultTaken or
+// names none.
+func takenKey(err error) storeKey {
+	var k keyTaken
+	if faultOf(err) != faultTaken || !errors.As(err, &k) {
+		return ""
+	}
+	return k.key
+}
+
 // absent says whether err says nothing is held: a contract read's
 // faultAbsent, or the no-rows error of a statement of the sqlite kind's that
 // reaches the Runner as it is (store_sqlite_manual.go).
@@ -95,6 +143,39 @@ var errKeepNothing = errors.New("store: the transaction keeps nothing")
 // anyState is putRun's expected state when a writer changes a run whatever
 // state the store holds it in.
 const anyState = ""
+
+// runClaim is a dispatcher's claim of a run (docs/design/store-postgresql.md,
+// D3): a token new for each claim, and the attempt claimed. A kind that keeps
+// no lock against other dispatchers fences every write the claimant makes by
+// it, and holds the claim for claimLease by its own clock, renewed by
+// renewClaim. The zero value is no claim.
+type runClaim struct {
+	token   string
+	attempt int
+}
+
+// claimLease is how long a claim is held, by the store's clock, from the
+// claim or its last renewal; claimRenewal is how often its holder renews it.
+const (
+	claimLease   = 60 * time.Second
+	claimRenewal = 15 * time.Second
+)
+
+// newRunClaim is a claim of attempt with a new token of 16 random bytes.
+func newRunClaim(attempt int) (runClaim, error) {
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		return runClaim{}, err
+	}
+	return runClaim{token: hex.EncodeToString(token), attempt: attempt}, nil
+}
+
+// runExpected is what putRun must find held before it writes: the run's state,
+// or anyState, and the claim the writer holds, or none.
+type runExpected struct {
+	state string
+	claim runClaim
+}
 
 // heldRequest is a run as the queue holds it under its request key: its id,
 // the digest of the request that made it, and its record, read when asked,
@@ -242,11 +323,57 @@ type (
 	}
 )
 
+// storeScope is the scope a transaction, or a read outside one, is held to
+// (docs/design/store-postgresql.md, sections 2 and 6). A store as a kind
+// opens it does the work for every scope: the dispatcher's, the ticks', the
+// restart's, and a listing's or a journal read's that names no scope. A
+// request's transactions and reads are made through heldTo, held to the
+// scope identifier the request names, or to none.
+//
+// A transaction held to a scope reads and writes only the records that carry
+// that scope identifier ("" being none), and the records no scope narrows:
+// releases, the chain of runs, the profile rows, and the rules held for the
+// installation (the counts of runs, triggers and occurrences, the pack and
+// dialect identities, the keys a record is created once under: D9). A record
+// of another scope reads absent; a write of one is refused. The journal is
+// read as section 6 says: a scope's entries, and the none scope's entries
+// that name no job.
+//
+// The zero value is the none scope, never every scope: a transaction held to
+// it by mistake reaches no other scope's record.
+type storeScope struct {
+	// every is the work for every scope; id means nothing with it.
+	every bool
+	// id is the scope identifier, "" for none.
+	id string
+}
+
+// everyScope is the work for every scope.
+var everyScope = storeScope{every: true}
+
+// scopeHeld is a transaction held to the scope identifier id, "" for none.
+func scopeHeld(id string) storeScope { return storeScope{id: id} }
+
+// reaches says whether sc reaches a record that carries scope ("" for none).
+func (sc storeScope) reaches(scope string) bool { return sc.every || sc.id == scope }
+
 // runStore is the Runner's durable state for the queue, releases, inputs and
 // run records, behind one contract.
 type runStore interface {
 	storeReads
 	journalReads
+	// heldTo is the store with every read and transaction held to sc
+	// (storeScope). A kind that holds no policy of its own, the sqlite kind,
+	// returns the store as it is: its one process holds every scope.
+	heldTo(sc storeScope) runStore
+	// missingAttemptHoldsNoAudit says whether the retry check
+	// (attemptsHoldNoAudit) may take an attempt directory that does not exist
+	// to hold no audit record (docs/design/store-postgresql.md, D11). The
+	// sqlite kind says yes: its state directory holds every attempt's
+	// directory, kept with its database. A kind whose store outlives the
+	// host's disk says no, and the check takes a missing directory to be
+	// unknown, as it takes one it cannot read.
+	missingAttemptHoldsNoAudit() bool
 	// update runs fn in one transaction and keeps what it wrote only if fn
 	// returns nil and the commit succeeds. Transactions are serializable: one
 	// sees every write of each that committed before it began, and none of
@@ -367,12 +494,25 @@ type runTx interface {
 	// putBrief writes the brief history held for subject, whatever it held.
 	putBrief(subject string, record []byte) error
 	// putRun writes r's state and record over the run held under r.ID, and
-	// returns the state it held before. With expected other than anyState,
-	// the run must be held in that state, or nothing is written and the
-	// fault is faultConflict: the versioned update by which a queued run is
-	// claimed once, and by which an interrupted run is queued again by a
-	// retry (retries.go). faultAbsent when no run is held under r.ID.
-	putRun(r Run, expected string) (string, error)
+	// returns the state it held before. With expected.state other than
+	// anyState, the run must be held in that state, or nothing is written and
+	// the fault is faultConflict: the versioned update by which a queued run
+	// is claimed once, and by which an interrupted run is queued again by a
+	// retry (retries.go). With expected.claim, the run must also be held under
+	// that claim, its lease not run out by the store's clock, or nothing is
+	// written and the fault is faultConflict: a claimant's write after its
+	// claim was lost. faultAbsent when no run is held under r.ID.
+	//
+	// After the write the run is held under r.claim: a claim other than the
+	// one held starts its lease, the one held keeps it, and none clears it, as
+	// an interruption does. The sqlite kind takes the claim and ignores it:
+	// its lock keeps every other dispatcher out, and is the fence.
+	putRun(r Run, expected runExpected) (string, error)
+	// renewClaim holds the run's claim for another claimLease from now, by the
+	// store's clock, if the run is held running under claim and its lease has
+	// not run out; otherwise it writes nothing and the fault is
+	// faultConflict. The sqlite kind ignores it, as it ignores the claim.
+	renewClaim(run string, claim runClaim) error
 	// runningRuns are the runs held running, in the order they were queued.
 	runningRuns() ([]Run, error)
 	// lastEntry is the sequence and line of the chain's last entry, or

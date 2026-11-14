@@ -827,7 +827,7 @@ func TestARetryIsRefusedForARunNotInterrupted(t *testing.T) {
 	} {
 		next := r
 		held(&next)
-		must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(next, anyState); return e }))
+		must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(next, runExpected{}); return e }))
 		refused(next, decimalRevision(next.Attempt), "run_not_retryable")
 	}
 	// A malformed request, empty, missing its attempt or oversized, is
@@ -882,9 +882,9 @@ func TestARetryIsRefusedWhenAnAttemptLeftAnAuditTrail(t *testing.T) {
 	// A later attempt's retry reads the earlier attempts' directories too.
 	later := r
 	later.Attempt, later.Attempts = 2, []Attempt{{Number: 1, Outcome: "interrupted", Reason: runAttemptRestarted}}
-	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(later, anyState); return e }))
+	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(later, runExpected{}); return e }))
 	refusedAsAudited(t, s, later, "2")
-	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(r, anyState); return e }))
+	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(r, runExpected{}); return e }))
 	// A directory whose state cannot be read is taken to hold one.
 	must(t, os.RemoveAll(audit))
 	must(t, os.WriteFile(audit, []byte("not a directory"), 0600))
@@ -919,7 +919,7 @@ func TestARetryIsRefusedAfterAFinishThatFailed(t *testing.T) {
 	// record or its entry in the chain of runs.
 	left := done
 	left.State, left.FinishedAt, left.Audit, left.AuditBytes, left.AuditSignatures = "running", "", nil, nil, nil
-	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(left, anyState); return e }))
+	must(t, s.store.update(func(tx runTx) error { _, e := tx.putRun(left, runExpected{}); return e }))
 	_, e = sqliteDB(s).Exec("DELETE FROM run_chain WHERE run=?", r.ID)
 	must(t, e)
 	s.Close()

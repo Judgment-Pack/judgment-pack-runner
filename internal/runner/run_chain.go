@@ -173,7 +173,10 @@ func appendRunEntry(tx runTx, run string, auditBytes []byte) error {
 // same transaction too, and names the chain entry's sequence.
 func (s *Service) finishRun(r Run) error { return finishRunIn(s.store, r) }
 
-// finishRunIn is finishRun in st.
+// finishRunIn is finishRun in st. The store must still hold the run running
+// under the claim r carries (D3): a claimant whose claim was lost, its run
+// interrupted and perhaps claimed again, writes nothing, and meets
+// faultConflict.
 func finishRunIn(st runStore, r Run) error {
 	return st.update(func(tx runTx) error {
 		var detail EventDetail
@@ -190,7 +193,7 @@ func finishRunIn(st runStore, r Run) error {
 		if r.State == "interrupted" && r.InterruptedAt != "" {
 			detail.Interruption = &EventInterruption{Seen: true, At: r.InterruptedAt}
 		}
-		return recordRun(tx, r, anyState, runnerActor, detail)
+		return recordRun(tx, r, runExpected{state: "running", claim: r.claim}, runnerActor, detail)
 	})
 }
 

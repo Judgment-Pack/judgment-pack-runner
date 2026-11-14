@@ -151,7 +151,7 @@ func TestVerificationCoverageInHelpAndGuide(t *testing.T) {
 		private []string
 	}{
 		"verification bundle": {reflect.TypeOf(runner.VerificationBundle{}), []string{"version", "releaseDigest", "release", "run", "inputs", "chain"}, nil},
-		"run":                 {reflect.TypeOf(runner.Run{}), []string{"trigger", "schemaVersion", "id", "jobId", "releaseId", "revision", "state", "input", "createdAt", "startedAt", "finishedAt", "requestedBy", "attempt", "result", "audit", "auditBytes", "auditSignatures", "problem"}, []string{"manual"}},
+		"run":                 {reflect.TypeOf(runner.Run{}), []string{"trigger", "schemaVersion", "id", "jobId", "releaseId", "revision", "state", "input", "createdAt", "startedAt", "finishedAt", "requestedBy", "attempt", "result", "audit", "auditBytes", "auditSignatures", "problem"}, []string{"manual", "claim"}},
 	} {
 		var got []string
 		var private []string
