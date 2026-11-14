@@ -287,7 +287,10 @@ class Checks(unittest.TestCase):
                 re.search(expression, component)
                 for expression, component in zip(expressions, components))
 
-        groups = []
+        # The groups run side by side, so the trace holds them in the order
+        # they started, which is not fixed: the group that takes what the
+        # others leave is known by having no -run, not by being last.
+        groups, rest = [], []
         for call in main:
             args = call['args']
             self.assertEqual(args[:2], ['test', '-race'], 'unit partition lost race instrumentation')
@@ -306,6 +309,8 @@ class Checks(unittest.TestCase):
             if '-skip' in args:
                 matches -= {name for name in names if selected(args[args.index('-skip') + 1], name)}
             groups.append(matches)
+            if '-run' not in args:
+                rest.append(matches)
             for key, binary in {'JPACK_TEST_BIN': 'jpack', 'JPACK_RETAINED_TEST_BIN': 'jpack-retained',
                                 'JPACK_COVERS_TEST_BIN': 'jpack-covers', 'JPACK_CORE050_TEST_BIN': 'jpack-core050',
                                 'JPACK_EARLIER_TEST_BIN': 'jpack-earlier', 'JPACK_GATEWAY_TEST_BIN': 'gateway',
@@ -316,8 +321,9 @@ class Checks(unittest.TestCase):
             for other in groups[index + 1:]:
                 self.assertFalse(group & other, 'unit partitions repeat cases')
         self.assertEqual(len(groups), 10)
+        self.assertEqual(len(rest), 1, 'one unit partition takes what the others leave')
         for name in ('ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzSelectedLeaf'):
-            self.assertIn(name, groups[-1])
+            self.assertIn(name, rest[0])
         conformance = [call for call in calls if '^TestStoreKindsConform$' in call['args']]
         self.assertEqual(len(conformance), 1)
         self.assertEqual(conformance[0]['args'],
