@@ -131,9 +131,18 @@ The lease, as (a) builds it:
 - **The claim's token.** A claim writes `claim_id` (16 random bytes, new for each claim),
   `claim_attempt` (the run's attempt) and `lease_until` on the run's row, in the claim's statement,
   fenced by the run's state as now: `UPDATE runs SET state='running', record=$1, claim_id=$2,
-  claim_attempt=$3, lease_until=now() + $4 WHERE id=$5 AND state='queued'`.
+  claim_attempt=$3, lease_until=now() + $4 WHERE id=$5 AND state='queued'`. As built, two
+  dispatchers that read one queued run meet here, or on the write that ends it in the queue
+  (expired there, or naming a profile set aside; `endInQueue`): the second is `conflict`, and its
+  dispatcher works nothing and goes on (`dispatchNext`), not stopping as for a failure of the
+  store; any other conflict still stops it.
 - **Expiry is the database's clock.** Every comparison with `lease_until` is with `now()` in the
-  statement that makes it. No Runner's clock is compared with it or written into it.
+  statement that makes it. No Runner's clock is compared with it or written into it. As built, a
+  claimant's fence (`lease_until >`, a finish's and a renewal's) is with `statement_timestamp()`
+  instead: `now()` is the transaction's start, before its wait for `journal_head`'s lock (D13), so
+  a finish that waited past its lease's end would still commit. A lease set (a claim's, a
+  renewal's) keeps `now()`, the earlier time and so the shorter lease, and so does the
+  interruption's test of a lease run out, which then runs out later.
 - **Every write a claimant makes is fenced by its token.** `putRun` gains an expected claim beside
   its expected state: the contract's change, its `expected` carrying both. A finish, with its chain
   entry and its journal entry, writes only `WHERE id=$1 AND state='running' AND claim_id=$2 AND
@@ -251,6 +260,20 @@ serialize, one transaction at a time, as they do on SQLite, and a slow transacti
 other writer, which D2's rule bounds by keeping files and the network out of every `fn`. Reads do
 not take the lock.
 
+Built with time bounds as well, which this note did not give: every pooled connection starts with
+`lock_timeout` 5 s, `statement_timeout` 30 s and `idle_in_transaction_session_timeout` 10 s
+(`pgBounds`; docs/postgresql-store.md, "Time bounds"). A writer held up by another session waits
+at most the lock bound and is refused; a session left idle inside a transaction that holds the
+lock is ended by the server; and the claim's renewal is held to a deadline of its interval
+(`updateWithin`), so that an attempt's end never waits on one without a bound. The start reads the
+bounds and the search path back on a connection of each pool and refuses one not held, by name
+(`checkSettings`, `errPostgreSQLSettingNotHeld`), as a connection pooler that drops start
+parameters would leave them. A request's write refused for the lock is not run again. The dispatcher takes the refusal for a store that is busy,
+not failing (`lockWaited`): its claim, its end of a run in the queue and its tick for lapsed
+leases made nothing and are tried at a later tick; its renewal is run again until its deadline;
+and its finish is made again while the claim's lease is live, which its token and lease fence
+(D3), so that a lock held a few seconds neither stops the dispatcher nor loses a run.
+
 Every other order a consumer follows, under (a):
 
 - **The chain** (`run_chain.sequence`): its next sequence is the committed tail's plus one, so it
@@ -288,6 +311,20 @@ A Runner holds a connection pool for each run-time login. At start the kind read
 attributes and memberships, and refuses to start if either is a superuser, bypasses row security,
 can create roles or databases, or is a member of the owner: a login that could read every scope is
 never taken for one that cannot.
+
+As built, the start also reads the live schema, which this note did not ask (`checkSchema`): it
+refuses a schema, or a relation, function, operator or type in it (a table's own row type aside,
+which is its relation's), that the owner the configuration names does not own
+(`errSchemaNotOwned`), a table without row security enabled and forced (`errRowSecurityOff`), and
+a run-time login that can use `DELETE`, `TRUNCATE`, `REFERENCES` or `TRIGGER` on a table of the
+schema, any privilege on a sequence of it (the grants give none, and a sequence's value is shared
+across scopes, D8), or `CREATE` on it (`errLoginPrivilegeTooWide`). The privileges are read with
+`has_table_privilege`, with `has_any_column_privilege` for `REFERENCES` (a grant on one column is
+enough for a foreign key to it), with `has_sequence_privilege`, and with `has_schema_privilege`,
+for the login and every role it is a member of, so that a grant made after the migration, to a
+predefined role such as `pg_write_all_data`, by a default privilege, or to a role reached only by
+`SET ROLE`, is refused, not only one made to the login by name. A wrong owner name in the configuration, which the
+membership check above passes, is refused by the first.
 
 **Migrations** are plain SQL files, `internal/runner/postgresql/migrations/NNNN_name.sql`, applied in
 order by one command, `jpack-runner store migrate`, that release tooling runs as a release step
@@ -436,7 +473,13 @@ entries' journal sequences, whose gaps say other entries exist, never what they 
 Document it. (b) A sequence per scope, which changes the journal's cursor. The kind defines no
 view; one added later is `security_invoker`, so the reader's policy applies. It defines no
 function, so no `SECURITY DEFINER` function (condition e); one added later is listed here with a
-pinned `search_path` and its reason.
+pinned `search_path` and its reason. As built, every pooled connection's `search_path` is
+`pg_catalog, jpack_runner`, the catalog first (`pgOpenPool`): a function, operator or type made in
+the schema with a built-in's name never hides the built-in from the kind's unqualified SQL
+(`statement_timestamp()`, `now()`, `set_config`), and the tables, unqualified, are found in the
+schema, the catalog holding none of their names. The migrations set their own path, the schema
+first, since they create objects in it unqualified; the start refuses a function, operator or type
+in the schema that another role owns (section 5).
 
 **D9. Rules across scopes.** A rule the Runner keeps over every scope's records (a release makes
 one job, a pack identity is never reused with other bytes, 128 triggers, the queues' limits, one
@@ -638,8 +681,14 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLMigrationIsIdempotent` (c, with a and d) | Built: the conditions of a and d are cases of it, not tests of their own. |
 | `TestPostgreSQLMigrationSetMatchesItsDigest` (i) | Built for the files and their digest; release notes are not read. |
 | `TestPostgreSQLDefinesNoSecurityDefinerFunction` (e) | Built. |
-| `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files read no process clock and compare a lease only with `now()`. |
+| `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files (every `store_postgresql*.go` but the tests) read no process clock, compare a lease, on either side of the operator, only with the database's clock, and fence no claimant's write by `now()`; the check is first run on comparisons it must find and must pass. |
+| `TestPostgreSQLStartRefusesASchemaNotOwnedByTheNamedOwner`, `TestPostgreSQLStartRefusesATableWithoutForcedRowSecurity`, `TestPostgreSQLStartRefusesARuntimeLoginWithWiderPrivileges` (section 5) | Built: a start is refused for another owner named, a relation, function, operator or type another role owns, a table with row security not forced or disabled, and each of the four table privileges, `REFERENCES` on one column, each of the three sequence privileges, and `CREATE` on the schema, granted by name, through a role inherited or reached by `SET ROLE`, by a default privilege and through `pg_write_all_data`. The last needs the administrator to grant `pg_write_all_data` (CI's is given `ADMIN TRUE, INHERIT FALSE, SET FALSE`). |
+| `TestPostgreSQLADispatcherThatLosesAClaimGoesOn` (D3) | Built: two Runners on one store read one queued run; exactly one works it, the other returns no error and works the next run. |
+| `TestPostgreSQLADispatcherThatLosesARunEndedInTheQueueGoesOn` (D3) | Built: the same race on a run expired in the queue and on one whose release names a profile set aside; exactly one ends it, the other returns no error. |
+| `TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease` (D3) | Built: a finish and a renewal that wait for `journal_head`'s lock past their lease's end write nothing. |
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
+| `TestPostgreSQLResolvesABuiltinBeforeTheSchema` | Built: with `now()`, `statement_timestamp()` and `set_config` made in the schema, by the owner, to fail, a claim, a renewal, a finish and a read held to a scope still call the built-ins; no relation of the schema has a name the catalog holds. |
+| `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLStartRefusesAConnectionWithoutItsSettings`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLADispatcherBehindAHeldLockGoesOn`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; a start over a pool whose connection was opened without the search path or one of the bounds is refused, naming it and the login; with another connection holding `journal_head`'s lock, a write is refused within the lock bound; a renewal is tried again, keeps the claim when the lock is let go before its deadline, and is refused at its deadline, its wait on the server ended, the claim reported lost; a dispatcher's end of a run in the queue, its tick for lapsed leases and its claim make nothing and its loop goes on, its finish lands once the lock is let go, the run completed and not interrupted, and the Runner stays healthy; a transaction left idle is ended by the server and the writer behind it goes on. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
 
 ## 11. What the slice after this one builds

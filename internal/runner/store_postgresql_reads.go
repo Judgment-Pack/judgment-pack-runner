@@ -15,14 +15,14 @@ import (
 // one reads one row of query into dest.
 func (r pgReads) one(op string, query string, args []any, dest ...any) error {
 	return r.read(op, func(q pgQuerier) error {
-		return pgFault(op, q.QueryRowContext(pgContext, query, args...).Scan(dest...), false)
+		return pgFault(op, q.QueryRowContext(r.ctx(), query, args...).Scan(dest...), false)
 	})
 }
 
 // each reads the record column of every row of query, in order.
 func (r pgReads) each(op, query string, args []any, each func([]byte) error) error {
 	return r.read(op, func(q pgQuerier) error {
-		rows, err := q.QueryContext(pgContext, query, args...)
+		rows, err := q.QueryContext(r.ctx(), query, args...)
 		if err != nil {
 			return pgFault(op, err, false)
 		}
@@ -283,7 +283,7 @@ func (r pgReads) journalPage(f journalFilter, g journalRange) ([]Event, bool, er
 	var items []Event
 	more := false
 	err := r.read("journal", func(q pgQuerier) error {
-		rows, err := q.QueryContext(pgContext, query, a...)
+		rows, err := q.QueryContext(r.ctx(), query, a...)
 		if err != nil {
 			return pgFault("journal", err, false)
 		}
@@ -341,7 +341,7 @@ func (k *pgStore) chainPage(after int64, limit int) ([][]byte, int64, error) {
 		bound = nil
 	}
 	err := k.read("chain", func(q pgQuerier) error {
-		rows, err := q.QueryContext(pgContext, "SELECT sequence,line FROM run_chain WHERE sequence>$1 ORDER BY sequence LIMIT $2", after, bound)
+		rows, err := q.QueryContext(k.ctx(), "SELECT sequence,line FROM run_chain WHERE sequence>$1 ORDER BY sequence LIMIT $2", after, bound)
 		if err != nil {
 			return pgFault("chain", err, false)
 		}
@@ -404,7 +404,7 @@ func (k *pgStore) cloudBoundTrigger(connection, job string) (string, error) {
 func (k *pgStore) jobTriggers(job string) ([]Trigger, error) {
 	items := []Trigger{}
 	err := k.read("trigger", func(q pgQuerier) error {
-		rows, err := q.QueryContext(pgContext, "SELECT record,key_hash FROM triggers WHERE job_id=$1 ORDER BY seq", job)
+		rows, err := q.QueryContext(k.ctx(), "SELECT record,key_hash FROM triggers WHERE job_id=$1 ORDER BY seq", job)
 		if err != nil {
 			return pgFault("trigger", err, false)
 		}
@@ -434,7 +434,7 @@ func (k *pgStore) occurrencePage(job string, before int64, preparations bool, li
 	items := []Occurrence{}
 	var next int64
 	err := k.read("occurrence", func(q pgQuerier) error {
-		rows, err := q.QueryContext(pgContext, "SELECT seq,record FROM occurrences WHERE job_id=$1 AND seq<$2 AND (NOT $3::boolean OR ("+pgJSON("record", "preparation")+" IS NOT NULL AND state<>'submitted')) ORDER BY seq DESC LIMIT $4", job, before, preparations, limit+1)
+		rows, err := q.QueryContext(k.ctx(), "SELECT seq,record FROM occurrences WHERE job_id=$1 AND seq<$2 AND (NOT $3::boolean OR ("+pgJSON("record", "preparation")+" IS NOT NULL AND state<>'submitted')) ORDER BY seq DESC LIMIT $4", job, before, preparations, limit+1)
 		if err != nil {
 			return pgFault("occurrence", err, false)
 		}
@@ -511,7 +511,7 @@ func (k *pgStore) listed(kind, jobID string, before int64, filter recordFilter, 
 	query := "SELECT t.seq,t.record," + extra + " FROM " + table + " t" + joins + " WHERE " + strings.Join(where, " AND ") + " ORDER BY t.seq DESC LIMIT " + strconv.Itoa(limit)
 	items := []listedRecord{}
 	err := k.read("list", func(q pgQuerier) error {
-		rows, err := q.QueryContext(pgContext, query, a...)
+		rows, err := q.QueryContext(k.ctx(), query, a...)
 		if err != nil {
 			return pgFault("list", err, false)
 		}
@@ -537,7 +537,7 @@ func (k *pgStore) recentRuns(jobs []string, per int) ([]recentRun, error) {
 	query := "SELECT job_id,id,state,created FROM (SELECT job_id,id,state," + pgJSON("record", "createdAt") + " AS created,row_number() OVER (PARTITION BY job_id ORDER BY seq DESC) AS rank FROM runs WHERE " + in + ") ranked WHERE rank<=" + strconv.Itoa(per) + ` ORDER BY job_id COLLATE "C",rank`
 	items := []recentRun{}
 	err := k.read("list", func(q pgQuerier) error {
-		rows, err := q.QueryContext(pgContext, query, a...)
+		rows, err := q.QueryContext(k.ctx(), query, a...)
 		if err != nil {
 			return pgFault("list", err, false)
 		}
@@ -562,7 +562,7 @@ func (k *pgStore) listedTriggers(jobs []string) ([]listedTrigger, error) {
 	query := "SELECT job_id,record FROM triggers WHERE " + pgIn("job_id", jobs, &a) + " ORDER BY seq"
 	items := []listedTrigger{}
 	err := k.read("list", func(q pgQuerier) error {
-		rows, err := q.QueryContext(pgContext, query, a...)
+		rows, err := q.QueryContext(k.ctx(), query, a...)
 		if err != nil {
 			return pgFault("list", err, false)
 		}

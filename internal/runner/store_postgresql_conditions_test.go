@@ -460,18 +460,140 @@ func TestPostgreSQLFencesEveryClaimantWriteByItsToken(t *testing.T) {
 		t.Fatal("the first claimant wrote its run after losing it:", got.State)
 	}
 	// The kind compares a lease only with the database's clock: no
-	// statement of its files is given the process's time.
-	for _, name := range []string{"store_postgresql.go", "store_postgresql_writes.go", "store_postgresql_reads.go"} {
+	// statement of its files is given the process's time, and a claimant's
+	// fence (a live lease: lease_until > X, or X < lease_until) is not the
+	// transaction's start, now(), which is before its wait for journal_head's
+	// lock. The check first finds what it is to find.
+	for src, faulty := range map[string]bool{
+		"lease_until>statement_timestamp()":   false,
+		"lease_until > clock_timestamp()":     false,
+		"lease_until<=now()":                  false,
+		"statement_timestamp() < lease_until": false,
+		"now() >= lease_until":                false,
+		"lease_until>now()":                   true,
+		"lease_until >= now()":                true,
+		"now() < lease_until":                 true,
+		"now()<=lease_until":                  true,
+		"lease_until > $3":                    true,
+		"$3 < lease_until":                    true,
+	} {
+		if got := pgLeaseFaults(src); len(got) > 0 != faulty {
+			t.Errorf("the lease check of %q finds %v", src, got)
+		}
+	}
+	names, err := filepath.Glob("store_postgresql*.go")
+	must(t, err)
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
 		b, err := os.ReadFile(name)
 		must(t, err)
 		if strings.Contains(string(b), "time.Now") {
 			t.Errorf("%s reads the process's clock", name)
 		}
-		for _, use := range regexp.MustCompile(`lease_until\s*(<=|>|<|>=)\s*[^ ),]+`).FindAllString(string(b), -1) {
-			if !strings.HasSuffix(use, "now()") && !strings.HasSuffix(use, "now(") {
-				t.Errorf("%s compares a lease with something else than now(): %s", name, use)
-			}
+		for _, fault := range pgLeaseFaults(string(b)) {
+			t.Errorf("%s %s", name, fault)
 		}
+	}
+}
+
+// pgLeaseFaults are the comparisons of a lease in src, lease_until <op> X
+// or X <op> lease_until, that are not with the database's clock, or that
+// fence a claimant's write (a lease still live) by the transaction's start.
+func pgLeaseFaults(src string) []string {
+	var faults []string
+	check := func(use, op, clock string) {
+		switch strings.TrimRight(clock, "()") {
+		case "statement_timestamp", "clock_timestamp":
+		case "now":
+			if op == ">" || op == ">=" {
+				faults = append(faults, "fences a claimant's write by the transaction's start: "+use)
+			}
+		default:
+			faults = append(faults, "compares a lease with something else than the database's clock: "+use)
+		}
+	}
+	for _, m := range regexp.MustCompile(`lease_until\s*(<=|>=|<|>)\s*([^\s),]+)`).FindAllStringSubmatch(src, -1) {
+		check(m[0], m[1], m[2])
+	}
+	// X <op> lease_until is lease_until <op'> X, the operator turned round.
+	turned := map[string]string{"<": ">", "<=": ">=", ">": "<", ">=": "<="}
+	for _, m := range regexp.MustCompile(`([A-Za-z_$][\w$.]*(?:\(\))?)\s*(<=|>=|<|>)\s*lease_until`).FindAllStringSubmatch(src, -1) {
+		check(m[0], turned[m[2]], m[1])
+	}
+	return faults
+}
+
+// A claimant's write that waits for journal_head's lock past its lease's
+// end writes nothing: the fence reads the database's clock when its
+// statement starts, after the wait, not when its transaction began. A
+// finish and a renewal alike.
+func TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease(t *testing.T) {
+	s, db, w, real := pgConditionWorld(t)
+	suite := s.pool(t, pgRoleSuite, db)
+	r, ok, err := claimRun(real, w.runs["a"].ID)
+	if err != nil || !ok {
+		t.Fatal("the run was not claimed:", ok, err)
+	}
+	for _, write := range []struct {
+		what string
+		do   func() error
+	}{
+		{"a finish", func() error { return finishRunIn(real, completed(r)) }},
+		{"a renewal", func() error { return real.update(func(tx runTx) error { return tx.renewClaim(r.ID, r.claim) }) }},
+	} {
+		pgExec(t, suite, "UPDATE runs SET lease_until=clock_timestamp()+interval '1 second' WHERE id=$1", r.ID)
+		end := pgHoldJournal(t, s, db)
+		done := make(chan error, 1)
+		go func() { done <- write.do() }()
+		waitWaiting(t, s, db, pgRoleWorker, 1, write.what+" behind a held lock")
+		var live bool
+		for {
+			if err := suite.QueryRowContext(pgContext, "SELECT lease_until>clock_timestamp() FROM runs WHERE id=$1", r.ID).Scan(&live); err != nil {
+				t.Fatal(err)
+			}
+			if !live {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		end()
+		wantFault(t, <-done, faultConflict, write.what+" that waited past its lease's end")
+		if got, _ := real.run(r.ID); got.State != "running" {
+			t.Fatalf("%s that waited past its lease's end wrote the run: %s", write.what, got.State)
+		}
+	}
+}
+
+// The kind's search path puts the system's catalog before its schema: a
+// function made in the schema with a built-in's name and arguments, even by
+// the owner, whom the start's checks pass, hides no built-in from the kind's
+// unqualified statements. A claim, a renewal and a finish read the
+// database's clock, and a read held to a scope sets it, as before; and no
+// relation of the schema has a name the catalog holds, so that every
+// unqualified table is still found in the schema.
+func TestPostgreSQLResolvesABuiltinBeforeTheSchema(t *testing.T) {
+	s, db, w, real := pgConditionWorld(t)
+	var shadows []string
+	for _, f := range []string{"now() RETURNS timestamptz", "statement_timestamp() RETURNS timestamptz", "set_config(text, text, boolean) RETURNS text"} {
+		shadows = append(shadows, "CREATE FUNCTION jpack_runner."+f+" LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'a function of the schema hid a built-in'; END$$")
+	}
+	pgOwnerDoes(t, s, db, shadows...)
+	r, ok, err := claimRun(real, w.runs["a"].ID)
+	if err != nil || !ok {
+		t.Fatal("a claim called a function of the schema:", ok, err)
+	}
+	must(t, real.update(func(tx runTx) error { return tx.renewClaim(r.ID, r.claim) }))
+	must(t, finishRunIn(real, completed(r)))
+	if got, err := real.heldTo(scopeHeld("a")).run(r.ID); err != nil || got.State != "completed" {
+		t.Fatal("a read held to a scope called a function of the schema:", got.State, err)
+	}
+	var shared string
+	must(t, s.pool(t, pgRoleSuite, db).QueryRowContext(pgContext, `SELECT coalesce(string_agg(c.relname, ', '), '') FROM pg_class c
+WHERE c.relnamespace='jpack_runner'::regnamespace AND EXISTS (SELECT 1 FROM pg_class k WHERE k.relnamespace='pg_catalog'::regnamespace AND k.relname=c.relname)`).Scan(&shared))
+	if shared != "" {
+		t.Fatal("a relation of the schema has a name the catalog holds:", shared)
 	}
 }
 

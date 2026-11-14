@@ -105,6 +105,24 @@ At start the Runner refuses to open the store when:
 - the store is not migrated, or its applied migrations are not exactly this Runner's set: run
   `jpack-runner store migrate` with the matching `jpack-runner` first;
 - the grants were made to other logins than the ones configured;
+- the owner the configuration names does not own the schema, or a relation, function, operator or
+  type in it ("not owned by the owner role the configuration names", naming the object). Every
+  pooled connection searches the system's catalog before the schema, so that nothing made in the
+  schema hides a built-in;
+- a table of the schema does not have row security both enabled and forced ("does not have row
+  security enabled and forced", naming the table): `NO FORCE ROW LEVEL SECURITY` set by hand is
+  refused;
+- either run-time login holds `DELETE`, `TRUNCATE`, `REFERENCES` or `TRIGGER` on a table of the
+  schema, `REFERENCES` on any column of one, `SELECT`, `UPDATE` or `USAGE` on a sequence of the
+  schema, or `CREATE` on the schema ("holds DELETE, TRUNCATE, REFERENCES or TRIGGER ...", naming
+  the login, the privilege and the table or sequence). What counts is what the login can use: privileges
+  granted to it, to `PUBLIC`, or to any role it is a member of, whether it inherits that role or
+  may only `SET ROLE` to it, a predefined role such as `pg_write_all_data` and a default privilege
+  among them. Revoke the grant, or the membership, and start again;
+- a connection of either pool does not hold the search path or a time bound the Runner starts it
+  with ("does not hold a setting the Runner starts it with", naming the setting and the login): a
+  connection pooler between the Runner and the server that drops start parameters is not
+  supported;
 - the store's identity (workspace, owner, input root) is another Runner's;
 - the configuration asks for manual admission, which stays on the sqlite kind.
 
@@ -131,12 +149,57 @@ scopes' entries are.
 ## Claims and leases
 
 There is no process-wide lock. A run is held by its claim: a token and a lease of 60 seconds,
-compared with the database's clock. The Runner renews the lease every 15 seconds while the
-attempt runs. When a renewal fails, conflicts, or takes longer than 15 seconds, or none has
-succeeded within 30 seconds of the last that did, the Runner stops the attempt's Runtime, writes
-nothing more for that run, and stops its dispatcher: `GET /v1/health` then reports it unhealthy,
-and the Runner needs a restart. A run left running by a Runner that stopped is interrupted by the
-dispatcher's tick once its lease has run out, about a minute later, not at the next start.
+compared with the database's clock when each write's statement starts, so a finish or a renewal
+that waited for another writer past its lease's end writes nothing. The Runner renews the lease
+every 15 seconds while the attempt runs. When a renewal fails, conflicts, or takes longer than 15
+seconds, or none has succeeded within 30 seconds of the last that did, the Runner stops the
+attempt's Runtime, writes nothing more for that run, and stops its dispatcher: `GET /v1/health`
+then reports it unhealthy, and the Runner needs a restart. A run left running by a Runner that
+stopped is interrupted by the dispatcher's tick once its lease has run out, about a minute later,
+not at the next start.
+
+Runners on one store may read the same queued run. The one whose write comes second, a claim or
+the end of a run that expired in the queue or names a profile set aside, finds the run no longer
+queued: it works nothing, stays healthy and goes on to the next run.
+
+## Time bounds
+
+Every connection of the two run-time pools starts with three settings. They are the session's
+start parameters, so they override what the connection string or the login's own settings name.
+At start the Runner reads them back, with the search path, on a connection of each pool, and
+refuses to open the store when one is not held (below):
+
+| Setting | Value | Why |
+|---|---|---|
+| `lock_timeout` | 5 s | Every write first takes the lock of `journal_head`, so a session that holds it holds up every writer. A statement that waits longer than 5 s for a lock is refused. 5 s is a third of the 15 s between renewals: a renewal that meets a held lock is refused within 5 s of its start and tried again until its deadline, well inside the 30 s after which the Runner stops the attempt in any case. |
+| `statement_timeout` | 30 s | Above the lock bound, so that a wait for a lock is refused as one; a bound on any statement that holds a pooled connection. |
+| `idle_in_transaction_session_timeout` | 10 s | A session left idle inside a transaction keeps the journal's lock. The server ends it after 10 s, so a writer behind it meets at most two lock refusals. The Runner's own transactions read no file and make no network call inside a transaction, so they are not idle that long. |
+
+Each renewal of a claim is also held to a deadline of 15 s, the interval between renewals: one
+refused for a lock wait is tried again until then, and one not done by then is rolled back, its
+statement cancelled on the server, and the claim is lost, as a renewal that took longer than 15 s
+already was. An attempt that ends while a renewal is in flight waits for it at most that long.
+
+A write refused for one of these bounds writes nothing. Its error names the bound: "waited longer
+than its lock bound (lock_timeout)", "ran longer than its bound (statement_timeout)", "stayed idle
+inside a transaction longer than its bound (idle_in_transaction_session_timeout)" or "did not end
+within its deadline". A request answers `500` with the code `store_error`, as for any other store
+failure, and is not run again.
+
+The dispatcher takes a lock wait for a store that is busy, not failing, and stays healthy:
+
+- a claim, the end of a run that expired in the queue or names a profile set aside, and the tick
+  that interrupts runs whose lease ran out make nothing; the run stays queued, and a later tick
+  tries again;
+- a renewal is tried again until its deadline, and the claim is lost only when the lock is held
+  past it;
+- the claimant's finish is made again while its claim's lease is live. Its claim token and lease
+  fence it, so it lands once or not at all.
+
+A finish still refused when the lease has run out, and any refusal for the statement or idle
+bound or the renewal's deadline, stops the dispatcher, as any store failure does, and
+`GET /v1/health` reports the Runner unhealthy. While an operator's session holds the journal's
+lock, no run is claimed or finished: that session is the thing to end.
 
 ## What is refused
 

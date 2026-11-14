@@ -705,9 +705,25 @@ func (s *Service) worker(ctx context.Context) {
 	}
 }
 
+// endInQueue writes r, read queued, as it ends before it starts, and says
+// whether it was this dispatcher's to end: a run another dispatcher on the
+// same store took out of the queue first (faultConflict) is not, and is no
+// failure of the store's; nor is a write that waited out the store's lock
+// bound, which made nothing and leaves the run queued for a later tick.
+func (s *Service) endInQueue(r Run) (bool, error) {
+	if err := s.changeRun(r); err != nil {
+		if faultOf(err) == faultConflict || lockWaited(err) {
+			return false, nil
+		}
+		return true, err
+	}
+	return true, nil
+}
+
 // dispatchNext takes the oldest queued run, if any, through evaluation to its
 // end, and says whether there was one. An error is a storage error, which
-// stops the dispatcher.
+// stops the dispatcher. A run another dispatcher claimed or ended first is
+// not one.
 func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	r, err := s.store.oldestQueued()
 	if absent(err) {
@@ -726,7 +742,7 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.FinishedAt = now()
 			r.Problem = "The automatic run expired in the queue before evaluation."
 			r.Reason = runQueueExpired
-			return true, s.changeRun(r)
+			return s.endInQueue(r)
 		}
 	}
 	// A run queued before a profile its release names was set aside never
@@ -737,7 +753,7 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 			r.FinishedAt = now()
 			r.Problem = e.Error()
 			r.Reason = runProfileSetAside
-			return true, s.changeRun(r)
+			return s.endInQueue(r)
 		}
 	}
 	r.State = "running"
@@ -753,6 +769,14 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	}
 	claimed := time.Now()
 	if err = s.changeRun(r); err != nil {
+		// The run left the queue between the read and the claim: another
+		// dispatcher on the same store claimed it first. Not this one's to
+		// work, and no failure of the store's: the dispatcher goes on. So
+		// too a claim that waited out the store's lock bound: it made
+		// nothing, and the run stays queued for a later tick.
+		if faultOf(err) == faultConflict || lockWaited(err) {
+			return false, nil
+		}
 		return true, err
 	}
 	// On a kind that leases claims the claim is renewed while the attempt
@@ -838,13 +862,21 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	}
 	// A claimant whose claim was lost writes nothing more of the run, and
 	// stops the dispatcher.
-	if err = releaseClaim(); err != nil {
+	live, err := releaseClaim()
+	if err != nil {
 		return true, err
 	}
 	// A completed run is recorded with its entry in the installation's
 	// chain of runs, or not at all: a failed append stops the dispatcher as
 	// any storage error does, and the run reads interrupted after a restart.
-	return true, s.finishRun(r)
+	// A finish that waited out the store's lock bound made nothing, and is
+	// made again while the claim's lease is live: its token and its lease
+	// fence it, so a second try writes once or not at all.
+	err = s.finishRun(r)
+	for lockWaited(err) && time.Now().Before(live) {
+		err = s.finishRun(r)
+	}
+	return true, err
 }
 func (s *Service) records(kind, jobID string, after int64) ([]json.RawMessage, int64, error) {
 	return s.filteredRecords(kind, jobID, after, recordFilter{})

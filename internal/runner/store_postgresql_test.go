@@ -4,7 +4,9 @@ package runner
 // 10). The tests run against the server JPACK_TEST_POSTGRESQL names, as a
 // login that can create roles and databases and is not a superuser; each is
 // skipped, and says so, when none is named, and fails instead when
-// JPACK_TEST_POSTGRESQL_REQUIRED is set, as CI sets it.
+// JPACK_TEST_POSTGRESQL_REQUIRED is set, as CI sets it. One case also needs
+// the login to grant pg_write_all_data (WITH ADMIN TRUE, INHERIT FALSE, SET
+// FALSE, as CI grants it), and is skipped or fails the same way without it.
 //
 // Once per test binary the harness creates the four roles of section 5 as an
 // operator would, under names of their own, and a template database migrated
