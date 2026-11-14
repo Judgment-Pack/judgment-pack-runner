@@ -116,6 +116,13 @@ var (
 	errPostgreSQLDeadline      = errors.New("a transaction of the postgresql store did not end within its deadline")
 )
 
+// lockWaited says whether err is a transaction that waited out the lock
+// bound and so made nothing: another session held a lock it needed, the
+// journal's first among them. The Runner takes it for a store that is busy,
+// not failing (store.go, claims.go); no other kind waits for a lock with a
+// bound.
+func lockWaited(err error) bool { return errors.Is(err, errPostgreSQLLockWait) }
+
 // pgScopeValue is the value of jpack.scope that holds a transaction to the
 // scope identifier id: "s:" and id, "s:" alone for none (section 6). An unset
 // or empty setting holds a transaction to no row.
@@ -264,12 +271,18 @@ func (k *pgStore) once(fn func(runTx) error) error {
 // updateWithin is update with its transaction, every retry of it and every
 // statement in it held to d from now: a transaction not ended by then is
 // rolled back and refused as errPostgreSQLDeadline, its statement in flight
-// cancelled on the server. The claim's renewal is made so (claims.go), so
-// that a claimant never waits on one longer than its interval.
+// cancelled on the server. One that waited out the lock bound made nothing
+// and is run again until then. The claim's renewal is made so (claims.go),
+// so that a claimant never waits on one longer than its interval, and a
+// lock held a few seconds does not lose its claim.
 func (k *pgStore) updateWithin(d time.Duration, fn func(runTx) error) error {
 	ctx, cancel := context.WithTimeout(k.ctx(), d)
 	defer cancel()
-	err := (&pgStore{pgReads{k.p, k.sc, nil, ctx}}).update(fn)
+	within := &pgStore{pgReads{k.p, k.sc, nil, ctx}}
+	err := within.update(fn)
+	for lockWaited(err) && ctx.Err() == nil {
+		err = within.update(fn)
+	}
 	if f := faultOf(err); err != nil && ctx.Err() != nil && f != faultConflict && f != faultRefused {
 		return storeFailure(faultDurability, "deadline", fmt.Errorf("%w (%s): %v", errPostgreSQLDeadline, d, err))
 	}

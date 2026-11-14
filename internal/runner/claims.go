@@ -63,15 +63,19 @@ var errClaimLost = errors.New("the dispatcher's claim of its run was not renewed
 // attempt's Runtime, when a renewal fails or claimTimes.stop passes after the
 // start of the last that succeeded; release ends the renewals, waiting for
 // one in flight so that none is made after it, and returns errClaimLost when
-// the claim was lost. On any other kind it returns ctx and a release that
-// renews and returns nothing.
-func (s *Service) holdClaim(ctx context.Context, run string, claim runClaim, claimed time.Time) (context.Context, func() error) {
+// the claim was lost, and otherwise the time, by the monotonic clock, before
+// which the store's lease is still live: claimLease after the start of the
+// last claim or renewal that succeeded, whose now() is after that start. On
+// any other kind it returns ctx and a release that renews and returns
+// nothing.
+func (s *Service) holdClaim(ctx context.Context, run string, claim runClaim, claimed time.Time) (context.Context, func() (time.Time, error)) {
 	if !leases(s.store) {
-		return ctx, func() error { return nil }
+		return ctx, func() (time.Time, error) { return time.Time{}, nil }
 	}
 	held, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	lost := false
+	leaseFrom := claimed
 	go func() {
 		defer close(done)
 		stop := time.NewTimer(time.Until(claimed.Add(claimTimes.stop)))
@@ -106,29 +110,36 @@ func (s *Service) holdClaim(ctx context.Context, run string, claim runClaim, cla
 					cancel()
 					continue
 				}
+				leaseFrom = began
 				stop.Reset(time.Until(began.Add(claimTimes.stop)))
 				next.Reset(time.Until(began.Add(claimTimes.renewal)))
 			}
 		}
 	}()
-	return held, func() error {
+	return held, func() (time.Time, error) {
 		cancel()
 		<-done
 		if lost {
-			return errClaimLost
+			return time.Time{}, errClaimLost
 		}
-		return nil
+		return leaseFrom.Add(claimLease), nil
 	}
 }
 
 // interruptLapsed is the dispatcher's tick on a kind that leases claims: each
 // run held running whose lease ran out, which no live claim holds, is
 // interrupted, as the restart interrupts it (D3). A run whose lease is live
-// is its holder's and is left as it is.
+// is its holder's and is left as it is. A tick that waited out the store's
+// lock bound interrupted nothing, and is no failure: the next tick tries
+// again.
 func (s *Service) interruptLapsed() error {
-	return s.store.update(func(tx runTx) error {
+	err := s.store.update(func(tx runTx) error {
 		return interruptRunning(tx, now(), func(r Run) EventDetail {
 			return EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt}}
 		})
 	})
+	if lockWaited(err) {
+		return nil
+	}
+	return err
 }

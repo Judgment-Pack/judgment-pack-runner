@@ -708,10 +708,11 @@ func (s *Service) worker(ctx context.Context) {
 // endInQueue writes r, read queued, as it ends before it starts, and says
 // whether it was this dispatcher's to end: a run another dispatcher on the
 // same store took out of the queue first (faultConflict) is not, and is no
-// failure of the store's.
+// failure of the store's; nor is a write that waited out the store's lock
+// bound, which made nothing and leaves the run queued for a later tick.
 func (s *Service) endInQueue(r Run) (bool, error) {
 	if err := s.changeRun(r); err != nil {
-		if faultOf(err) == faultConflict {
+		if faultOf(err) == faultConflict || lockWaited(err) {
 			return false, nil
 		}
 		return true, err
@@ -770,8 +771,10 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	if err = s.changeRun(r); err != nil {
 		// The run left the queue between the read and the claim: another
 		// dispatcher on the same store claimed it first. Not this one's to
-		// work, and no failure of the store's: the dispatcher goes on.
-		if faultOf(err) == faultConflict {
+		// work, and no failure of the store's: the dispatcher goes on. So
+		// too a claim that waited out the store's lock bound: it made
+		// nothing, and the run stays queued for a later tick.
+		if faultOf(err) == faultConflict || lockWaited(err) {
 			return false, nil
 		}
 		return true, err
@@ -859,13 +862,21 @@ func (s *Service) dispatchNext(ctx context.Context) (bool, error) {
 	}
 	// A claimant whose claim was lost writes nothing more of the run, and
 	// stops the dispatcher.
-	if err = releaseClaim(); err != nil {
+	live, err := releaseClaim()
+	if err != nil {
 		return true, err
 	}
 	// A completed run is recorded with its entry in the installation's
 	// chain of runs, or not at all: a failed append stops the dispatcher as
 	// any storage error does, and the run reads interrupted after a restart.
-	return true, s.finishRun(r)
+	// A finish that waited out the store's lock bound made nothing, and is
+	// made again while the claim's lease is live: its token and its lease
+	// fence it, so a second try writes once or not at all.
+	err = s.finishRun(r)
+	for lockWaited(err) && time.Now().Before(live) {
+		err = s.finishRun(r)
+	}
+	return true, err
 }
 func (s *Service) records(kind, jobID string, after int64) ([]json.RawMessage, int64, error) {
 	return s.filteredRecords(kind, jobID, after, recordFilter{})
