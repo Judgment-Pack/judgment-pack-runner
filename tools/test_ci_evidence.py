@@ -15,6 +15,7 @@ reader: a workflow rewritten in another shape fails here until the reading follo
 """
 import hashlib
 import os
+import platform
 import tempfile
 import json
 from pathlib import Path
@@ -119,8 +120,13 @@ def go_versions(text):
 
 
 
-def unit_partition_trace(script, *, script_text=None, fail_call=None, conformance='sqlite,memory,twice'):
-    """Execute only shell wiring: the fake Go records selections, never builds."""
+def unit_partition_trace(script, *, script_text=None, fail_call=None, fail_args=None, jobs=None,
+                         conformance='sqlite,memory,twice'):
+    """Execute only shell wiring: the fake Go records selections, never builds.
+
+    jobs sets JPACK_UNIT_TEST_JOBS (None leaves the script's default). Call numbers
+    follow the order in which Go starts, so fail_call is exact only with jobs='1';
+    fail_args fails the call with exactly these arguments, whatever its number."""
     with tempfile.TemporaryDirectory(prefix='runner-unit-selection-') as temporary:
         directory = Path(temporary)
         trace = directory / 'trace.jsonl'
@@ -138,7 +144,7 @@ with Path(os.environ['UNIT_SELECTION_TRACE']).open('a') as output:
         'JPACK_EARLIER_TEST_BIN', 'JPACK_GATEWAY_TEST_BIN', 'JPACK_MCP_ADAPTER_TEST_BIN',
         'JPACK_OLD_RUNNER_TEST_BIN')}}) + '\n')
 number = len(Path(os.environ['UNIT_SELECTION_TRACE']).read_text().splitlines())
-if str(number) == os.environ.get('UNIT_SELECTION_FAIL_CALL'):
+if str(number) == os.environ.get('UNIT_SELECTION_FAIL_CALL') or args == json.loads(os.environ['UNIT_SELECTION_FAIL_ARGS']):
     print('fake Go failure at call %d' % number)
     sys.exit(7)
 if '^TestStoreKindsConform$' in args:
@@ -150,10 +156,14 @@ if '^TestStoreKindsConform$' in args:
         env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ['PATH'],
                    UNIT_SELECTION_TRACE=str(trace),
                    UNIT_SELECTION_FAIL_CALL=str(fail_call),
+                   UNIT_SELECTION_FAIL_ARGS=json.dumps(fail_args),
                    UNIT_SELECTION_CONFORMANCE=conformance)
+        env.pop('JPACK_UNIT_TEST_JOBS', None)
+        if jobs is not None:
+            env['JPACK_UNIT_TEST_JOBS'] = jobs
         process = subprocess.run(['bash', str(script)], cwd=ROOT, env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        calls = [json.loads(line) for line in trace.read_text().splitlines()]
+        calls = [json.loads(line) for line in trace.read_text().splitlines()] if trace.exists() else []
         return process, calls
 
 
@@ -277,7 +287,10 @@ class Checks(unittest.TestCase):
                 re.search(expression, component)
                 for expression, component in zip(expressions, components))
 
-        groups = []
+        # The groups run side by side, so the trace holds them in the order
+        # they started, which is not fixed: the group that takes what the
+        # others leave is known by having no -run, not by being last.
+        groups, rest = [], []
         for call in main:
             args = call['args']
             self.assertEqual(args[:2], ['test', '-race'], 'unit partition lost race instrumentation')
@@ -296,6 +309,8 @@ class Checks(unittest.TestCase):
             if '-skip' in args:
                 matches -= {name for name in names if selected(args[args.index('-skip') + 1], name)}
             groups.append(matches)
+            if '-run' not in args:
+                rest.append(matches)
             for key, binary in {'JPACK_TEST_BIN': 'jpack', 'JPACK_RETAINED_TEST_BIN': 'jpack-retained',
                                 'JPACK_COVERS_TEST_BIN': 'jpack-covers', 'JPACK_CORE050_TEST_BIN': 'jpack-core050',
                                 'JPACK_EARLIER_TEST_BIN': 'jpack-earlier', 'JPACK_GATEWAY_TEST_BIN': 'gateway',
@@ -306,8 +321,9 @@ class Checks(unittest.TestCase):
             for other in groups[index + 1:]:
                 self.assertFalse(group & other, 'unit partitions repeat cases')
         self.assertEqual(len(groups), 10)
+        self.assertEqual(len(rest), 1, 'one unit partition takes what the others leave')
         for name in ('ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzSelectedLeaf'):
-            self.assertIn(name, groups[-1])
+            self.assertIn(name, rest[0])
         conformance = [call for call in calls if '^TestStoreKindsConform$' in call['args']]
         self.assertEqual(len(conformance), 1)
         self.assertEqual(conformance[0]['args'],
@@ -348,13 +364,56 @@ class Checks(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, message):
                     self.assert_unit_partition_calls(calls)
 
+    def test_unit_selections_run_side_by_side_as_they_run_one_after_another(self):
+        serial, serial_calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', jobs='1')
+        self.assertEqual(serial.returncode, 0, serial.stdout)
+        self.assert_unit_partition_calls(serial_calls)
+        self.assertIn('unit-tests: 10 groups, at most 1 at once, ', serial.stdout)
+        default = '2' if platform.system() == 'Darwin' else '3'
+        for jobs, at_most in ((None, default), ('4', '4'), ('10', '10')):
+            with self.subTest(jobs=jobs):
+                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', jobs=jobs)
+                self.assertEqual(process.returncode, 0, process.stdout)
+                self.assertEqual(sorted(call['args'] for call in calls), sorted(call['args'] for call in serial_calls))
+                self.assertEqual(calls[-1]['args'], serial_calls[-1]['args'], 'conformance did not run last')
+                listing = [line for line in process.stdout.splitlines() if line.startswith('unit-tests: 10 groups')]
+                self.assertEqual(len(listing), 1, process.stdout)
+                self.assertIn(', at most %s at once, ' % at_most, listing[0])
+                for group in range(1, 11):
+                    self.assertRegex(listing[0], r'(: |, )%d ok [0-9]+s' % group)
+
+    def test_unit_script_refuses_a_job_count_that_is_not_a_whole_number_above_zero(self):
+        for jobs in ('0', '00', '03', '-1', '1.5', 'two', ' 2'):
+            with self.subTest(jobs=jobs):
+                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', jobs=jobs)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertEqual(calls, [])
+                self.assertIn('not a whole number above 0', process.stdout)
+
     def test_unit_script_propagates_each_partition_and_conformance_failure(self):
+        # One at a time, nothing starts after a failure.
         for failed in range(1, 12):
             with self.subTest(call=failed):
-                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', fail_call=failed)
+                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', fail_call=failed,
+                                                      jobs='1')
                 self.assertNotEqual(process.returncode, 0)
                 self.assertEqual(len(calls), failed, 'script continued after Go failed')
                 self.assertIn('fake Go failure at call %d' % failed, process.stdout)
+        # Side by side, a failed group fails the step, its output is shown whole, and the
+        # store conformance run does not start.
+        _, everything = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', jobs='1')
+        groups = [call['args'] for call in everything[:10]]
+        for number, args in enumerate(groups, 1):
+            with self.subTest(group=number):
+                process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', fail_args=args)
+                self.assertNotEqual(process.returncode, 0)
+                self.assertIn('fake Go failure at call ', process.stdout)
+                self.assertIn('== the output of group %d ==' % number, process.stdout)
+                self.assertRegex(process.stdout, r'(?m)^group %d FAIL \(7\) in ' % number)
+                self.assertRegex(process.stdout, r'(?m)^unit-tests: 10 groups, .*\b%d FAIL \(7\)' % number)
+                self.assertNotIn(everything[10]['args'], [call['args'] for call in calls],
+                                 'store conformance ran after a group failed')
+                self.assertIn(args, [call['args'] for call in calls])
 
     def assert_unit_store_conformance_required(self, *, script_text=None):
         for kinds, missing in [('sqlite,twice', 'memory'), ('memory,twice', 'sqlite'), ('sqlite,memory', 'twice'),

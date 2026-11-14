@@ -9,7 +9,7 @@
     {"name": "go-vet", "run": "go vet ./...", "toolchain": "go", "timeout": 3000},
     {"name": "build-pinned", "run": "scripts/checks/build-pinned.sh", "toolchain": "go", "timeout": 3000},
     {"name": "manual-gate", "run": "scripts/checks/manual-gate.sh", "toolchain": "go", "summary": "^(ok|FAIL|---) ", "timeout": 3000},
-    {"name": "unit-tests", "run": "scripts/checks/unit-tests.sh", "toolchain": "go", "summary": "^(ok|FAIL|---) ", "timeout": 3000},
+    {"name": "unit-tests", "run": "scripts/checks/unit-tests.sh", "toolchain": "go", "summary": "^(ok|FAIL|---|unit-tests:) ", "timeout": 3000},
     {"name": "chain-tests", "run": "scripts/checks/chain-tests.sh", "toolchain": "go", "summary": "^(ok|FAIL) ", "timeout": 3000},
     {"name": "openapi", "run": "python3 -m json.tool openapi.json > /dev/null", "toolchain": "python"},
     {"name": "build", "run": "go build -trimpath -o /dev/null ./cmd/jpack-runner && go build -trimpath -o /dev/null ./cmd/jpack-source-worker", "toolchain": "go", "timeout": 3000},
