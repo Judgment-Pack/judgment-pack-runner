@@ -525,6 +525,37 @@ func TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease(t *testing.T) {
 	}
 }
 
+// The kind's search path puts the system's catalog before its schema: a
+// function made in the schema with a built-in's name and arguments, even by
+// the owner, whom the start's checks pass, hides no built-in from the kind's
+// unqualified statements. A claim, a renewal and a finish read the
+// database's clock, and a read held to a scope sets it, as before; and no
+// relation of the schema has a name the catalog holds, so that every
+// unqualified table is still found in the schema.
+func TestPostgreSQLResolvesABuiltinBeforeTheSchema(t *testing.T) {
+	s, db, w, real := pgConditionWorld(t)
+	var shadows []string
+	for _, f := range []string{"now() RETURNS timestamptz", "statement_timestamp() RETURNS timestamptz", "set_config(text, text, boolean) RETURNS text"} {
+		shadows = append(shadows, "CREATE FUNCTION jpack_runner."+f+" LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'a function of the schema hid a built-in'; END$$")
+	}
+	pgOwnerDoes(t, s, db, shadows...)
+	r, ok, err := claimRun(real, w.runs["a"].ID)
+	if err != nil || !ok {
+		t.Fatal("a claim called a function of the schema:", ok, err)
+	}
+	must(t, real.update(func(tx runTx) error { return tx.renewClaim(r.ID, r.claim) }))
+	must(t, finishRunIn(real, completed(r)))
+	if got, err := real.heldTo(scopeHeld("a")).run(r.ID); err != nil || got.State != "completed" {
+		t.Fatal("a read held to a scope called a function of the schema:", got.State, err)
+	}
+	var shared string
+	must(t, s.pool(t, pgRoleSuite, db).QueryRowContext(pgContext, `SELECT coalesce(string_agg(c.relname, ', '), '') FROM pg_class c
+WHERE c.relnamespace='jpack_runner'::regnamespace AND EXISTS (SELECT 1 FROM pg_class k WHERE k.relnamespace='pg_catalog'::regnamespace AND k.relname=c.relname)`).Scan(&shared))
+	if shared != "" {
+		t.Fatal("a relation of the schema has a name the catalog holds:", shared)
+	}
+}
+
 // claimRun claims the queued run id on st as the dispatcher claims it: in a
 // transaction that expects it queued.
 func claimRun(st runStore, id string) (Run, bool, error) {

@@ -66,8 +66,8 @@ func pgAdminDoes(t *testing.T, s *pgTestServer, statement, undo string) {
 	})
 }
 
-// The schema and every relation in it are the owner's the configuration
-// names.
+// The schema and every relation, function, operator and type in it are the
+// owner's the configuration names.
 func TestPostgreSQLStartRefusesASchemaNotOwnedByTheNamedOwner(t *testing.T) {
 	s := pgServer(t)
 	db := s.database(t)
@@ -88,6 +88,23 @@ func TestPostgreSQLStartRefusesASchemaNotOwnedByTheNamedOwner(t *testing.T) {
 		}
 		wantStartRefused(t, pgStartOn(s, db, s.role(pgRoleOwner)), errSchemaNotOwned, "stray")
 	})
+	for name, c := range map[string]struct{ statement, names string }{
+		"a function another role owns":  {"CREATE FUNCTION jpack_runner.statement_timestamp() RETURNS timestamptz LANGUAGE sql AS $$SELECT 'infinity'::timestamptz$$", "function statement_timestamp"},
+		"an operator another role owns": {"CREATE OPERATOR jpack_runner.=== (LEFTARG = int, RIGHTARG = int, FUNCTION = int4eq)", "operator ==="},
+		"a type another role owns":      {"CREATE TYPE jpack_runner.stray_kind AS ENUM ('a')", "type _stray_kind"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := s.database(t)
+			migration := pgx.Identifier{s.role(pgRoleMigration)}.Sanitize()
+			pgOwnerDoes(t, s, db, "GRANT USAGE, CREATE ON SCHEMA jpack_runner TO "+migration)
+			cfg, err := pgx.ParseConfig(s.url(pgRoleMigration, db))
+			must(t, err)
+			conn := stdlib.OpenDB(*cfg)
+			defer conn.Close()
+			pgExec(t, conn, c.statement)
+			wantStartRefused(t, pgStartOn(s, db, s.role(pgRoleOwner)), errSchemaNotOwned, c.names)
+		})
+	}
 }
 
 // Every table has row security enabled and forced.

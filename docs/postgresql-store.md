@@ -105,8 +105,10 @@ At start the Runner refuses to open the store when:
 - the store is not migrated, or its applied migrations are not exactly this Runner's set: run
   `jpack-runner store migrate` with the matching `jpack-runner` first;
 - the grants were made to other logins than the ones configured;
-- the owner the configuration names does not own the schema, or a relation in it ("not owned by
-  the owner role the configuration names", naming the object);
+- the owner the configuration names does not own the schema, or a relation, function, operator or
+  type in it ("not owned by the owner role the configuration names", naming the object). Every
+  pooled connection searches the system's catalog before the schema, so that nothing made in the
+  schema hides a built-in;
 - a table of the schema does not have row security both enabled and forced ("does not have row
   security enabled and forced", naming the table): `NO FORCE ROW LEVEL SECURITY` set by hand is
   refused;

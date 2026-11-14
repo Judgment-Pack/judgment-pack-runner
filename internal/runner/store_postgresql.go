@@ -311,9 +311,12 @@ func (k *pgStore) close() error {
 	return err
 }
 
-// pgOpenPool opens a pool for one login, with the kind's schema first in its
-// search path and the system's after it, and pgBounds, and the function that
-// closes the driver's pool under it. The settings are the session's start
+// pgOpenPool opens a pool for one login, with the system's catalog first in
+// its search path and the kind's schema after it, and pgBounds, and the
+// function that closes the driver's pool under it. With the catalog first, a
+// function, operator or type made in the schema never hides a built-in of
+// the same name from the kind's statements, whose tables are unqualified and
+// found in the schema, the catalog holding none of their names. The settings are the session's start
 // parameters, stored nowhere, and override what the connection string says.
 // A statement whose context ends (updateWithin) has its connection closed by
 // the driver, which sends the server a cancel request first, so that the
@@ -323,7 +326,7 @@ func pgOpenPool(conn string) (*sql.DB, func(), error) {
 	if err != nil {
 		return nil, nil, errors.New("a connection string of the postgresql store does not read")
 	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = postgresqlSchema + ", pg_catalog"
+	cfg.ConnConfig.RuntimeParams["search_path"] = "pg_catalog, " + postgresqlSchema
 	cfg.ConnConfig.RuntimeParams["application_name"] = "jpack-runner"
 	for name, d := range map[string]time.Duration{"lock_timeout": pgBounds.lock, "statement_timeout": pgBounds.statement, "idle_in_transaction_session_timeout": pgBounds.idle} {
 		cfg.ConnConfig.RuntimeParams[name] = strconv.FormatInt(d.Milliseconds(), 10)
@@ -443,7 +446,7 @@ func (k *pgStore) checkLogins(owner string) error {
 // The refusals of a start whose live schema is not as the migration left it
 // (checkSchema), each naming the object it found.
 var (
-	errSchemaNotOwned        = errors.New("the postgresql store's schema, or a relation in it, is not owned by the owner role the configuration names")
+	errSchemaNotOwned        = errors.New("the postgresql store's schema, or a relation, function, operator or type in it, is not owned by the owner role the configuration names")
 	errRowSecurityOff        = errors.New("a table of the postgresql store does not have row security enabled and forced")
 	errLoginPrivilegeTooWide = errors.New("a run-time login of the postgresql store holds DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of its schema, or CREATE on the schema")
 )
@@ -452,7 +455,8 @@ var (
 const pgTableKinds = "('r','p','v','m','f')"
 
 // checkSchema refuses a store whose live schema is not as the migration
-// left it: the schema or a relation in it not owned by owner, a table
+// left it: the schema, or a relation, function, operator or type in it, not
+// owned by owner (a table's own row type is its relation's), a table
 // without row security enabled and forced, or a run-time login that holds
 // DELETE, TRUNCATE, REFERENCES or TRIGGER on a table of the schema or CREATE
 // on it. A login's privileges are those it holds through any role it is a
@@ -465,7 +469,10 @@ func (k *pgStore) checkSchema(owner string) error {
 	schema := "'" + postgresqlSchema + "'::regnamespace"
 	var stray string
 	err := k.p.worker.QueryRowContext(pgContext, `SELECT coalesce((SELECT 'schema '||n.nspname FROM pg_namespace n WHERE n.oid=`+schema+` AND n.nspowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=$1)),
-  (SELECT c.relname FROM pg_class c WHERE c.relnamespace=`+schema+` AND c.relowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=$1) ORDER BY c.relname LIMIT 1), '')`, owner).Scan(&stray)
+  (SELECT c.relname FROM pg_class c WHERE c.relnamespace=`+schema+` AND c.relowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=$1) ORDER BY c.relname LIMIT 1),
+  (SELECT 'function '||p.proname FROM pg_proc p WHERE p.pronamespace=`+schema+` AND p.proowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=$1) ORDER BY p.proname LIMIT 1),
+  (SELECT 'operator '||o.oprname FROM pg_operator o WHERE o.oprnamespace=`+schema+` AND o.oprowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=$1) ORDER BY o.oprname LIMIT 1),
+  (SELECT 'type '||t.typname FROM pg_type t WHERE t.typnamespace=`+schema+` AND t.typrelid=0 AND t.typowner IS DISTINCT FROM (SELECT oid FROM pg_roles WHERE rolname=$1) ORDER BY t.typname LIMIT 1), '')`, owner).Scan(&stray)
 	if err != nil {
 		return pgFault("open", err, false)
 	}
