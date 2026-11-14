@@ -3,7 +3,8 @@ name: CI
 # The check list is dev.json, run by scripts/dev/check.sh (the development kit's vendored runner);
 # the longer steps are scripts under scripts/checks/ with the comments they had here. Two jobs, both
 # required by branch protection under their names: `Runner (<os>)` runs every step but the release
-# ones on Linux and macOS, and `Release contents` runs the release steps. Both set up the exact
+# ones on Linux and macOS, `Release contents` runs the release steps, and `PostgreSQL store` runs the
+# postgresql store kind's tests against a service container. Both set up the exact
 # toolchain release.yml names. On a pull request the `Runner` jobs run only the steps jpdev.json
 # maps the changed paths to (`check.sh --changed`); on a push to main they run the whole list.
 # `Release contents` runs its four steps every time. A push to main also records each job's
@@ -58,9 +59,9 @@ jobs:
         run: |
           set -o pipefail
           if [ "$EVENT" = pull_request ]; then
-            scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip release-toolchain,third-party-notices,release-archives,release-programs | tee "${{ runner.temp }}/checks.log"
+            scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
           else
-            scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs | tee "${{ runner.temp }}/checks.log"
+            scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
           fi
       # The commit, its input identities, this runner's image and tools, and every check's result:
       # the evidence the release takes (.github/ci-evidence.json). Only a push to main records it.
@@ -101,6 +102,53 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-evidence-ci-release-contents-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # The postgresql store kind's tests (docs/design/store-postgresql.md, section 10), against a
+  # PostgreSQL 16 service container, in a job of its own so that no other job waits for the
+  # server. The container's superuser makes an administrator that is not one, with the two
+  # attributes the tests' roles and databases need, and is not used again; a test that would
+  # skip fails here (JPACK_TEST_POSTGRESQL_REQUIRED).
+  postgresql-store:
+    name: PostgreSQL store
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-superuser-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: true
+      - name: An administrator that is not a superuser
+        env:
+          PGPASSWORD: ci-superuser-only
+        run: psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE jpack_ci_admin LOGIN CREATEROLE CREATEDB PASSWORD 'ci-admin-only'"
+      - name: The postgresql store's step of dev.json
+        env:
+          JPACK_TEST_POSTGRESQL: postgres://jpack_ci_admin:ci-admin-only@127.0.0.1:5432/postgres?sslmode=disable
+          JPACK_TEST_POSTGRESQL_REQUIRED: '1'
+        run: |
+          set -o pipefail
+          scripts/dev/check.sh --all --only postgresql-store | tee "${{ runner.temp }}/checks.log"
+      - name: Record exact CI inputs and coverage
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: python3 scripts/dev/release_evidence.py capture --workflow ci --job postgresql-store --check-log "${{ runner.temp }}/checks.log" --output "${{ runner.temp }}/evidence.json"
+      - name: Upload immutable CI evidence
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-evidence-ci-postgresql-store-${{ github.run_attempt }}
           path: ${{ runner.temp }}/evidence.json
           if-no-files-found: error
           retention-days: 7
