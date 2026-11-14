@@ -19,7 +19,10 @@ type Config struct {
 	ExecutorAdmission *ManualAdmissionBinding
 	// ExecutorOwnership opts this workspace into trusted external ownership.
 	// Open snapshots it before taking the lease; nil preserves legacy behavior.
-	ExecutorOwnership              *ExecutorOwnership
+	ExecutorOwnership *ExecutorOwnership
+	// PostgreSQL selects the postgresql kind, with its logins
+	// (docs/design/store-postgresql.md, D1). nil is the sqlite kind, in Dir.
+	PostgreSQL                     *PostgreSQLConnections
 	Dir, Runtime, Workspace, Owner string
 	InputProfiles                  []InputProfile
 	InputRoot                      string
@@ -219,8 +222,12 @@ func Open(cfg Config) (_ *Service, err error) {
 	// The boot line's directory reaches the store only through the store
 	// kind's constructor, which takes the store's lock, then runs afterLock,
 	// then opens the database, and applies the schema after manual.
-	s.store, err = openStore(defaultStoreKind, storeOpening{
-		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot,
+	kind, connections := defaultStoreKind, PostgreSQLConnections{}
+	if cfg.PostgreSQL != nil {
+		kind, connections = postgresqlKind, *cfg.PostgreSQL
+	}
+	s.store, err = openStore(kind, storeOpening{
+		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot, postgresql: connections,
 		migrate: cfg.ExecutorAdmission == nil, manualAdmission: cfg.ExecutorAdmission != nil,
 		afterLock: func() error {
 			for _, n := range []string{"releases", "attempts", "runtimes"} {

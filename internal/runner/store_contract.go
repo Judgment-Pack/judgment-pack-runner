@@ -637,6 +637,9 @@ type storeOpening struct {
 	// manualAdmission is set when the Runner runs under manual admission:
 	// a kind that hands it no manual-admission state is then refused.
 	manualAdmission bool
+	// postgresql are the postgresql kind's logins. Only that kind reads
+	// them.
+	postgresql PostgreSQLConnections
 }
 
 // manualState is the manual-admission state the sqlite kind keeps beside
@@ -692,14 +695,21 @@ const (
 	askRunAttempts
 )
 
-// defaultStoreKind is the kind every Runner opens. The boot line names no
-// kind, so no other is selectable yet.
+// defaultStoreKind is the kind a Runner opens unless its service
+// configuration names another (store-postgresql.md, D1).
 const defaultStoreKind = "sqlite"
 
 // storeKinds are the kinds a store can be opened as, by name.
 var storeKinds = map[string]func(storeOpening) (runStore, error){
 	"sqlite": func(o storeOpening) (runStore, error) {
 		k, err := openSQLiteStore(o)
+		if err != nil {
+			return nil, err
+		}
+		return k, nil
+	},
+	postgresqlKind: func(o storeOpening) (runStore, error) {
+		k, err := openPostgreSQLStore(o)
 		if err != nil {
 			return nil, err
 		}

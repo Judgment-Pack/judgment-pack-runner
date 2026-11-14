@@ -50,6 +50,10 @@ type storeKindUnderTest struct {
 	// being the fence.
 	fencesClaims bool
 	passTime     func(st runStore, d time.Duration)
+	// migratedSchema is a kind whose migration writes the latest schema the
+	// Runner knows, which raiseSchema then finds raised (the postgresql
+	// kind: store-postgresql.md, D15).
+	migratedSchema bool
 	// own are the kind's own cases.
 	own []storeCase
 }
@@ -83,7 +87,7 @@ func openSQLiteForTest(t *testing.T, dir string) *sqliteStore {
 }
 
 func storeKindsUnderTest() []storeKindUnderTest {
-	return []storeKindUnderTest{
+	return append([]storeKindUnderTest{
 		{
 			name: "sqlite",
 			open: func(t *testing.T) runStore {
@@ -147,7 +151,7 @@ func storeKindsUnderTest() []storeKindUnderTest {
 			failCommits:  func(st runStore, err error) { memoryOf(st).failCommits(err) },
 			spoil:        func(t *testing.T, st runStore, run string) { memoryOf(st).spoilRun(run) },
 		},
-	}
+	}, pgKindsUnderTest()...)
 }
 
 // memoryOf is the in-memory kind st is, or runs on under the twice mode.

@@ -1,12 +1,14 @@
 package runner
 
-// No code outside the sqlite kind's files holds the kind's database or makes
-// a statement (docs/design/store-interface.md, section 9.5): the rule is
-// read from the module's source, not from a list of files. Outside the files
-// sqliteKindFiles names, no file of the module imports database/sql or a
-// sqlite package, or holds statement text in a string; and no file of this
-// package selects a member the kind's files declare with a database/sql type,
-// or names a function, variable or type they declare over one.
+// No code outside the store kinds' files holds a kind's database or makes a
+// statement (docs/design/store-interface.md, section 9.5; the postgresql
+// kind's, store-postgresql.md, section 3): the rule is read from the
+// module's source, not from a list of files. Outside the files
+// storeKindFiles names, no file of the module imports database/sql, a sqlite
+// package or the postgresql driver, or holds statement text in a string; and
+// no file of this package selects a member the kinds' files declare with a
+// database/sql type, or names a function, variable or type they declare over
+// one.
 
 import (
 	"go/ast"
@@ -22,8 +24,9 @@ import (
 	"testing"
 )
 
-// sqliteKindFiles are the sqlite kind's files, from the module's root.
-const sqliteKindFiles = "internal/runner/store_sqlite*.go"
+// storeKindFiles are the files of the sqlite and the postgresql kinds, from
+// the module's root.
+var storeKindFiles = []string{"internal/runner/store_sqlite*.go", "internal/runner/store_postgresql*.go"}
 
 // sqlStatement is statement text: a statement's keywords, written as this
 // module writes them, or a function only a statement calls.
@@ -32,7 +35,7 @@ var sqlStatement = regexp.MustCompile(`\b(SELECT\b[\s\S]*\bFROM|INSERT (OR [A-Z]
 type lintedFile struct {
 	path string // from the module's root, with slashes
 	file *ast.File
-	kind bool // one of sqliteKindFiles
+	kind bool // one of storeKindFiles
 }
 
 // moduleSources parses every Go file of the module outside its tests.
@@ -66,9 +69,16 @@ func moduleSources(t *testing.T, fset *token.FileSet) []lintedFile {
 		if err != nil {
 			return err
 		}
-		kind, err := path.Match(sqliteKindFiles, rel)
+		kind := false
+		for _, pattern := range storeKindFiles {
+			matched, err := path.Match(pattern, rel)
+			if err != nil {
+				return err
+			}
+			kind = kind || matched
+		}
 		files = append(files, lintedFile{path: rel, file: f, kind: kind})
-		return err
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -234,8 +244,8 @@ func TestNoStatementOutsideTheSQLiteKind(t *testing.T) {
 		imports, _ := importNames(lf.file)
 		for _, spec := range lf.file.Imports {
 			p, _ := strconv.Unquote(spec.Path.Value)
-			if p == "database/sql" || strings.HasPrefix(p, "database/sql/") || strings.Contains(p, "sqlite") {
-				t.Errorf("%s: imports %s outside the sqlite kind's files (%s)", at(spec), p, sqliteKindFiles)
+			if p == "database/sql" || strings.HasPrefix(p, "database/sql/") || strings.Contains(p, "sqlite") || strings.Contains(p, "jackc/pgx") {
+				t.Errorf("%s: imports %s outside the store kinds' files (%s)", at(spec), p, storeKindFiles)
 			}
 		}
 		ownPackage := path.Dir(lf.path) == "internal/runner"
@@ -244,7 +254,7 @@ func TestNoStatementOutsideTheSQLiteKind(t *testing.T) {
 			switch n := n.(type) {
 			case *ast.BasicLit:
 				if text, err := strconv.Unquote(n.Value); n.Kind == token.STRING && err == nil && sqlStatement.MatchString(text) {
-					t.Errorf("%s: statement text outside the sqlite kind's files: %.60q", at(n), text)
+					t.Errorf("%s: statement text outside the store kinds' files: %.60q", at(n), text)
 				}
 			case *ast.SelectorExpr:
 				selected[n.Sel] = true
@@ -252,11 +262,11 @@ func TestNoStatementOutsideTheSQLiteKind(t *testing.T) {
 					return false
 				}
 				if ownPackage && members[n.Sel.Name] {
-					t.Errorf("%s: selects %s, which the sqlite kind declares over database/sql", at(n.Sel), n.Sel.Name)
+					t.Errorf("%s: selects %s, which a store kind declares over database/sql", at(n.Sel), n.Sel.Name)
 				}
 			case *ast.Ident:
 				if ownPackage && !selected[n] && named[n.Name] {
-					t.Errorf("%s: names %s, which the sqlite kind declares over database/sql", at(n), n.Name)
+					t.Errorf("%s: names %s, which a store kind declares over database/sql", at(n), n.Name)
 				}
 			}
 			return true
