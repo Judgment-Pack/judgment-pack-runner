@@ -31,7 +31,7 @@ var (
 func errNoProfileRow(key string) error { return fmt.Errorf("no profile row is held under %q", key) }
 
 func (t *pgTx) exec(op, query string, args ...any) (int64, error) {
-	res, err := t.tx.ExecContext(pgContext, query, args...)
+	res, err := t.tx.ExecContext(t.ctx(), query, args...)
 	if err != nil {
 		return 0, pgFault(op, err, true)
 	}
@@ -60,7 +60,7 @@ func (t *pgTx) move(name string, states []string, from, to string) error {
 
 func (t *pgTx) heldCount(name string) (int, error) {
 	var n int
-	err := t.tx.QueryRowContext(pgContext, "SELECT value FROM counts WHERE name=$1", name).Scan(&n)
+	err := t.tx.QueryRowContext(t.ctx(), "SELECT value FROM counts WHERE name=$1", name).Scan(&n)
 	return n, pgFault("count", err, false)
 }
 
@@ -90,7 +90,7 @@ func (t *pgTx) putRun(r Run, want runExpected) (string, error) {
 		return "", e
 	}
 	var from string
-	if err := t.tx.QueryRowContext(pgContext, "SELECT state FROM runs WHERE id=$1 FOR UPDATE", r.ID).Scan(&from); err != nil {
+	if err := t.tx.QueryRowContext(t.ctx(), "SELECT state FROM runs WHERE id=$1 FOR UPDATE", r.ID).Scan(&from); err != nil {
 		return "", pgFault("run", err, false)
 	}
 	if want.state != anyState && from != want.state {
@@ -155,14 +155,14 @@ func (t *pgTx) runningRuns() ([]Run, error) {
 // for the first (D14).
 func (t *pgTx) lastEntry() (int64, []byte, error) {
 	var last int64
-	if err := t.tx.QueryRowContext(pgContext, "SELECT last FROM chain_head FOR UPDATE").Scan(&last); err != nil {
+	if err := t.tx.QueryRowContext(t.ctx(), "SELECT last FROM chain_head FOR UPDATE").Scan(&last); err != nil {
 		return 0, nil, pgFault("chain", err, false)
 	}
 	if last == 0 {
 		return 0, nil, storeFailure(faultAbsent, "chain", sql.ErrNoRows)
 	}
 	var line []byte
-	if err := t.tx.QueryRowContext(pgContext, "SELECT line FROM run_chain WHERE sequence=$1", last).Scan(&line); err != nil {
+	if err := t.tx.QueryRowContext(t.ctx(), "SELECT line FROM run_chain WHERE sequence=$1", last).Scan(&line); err != nil {
 		return 0, nil, pgFault("chain", err, false)
 	}
 	return last, line, nil
@@ -189,7 +189,7 @@ func (t *pgTx) createRelease(r Release) error {
 func (t *pgTx) appendJournal(c change) (int64, error) {
 	e := journalRowOf(c)
 	var sequence int64
-	if err := t.tx.QueryRowContext(pgContext, "UPDATE journal_head SET last=last+1 RETURNING last").Scan(&sequence); err != nil {
+	if err := t.tx.QueryRowContext(t.ctx(), "UPDATE journal_head SET last=last+1 RETURNING last").Scan(&sequence); err != nil {
 		return 0, pgFault("journal", err, true)
 	}
 	_, err := t.exec("journal", "INSERT INTO events(sequence,entry_version,kind,at,by_actor,concerns,revision,from_state,to_state,reason,detail,job_id,release_id,refusal) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
@@ -207,7 +207,7 @@ func (t *pgTx) raiseSchema(schema string) error {
 		return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))
 	}
 	var held string
-	if err := t.tx.QueryRowContext(pgContext, "SELECT value FROM metadata WHERE key='schema'").Scan(&held); err != nil {
+	if err := t.tx.QueryRowContext(t.ctx(), "SELECT value FROM metadata WHERE key='schema'").Scan(&held); err != nil {
 		return pgFault("schema", err, false)
 	}
 	if pgSchemaOrder[held] < pgSchemaOrder[schema] {
@@ -218,7 +218,7 @@ func (t *pgTx) raiseSchema(schema string) error {
 
 func (t *pgTx) lastRefusal(key string) (string, error) {
 	var at string
-	err := t.tx.QueryRowContext(pgContext, "SELECT at FROM events WHERE refusal=$1 ORDER BY sequence DESC LIMIT 1", []byte(key)).Scan(&at)
+	err := t.tx.QueryRowContext(t.ctx(), "SELECT at FROM events WHERE refusal=$1 ORDER BY sequence DESC LIMIT 1", []byte(key)).Scan(&at)
 	return at, pgFault("journal", err, false)
 }
 
@@ -316,7 +316,7 @@ func (t *pgTx) createOccurrence(o Occurrence, identity, payload string) error {
 
 func (t *pgTx) putOccurrence(o Occurrence, expected string) (string, error) {
 	var from string
-	if err := t.tx.QueryRowContext(pgContext, "SELECT state FROM occurrences WHERE id=$1 FOR UPDATE", o.ID).Scan(&from); err != nil {
+	if err := t.tx.QueryRowContext(t.ctx(), "SELECT state FROM occurrences WHERE id=$1 FOR UPDATE", o.ID).Scan(&from); err != nil {
 		return "", pgFault("occurrence", err, false)
 	}
 	if expected != anyState && from != expected {
@@ -344,13 +344,13 @@ func (t *pgTx) createOccurrenceKey(occurrence, hash string) error {
 
 func (t *pgTx) jobActivity(job string) (int, error) {
 	var n int
-	err := t.tx.QueryRowContext(pgContext, "SELECT (SELECT count(*) FROM runs WHERE job_id=$1 AND state IN ('queued','running'))+(SELECT count(*) FROM occurrences WHERE job_id=$1 AND state IN ('accepted','preparing','waiting','needs-attention'))", job).Scan(&n)
+	err := t.tx.QueryRowContext(t.ctx(), "SELECT (SELECT count(*) FROM runs WHERE job_id=$1 AND state IN ('queued','running'))+(SELECT count(*) FROM occurrences WHERE job_id=$1 AND state IN ('accepted','preparing','waiting','needs-attention'))", job).Scan(&n)
 	return n, pgFault("occurrence", err, false)
 }
 
 func (t *pgTx) openOccurrences(job string) (int, error) {
 	var n int
-	err := t.tx.QueryRowContext(pgContext, "SELECT count(*) FROM occurrences WHERE job_id=$1 AND state IN ('accepted','preparing','waiting','needs-attention')", job).Scan(&n)
+	err := t.tx.QueryRowContext(t.ctx(), "SELECT count(*) FROM occurrences WHERE job_id=$1 AND state IN ('accepted','preparing','waiting','needs-attention')", job).Scan(&n)
 	return n, pgFault("occurrence", err, false)
 }
 
@@ -366,7 +366,7 @@ func (t *pgTx) preparingOccurrences() ([]Occurrence, error) {
 
 func (t *pgTx) lastPreparing(occurrence string) (string, error) {
 	var since string
-	err := t.tx.QueryRowContext(pgContext, "SELECT at FROM events WHERE kind='occurrence.preparing' AND "+pgJSON("concerns", "occurrence")+"=$1 ORDER BY sequence DESC LIMIT 1", occurrence).Scan(&since)
+	err := t.tx.QueryRowContext(t.ctx(), "SELECT at FROM events WHERE kind='occurrence.preparing' AND "+pgJSON("concerns", "occurrence")+"=$1 ORDER BY sequence DESC LIMIT 1", occurrence).Scan(&since)
 	return since, pgFault("journal", err, false)
 }
 
@@ -389,7 +389,7 @@ func (t *pgTx) createJob(j Job) error {
 // reviseJob meets the revision's release key before the job's (D9).
 func (t *pgTx) reviseJob(j Job, request string) error {
 	var held int
-	if err := t.tx.QueryRowContext(pgContext, "SELECT count(*) FROM jobs WHERE id=$1", j.ID).Scan(&held); err != nil {
+	if err := t.tx.QueryRowContext(t.ctx(), "SELECT count(*) FROM jobs WHERE id=$1", j.ID).Scan(&held); err != nil {
 		return pgFault("job", err, false)
 	}
 	if held == 0 {

@@ -138,6 +138,30 @@ nothing more for that run, and stops its dispatcher: `GET /v1/health` then repor
 and the Runner needs a restart. A run left running by a Runner that stopped is interrupted by the
 dispatcher's tick once its lease has run out, about a minute later, not at the next start.
 
+## Time bounds
+
+Every connection of the two run-time pools starts with three settings. They are the session's
+start parameters, so they override what the connection string or the login's own settings name:
+
+| Setting | Value | Why |
+|---|---|---|
+| `lock_timeout` | 5 s | Every write first takes the lock of `journal_head`, so a session that holds it holds up every writer. A statement that waits longer than 5 s for a lock is refused. 5 s is a third of the 15 s between renewals: a renewal that meets a held lock fails within 5 s of its start, well inside the 30 s after which the Runner stops the attempt in any case. |
+| `statement_timeout` | 30 s | Above the lock bound, so that a wait for a lock is refused as one; a bound on any statement that holds a pooled connection. |
+| `idle_in_transaction_session_timeout` | 10 s | A session left idle inside a transaction keeps the journal's lock. The server ends it after 10 s, so a writer behind it meets at most two lock refusals. The Runner's own transactions read no file and make no network call inside a transaction, so they are not idle that long. |
+
+Each renewal of a claim is also held to a deadline of 15 s, the interval between renewals: one
+not done by then is rolled back, its statement cancelled on the server, and the claim is lost, as
+a renewal that took longer than 15 s already was. An attempt that ends while a renewal is in
+flight waits for it at most that long.
+
+A write refused for one of these bounds writes nothing. Its error names the bound: "waited longer
+than its lock bound (lock_timeout)", "ran longer than its bound (statement_timeout)", "stayed idle
+inside a transaction longer than its bound (idle_in_transaction_session_timeout)" or "did not end
+within its deadline". A request answers `500` with the code `store_error`, as for any other store
+failure. A write of the dispatcher refused so stops it, as any store failure does, and
+`GET /v1/health` reports the Runner unhealthy. A lock wait is not run again: an operator's session
+that holds the journal's lock is the thing to end.
+
 ## What is refused
 
 These routes are served:

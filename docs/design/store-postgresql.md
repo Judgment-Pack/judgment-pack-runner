@@ -251,6 +251,13 @@ serialize, one transaction at a time, as they do on SQLite, and a slow transacti
 other writer, which D2's rule bounds by keeping files and the network out of every `fn`. Reads do
 not take the lock.
 
+Built with time bounds as well, which this note did not give: every pooled connection starts with
+`lock_timeout` 5 s, `statement_timeout` 30 s and `idle_in_transaction_session_timeout` 10 s
+(`pgBounds`; docs/postgresql-store.md, "Time bounds"). A writer held up by another session waits
+at most the lock bound and is refused, without a retry; a session left idle inside a transaction
+that holds the lock is ended by the server; and the claim's renewal is held to a deadline of its
+interval (`updateWithin`), so that an attempt's end never waits on one without a bound.
+
 Every other order a consumer follows, under (a):
 
 - **The chain** (`run_chain.sequence`): its next sequence is the committed tail's plus one, so it
@@ -640,6 +647,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLDefinesNoSecurityDefinerFunction` (e) | Built. |
 | `TestPostgreSQLFencesEveryClaimantWriteByItsToken` (D3) | Built, with a check that the kind's files read no process clock and compare a lease only with `now()`. |
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
+| `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; with another connection holding `journal_head`'s lock, a write is refused within the lock bound, a renewal within its deadline, its wait on the server ended, the claim reported lost; a transaction left idle is ended by the server and the writer behind it goes on. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
 
 ## 11. What the slice after this one builds

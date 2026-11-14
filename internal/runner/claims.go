@@ -26,6 +26,22 @@ func leases(st runStore) bool {
 	return ok && l.leasesClaims()
 }
 
+// boundedStore is a kind whose transaction can be held to a deadline: the
+// postgresql kind.
+type boundedStore interface {
+	runStore
+	updateWithin(d time.Duration, fn func(runTx) error) error
+}
+
+// updateWithin is st's update held to d on a kind that holds one to a
+// deadline, and its update on any other.
+func updateWithin(st runStore, d time.Duration, fn func(runTx) error) error {
+	if b, ok := st.(boundedStore); ok {
+		return b.updateWithin(d, fn)
+	}
+	return st.update(fn)
+}
+
 // claimTimes are how often a holder renews its claim, and how long after the
 // start of the last claim or renewal that succeeded it begins stopping the
 // run's Runtime when none since has: half the lease, so the Runtime is being
@@ -81,7 +97,7 @@ func (s *Service) holdClaim(ctx context.Context, run string, claim runClaim, cla
 				began = time.Now()
 				renewing = make(chan error, 1)
 				go func(result chan<- error) {
-					result <- s.store.update(func(tx runTx) error { return tx.renewClaim(run, claim) })
+					result <- updateWithin(s.store, claimTimes.renewal, func(tx runTx) error { return tx.renewClaim(run, claim) })
 				}(renewing)
 			case err := <-renewing:
 				renewing = nil

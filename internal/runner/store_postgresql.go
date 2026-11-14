@@ -66,11 +66,22 @@ type pgPools struct {
 }
 
 // pgReads are the reads of a view held to sc: inside a transaction through
-// tx, and otherwise each its own statement, held to the view's scope.
+// tx, and otherwise each its own statement, held to the view's scope. Every
+// statement is made under c, the context of a transaction held to a deadline
+// (updateWithin), or pgContext.
 type pgReads struct {
 	p  *pgPools
 	sc storeScope
 	tx *sql.Tx
+	c  context.Context
+}
+
+// ctx is the context the view's statements are made under.
+func (r pgReads) ctx() context.Context {
+	if r.c == nil {
+		return pgContext
+	}
+	return r.c
 }
 
 // pgStore is a view of the postgresql kind, held to a scope, every scope's as
@@ -81,6 +92,29 @@ type pgStore struct{ pgReads }
 type pgTx struct{ pgReads }
 
 var pgContext = context.Background()
+
+// pgBounds are the time bounds every pooled connection of the kind holds,
+// set as the session's start parameters (docs/postgresql-store.md, "Time
+// bounds"). lock is lock_timeout: a statement waits no longer for a lock,
+// journal_head's that every write takes first among them; a third of the
+// renewal's interval, so that a renewal that meets a lock held fails in
+// time for the claimant to stop its Runtime well inside the lease.
+// statement is statement_timeout, above lock so that a wait for a lock is
+// reported as one, and a bound on any statement that holds a pooled
+// connection. idle is idle_in_transaction_session_timeout: a session left
+// idle inside a transaction, holding journal_head's lock, is ended by the
+// server, so that the writers waiting behind it meet at most two lock
+// timeouts. Tests shorten them.
+var pgBounds = struct{ lock, statement, idle time.Duration }{5 * time.Second, 30 * time.Second, 10 * time.Second}
+
+// The refusals of a statement or a transaction that met a time bound, each
+// within the bound it names (pgFault, updateWithin).
+var (
+	errPostgreSQLLockWait      = errors.New("the postgresql store waited longer than its lock bound (lock_timeout) for a lock another connection holds")
+	errPostgreSQLStatementTime = errors.New("a statement of the postgresql store ran longer than its bound (statement_timeout), or was cancelled")
+	errPostgreSQLIdleSession   = errors.New("the postgresql store's session was ended after it stayed idle inside a transaction longer than its bound (idle_in_transaction_session_timeout)")
+	errPostgreSQLDeadline      = errors.New("a transaction of the postgresql store did not end within its deadline")
+)
 
 // pgScopeValue is the value of jpack.scope that holds a transaction to the
 // scope identifier id: "s:" and id, "s:" alone for none (section 6). An unset
@@ -106,12 +140,12 @@ func (r pgReads) read(op string, fn func(q pgQuerier) error) error {
 	if r.sc.every {
 		return fn(r.p.worker)
 	}
-	tx, err := r.p.request.BeginTx(pgContext, &sql.TxOptions{Isolation: sql.LevelReadCommitted, ReadOnly: true})
+	tx, err := r.p.request.BeginTx(r.ctx(), &sql.TxOptions{Isolation: sql.LevelReadCommitted, ReadOnly: true})
 	if err != nil {
 		return storeFailure(faultUnavailable, op, err)
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(pgContext, "SELECT set_config('jpack.scope', $1, true)", pgScopeValue(r.sc.id)); err != nil {
+	if _, err = tx.ExecContext(r.ctx(), "SELECT set_config('jpack.scope', $1, true)", pgScopeValue(r.sc.id)); err != nil {
 		return storeFailure(faultUnavailable, op, err)
 	}
 	if err = fn(tx); err != nil {
@@ -137,6 +171,10 @@ func pgFault(op string, err error, write bool) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return storeFailure(faultAbsent, op, err)
 	}
+	fault := faultUnavailable
+	if write {
+		fault = faultDurability
+	}
 	var e *pgconn.PgError
 	if errors.As(err, &e) {
 		switch e.Code {
@@ -147,12 +185,17 @@ func pgFault(op string, err error, write bool) error {
 			return storeFailure(faultTaken, op, err)
 		case "23514", "23503", "42501":
 			return storeFailure(faultRefused, op, err)
+		// A time bound met: the statement made nothing, and its transaction
+		// keeps nothing (pgBounds).
+		case "55P03":
+			return storeFailure(fault, op, fmt.Errorf("%w: %v", errPostgreSQLLockWait, err))
+		case "57014":
+			return storeFailure(fault, op, fmt.Errorf("%w: %v", errPostgreSQLStatementTime, err))
+		case "25P03":
+			return storeFailure(fault, op, fmt.Errorf("%w: %v", errPostgreSQLIdleSession, err))
 		}
 	}
-	if write {
-		return storeFailure(faultDurability, op, err)
-	}
-	return storeFailure(faultUnavailable, op, err)
+	return storeFailure(fault, op, err)
 }
 
 // pgKeys are the keys a faultTaken names (storeKey), by the constraint the
@@ -193,20 +236,20 @@ func (k *pgStore) update(fn func(runTx) error) error {
 }
 
 func (k *pgStore) once(fn func(runTx) error) error {
-	tx, err := k.pool().BeginTx(pgContext, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	tx, err := k.pool().BeginTx(k.ctx(), &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return storeFailure(faultDurability, "begin", err)
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(pgContext, "LOCK TABLE journal_head IN EXCLUSIVE MODE"); err != nil {
+	if _, err = tx.ExecContext(k.ctx(), "LOCK TABLE journal_head IN EXCLUSIVE MODE"); err != nil {
 		return pgFault("begin", err, true)
 	}
 	if !k.sc.every {
-		if _, err = tx.ExecContext(pgContext, "SELECT set_config('jpack.scope', $1, true)", pgScopeValue(k.sc.id)); err != nil {
+		if _, err = tx.ExecContext(k.ctx(), "SELECT set_config('jpack.scope', $1, true)", pgScopeValue(k.sc.id)); err != nil {
 			return pgFault("begin", err, true)
 		}
 	}
-	if err = fn(&pgTx{pgReads{k.p, k.sc, tx}}); err != nil {
+	if err = fn(&pgTx{pgReads{k.p, k.sc, tx, k.c}}); err != nil {
 		return err
 	}
 	if err = k.p.commit(tx); err != nil {
@@ -218,9 +261,24 @@ func (k *pgStore) once(fn func(runTx) error) error {
 	return nil
 }
 
+// updateWithin is update with its transaction, every retry of it and every
+// statement in it held to d from now: a transaction not ended by then is
+// rolled back and refused as errPostgreSQLDeadline, its statement in flight
+// cancelled on the server. The claim's renewal is made so (claims.go), so
+// that a claimant never waits on one longer than its interval.
+func (k *pgStore) updateWithin(d time.Duration, fn func(runTx) error) error {
+	ctx, cancel := context.WithTimeout(k.ctx(), d)
+	defer cancel()
+	err := (&pgStore{pgReads{k.p, k.sc, nil, ctx}}).update(fn)
+	if f := faultOf(err); err != nil && ctx.Err() != nil && f != faultConflict && f != faultRefused {
+		return storeFailure(faultDurability, "deadline", fmt.Errorf("%w (%s): %v", errPostgreSQLDeadline, d, err))
+	}
+	return err
+}
+
 // heldTo is a view of the same pools, held to sc.
 func (k *pgStore) heldTo(sc storeScope) runStore {
-	return &pgStore{pgReads{k.p, sc, nil}}
+	return &pgStore{pgReads{k.p, sc, nil, k.c}}
 }
 
 // missingAttemptHoldsNoAudit is no: the store outlives the host's disk, so an
@@ -241,9 +299,12 @@ func (k *pgStore) close() error {
 }
 
 // pgOpenPool opens a pool for one login, with the kind's schema first in its
-// search path and the system's after it, and the function that closes the
-// driver's pool under it. The setting is the session's start parameter,
-// stored nowhere.
+// search path and the system's after it, and pgBounds, and the function that
+// closes the driver's pool under it. The settings are the session's start
+// parameters, stored nowhere, and override what the connection string says.
+// A statement whose context ends (updateWithin) has its connection closed by
+// the driver, which sends the server a cancel request first, so that the
+// statement does not go on waiting there for a lock.
 func pgOpenPool(conn string) (*sql.DB, func(), error) {
 	cfg, err := pgxpool.ParseConfig(conn)
 	if err != nil {
@@ -251,6 +312,9 @@ func pgOpenPool(conn string) (*sql.DB, func(), error) {
 	}
 	cfg.ConnConfig.RuntimeParams["search_path"] = postgresqlSchema + ", pg_catalog"
 	cfg.ConnConfig.RuntimeParams["application_name"] = "jpack-runner"
+	for name, d := range map[string]time.Duration{"lock_timeout": pgBounds.lock, "statement_timeout": pgBounds.statement, "idle_in_transaction_session_timeout": pgBounds.idle} {
+		cfg.ConnConfig.RuntimeParams[name] = strconv.FormatInt(d.Milliseconds(), 10)
+	}
 	pool, err := pgxpool.NewWithConfig(pgContext, cfg)
 	if err != nil {
 		return nil, nil, err
@@ -261,7 +325,7 @@ func pgOpenPool(conn string) (*sql.DB, func(), error) {
 // newPostgreSQLStore is a store over two pools, every scope's, closing
 // closers when it closes.
 func newPostgreSQLStore(request, worker *sql.DB, closers ...func()) *pgStore {
-	return &pgStore{pgReads{&pgPools{request: request, worker: worker, closers: closers, commit: (*sql.Tx).Commit}, everyScope, nil}}
+	return &pgStore{pgReads{&pgPools{request: request, worker: worker, closers: closers, commit: (*sql.Tx).Commit}, everyScope, nil, nil}}
 }
 
 // openPostgreSQLStore is the kind's constructor. It opens a pool for each
@@ -422,14 +486,14 @@ func (k *pgStore) beginJournal() error {
 	return k.update(func(tx runTx) error {
 		t := tx.(*pgTx)
 		var began int
-		if err := t.tx.QueryRowContext(pgContext, "SELECT count(*) FROM events WHERE kind='journal.began'").Scan(&began); err != nil {
+		if err := t.tx.QueryRowContext(t.ctx(), "SELECT count(*) FROM events WHERE kind='journal.began'").Scan(&began); err != nil {
 			return pgFault("journal", err, false)
 		}
 		if began > 0 {
 			return nil
 		}
 		var held EventHeld
-		if err := t.tx.QueryRowContext(pgContext, "SELECT (SELECT count(*) FROM jobs), (SELECT count(*) FROM triggers), (SELECT count(*) FROM occurrences), (SELECT count(*) FROM runs)").Scan(&held.Jobs, &held.Triggers, &held.Occurrences, &held.Runs); err != nil {
+		if err := t.tx.QueryRowContext(t.ctx(), "SELECT (SELECT count(*) FROM jobs), (SELECT count(*) FROM triggers), (SELECT count(*) FROM occurrences), (SELECT count(*) FROM runs)").Scan(&held.Jobs, &held.Triggers, &held.Occurrences, &held.Runs); err != nil {
 			return pgFault("journal", err, false)
 		}
 		_, err := tx.appendJournal(change{kind: "journal.began", by: runnerActor, detail: EventDetail{Held: &held}})
