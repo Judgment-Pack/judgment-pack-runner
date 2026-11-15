@@ -246,7 +246,10 @@ func (s *Service) startBackground(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
-				if e := s.prepareOccurrence(ctx); e != nil {
+				// A preparation whose write waited out the store's lock
+				// bound made nothing, and is taken up again at a later
+				// pass: the store is busy, not failing (occurrenceLost).
+				if e := s.prepareOccurrence(ctx); e != nil && !onlyLockWaited(e) {
 					s.unhealthy.Store(true)
 					return
 				}

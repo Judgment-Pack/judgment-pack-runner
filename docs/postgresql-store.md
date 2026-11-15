@@ -227,6 +227,18 @@ The dispatcher takes a lock wait for a store that is busy, not failing, and stay
 - the claimant's finish is made again while its claim's lease is live. Its claim token and lease
   fence it, so it lands once or not at all.
 
+The trigger automation and the preparation workers take it the same way, and stay healthy:
+
+- a schedule or file-change trigger's tick by the Runner's own clock makes nothing, the trigger's
+  next time is not moved on, and the next tick, a second later, admits the due time. A due time
+  held up for less than 30 s is still on time;
+- the claim of a ready occurrence, its dispatch and the claim or a write of a preparation make
+  nothing; a claim already held is released where the release is not held up as well, and
+  otherwise lapses with its lease. The occurrence is taken up again at a later tick;
+- a `POST /v1/ticks` call whose trigger write is refused at the lock bound is answered with the
+  error, and the trigger's due time is still due: call again with the same `at` (see "Shared
+  interval ticks").
+
 A finish still refused when the lease has run out, and any refusal for the statement or idle
 bound or the renewal's deadline, stops the dispatcher, as any store failure does, and
 `GET /v1/health` reports the Runner unhealthy. While an operator's session holds the journal's

@@ -617,12 +617,30 @@ func (s *Service) claimOccurrence(id, state string) (Occurrence, error) {
 // occurrenceLost is nil for a claim's error that says the occurrence is not
 // this Runner's to work: another Runner holds it, or it moved on or is gone
 // since it was read. The Runner wrote nothing of it, and goes on to the next
-// (#245). Any other error is err.
+// (#245). So too a claim that waited out the store's lock bound: it made
+// nothing, the store is busy and not failing, and the occurrence is claimed
+// at a later tick. Any other error is err.
 func occurrenceLost(err error) error {
-	if faultOf(err) == faultConflict || absent(err) {
+	if faultOf(err) == faultConflict || absent(err) || lockWaited(err) {
 		return nil
 	}
 	return err
+}
+
+// onlyLockWaited says whether err is a lock wait and nothing else: every
+// error it joins (releasedWith) waited out the store's lock bound, so that a
+// failure joined to a lock wait is not taken for a busy store.
+func onlyLockWaited(err error) bool {
+	if many, ok := err.(interface{ Unwrap() []error }); ok {
+		errs := many.Unwrap()
+		for _, e := range errs {
+			if !onlyLockWaited(e) {
+				return false
+			}
+		}
+		return len(errs) > 0
+	}
+	return lockWaited(err)
 }
 
 // failHeld fails o, held under this Runner's claim, whose own record cannot
