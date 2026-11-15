@@ -975,7 +975,15 @@ real-time timer. The computer must be awake and Desk running.
 In service mode, one external scheduler job per shared interval can tick every scope's
 shared-interval triggers through `POST /v1/ticks`, with the control API's credential and
 no scope identifier; a repeated or late call, on this Runner or another of the store,
-records nothing twice. Every Runner on one store must name the same shared intervals and
+records nothing twice. A call ticks the triggers one at a time, in the order they were
+made, and stops at the first one whose tick fails, a store error or a trigger whose record
+cannot be read among them: it answers that error (`500` `store_error`, or `503`
+`runner_unavailable`), the triggers before it ticked and the rest not, and does not say how
+many it recorded. Name `at` on every call, so that the scheduler can call again with the
+same `at`, within one interval of it: the triggers already ticked record nothing twice, and
+the rest are ticked, on time. A retry is safe although a `500` says `retryable: false`. A
+trigger whose tick keeps failing holds back the triggers made after it on every call until
+it is fixed or paused. Every Runner on one store must name the same shared intervals and
 bounds: at each start, Runner reports every enabled trigger bound to an interval its
 configuration does not name, or whose cron expression is outside its bounds, one
 `trigger.outside-settings` journal entry each and, in `GET /v1/status`, under

@@ -236,8 +236,8 @@ The trigger automation and the preparation workers take it the same way, and sta
   nothing; a claim already held is released where the release is not held up as well, and
   otherwise lapses with its lease. The occurrence is taken up again at a later tick;
 - a `POST /v1/ticks` call whose trigger write is refused at the lock bound is answered with the
-  error, and the trigger's due time is still due: call again with the same `at` (see "Shared
-  interval ticks").
+  error, and the trigger's due time is still due: call again with the same `at`, as after any
+  error part-way through a tick (README, "Triggers").
 
 A finish still refused when the lease has run out, and any refusal for the statement or idle
 bound or the renewal's deadline, stops the dispatcher, as any store failure does, and
