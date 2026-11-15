@@ -576,8 +576,8 @@ root (`inputRoot`, the store's identity), on both storage kinds; the root has no
 A trigger preview held to one scope (`POST /v1/jobs/{job}/triggers/preview`) may name a file
 another scope's jobs use, and its answer carries the file's facts and evidence. Row security holds
 the store's rows to a scope, not the files under the input root, which every Runner of one store
-shares (the store holds them to one `inputRoot`): scopes whose inputs must stay apart are given
-separate installations (#279).
+shares (the store records one `inputRoot` that every Runner of it must match): scopes whose
+inputs must stay apart are given separate installations (#279).
 
 **What a request held to one scope can infer.** Row security keeps another scope's rows from a
 request held to one scope; it does not keep that request from learning that other scopes are

@@ -1247,7 +1247,10 @@ func TestPostgreSQLHoldsTheProfileRowsToTheNoneScope(t *testing.T) {
 		t.Helper()
 		inScope(t, request, scope, unset, func(tx *sql.Tx) {
 			res, err := tx.ExecContext(pgContext, query, args...)
-			if err == nil {
+			// A plain update the policy's USING clause hides the row from
+			// touches nothing and raises no error; an insert, plain or meeting
+			// the row's key, must be refused with 42501.
+			if err == nil && strings.HasPrefix(query, "UPDATE ") {
 				if n, _ := res.RowsAffected(); n == 0 {
 					return
 				}
