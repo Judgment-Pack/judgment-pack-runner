@@ -3238,6 +3238,10 @@
           "retry": {
             "$ref": "#/components/schemas/RetryPolicy",
             "description": "The job's retry policy. Absent, the job makes one attempt; a policy of maxAttempts 1 is that default, and the job is created as without one (no retry member, the store's schema unchanged). A retry that is not an object, a member that is not a whole number, a duplicate member, or a member no policy takes is refused by the body's strict reading (400 invalid_request). Written null, missing a member, out of bounds, or under a name that only folds to retry or to one of its members, the creation is refused (422 invalid_retry_policy). A policy is accepted on any job, since a job's triggers and release can change after it is created, and acts only on occurrences that acquire their input over a Gateway connection that is not durable: on any other job it has no effect, and with maxAttempts above 1 it still raises the store to schema 6. A repeated creation from the same release must name the same policy, or none. Refused under the manual-admission gate (manual_profile_unsupported)."
+          },
+          "paging": {
+            "$ref": "#/components/schemas/JobPaging",
+            "description": "The cursors the job keeps between runs for the paged sources of its release's dialect (docs/design/paging.md)."
           }
         },
         "required": [
@@ -3419,6 +3423,9 @@
           "retry": {
             "$ref": "#/components/schemas/RetryPolicy",
             "description": "The retry policy the job was created with, kept by every upgrade; absent for a job created without one."
+          },
+          "paging": {
+            "$ref": "#/components/schemas/JobPaging"
           }
         },
         "required": [
@@ -5380,6 +5387,50 @@
             "type": "string",
             "minLength": 1,
             "description": "Sole exact original signed response JSON text; excludes snapshot and response. It grants no signature, source or producer authority."
+          },
+          "pages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "result": {},
+                "receipt": {
+                  "type": "object",
+                  "description": "Complete signed Gateway v3 acquisition receipt; Runner verifies the signed fields, profile and canonical result."
+                },
+                "salts": {
+                  "type": "object",
+                  "properties": {
+                    "args": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "statement": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "args"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "result"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "receipt": [
+                  "salts"
+                ],
+                "salts": [
+                  "receipt"
+                ]
+              },
+              "description": "An acquisition, {result, receipt, salts}. A research source's result is its research record, exactly fields and responses (each retained response exactly profile, request, result, receipt and salts), and its receipt and salts are present exactly when the record came back through a gateway source; every other source's are required."
+            },
+            "description": "A paged source's pages (format 4.1.0, RFC 0033): each the gateway's answer to call i of one session, in order."
           }
         },
         "required": [],
@@ -5942,6 +5993,10 @@
           "retainedColumn": {
             "type": "boolean",
             "description": "Derived by Runner from the approved producer profile and mapping read. True requires all effective producer ceilings; it grants no producer authority."
+          },
+          "paging": {
+            "type": "object",
+            "description": "A paged source's rule, as its dialect names it (format 4.1.0): the next reference, how a page names none, the request member it fills, the items and maxPages."
           }
         },
         "description": "The next source to acquire. For a research source, the caller runs the recipe (arguments) through the profiles the source is bound to and supplies the research record it assembles from the responses it retains: Runner asks no model and reads no page.",
@@ -6280,6 +6335,13 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "paging": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PagedRead"
+            },
+            "description": "What the occurrence read of each paged source; the run that completes moves each cursor it names."
           }
         },
         "required": [
@@ -6393,6 +6455,16 @@
           },
           "errorClass": {
             "$ref": "#/components/schemas/ErrorClass"
+          },
+          "heldPages": {
+            "$ref": "#/components/schemas/HeldPages"
+          },
+          "paging": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PagedRead"
+            },
+            "description": "What the accepted occurrence read of each paged source."
           }
         },
         "required": [
@@ -6953,9 +7025,10 @@
               "2",
               "3",
               "4",
-              "5"
+              "5",
+              "6"
             ],
-            "description": "5 for an entry that holds disposition, errorClass or counts, whatever its by, scope or attempt, which an entry of an earlier version never holds; 4 for any other entry that holds attempt, whatever its by or scope; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, a 4 holds an attempt, and a 5 a run's or an occurrence's end with its counts or class, whatever its by."
+            "description": "6 for an occurrence.ready entry that holds fullReRead, which an entry of an earlier version never holds; 5 for an entry that holds disposition, errorClass or counts, whatever its by, scope or attempt, which an entry of an earlier version never holds; 4 for any other entry that holds attempt, whatever its by or scope; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, a 4 holds an attempt, and a 5 a run's or an occurrence's end with its counts or class, whatever its by."
           },
           "kind": {
             "enum": [
@@ -7186,6 +7259,13 @@
           "counts": {
             "$ref": "#/components/schemas/RunCounts",
             "description": "On run.completed, run.failed, run.expired and run.interrupted: the run's counts. An entry that holds it has entryVersion 5."
+          },
+          "fullReRead": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The paged sources the occurrence read again in full from their cursor's first value after the gateway said a reference had expired (410 source_reference_expired). Entry version 6."
           }
         }
       },
@@ -8538,6 +8618,156 @@
         },
         "required": [
           "kind"
+        ],
+        "additionalProperties": false
+      },
+      "CursorRule": {
+        "type": "object",
+        "description": "A job's cursor for one paged source of its release's dialect (docs/design/paging.md, sections 4.1 and 7): a change cursor fills a string case parameter with a reference read from the last page at reference; a window cursor fills a timestamp case parameter with its start and end with the instant the occurrence is prepared, which is the next start.",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "A paged operation source of the release's dialect of format 4.1.0, named once. paging_source_unknown otherwise."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "change",
+              "window"
+            ]
+          },
+          "parameter": {
+            "type": "string",
+            "description": "The case parameter the cursor fills: of type string for a change cursor, timestamp for a window's start. paging_parameter_unknown otherwise."
+          },
+          "end": {
+            "type": "string",
+            "description": "A window's end parameter, of type timestamp, other than parameter; a change cursor names none."
+          },
+          "reference": {
+            "type": "string",
+            "description": "A change cursor's JSON Pointer into the last page, other than the root, where the next run's reference is read; a window cursor names none."
+          },
+          "first": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The cursor's first value, filled when no run has moved the cursor, and after an expired reference; a window's is a timestamp."
+          }
+        },
+        "required": [
+          "source",
+          "kind",
+          "parameter",
+          "first"
+        ],
+        "additionalProperties": false
+      },
+      "JobPaging": {
+        "type": "object",
+        "description": "A job's paging member: a cursor rule for each paged source it keeps a cursor for. Each refusal is 422: invalid_paging_rule (form, bounds, null, or the member named in another case), paging_source_unknown, paging_parameter_unknown. A job that names it raises the store's schema to 8.",
+        "properties": {
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/CursorRule"
+            }
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "additionalProperties": false
+      },
+      "CursorAdvance": {
+        "type": "object",
+        "description": "A paged read's cursor: the value read from the store (absent when no run had moved it), the value filled into the case, and the value the pages say comes next (absent when none, or when the read ended at the bound). The run that completes writes to while the store still holds read.",
+        "properties": {
+          "read": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from"
+        ],
+        "additionalProperties": false
+      },
+      "PagedRead": {
+        "type": "object",
+        "description": "What an occurrence, and then its run, read of one paged source: the pages and each page's receipt in call order, in one gateway session, how the loop ended, whether the source was read again from the cursor's first value after an expired reference, and the cursor's advance.",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "receipts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            }
+          },
+          "end": {
+            "type": "string",
+            "enum": [
+              "no-next",
+              "bound"
+            ]
+          },
+          "fullReRead": {
+            "type": "boolean"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/CursorAdvance"
+          }
+        },
+        "required": [
+          "source",
+          "pages",
+          "receipts",
+          "end"
+        ],
+        "additionalProperties": false
+      },
+      "HeldPages": {
+        "type": "object",
+        "description": "The pages an attempt received before the gateway throttled the next, held for the job's next attempt, which asks the throttled page in the same session and no page before it.",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "first": {
+            "description": "The first page's request."
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "source",
+          "profile",
+          "session",
+          "first",
+          "pages"
         ],
         "additionalProperties": false
       }
