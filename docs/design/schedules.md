@@ -219,7 +219,17 @@ whose identity would differ. No lock, row or column is added for
 it. Two calls for one tick at the same time may share the triggers between
 them: each trigger due is ticked by the call that takes it first, and the
 other finds its `nextAt` after the tick, so each call answers the
-occurrences it recorded, and the two answers add up to the triggers due. A
+occurrences it recorded, and the two answers add up to the triggers due.
+Two calls at the same time for different ticks of one interval, a late call
+for one tick beside the call for the next, may likewise interleave trigger
+by trigger: a trigger the later call reaches first has its earlier due time
+taken by its missed rule (section 6), and the earlier call then finds its
+`nextAt` after that call's tick and records nothing for it, while a trigger
+the earlier call reaches first admits the earlier due time on time, and the
+later call its own. Either way no due time of a trigger is admitted twice
+and no trigger makes a catch-up burst; which call records a trigger's
+occurrence, and whether its earlier due time is on time or missed, depends
+on the order the two calls reach it. A
 Runner found unhealthy part way through a call answers `503`
 `runner_unavailable` for it; the triggers ticked before stay ticked, and a
 retry of the call after the restart ticks the rest, while the tick is no
@@ -339,7 +349,12 @@ triggers is safe:
   occurrence admitted between two triggers is counted, and the limit holds.
 - *What the call no longer has* is one instant over its fan-out: a trigger
   paused between two triggers of the call is passed by, and two calls at the
-  same time share the triggers (section 5). The list of triggers is read
+  same time share the triggers (section 5). Two calls at the same time for
+  different ticks, a late replay of one tick beside the next, may mix trigger
+  by trigger: a trigger the later call reaches first has the earlier due
+  time taken by its missed rule, and the earlier call records nothing for
+  it, while the triggers the earlier call reaches first admit it on time
+  (section 5). No due time is admitted twice. The list of triggers is read
   once, at the start: a trigger enabled during the call is next due after the
   tick (section 5) and is not missed.
 
