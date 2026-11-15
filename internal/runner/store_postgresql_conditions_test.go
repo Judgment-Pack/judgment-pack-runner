@@ -300,6 +300,62 @@ func TestPostgreSQLRolesHoldOnlyWhatTheyNeed(t *testing.T) {
 	must(t, k.checkLogins(s.role(pgRoleOwner)))
 }
 
+// Section 7: each run-time login holds on each of the store's tables the
+// privileges the section's table names and no other, so the work for every
+// scope, on the worker login, holds no more than the ticks, the dispatch and
+// preparation write; a table the section does not name is held by neither.
+func TestPostgreSQLLoginsHoldOnlyTheirTablesPrivileges(t *testing.T) {
+	s, db, _, _ := pgConditionWorld(t)
+	held := map[string]map[string]string{
+		pgRoleRequest: {
+			"releases": "SELECT INSERT", "metadata": "SELECT INSERT UPDATE",
+			"jobs": "SELECT INSERT UPDATE", "triggers": "SELECT INSERT UPDATE", "occurrences": "SELECT INSERT UPDATE",
+			"runs": "SELECT INSERT UPDATE", "briefs": "SELECT INSERT UPDATE",
+			"job_creations": "SELECT INSERT", "job_revisions": "SELECT INSERT", "trigger_revisions": "INSERT",
+			"occurrence_keys": "SELECT INSERT", "events": "SELECT INSERT", "run_chain": "SELECT",
+			"journal_head": "SELECT UPDATE", "counts": "SELECT UPDATE",
+			"pack_identities": "SELECT INSERT", "dialect_identities": "SELECT INSERT", "schema_migrations": "SELECT",
+		},
+		pgRoleWorker: {
+			"releases": "SELECT", "metadata": "SELECT INSERT",
+			"jobs": "SELECT", "triggers": "SELECT UPDATE", "occurrences": "SELECT INSERT UPDATE",
+			"runs": "SELECT INSERT UPDATE", "job_creations": "SELECT", "job_revisions": "SELECT",
+			"events": "SELECT INSERT", "run_chain": "SELECT INSERT", "journal_head": "SELECT UPDATE",
+			"chain_head": "SELECT UPDATE", "counts": "SELECT UPDATE",
+			"pack_identities": "SELECT", "dialect_identities": "SELECT", "schema_migrations": "SELECT",
+		},
+	}
+	suite := s.pool(t, pgRoleSuite, db)
+	rows, err := suite.QueryContext(pgContext, "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p') ORDER BY c.relname", postgresqlSchema)
+	must(t, err)
+	var tables []string
+	for rows.Next() {
+		var name string
+		must(t, rows.Scan(&name))
+		tables = append(tables, name)
+	}
+	must(t, rows.Err())
+	rows.Close()
+	if len(tables) == 0 {
+		t.Fatal("the store holds no table")
+	}
+	for login, want := range held {
+		for _, table := range tables {
+			var privileges []string
+			for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+				var has bool
+				must(t, suite.QueryRowContext(pgContext, "SELECT has_table_privilege($1, $2, $3)", s.role(login), postgresqlSchema+"."+table, privilege).Scan(&has))
+				if has {
+					privileges = append(privileges, privilege)
+				}
+			}
+			if got := strings.Join(privileges, " "); got != want[table] {
+				t.Errorf("the %s login holds %q on %s, want %q", login, got, table, want[table])
+			}
+		}
+	}
+}
+
 // pgFreshDatabase is an empty database of the test's own, in which the owner
 // may make its schema.
 func pgFreshDatabase(t *testing.T, s *pgTestServer) string {
