@@ -1,9 +1,14 @@
 # Paging over a source, with a cursor kept between runs
 
-Status: decided for #247, answer A (section 3); nothing in it is built. The
-dialect amendment it needs is judgment-pack-spec #328; Runner builds section 4
-after that amendment's text and vectors are settled. Section 5 is kept as the
-record of the answers not taken.
+Status: decided for #247, answer A (section 3). The dialect amendment is the
+Spec's RFC 0033 (format `4.1.0`, in Review), and Runner reads it in
+`verify-preparation` ([dialect-format-4.md](dialect-format-4.md), section 7):
+the rule of section 4.1 is the dialect's `paging`, and the pages, receipts and
+citations of section 4.3 are its preparation's. Sections 4.2 and 4.4 to 4.6, the
+run's loop and the cursor, are not built: a run does not prepare through
+format `4.0.0` or `4.1.0` until the Spec's recording and workflow schemas admit
+them (spec issue #326). Section 5 is kept as the record of the answers not
+taken.
 
 ## 1. What #247 asks
 

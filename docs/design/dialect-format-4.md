@@ -37,13 +37,18 @@ unchanged. Moving that preparer into the package is slice 2.
 
 ## 2. What is not admitted
 
-Every path but `verify-preparation` refuses a dialect of format `4.0.0` with
-`dialect_format_not_admitted` (HTTP 422): a release, a job (a release saved
-before this check included), a preview, a delivery and a workflow. The
-message names what it waits for: the Spec's workflow and recording schemas do
-not admit the format yet (spec issue #324), so no record could name a
-preparation of it. The gate is in `releaseDialectIdentity` and
-`format4Form` (`internal/runner/dialect_format4.go`), not in the store.
+Every path but `verify-preparation` refuses a dialect of format `4.0.0`, or of
+format `4.1.0` (section 7), with `dialect_format_not_admitted` (HTTP 422): a
+release, a job (a release saved before this check included), a preview, a
+delivery and a workflow. The message names the format and what it waits for:
+the Spec's workflow and recording schemas do not admit the format yet (spec
+issue #324, its second item now spec issue #326, which asks for that decision
+before a runner admits a job on the format), so no record could name a
+preparation of it. The gate is in `releaseDialectIdentity` and `format4Form`
+(`internal/runner/dialect_format4.go`), not in the store. It stays until spec
+issue #326 is decided: a run on either format would export a preparation the
+Spec's recording schema does not read, under a release digest whose encoding
+RFC 0020 does not yet give for the format.
 
 Also refused by name, in both readers:
 
@@ -147,3 +152,61 @@ time per candidate in a batch, and 0.69 to 0.78 ms for one candidate on one
 goroutine. A CPU profile of the one-goroutine benchmark puts about four
 fifths of a preparation in the distance, nearly all of it the inverse sine,
 found by bisection over the fixed-point sine as §2.2.5 gives it.
+
+## 7. Format 4.1.0: a paged source
+
+Runner reads the proposed format `4.1.0` (the Spec's RFC 0033, in Review),
+format `4.0.0` with a paged `operation` source, where it reads format `4.0.0`:
+in `verify-preparation` alone (`internal/runner/dialect_format41.go`). The
+reading is by the same maintainer as the Spec's reference reader: it is not an
+independent implementation, and no conformance claim is made of it.
+
+- **The form** (RFC 0033 section 2): `paging` on an `operation` without a
+  calculation, exactly `next`, `noNext`, `fills`, `items` and `maxPages`, and
+  `fills`'s parent an object written in the source's `arguments`, within no
+  template form, `input-malformed` otherwise; `fills` naming a member a
+  profile does not let a reference fill, `profile-mismatch` when the source is
+  prepared. `paging`, and an acquisitions member that has `pages`, are refused
+  `input-malformed` in every other format, on every path.
+- **The walk** (sections 3 to 5): from page 0, each page finished before the
+  next, in the order section 4 gives the findings; each request after the
+  first is the first with `fills` set to the reference the page before named;
+  the loop ends at `no-next` or at `maxPages`. A page retained after the end is
+  `acquisition-unexpected`.
+- **The joined value and the read** (section 6): `{"end", "items", "last",
+  "pages", "values"}`, the read applied once to it.
+- **The bounds** (section 7), measured in §11's third phase in a document of
+  the format alone: `maxPages` when an integer, the pages retained, each
+  page's `result` nesting; a next reference's bytes when read; the joined
+  value's nesting when formed.
+- **The preparation** (section 8): `formatVersion` `"4.1.0"`, the paged
+  source's outcome `paging`, its lineage's `receipts`, and `cites` in the
+  order of `sources` whenever a paged source is declared.
+- **Sessions**: §5.2's two forms hold over the unpaged sources' receipts; a
+  receipt of any other source, a research source's included, that names a
+  paged source's session is `acquisition-sessions`.
+- **A binding document** is read for format `4.1.0` (the vector
+  `paged-unbound-paged` binds one); format `4.0.0` keeps its refusal
+  (section 2).
+- `verify-preparation --capabilities` names `"4.1.0"` among `formatVersions`,
+  interface version 4.
+- The `sdk/dialect` package is unchanged: it refuses a dialect that names a
+  source, `sources-unread`, so every paged dialect.
+
+The Spec's `conformance/dialect/format-4.1/` at
+`7510ea12d7079b60073aac498ca9c21ec1362cd4` is vendored byte for byte under
+`vectors/dialect-format-4.1/spec`, its two top-level files held to the Spec
+commit's digests and every vector's files to the manifest's
+(`internal/runner/dialect_format41_test.go`). Of the 88 vectors, 87 agree:
+the result and its code, and of a reading the digest, the facts, each named
+outcome with its `paging`, the cites in order and the unsigned parameters.
+`paged-research-in-paged-session` is not read: its research source writes the
+typed `results` contract, which Runner's research reading does not read, so
+its dialect is refused `input-malformed` before the paged session is
+reached. The rule it checks is the one `paged-session-shared` checks for an
+unpaged source, in the same place (`admit`, `prepareV2Mode`).
+
+Nothing here prepares a paged source for a run: a run's acquisition, the
+cursor kept between runs and the run record's pages
+([paging.md](paging.md), section 4) wait for the format to be admitted on
+the run path (section 2).
