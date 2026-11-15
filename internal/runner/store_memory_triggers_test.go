@@ -219,7 +219,7 @@ func (m *memoryStore) identifiedOccurrence(trigger, identity string) (Occurrence
 	return m.reads().identifiedOccurrence(trigger, identity)
 }
 
-func (m *memoryStore) enabledTriggers() ([]string, error) {
+func (m *memoryStore) enabledTriggers(ownClock bool) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	ids := []string{}
@@ -231,7 +231,7 @@ func (m *memoryStore) enabledTriggers() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !t.Paused {
+		if !t.Paused && !(ownClock && sharedTicked(t, "")) {
 			ids = append(ids, h.id)
 		}
 	}

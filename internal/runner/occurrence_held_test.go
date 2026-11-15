@@ -175,7 +175,7 @@ func TestPostgreSQLAFullQueueReleasesTheOccurrencesClaim(t *testing.T) {
 	o, due := p.admitted(first)
 	var active int
 	must(t, p.suite.QueryRowContext(pgContext, "SELECT value FROM counts WHERE name='active-runs'").Scan(&active))
-	_, err := p.suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='active-runs'", queueLimit)
+	_, err := p.suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='active-runs'", defaultRunQueue)
 	must(t, err)
 	if err := first.dispatchOccurrence(o, due.Add(time.Second)); err != nil {
 		t.Fatal("the dispatch with the queue full returned an error:", err)

@@ -76,8 +76,16 @@ func sqliteOccurrence(row *sql.Row) (Occurrence, error) {
 	return o, nil
 }
 
-func (k *sqliteStore) enabledTriggers() ([]string, error) {
-	rows, err := k.db.Query("SELECT id FROM triggers WHERE json_extract(record,'$.paused')=0 ORDER BY seq")
+// sqliteOwnClock leaves out a schedule bound to a shared interval, as
+// sharedTicked reads one: IS compares a member absent, NULL, as unequal.
+const sqliteOwnClock = " AND NOT (json_extract(record,'$.config.kind') IS 'schedule' AND json_extract(record,'$.config.schedule.kind') IS 'tick')"
+
+func (k *sqliteStore) enabledTriggers(ownClock bool) ([]string, error) {
+	query := "SELECT id FROM triggers WHERE json_extract(record,'$.paused')=0"
+	if ownClock {
+		query += sqliteOwnClock
+	}
+	rows, err := k.db.Query(query + " ORDER BY seq")
 	if err != nil {
 		return nil, sqliteFault("trigger", err, false)
 	}

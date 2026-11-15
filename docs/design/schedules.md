@@ -55,7 +55,8 @@ A `tick` schedule takes `tick`, the shared interval's name, `timezone`,
 due at every tick of the interval; with it, at the **first tick at or after
 each match**, so `{"tick":"15m","cron":"7 9 * * 1-5","timezone":"America/Toronto"}`
 runs at the 09:15 tick of each weekday in Toronto. The Runner's own clock
-never ticks it: only a call for its interval does (section 5).
+never ticks it, and does not read it (section 8): only a call for its
+interval ticks it (section 5).
 
 A schedule of another kind that names `cron` or `tick` is refused,
 `invalid_schedule`.
@@ -124,11 +125,16 @@ The configuration's optional `limits` member is one object of:
 - `triggers`: the most triggers the installation holds, from 1 to 1000,
   default 128;
 - `pendingOccurrences`: the most occurrences pending (accepted, preparing or
-  waiting) at once, from 1 to 2000, default 100.
+  waiting) at once, from 1 to 2000, default 100;
+- `runQueue`: the most runs queued or running at once, the run queue, from 1
+  to 2000, default 100.
 
 Each a whole number, at most once, spelled exactly, none null, and nothing
-else; a refusal stops the start. Without the member, or without one of the
-two, the default holds, as it does on a companion's boot line, which takes
+else; a refusal stops the start. Anything but an object, a member given
+twice or a member Runner does not know is refused first; then the three are
+checked in this order, `triggers`, `pendingOccurrences`, `runQueue`, so that
+of several refused the first is answered every time. Without the member, or without one of the
+three, the default holds, as it does on a companion's boot line, which takes
 no `limits`. `GET /v1/status` states the limits in force, under `limits`.
 Section 9 says what they hold and what Runners that share a store need;
 section 8 says how the maximums were chosen.
@@ -160,7 +166,7 @@ refused by them answers the same `422` code, not `409`
 `trigger_upgrade_incompatible`, which stays the answer for a trigger the new
 release cannot serve. A trigger
 enabled before the operator narrowed them keeps its schedule until it is
-changed or enabled again (section 9).
+changed or enabled again, and each start reports it (section 9).
 
 ## 5. The shared tick
 
@@ -303,26 +309,83 @@ accepted, none skipped `queue-full`.
   40 ms on the sqlite kind (once 1.1 s, at 1000 on sqlite, a stall of the
   disk). Held for the whole fan-out, as before this change, the lock would
   have been held for the whole tick, 1.2 to 18 s.
-- **The Runner's own clock reads every enabled trigger once a second**, the
-  shared-interval ones included, under the lock ("one pass" above). With the
+- **The Runner's own clock read every enabled trigger once a second**, the
+  shared-interval ones included, under the lock ("one pass" above), until
+  #289 (below). With the
   clock running beside the tick, the tick took 7.6 s at 1000 and 16.3 s at
   2000 on sqlite, and 17.1 s at 1000 and 79 s at 2000 on postgresql, where
   the clock's passes held the lock for about 350 ms of every second at 1000
   and 710 ms at 2000; the clock waited at most 25 ms for the lock.
 
+**The own clock's read (#289).** The clock's read leaves out every schedule
+bound to a shared interval, in its statement on both kinds
+(`enabledTriggers(ownClock)`: not a `schedule` trigger whose schedule's kind
+is `tick`), so that a pass reads, and holds the lock for, only the triggers
+the clock may tick. A trigger changed to a shared interval after the list was
+read is still passed by when it is read (`scheduleTick`). Measured again on
+the postgresql kind, on the same machine: N enabled shared-interval triggers
+across four scopes, each due at one tick; one pass of the clock alone (the
+median of seven), then the tick with the clock running beside it as its loop
+runs it, a pass and then the next whole second. Before is the Runner of
+#288, after is this change.
+
+| N | One pass of the clock, before | After | The tick with the clock beside it, before | After |
+|---|---|---|---|---|
+| 1000 | 390 ms | 19 ms | 17.8 s | 12.0 s |
+| 2000 | 673 ms | 27 to 30 ms | 2 min 45 s | 22 to 36 s (two runs) |
+
+During the tick the clock's passes still took 160 to 220 ms on average:
+each dispatches up to ten of the occurrences the tick has admitted into runs
+(section 9), under the lock. The tick now shares the lock with that
+dispatch, not with the read.
+
 These are one machine's figures, not bounds: they vary with the disk, the
 network to the database, the store's size, and the load beside it. The tests
 report their own figure and hold only the counts.
 
-**The maximums.** `triggers` is at most 1000: at 2000 on the postgresql kind
-the Runner's own clock spends about three quarters of every second reading
-the triggers, and a tick with the clock running took longer than one minute,
-the shortest shared interval; at 1000 the tick took under 20 s on both kinds
-and the clock's pass about a third of a second. `pendingOccurrences` is at
+**The maximums.** `triggers` is at most 1000. Before #289, at 2000 on the
+postgresql kind the Runner's own clock spent about three quarters of every
+second reading the triggers, and a tick with the clock running took longer
+than one minute, the shortest shared interval; at 1000 the tick took under
+20 s on both kinds and the clock's pass about a third of a second. Since
+#289 the figures would allow 2000 triggers bound to shared intervals: the
+clock's pass about 30 ms, and a tick with the clock beside it under one
+minute. The maximum stays, because the limit counts every trigger and the
+clock still reads, once a second, each enabled trigger not bound to a
+shared interval (another schedule, a file, an event or a cloud trigger), at
+the cost the first table shows: 2000 of those on the postgresql kind would
+take about three quarters of every second again. A larger maximum waits for
+a read that costs only the triggers due, by their next time, or for a limit
+of its own for shared-interval triggers. `pendingOccurrences` is at
 most 2000: the tick's check of the queue is one count in each trigger's
 transaction (a row on the postgresql kind), and the ticks at 2000 cost no
 more per trigger than at 128. A larger queue is a longer wait for its last
 occurrence, which the run queue (section 9) takes in turn.
+
+**The run queue (#289).** One shared tick admitted 300 occurrences, one for
+each of 300 jobs, and the Runner's clock dispatched them into runs, on one
+machine (indicative figures):
+
+| Kind | Each run | `runQueue` | Every occurrence a run | Every run ended | Most runs queued or running |
+|---|---|---|---|---|---|
+| sqlite | at once | 100 | 29.3 s | 29.7 s | 14 |
+| sqlite | at once | 300 | 29.4 s | 29.6 s | 35 |
+| postgresql | at once | 100 | 29.3 s | 29.5 s | 7 |
+| postgresql | at once | 300 | 29.5 s | 29.7 s | 7 |
+| sqlite | 0.2 s | 100 | 51 s | 75.8 s | 100 |
+| sqlite | 0.2 s | 300 | 29.2 s | 78.3 s | 192 |
+| postgresql | 0.2 s | 100 | 51.2 s | 76.6 s | 100 |
+| postgresql | 0.2 s | 300 | 29.4 s | 77.1 s | 187 |
+
+The clock dispatches up to ten occurrences a pass, one pass a second, so
+300 occurrences are runs after about 30 s on both kinds while the run queue
+has room. With runs that end at once it never filled. With runs of 0.2 s
+each, which the one worker ends in turn, the default queue filled and the
+last occurrences waited for runs to end; with `runQueue` at 300 they were
+runs after 30 s, and every run ended no sooner. A larger run queue moves
+the wait from the occurrences pending to the runs queued; it does not end
+the work sooner. `runQueue` is at most 2000, as `pendingOccurrences` is:
+every occurrence pending can be a run queued.
 
 **One call holds the automation lock for one trigger at a time.** The tick
 takes the lock the Runner's own automation takes for each trigger, reads the
@@ -358,22 +421,20 @@ triggers is safe:
   once, at the start: a trigger enabled during the call is next due after the
   tick (section 5) and is not missed.
 
-**Not in this change.** The Runner's own clock reads every enabled trigger
-each second, the shared-interval ones included, which it never ticks; at the
-maximum that pass is the larger cost. Leaving them out of its pass is a
-change to the clock, not to the tick, and is left for its own change.
-
 ## 9. Limits, and not in this change
 
 - **The installation's limits are the operator's** (section 4). A companion
-  keeps the defaults, 128 triggers and 100 pending occurrences. The trigger
+  keeps the defaults, 128 triggers, 100 pending occurrences and 100 runs
+  queued or running. The trigger
   past the limit, configured or made with its job, is refused, `422`
   `trigger_limit`, stating the limit ("This local runner supports up to 1000
   triggers."). A tick that finds more due than the queue has room for records
   the rest `skipped`, reason `queue-full`, as the clock does; an event or a
   record delivered at the full queue is refused, `429` `queue_full`, its
-  message stating the limit. The run queue, the runs queued or running, stays
-  at 100 and is not a setting.
+  message stating the limit. The run queue, the runs queued or running, holds
+  a run's submission and its retry, refused `429` `queue_full` at the limit,
+  and an occurrence's dispatch, which waits at the full queue until a run
+  ends, as before; only the number is the operator's (#289).
 - **Runners that share a store are configured with the same limits.** Each
   Runner holds the store to its own: on both kinds the Runner reads the count
   against its configured limit, and on the postgresql kind the `triggers` row
@@ -386,8 +447,29 @@ change to the clock, not to the tick, and is left for its own change.
   records the limits, and a Runner restarted with other limits holds the new
   ones from its start, the triggers already held past a lowered limit kept.
 - **The bounds are the installation's,** not a job's or a scope's.
-- A trigger enabled before the operator narrowed the bounds is not paused
-  or refused at its next tick.
+- **Every Runner on one store must name the same shared intervals and
+  bounds.** The settings are the configuration's, not the store's: a trigger
+  enabled under one Runner's settings stays enabled under another's, and
+  under the next start's. A trigger bound to a shared interval a Runner does
+  not name is never ticked by that Runner, whose tick call for the interval is
+  refused (`422` `unknown_shared_interval`); one whose cron expression is
+  outside a Runner's bounds goes on being ticked on its schedule until it is
+  changed or enabled again, which the bounds in force then hold. Neither is
+  paused, changed or refused at its tick. Each start holds every enabled
+  trigger, of every scope, to its settings, as enabling it does, and reports
+  each one refused (#286):
+  - in the [journal](activity-journal.md), one `trigger.outside-settings`
+    entry for each, by the Runner, naming the trigger at its revision, its
+    job and release, with the refusal's `code` and the scope identifier as
+    the entry's own member, never in its text;
+  - in `GET /v1/status`, under `triggersOutsideSettings`: when the start
+    checked, and under `unknownSharedInterval` and `outsideBounds` the count
+    and the trigger ids, as the start found them.
+
+  Each start under the same settings reports the same triggers again, one
+  entry each. A start under manual admission checks nothing. The health
+  route, which answers without a credential in service mode, says nothing of
+  them ([service-mode.md](service-mode.md), section 6).
 - No seconds field, no names, no `L`, `W` or `#`, no `@` macros.
 - No shared interval on a companion's boot line.
 - The `interval`, `daily`, `weekly` and `once` kinds are unchanged, and not

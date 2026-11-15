@@ -281,6 +281,7 @@ func TestEveryTransactionIsSafeToRunTwice(t *testing.T) {
 		{"a change between the runs", TestAClosureRunAgainDecidesFromTheStore},
 		{"a leased claim renewed", TestALeasingKindsClaimIsRenewedWhileItsAttemptGoesOn},
 		{"the tick's interruption", TestTheTickInterruptsALapsedRunAndNamesNoRestart},
+		{"a start's report of triggers outside the settings", TestAStartReportsTheTriggersOutsideItsScheduleSettings},
 	} {
 		t.Run(flow.name, flow.run)
 	}

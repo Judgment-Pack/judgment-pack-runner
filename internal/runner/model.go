@@ -15,11 +15,6 @@ import (
 const MaxBody = 2 << 20
 const maxOutput = 8 << 20
 
-// queueLimit is the run queue's: the most runs queued or running at once. It
-// is fixed. The automatic queue, the occurrences pending, is the operator's
-// (LimitSettings).
-const queueLimit = 100
-
 type Input struct {
 	Preparation *Preparation    `json:"preparation,omitempty"`
 	Facts       json.RawMessage `json:"facts,omitempty"`

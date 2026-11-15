@@ -289,7 +289,7 @@ func (s *Service) sharedTick(req TickRequest, by requester) (TickResult, error) 
 	if s.unhealthy.Load() {
 		return TickResult{}, errTickUnhealthy()
 	}
-	ids, e := s.store.enabledTriggers()
+	ids, e := s.store.enabledTriggers(false)
 	if e != nil {
 		return TickResult{}, e
 	}

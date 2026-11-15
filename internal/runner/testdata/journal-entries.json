@@ -139,6 +139,24 @@
   "previousRevision": 4
  },
  {
+  "sequence": 30,
+  "entryVersion": "3",
+  "kind": "trigger.outside-settings",
+  "at": "2026-10-06T09:30:00.000001Z",
+  "by": {
+   "kind": "runner"
+  },
+  "concerns": {
+   "job": "job_11111111111111111111111111111111",
+   "release": "release_22222222222222222222222222222222",
+   "trigger": "trg_33333333333333333333333333333333"
+  },
+  "revision": 5,
+  "reason": "This Runner's operator names no such shared interval. This Runner does not tick the trigger.",
+  "scope": "scope-a",
+  "code": "unknown_shared_interval"
+ },
+ {
   "sequence": 9,
   "entryVersion": "1",
   "kind": "occurrence.received",

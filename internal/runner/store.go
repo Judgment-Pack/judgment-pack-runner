@@ -129,6 +129,10 @@ type Service struct {
 	selectedProfiles atomic.Pointer[[]InputProfile]
 	selectedStored   []json.RawMessage
 	selectedSetAside []SetAsideProfile
+	// heldSchedules is the triggers the start found outside the schedule
+	// settings (held_schedules.go), fixed from then on; nil under manual
+	// admission, which starts no automation.
+	heldSchedules *heldSchedules
 }
 
 func Open(cfg Config) (_ *Service, err error) {
@@ -305,6 +309,13 @@ func Open(cfg Config) (_ *Service, err error) {
 	// invocation that may have appended an operational audit before crashing.
 	if err = s.restart(); err != nil {
 		return nil, err
+	}
+	// Before any trigger is ticked: the triggers enabled under other
+	// schedule settings than this start's are reported, not changed.
+	if cfg.ExecutorAdmission == nil {
+		if s.heldSchedules, err = s.checkHeldSchedules(); err != nil {
+			return nil, err
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
@@ -675,7 +686,7 @@ func (s *Service) submitIn(st runStore, by requester, jobID, key string, input I
 		if err != nil {
 			return err
 		}
-		if count >= queueLimit {
+		if count >= s.cfg.Limits.runQueue() {
 			return &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 		}
 		queued := Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller, Scope: j.Scope}

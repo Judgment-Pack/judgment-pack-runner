@@ -217,14 +217,24 @@ and, for kind `outcome`, its `outcomeId`; the others carry the run's
 `errorClass`. `occurrence.failed` and `occurrence.expired` carry the
 occurrence's `errorClass`. No kind is added.
 
+Later, with [schedules](schedules.md) (section 9): `trigger.outside-settings`,
+by `runner`, with no state and no `previousRevision`: a start found an enabled
+trigger whose schedule its settings refuse, a shared interval they do not name
+or a cron expression outside their bounds. It names the trigger, its job and
+release, and the revision the start found; it carries `code`
+(`unknown_shared_interval` or a `cron_` code), the scope identifier as `scope`
+when the job has one, and a `reason` that states the refusal and what it means
+for the trigger, never the scope identifier. The start writes one for each
+such trigger, together, after its `runner.started`, and changes no trigger.
+
 ### Where each is written
 
 Each kind is written by the function that makes the change, in its transaction.
 Where that function is one bare statement today, it becomes a transaction that
 holds the change and its entry (section 4).
 
-**Triggers.** Every trigger entry is a new revision, and carries
-`previousRevision`.
+**Triggers.** Every trigger entry but `trigger.outside-settings` is a new
+revision, and carries `previousRevision`.
 
 - `trigger.configured`: `configureTrigger` (`triggers_store.go:113-126`), and
   `createJobConfigured` for a trigger made with its job (`store.go:286-305`).
@@ -238,6 +248,10 @@ holds the change and its entry (section 4).
   of a schedule carries `nextAt`.
 - `trigger.key-rotated`: `rotateTriggerKey` (`:205-227`), through
   `writeTrigger`. Its revision becomes the new key's `keyRevision`.
+- `trigger.outside-settings`: `checkHeldSchedules` (`held_schedules.go`), at
+  the start, after `runner.started`: one transaction holds the entry of every
+  trigger the start found outside the schedule settings, and writes no
+  trigger. Its revision is the one found, not a new one.
 
 **Occurrences.**
 

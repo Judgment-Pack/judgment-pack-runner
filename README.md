@@ -146,7 +146,8 @@ starts it), and:
   file; no one but its owner, Runner's user or root, may write it.
 - `acceptOtherHostsOverPlainHTTP`, optional, `true` or `false`.
 - `limits`, optional: `triggers`, the most triggers the installation holds (default
-  128, at most 1000), and `pendingOccurrences`, the most occurrences pending at once
+  128, at most 1000), `pendingOccurrences`, the most occurrences pending at once
+  (default 100, at most 2000), and `runQueue`, the most runs queued or running at once
   (default 100, at most 2000). Runners that share a store are configured with the same
   limits; configured otherwise, each refuses at its own number. The
   [schedules design](docs/design/schedules.md) (sections 8 and 9) has the measured cost.
@@ -974,13 +975,18 @@ real-time timer. The computer must be awake and Desk running.
 In service mode, one external scheduler job per shared interval can tick every scope's
 shared-interval triggers through `POST /v1/ticks`, with the control API's credential and
 no scope identifier; a repeated or late call, on this Runner or another of the store,
-records nothing twice. The evaluation, bounds, refusal codes and measured cost are in
+records nothing twice. Every Runner on one store must name the same shared intervals and
+bounds: at each start, Runner reports every enabled trigger bound to an interval its
+configuration does not name, or whose cron expression is outside its bounds, one
+`trigger.outside-settings` journal entry each and, in `GET /v1/status`, under
+`triggersOutsideSettings`, the counts and trigger ids; it changes none of them. The
+evaluation, bounds, refusal codes and measured cost are in
 [schedules](docs/design/schedules.md).
 
 Overlap defaults to **Skip this occurrence**; **Queue this occurrence** uses a
 bounded queue. Up to 100 occurrences can await admission, alongside the existing
-bounded run queue; a service's `limits` member sets this limit, up to 2000. The limit
-is the installation's, shared by every trigger. A schedule, a
+bounded run queue of up to 100 runs queued or running; a service's `limits` member sets
+each, up to 2000. The limits are the installation's, shared by every trigger. A schedule, a
 file change or a cloud signal that finds it reached has no sender to answer, and is
 recorded `skipped`, reason `queue-full`; an event delivery is refused instead, with
 429 `queue_full` ([below](#event-delivery)). Queue expiry is explicit, from 1 minute

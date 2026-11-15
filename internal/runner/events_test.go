@@ -725,6 +725,11 @@ func TestEveryChangeOfStateWritesExactlyOneEntry(t *testing.T) {
 	// has none to its schema, byte for byte): its kind is made, one entry a
 	// change, by TestAThrottledAcquisitionIsAttemptedAgainAfterItsWait.
 	covered["occurrence.retry-scheduled"] = true
+	// A trigger outside the schedule settings is found only by a start under
+	// other settings than the trigger was enabled under: its kind is made,
+	// one entry a trigger, by
+	// TestAStartReportsTheTriggersOutsideItsScheduleSettings.
+	covered[outsideSettingsKind] = true
 	for _, kind := range eventKinds {
 		if !covered[kind] {
 			t.Errorf("no step made a change of kind %s", kind)

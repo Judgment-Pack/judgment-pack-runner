@@ -159,8 +159,10 @@ var triggerStoreCases = []storeCase{
 		other.JobID = "job_other"
 		w.keep(t, []Trigger{third, w.worldTrigger("trg_0"), other, first})
 		must(t, w.st.update(func(tx runTx) error { return tx.putTrigger(first, "sha256:key", false) }))
-		if ids, err := w.st.enabledTriggers(); err != nil || !slices.Equal(ids, []string{"trg_3", "trg_1"}) {
-			t.Fatalf("enabled triggers %v, %v", ids, err)
+		for _, ownClock := range []bool{false, true} {
+			if ids, err := w.st.enabledTriggers(ownClock); err != nil || !slices.Equal(ids, []string{"trg_3", "trg_1"}) {
+				t.Fatalf("enabled triggers (own clock %v) %v, %v", ownClock, ids, err)
+			}
 		}
 		items, err := w.st.jobTriggers(w.job.ID)
 		must(t, err)
@@ -173,6 +175,35 @@ var triggerStoreCases = []storeCase{
 		}
 		if items, err = w.st.jobTriggers("job_none"); err != nil || items == nil || len(items) != 0 {
 			t.Fatalf("a job with no triggers has %v, %v", items, err)
+		}
+	}},
+	// docs/design/schedules.md, section 8: the Runner's own clock never
+	// ticks a schedule bound to a shared interval, and its read leaves every
+	// such trigger out, enabled or not, with or without an expression; the
+	// shared tick's read keeps them.
+	{"the own clock's enabled triggers leave out a schedule bound to a shared interval", func(t *testing.T, k storeKindUnderTest) {
+		w := newStoreWorld(t, k)
+		schedule := func(id string, sc Schedule, paused bool) Trigger {
+			tr := w.worldTrigger(id)
+			sc.Timezone, sc.StartAt = "UTC", "2026-01-01T00:00:00Z"
+			tr.Config.Kind, tr.Config.Schedule, tr.Paused = "schedule", &sc, paused
+			return tr
+		}
+		event := w.worldTrigger("trg_event")
+		event.Paused = false
+		w.keep(t, []Trigger{
+			schedule("trg_shared", Schedule{Kind: "tick", Tick: "15m"}, false),
+			event,
+			schedule("trg_interval", Schedule{Kind: "interval", EverySeconds: 60}, false),
+			schedule("trg_cron", Schedule{Kind: "cron", Cron: "0 * * * *"}, false),
+			schedule("trg_shared_cron", Schedule{Kind: "tick", Tick: "1h", Cron: "0 9 * * *"}, false),
+			schedule("trg_shared_paused", Schedule{Kind: "tick", Tick: "15m"}, true),
+		})
+		if ids, err := w.st.enabledTriggers(true); err != nil || !slices.Equal(ids, []string{"trg_event", "trg_interval", "trg_cron"}) {
+			t.Fatalf("the own clock's triggers %v, %v", ids, err)
+		}
+		if ids, err := w.st.enabledTriggers(false); err != nil || !slices.Equal(ids, []string{"trg_shared", "trg_event", "trg_interval", "trg_cron", "trg_shared_cron"}) {
+			t.Fatalf("every enabled trigger %v, %v", ids, err)
 		}
 	}},
 	{"an occurrence is admitted once under its id and once under its identity", func(t *testing.T, k storeKindUnderTest) {

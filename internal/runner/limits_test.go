@@ -1,9 +1,11 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -48,7 +50,7 @@ func TestAStoreAtItsConfiguredLimitsRefusesTheNextTriggerAndOccurrence(t *testin
 		Limits map[string]int `json:"limits"`
 	}
 	must(t, json.Unmarshal(got.Body.Bytes(), &status))
-	if got.Code != 200 || len(status.Limits) != 2 || status.Limits["triggers"] != 4 || status.Limits["pendingOccurrences"] != 2 {
+	if got.Code != 200 || len(status.Limits) != 3 || status.Limits["triggers"] != 4 || status.Limits["pendingOccurrences"] != 2 || status.Limits["runQueue"] != defaultRunQueue {
 		t.Fatalf("the status states the limits as %d %v", got.Code, status.Limits)
 	}
 
@@ -85,7 +87,7 @@ func TestAStoreAtItsConfiguredLimitsRefusesTheNextTriggerAndOccurrence(t *testin
 // A limit out of its bounds is refused at the start, before anything is
 // opened.
 func TestALimitOutOfItsBoundsIsRefusedAtTheStart(t *testing.T) {
-	for _, limits := range []LimitSettings{{Triggers: maxTriggerLimit + 1}, {PendingOccurrences: maxPendingOccurrences + 1}, {Triggers: -1}} {
+	for _, limits := range []LimitSettings{{Triggers: maxTriggerLimit + 1}, {PendingOccurrences: maxPendingOccurrences + 1}, {Triggers: -1}, {RunQueue: maxRunQueue + 1}, {RunQueue: -1}} {
 		cfg := journalConfig(t)
 		cfg.Limits = limits
 		if s, e := Open(cfg); e == nil || !strings.HasPrefix(e.Error(), "limits.") {
@@ -97,20 +99,96 @@ func TestALimitOutOfItsBoundsIsRefusedAtTheStart(t *testing.T) {
 	}
 }
 
-// A limits member with both limits refused answers the refusal of triggers,
-// the first checked, every time, whatever order the members are read in.
-func TestALimitsMemberWithBothLimitsRefusedAnswersTheTriggersRefusal(t *testing.T) {
-	for _, raw := range []string{
-		`{"pendingOccurrences":0,"triggers":0}`,
-		`{"triggers":0,"pendingOccurrences":0}`,
-		`{"pendingOccurrences":0,"triggers":1001}`,
-		`{"triggers":1001,"pendingOccurrences":2001}`,
+// A limits member with several limits refused answers the refusal of the
+// first checked, triggers, then pendingOccurrences, then runQueue, every
+// time, whatever order the members are read in.
+func TestALimitsMemberWithSeveralLimitsRefusedAnswersTheFirstChecked(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"pendingOccurrences":0,"triggers":0}`:                       "limits.triggers is from 1 to 1000",
+		`{"triggers":0,"pendingOccurrences":0}`:                       "limits.triggers is from 1 to 1000",
+		`{"pendingOccurrences":0,"triggers":1001}`:                    "limits.triggers is from 1 to 1000",
+		`{"triggers":1001,"pendingOccurrences":2001}`:                 "limits.triggers is from 1 to 1000",
+		`{"runQueue":0,"pendingOccurrences":0,"triggers":1001}`:       "limits.triggers is from 1 to 1000",
+		`{"runQueue":2001,"triggers":2,"pendingOccurrences":0}`:       "limits.pendingOccurrences is from 1 to 2000",
+		`{"runQueue":-1,"pendingOccurrences":2001}`:                   "limits.pendingOccurrences is from 1 to 2000",
+		`{"runQueue":2001,"triggers":1000,"pendingOccurrences":2000}`: "limits.runQueue is from 1 to 2000",
+		`{"runQueue":0}`: "limits.runQueue is from 1 to 2000",
 	} {
 		for range 32 {
-			if _, e := ParseLimitSettings(json.RawMessage(raw)); e == nil || e.Error() != "limits.triggers is from 1 to 1000" {
-				t.Fatalf("%s: %v, want the refusal of triggers", raw, e)
+			if _, e := ParseLimitSettings(json.RawMessage(raw)); e == nil || e.Error() != want {
+				t.Fatalf("%s: %v, want %q", raw, e, want)
 			}
 		}
+	}
+	for raw, want := range map[string]LimitSettings{
+		`{"runQueue":1}`:    {RunQueue: 1},
+		`{"runQueue":2000}`: {RunQueue: maxRunQueue},
+		`{"triggers":1000,"pendingOccurrences":2000,"runQueue":500}`: {Triggers: maxTriggerLimit, PendingOccurrences: maxPendingOccurrences, RunQueue: 500},
+	} {
+		if got, e := ParseLimitSettings(json.RawMessage(raw)); e != nil || got != want {
+			t.Fatalf("%s: %+v, %v", raw, got, e)
+		}
+	}
+	for _, raw := range []string{`{"runQueue":null}`, `{"runQueue":1.5}`, `{"RunQueue":5}`, `{"runQueue":5,"runQueue":6}`, `{"runQueue":"5"}`} {
+		if _, e := ParseLimitSettings(json.RawMessage(raw)); e == nil || !strings.HasPrefix(e.Error(), "limits, when present, is an object of triggers, pendingOccurrences and runQueue") {
+			t.Fatalf("%s: %v, want the member's refusal", raw, e)
+		}
+	}
+}
+
+// Section 9: the run queue holds the configured number of runs queued or
+// running, not the default. A submission past it is refused, 429
+// queue_full, and writes nothing; an accepted occurrence the clock reaches at
+// the full queue waits as it was, its run not made, and is dispatched once
+// the queue has room. GET /v1/status states the number.
+func TestTheRunQueueHoldsItsConfiguredLimit(t *testing.T) {
+	cfg := journalConfig(t)
+	cfg.Limits = LimitSettings{RunQueue: 3}
+	cfg.disableDispatcher = true
+	cfg.disableAutomation = true
+	s := openJournal(t, cfg)
+	t.Cleanup(s.Close)
+	j, e := s.createJob("Queued", journalRelease(t, s, completingRuntime(t, cfg.Dir)).ID)
+	must(t, e)
+	var status struct {
+		Limits map[string]int `json:"limits"`
+	}
+	got := serve(t, s, "GET", "/v1/status", "", nil)
+	must(t, json.Unmarshal(got.Body.Bytes(), &status))
+	if status.Limits["runQueue"] != 3 {
+		t.Fatalf("the status states the run queue as %v", status.Limits)
+	}
+	for i := range 3 {
+		if got = serve(t, s, "POST", "/v1/jobs/"+j.ID+"/runs", string(encode(journalInput())), map[string]string{"Idempotency-Key": "fill-" + strconv.Itoa(i)}); got.Code != 202 {
+			t.Fatalf("run %d of a queue of 3: %d %s", i+1, got.Code, got.Body.String())
+		}
+	}
+	got = serve(t, s, "POST", "/v1/jobs/"+j.ID+"/runs", string(encode(journalInput())), map[string]string{"Idempotency-Key": "past"})
+	if code, a := answerOf(t, got.Code, got.Body.Bytes()); code != 429 || a.Error.Code != "queue_full" {
+		t.Fatalf("a run past a queue of 3: %d %s", got.Code, got.Body.String())
+	}
+	var held int
+	must(t, sqliteDB(s).QueryRow("SELECT count(*) FROM runs").Scan(&held))
+	if held != 3 {
+		t.Fatalf("the store holds %d runs, want 3", held)
+	}
+
+	tr, e := s.configureTrigger(j.ID, "", 0, constantTrigger(time.Now()))
+	must(t, e)
+	o := newOccurrence(tr, j, time.Now())
+	input := journalInput()
+	o.Input, o.InputDigest = &input, digest(encode(input))
+	admit(t, s, tr, &o, "full")
+	must(t, s.automationTick(time.Now()))
+	if waits := storedOccurrence(t, s, o.ID); waits.State != "accepted" || waits.RunID != "" {
+		t.Fatalf("the occurrence did not wait at the full queue: %+v", waits)
+	}
+	// One run ends: the queue has room for the occurrence's.
+	_, e = s.dispatchNext(context.Background())
+	must(t, e)
+	must(t, s.automationTick(time.Now()))
+	if moved := storedOccurrence(t, s, o.ID); moved.State != "submitted" || moved.RunID == "" {
+		t.Fatalf("the occurrence was not dispatched once the queue had room: %+v", moved)
 	}
 }
 
