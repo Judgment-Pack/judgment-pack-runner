@@ -82,8 +82,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) error {
 // and executorAdmission, which it refuses; token, the owner bearer, which a
 // configuration with identity does not take and one without needs; listen;
 // acceptOtherHostsOverPlainHTTP, true or false; schedules, the shared
-// intervals and the cron bounds; and limits, the installation's trigger and
-// pending-occurrence limits.
+// intervals and the cron bounds; and limits, the installation's trigger,
+// pending-occurrence and run queue limits.
 func readServiceConfig(path string) (serviceConfig, error) {
 	raw, err := runner.ReadServiceConfig(path)
 	if err != nil {

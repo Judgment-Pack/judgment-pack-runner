@@ -396,7 +396,7 @@ func (s *Service) retryRunBy(st runStore, by requester, runID string, attempt in
 		if err != nil {
 			return err
 		}
-		if count >= queueLimit {
+		if count >= s.cfg.Limits.runQueue() {
 			return &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 		}
 		if err = tx.raiseSchema(retryStoreSchema); err != nil {

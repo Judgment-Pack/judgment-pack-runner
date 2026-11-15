@@ -669,7 +669,7 @@ func (s *Service) submitIn(st runStore, by requester, jobID, key string, input I
 		if err != nil {
 			return err
 		}
-		if count >= queueLimit {
+		if count >= s.cfg.Limits.runQueue() {
 			return &apiError{429, "queue_full", "The local queue is full. Try again after pending runs finish."}
 		}
 		queued := Run{manual: manual, Trigger: origin, SchemaVersion: "1", ID: id("run_"), JobID: j.ID, ReleaseID: j.ReleaseID, Revision: j.Revision, State: "queued", Input: input, CreatedAt: now(), RequestedBy: caller, Scope: j.Scope}

@@ -125,11 +125,16 @@ The configuration's optional `limits` member is one object of:
 - `triggers`: the most triggers the installation holds, from 1 to 1000,
   default 128;
 - `pendingOccurrences`: the most occurrences pending (accepted, preparing or
-  waiting) at once, from 1 to 2000, default 100.
+  waiting) at once, from 1 to 2000, default 100;
+- `runQueue`: the most runs queued or running at once, the run queue, from 1
+  to 2000, default 100.
 
 Each a whole number, at most once, spelled exactly, none null, and nothing
-else; a refusal stops the start. Without the member, or without one of the
-two, the default holds, as it does on a companion's boot line, which takes
+else; a refusal stops the start. Anything but an object, a member given
+twice or a member Runner does not know is refused first; then the three are
+checked in this order, `triggers`, `pendingOccurrences`, `runQueue`, so that
+of several refused the first is answered every time. Without the member, or without one of the
+three, the default holds, as it does on a companion's boot line, which takes
 no `limits`. `GET /v1/status` states the limits in force, under `limits`.
 Section 9 says what they hold and what Runners that share a store need;
 section 8 says how the maximums were chosen.
@@ -357,6 +362,31 @@ transaction (a row on the postgresql kind), and the ticks at 2000 cost no
 more per trigger than at 128. A larger queue is a longer wait for its last
 occurrence, which the run queue (section 9) takes in turn.
 
+**The run queue (#289).** One shared tick admitted 300 occurrences, one for
+each of 300 jobs, and the Runner's clock dispatched them into runs, on one
+machine (indicative figures):
+
+| Kind | Each run | `runQueue` | Every occurrence a run | Every run ended | Most runs queued or running |
+|---|---|---|---|---|---|
+| sqlite | at once | 100 | 29.3 s | 29.7 s | 14 |
+| sqlite | at once | 300 | 29.4 s | 29.6 s | 35 |
+| postgresql | at once | 100 | 29.3 s | 29.5 s | 7 |
+| postgresql | at once | 300 | 29.5 s | 29.7 s | 7 |
+| sqlite | 0.2 s | 100 | 51 s | 75.8 s | 100 |
+| sqlite | 0.2 s | 300 | 29.2 s | 78.3 s | 192 |
+| postgresql | 0.2 s | 100 | 51.2 s | 76.6 s | 100 |
+| postgresql | 0.2 s | 300 | 29.4 s | 77.1 s | 187 |
+
+The clock dispatches up to ten occurrences a pass, one pass a second, so
+300 occurrences are runs after about 30 s on both kinds while the run queue
+has room. With runs that end at once it never filled. With runs of 0.2 s
+each, which the one worker ends in turn, the default queue filled and the
+last occurrences waited for runs to end; with `runQueue` at 300 they were
+runs after 30 s, and every run ended no sooner. A larger run queue moves
+the wait from the occurrences pending to the runs queued; it does not end
+the work sooner. `runQueue` is at most 2000, as `pendingOccurrences` is:
+every occurrence pending can be a run queued.
+
 **One call holds the automation lock for one trigger at a time.** The tick
 takes the lock the Runner's own automation takes for each trigger, reads the
 trigger again under it, ticks it, and lets it go before the next: the
@@ -394,14 +424,17 @@ triggers is safe:
 ## 9. Limits, and not in this change
 
 - **The installation's limits are the operator's** (section 4). A companion
-  keeps the defaults, 128 triggers and 100 pending occurrences. The trigger
+  keeps the defaults, 128 triggers, 100 pending occurrences and 100 runs
+  queued or running. The trigger
   past the limit, configured or made with its job, is refused, `422`
   `trigger_limit`, stating the limit ("This local runner supports up to 1000
   triggers."). A tick that finds more due than the queue has room for records
   the rest `skipped`, reason `queue-full`, as the clock does; an event or a
   record delivered at the full queue is refused, `429` `queue_full`, its
-  message stating the limit. The run queue, the runs queued or running, stays
-  at 100 and is not a setting.
+  message stating the limit. The run queue, the runs queued or running, holds
+  a run's submission and its retry, refused `429` `queue_full` at the limit,
+  and an occurrence's dispatch, which waits at the full queue until a run
+  ends, as before; only the number is the operator's (#289).
 - **Runners that share a store are configured with the same limits.** Each
   Runner holds the store to its own: on both kinds the Runner reads the count
   against its configured limit, and on the postgresql kind the `triggers` row

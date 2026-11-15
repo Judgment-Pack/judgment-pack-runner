@@ -79,9 +79,10 @@ Its members:
   and the shortest and longest gap a cron expression may have
   ([schedules](schedules.md), section 4).
 - **`limits`**, optional: the most triggers the installation holds
-  (`triggers`, default 128, at most 1000) and the most occurrences pending at
-  once (`pendingOccurrences`, default 100, at most 2000). Runners that share
-  a store are configured with the same limits
+  (`triggers`, default 128, at most 1000), the most occurrences pending at
+  once (`pendingOccurrences`, default 100, at most 2000) and the most runs
+  queued or running at once (`runQueue`, default 100, at most 2000). Runners
+  that share a store are configured with the same limits
   ([schedules](schedules.md), section 9).
 
 `executorOwnership` and `executorAdmission` are refused: both bind Runner to

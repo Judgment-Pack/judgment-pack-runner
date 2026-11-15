@@ -159,7 +159,7 @@ func TestEveryAdmissionRefusalIsJournaledOnce(t *testing.T) {
 			return submit(`{"facts":{"other":true}}`, "k")(w)
 		}},
 		{"submit-run: the queue is full", 429, &want{"submit-run", "queue_full", "installation"}, func(w *coverWorld) int {
-			for i := 0; i < queueLimit; i++ {
+			for i := 0; i < defaultRunQueue; i++ {
 				_, _, e := w.s.submit(w.job.ID, "fill-"+strconv.Itoa(i), journalInput())
 				must(w.t, e)
 			}

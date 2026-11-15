@@ -707,7 +707,7 @@ func TestAFullQueueEndsTheTicksDispatching(t *testing.T) {
 	input := sample()
 	o.Input, o.InputDigest = &input, digest(encode(input))
 	admit(t, s, tr, &o, "full")
-	for i := range queueLimit {
+	for i := range defaultRunQueue {
 		if _, _, e = s.submit(j.ID, "fill-"+strconv.Itoa(i), sample()); e != nil {
 			t.Fatal(e)
 		}

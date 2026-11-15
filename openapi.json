@@ -3772,7 +3772,7 @@
           },
           "limits": {
             "type": "object",
-            "description": "The installation's limits in force: the most triggers it holds, and the most occurrences pending (accepted, preparing or waiting) at once, the defaults (128 and 100) included. A service configuration may set either; a companion has the defaults.",
+            "description": "The installation's limits in force: the most triggers it holds, the most occurrences pending (accepted, preparing or waiting) at once, and the most runs queued or running at once (the run queue), the defaults (128, 100 and 100) included. A service configuration may set any of them; a companion has the defaults.",
             "properties": {
               "triggers": {
                 "type": "integer",
@@ -3783,11 +3783,17 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 2000
+              },
+              "runQueue": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2000
               }
             },
             "required": [
               "triggers",
-              "pendingOccurrences"
+              "pendingOccurrences",
+              "runQueue"
             ],
             "additionalProperties": false
           }
