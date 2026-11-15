@@ -19,15 +19,18 @@ import (
 // Names (JAN, MON), "?", "L", "W", "#", seven for Sunday, a step on a
 // single number, and the "@" macros are refused.
 //
-// A day matches by the standard rule: a day-of-month or day-of-week field
-// written "*" is unrestricted, any other spelling ("*/2" included)
-// restricts it; when both are restricted a day either one matches matches,
-// and when one is unrestricted the other alone decides.
+// A day matches by the rule common cron readers (Vixie cron, cronie) apply:
+// a day-of-month or day-of-week field that starts with "*" ("*" or "*/2")
+// is unrestricted for this rule, any other spelling restricts it; when both
+// are restricted a day either one matches matches, and when either is
+// unrestricted a day both match matches, so "0 0 */2 * 1" is odd days that
+// are Mondays.
 //
 // The reader uses the standard library only.
 
 // cronExpr is a cron expression as read: the values each field matches, as
-// bits, and whether its day fields are unrestricted.
+// bits, and whether its day fields start with "*", which leaves them
+// unrestricted for the day rule.
 type cronExpr struct {
 	minute         uint64 // bits 0-59
 	hour           uint32 // bits 0-23
@@ -93,7 +96,7 @@ func parseCron(s string) (cronExpr, error) {
 		}
 	}
 	c.minute, c.hour, c.dom, c.month, c.dow = bits[0], uint32(bits[1]), uint32(bits[2]), uint16(bits[3]), uint8(bits[4])
-	c.domAny, c.dowAny = parts[2] == "*", parts[4] == "*"
+	c.domAny, c.dowAny = strings.HasPrefix(parts[2], "*"), strings.HasPrefix(parts[4], "*")
 	return c, nil
 }
 
@@ -153,13 +156,8 @@ func (c cronExpr) day(m time.Month, d int, wd time.Weekday) bool {
 		return false
 	}
 	dom, dow := c.dom&(1<<d) != 0, c.dow&(1<<wd) != 0
-	switch {
-	case c.domAny && c.dowAny:
-		return true
-	case c.domAny:
-		return dow
-	case c.dowAny:
-		return dom
+	if c.domAny || c.dowAny {
+		return dom && dow
 	}
 	return dom || dow
 }

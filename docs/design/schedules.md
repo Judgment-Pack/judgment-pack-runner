@@ -78,10 +78,12 @@ from 1 to the field's largest value. Names (`JAN`, `MON`), `?`, `L`, `W`,
 macros are refused, `invalid_cron`, and the refusal repeats nothing of the
 expression.
 
-**The day rule** is the standard one: a day field written `*` is
-unrestricted, any other spelling (`*/2` included) restricts it; when both day
-fields are restricted, a day either one matches matches; when one is
-unrestricted, the other alone decides.
+**The day rule** is the one common cron readers (Vixie cron, cronie) apply:
+a day field that starts with `*` (`*` or `*/2`) is unrestricted for this
+rule, any other spelling (`1-31/2` included) restricts it; when both day
+fields are restricted, a day either one matches matches; when either is
+unrestricted, a day both match matches. So `0 0 */2 * 1` runs on odd days
+that are Mondays, and `0 0 1-31/2 * 1` on odd days and on Mondays.
 
 **Evaluation and granularity.** An expression matches whole minutes of the
 local wall clock in the schedule's zone. A local time that a time-zone

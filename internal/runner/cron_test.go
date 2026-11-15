@@ -51,10 +51,13 @@ func TestCronGrammar(t *testing.T) {
 		{"00 05 01 01 0", []int{0}, []int{5}, []int{1}, []int{1}, []int{0}, false, false},
 		{"59 23 31 12 6", []int{59}, []int{23}, []int{31}, []int{12}, []int{6}, false, false},
 		{"0 0 1 */3 *", []int{0}, []int{0}, []int{1}, []int{1, 4, 7, 10}, all(0, 6), false, true},
-		// "*/2" restricts the field: only "*" written alone leaves it open.
-		{"0 0 */2 * 5", []int{0}, []int{0}, []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31}, all(1, 12), []int{5}, false, false},
+		// A field that starts with "*" ("*/2") leaves the day rule open, as
+		// common readers do; "1-31/2", the same days, restricts it.
+		{"0 0 */2 * 5", []int{0}, []int{0}, []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31}, all(1, 12), []int{5}, true, false},
+		{"0 0 1-31/2 * 5", []int{0}, []int{0}, []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31}, all(1, 12), []int{5}, false, false},
+		{"0 0 13 * */2", []int{0}, []int{0}, []int{13}, all(1, 12), []int{0, 2, 4, 6}, false, true},
 		{"1-1 0 * * *", []int{1}, []int{0}, all(1, 31), all(1, 12), all(0, 6), true, true},
-		{"*/59 */23 */31 */12 */6", []int{0, 59}, []int{0, 23}, []int{1}, []int{1}, []int{0, 6}, false, false},
+		{"*/59 */23 */31 */12 */6", []int{0, 59}, []int{0, 23}, []int{1}, []int{1}, []int{0, 6}, true, true},
 	} {
 		got, err := parseCron(c.expr)
 		if err != nil {
@@ -116,7 +119,14 @@ func TestCronNextAndLatest(t *testing.T) {
 		{"the 13th or a Friday: the 13th", "0 0 13 * 5", time.UTC, "2026-11-06T00:00:00Z", "2026-11-13T00:00:00Z"},
 		{"the 13th alone", "0 0 13 * *", time.UTC, "2026-11-01T00:00:00Z", "2026-11-13T00:00:00Z"},
 		{"Fridays alone", "0 0 * * 5", time.UTC, "2026-11-07T00:00:00Z", "2026-11-13T00:00:00Z"},
-		{"odd days or Fridays", "0 0 */2 * 5", time.UTC, "2026-11-01T00:00:00Z", "2026-11-03T00:00:00Z"},
+		// A day field that starts with "*" leaves the rule open: both
+		// fields must match, as in common readers.
+		{"odd days that are Fridays", "0 0 */2 * 5", time.UTC, "2026-11-01T00:00:00Z", "2026-11-13T00:00:00Z"},
+		{"odd days that are Mondays", "0 0 */2 * 1", time.UTC, "2026-11-01T00:00:00Z", "2026-11-09T00:00:00Z"},
+		{"odd days that are Mondays, the next", "0 0 */2 * 1", time.UTC, "2026-11-09T00:00:00Z", "2026-11-23T00:00:00Z"},
+		{"the 13th that is a Sunday, Tuesday, Thursday or Saturday", "0 0 13 * */2", time.UTC, "2026-11-01T00:00:00Z", "2026-12-13T00:00:00Z"},
+		{"odd days written as a range, or Fridays", "0 0 1-31/2 * 5", time.UTC, "2026-11-01T00:00:00Z", "2026-11-03T00:00:00Z"},
+		{"odd days written as a range, or Fridays: the Friday", "0 0 1-31/2 * 5", time.UTC, "2026-11-05T00:00:00Z", "2026-11-06T00:00:00Z"},
 		{"a weekday at nine, over a weekend", "0 9 * * 1-5", time.UTC, "2026-11-13T09:00:00Z", "2026-11-16T09:00:00Z"},
 		{"the zone's wall clock", "0 9 * * *", toronto, "2026-11-15T00:00:00Z", "2026-11-15T14:00:00Z"},
 		{"a nonexistent local time is skipped", "30 2 * * *", toronto, "2026-03-07T08:00:00Z", "2026-03-09T06:30:00Z"},
