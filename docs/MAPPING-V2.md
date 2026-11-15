@@ -2237,7 +2237,9 @@ pass these routes through yet.
 
 Preparation sessions that Runner issues to a caller, seal verification, HTTP catalog support,
 SQL async statement lifecycles, model HTTP calls, multi-record/page acquisition,
-and pack-level class declarations remain separate work. Of dialect version 3,
+and pack-level class declarations remain separate work. Paging over a source, with a
+cursor kept between runs, is proposed in [design/paging.md](design/paging.md) and
+waits for the dialect's form for several acquisitions of one source. Of dialect version 3,
 the kinds `http`, `sql` and `web` are refused by name
 ([above](#dialect-version-3)). A `research` source is prepared from responses its
 caller retains ([above](#research-sources)): Runner runs no research itself, in
