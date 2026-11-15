@@ -147,8 +147,8 @@ changed or enabled again (section 9).
 
 `POST /v1/ticks` takes `{"interval":"15m"}`, and optionally `"at"`, the tick:
 an RFC 3339 time that is a multiple of the interval since midnight UTC, from
-the year 2000 to 2200, no more than 30 seconds ahead of the Runner's clock.
-Without `at`, the tick is the last at or before the Runner's clock plus 30
+the year 2000 to 2200, no more than 30 seconds ahead of the Runner's clock
+and no more than one interval behind it (section 6). Without `at`, the tick is the last at or before the Runner's clock plus 30
 seconds, so that a scheduler that calls a little early names the tick it
 means. It answers `200` with `{"interval","at","occurrences"}`, the number of
 occurrences this call recorded, accepted or skipped.
@@ -185,7 +185,8 @@ and records nothing; one that read the trigger before the first call wrote
 it meets the version moved on, and records nothing, failing nothing; the
 occurrence's identity, `schedule:<revision>:<due>`, keeps a second
 occurrence of one due time out whatever the order. A call for a tick before
-the trigger's `nextAt` records nothing. No lock, row or column is added for
+the trigger's `nextAt` records nothing; one for a tick more than one interval
+behind the Runner's clock is refused (section 6). No lock, row or column is added for
 it.
 
 ## 6. The missed rule
@@ -193,6 +194,16 @@ it.
 A due time before the tick a call names is one whose own tick no call named
 (the scheduler was down, or skipped it): the trigger's `missed` decides, as on
 the Runner's own clock, with no grace, since the call's tick is the clock.
+
+**Lateness is judged against the Runner's clock as well.** A call may name a
+tick no more than one interval behind the Runner's clock; an older one is
+refused, `422` `invalid_tick`, and records nothing. So a due time more than
+one interval before the Runner's clock is always before the tick a call can
+name, and is missed. A scheduler down from 10:00 to 11:00 that replays the
+15-minute ticks 10:00, 10:15, ... 11:00 at 11:00:05 has the first four
+refused; the 11:00 call finds the 10:00 due time missed, and `latest` makes
+one occurrence, at 11:00, while `skip` records one skipped. A retry of a
+call that failed is taken while its tick is no more than one interval old.
 
 - `skip` records one skipped occurrence, reason `missed`, from the first due
   time missed through the tick called, and the next run is the next tick;

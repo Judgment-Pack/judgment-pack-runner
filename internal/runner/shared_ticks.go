@@ -232,12 +232,16 @@ func sharedTicked(t Trigger, name string) bool {
 // sharedTickLead is how far ahead of the Runner's clock a tick may be named,
 // so that a scheduler whose clock runs a little ahead names the tick it
 // means. A call that names none ticks the last tick at or before the
-// Runner's clock plus the lead.
+// Runner's clock plus the lead. A tick named more than one interval behind
+// the clock is refused: the next tick's time has come, and a call for a
+// past tick would admit as on time a due time the scheduler missed
+// (docs/design/schedules.md, section 6).
 const sharedTickLead = 30 * time.Second
 
 // TickRequest is the body of POST /v1/ticks: the shared interval, and
 // optionally the tick, a multiple of the interval since midnight UTC, no
-// more than sharedTickLead ahead of the Runner's clock.
+// more than sharedTickLead ahead of the Runner's clock and no more than one
+// interval behind it.
 type TickRequest struct {
 	Interval string `json:"interval"`
 	At       string `json:"at,omitempty"`
@@ -266,12 +270,17 @@ func (s *Service) sharedTick(req TickRequest) (TickResult, error) {
 	if !ok || !s.cfg.Schedules.shares(req.Interval) {
 		return TickResult{}, bad("unknown_shared_interval", "This Runner's operator names no such shared interval.")
 	}
-	now := time.Now()
+	now := s.instant()
 	tick := now.Add(sharedTickLead).Truncate(span)
 	if req.At != "" {
+		// A due time is judged late against the Runner's clock as well as
+		// against the tick: a tick more than one interval behind the clock
+		// is refused, so that a due time more than one interval before the
+		// clock is always before the tick called, and missed. A scheduler
+		// that replays the ticks it missed makes no catch-up burst.
 		at, e := time.Parse(time.RFC3339, req.At)
-		if e != nil || at.Year() < 2000 || at.Year() > 2200 || !at.Truncate(span).Equal(at) || at.Sub(now) > sharedTickLead {
-			return TickResult{}, bad("invalid_tick", "Name a tick of the interval, a multiple of it since midnight UTC, no more than 30 seconds ahead of the Runner's clock.")
+		if e != nil || at.Year() < 2000 || at.Year() > 2200 || !at.Truncate(span).Equal(at) || at.Sub(now) > sharedTickLead || now.Sub(at) > span {
+			return TickResult{}, bad("invalid_tick", "Name a tick of the interval, a multiple of it since midnight UTC, no more than 30 seconds ahead of the Runner's clock and no more than one interval behind it.")
 		}
 		tick = at
 	}

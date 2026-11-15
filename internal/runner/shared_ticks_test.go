@@ -90,6 +90,13 @@ func (w *tickWorld) occurrencesOf(id string) []Occurrence {
 	return out
 }
 
+// at sets the Runner's clock, the time a tick is judged by, to now, and
+// answers it: a test passes its times rather than read the wall clock's.
+func (w *tickWorld) at(now time.Time) time.Time {
+	w.s.clock = func() time.Time { return now }
+	return now
+}
+
 // nextAt is trigger id's next time as stored.
 func (w *tickWorld) nextAt(id string) string {
 	w.t.Helper()
@@ -132,7 +139,7 @@ func ticked(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 func TestASharedTickTicksEveryScopesTriggersOnce(t *testing.T) {
 	w := newTickWorld(t, ScheduleSettings{SharedIntervals: []string{"15m", "1h"}})
 	doc := readOpenAPI(t)
-	tick := time.Now().UTC().Truncate(15 * time.Minute)
+	tick := w.at(time.Now().UTC().Truncate(15 * time.Minute))
 	var bound []Trigger
 	for _, scope := range []string{"", "scope-a", "scope-b"} {
 		bound = append(bound, w.trigger(scope, sharedSchedule("15m", ""), true, tick))
@@ -165,7 +172,8 @@ func TestASharedTickTicksEveryScopesTriggersOnce(t *testing.T) {
 		t.Fatalf("the tick journaled %d entries", n-entries)
 	}
 
-	// The same tick again, and a tick already passed, admit nothing.
+	// The same tick again, and a tick already passed (one interval behind
+	// the clock, the furthest a call may name), admit nothing.
 	for _, at := range []time.Time{tick, tick.Add(-15 * time.Minute)} {
 		if r = tickResult(t, doc, w.tick("15m", ticked(at))); r.Occurrences != 0 {
 			t.Fatalf("the tick %s again admitted %d", at, r.Occurrences)
@@ -191,11 +199,10 @@ func TestASharedTickTicksEveryScopesTriggersOnce(t *testing.T) {
 	// A call that names no tick ticks the last at or before the Runner's
 	// clock plus the lead: a tick of the interval, never more than one
 	// interval behind the clock.
-	before := time.Now()
 	r = tickResult(t, doc, w.tick("1h", ""))
 	at, e := time.Parse(time.RFC3339, r.At)
 	must(t, e)
-	if !at.Truncate(time.Hour).Equal(at) || at.After(time.Now().Add(sharedTickLead)) || before.Sub(at) > time.Hour {
+	if !at.Truncate(time.Hour).Equal(at) || at.After(tick.Add(sharedTickLead)) || tick.Sub(at) > time.Hour {
 		t.Fatalf("a call naming no tick ticked %s", r.At)
 	}
 }
@@ -205,7 +212,7 @@ func TestASharedTickTicksEveryScopesTriggersOnce(t *testing.T) {
 // missed occurrence skipped through the tick, latest admits the tick's.
 func TestASharedTickAfterMissedTicksFollowsTheMissedRule(t *testing.T) {
 	w := newTickWorld(t, ScheduleSettings{SharedIntervals: []string{"15m"}})
-	tick := time.Now().UTC().Truncate(15 * time.Minute)
+	tick := w.at(time.Now()).UTC().Truncate(15 * time.Minute)
 	due := tick.Add(-30 * time.Minute)
 	skip := w.trigger("", sharedSchedule("15m", ""), true, due)
 	c := sharedSchedule("15m", "")
@@ -229,6 +236,47 @@ func TestASharedTickAfterMissedTicksFollowsTheMissedRule(t *testing.T) {
 	}
 }
 
+// Section 6: a scheduler down from 10:00 to 11:00 that replays at 11:00:05
+// every tick it missed makes no catch-up burst. Each tick more than one
+// interval behind the Runner's clock is refused, invalid_tick, and records
+// nothing; the 11:00 tick finds the 10:00 due time missed: latest admits
+// one occurrence, at 11:00, and skip records the missed times skipped.
+func TestASharedTickReplayedAfterAnOutageMakesNoBurst(t *testing.T) {
+	w := newTickWorld(t, ScheduleSettings{SharedIntervals: []string{"15m"}})
+	doc := readOpenAPI(t)
+	down, back := instant("2026-11-15T10:00:00Z"), instant("2026-11-15T11:00:00Z")
+	skip := w.trigger("", sharedSchedule("15m", ""), true, down)
+	c := sharedSchedule("15m", "")
+	c.Missed = "latest"
+	latest := w.trigger("scope-a", c, true, down)
+	w.at(back.Add(5 * time.Second))
+	made, refused := 0, 0
+	for at := down; !at.After(back); at = at.Add(15 * time.Minute) {
+		got := w.tick("15m", ticked(at))
+		if got.Code == 422 && strings.Contains(got.Body.String(), `"code":"invalid_tick"`) {
+			refused++
+			continue
+		}
+		made += tickResult(t, doc, got).Occurrences
+	}
+	if refused != 4 || made != 2 {
+		t.Fatalf("the replay was refused %d times and recorded %d occurrences", refused, made)
+	}
+	got := w.occurrencesOf(skip.ID)
+	if len(got) != 1 || got[0].State != "skipped" || got[0].Reason != "missed" || got[0].MissedFrom != down.Format(time.RFC3339Nano) || got[0].MissedThrough != back.Format(time.RFC3339Nano) {
+		t.Fatalf("skip recorded %+v", got)
+	}
+	got = w.occurrencesOf(latest.ID)
+	if len(got) != 1 || got[0].State != "accepted" || got[0].Reason != "latest-after-missed" || got[0].ScheduledAt != back.Format(time.RFC3339Nano) || got[0].MissedFrom != down.Format(time.RFC3339Nano) {
+		t.Fatalf("latest admitted %+v", got)
+	}
+	for _, tr := range []Trigger{skip, latest} {
+		if next := w.nextAt(tr.ID); next != back.Add(15*time.Minute).Format(time.RFC3339Nano) {
+			t.Fatalf("trigger %s is next due %s", tr.ID, next)
+		}
+	}
+}
+
 // Section 4: the route is the installation's. A request without the
 // control API's credential, with another credential (a trigger's key
 // among them), naming a scope identifier, naming an interval the operator
@@ -237,7 +285,7 @@ func TestASharedTickAfterMissedTicksFollowsTheMissedRule(t *testing.T) {
 // all along.
 func TestASharedTickIsRefusedWithoutTheCredentialOrWithAScope(t *testing.T) {
 	w := newTickWorld(t, ScheduleSettings{SharedIntervals: []string{"15m"}})
-	tick := time.Now().UTC().Truncate(15 * time.Minute)
+	tick := w.at(time.Now()).UTC().Truncate(15 * time.Minute)
 	var due []Trigger
 	for _, scope := range []string{"", "scope-a"} {
 		due = append(due, w.trigger(scope, sharedSchedule("15m", ""), true, tick))
@@ -275,6 +323,7 @@ func TestASharedTickIsRefusedWithoutTheCredentialOrWithAScope(t *testing.T) {
 		{"no interval", w.tick("", ticked(tick)), 422, "unknown_shared_interval"},
 		{"a time that is not a tick", w.tick("15m", ticked(tick.Add(time.Minute))), 422, "invalid_tick"},
 		{"a tick ahead of the clock", w.tick("15m", ticked(tick.Add(time.Hour))), 422, "invalid_tick"},
+		{"a tick more than one interval behind the clock", w.tick("15m", ticked(tick.Add(-30*time.Minute))), 422, "invalid_tick"},
 		{"a time without its offset", w.tick("15m", tick.Format("2006-01-02T15:04:05")), 422, "invalid_tick"},
 		{"a tick before 2000", w.tick("15m", "1999-12-31T00:00:00Z"), 422, "invalid_tick"},
 		{"a member more", serve(t, w.s, "POST", "/v1/ticks", `{"interval":"15m","scope":"scope-a"}`, nil), 400, "invalid_request"},
@@ -532,7 +581,7 @@ func TestTheFirstCronOrSharedScheduleRaisesTheStoresSchema(t *testing.T) {
 func TestASharedTickAtSeveralHundredJobsReportsItsCost(t *testing.T) {
 	const jobs = 400
 	w := newTickWorld(t, ScheduleSettings{SharedIntervals: []string{"15m"}})
-	tick := time.Now().UTC().Truncate(15 * time.Minute)
+	tick := w.at(time.Now()).UTC().Truncate(15 * time.Minute)
 	c := sharedSchedule("15m", "")
 	for i := range jobs {
 		j := w.job([]string{"", "scope-a", "scope-b", "scope-c"}[i%4])

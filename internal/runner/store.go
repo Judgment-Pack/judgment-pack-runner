@@ -74,7 +74,8 @@ type Service struct {
 	cloudProblems      map[string]string
 	cloudFactory       func(context.Context, CloudConnection) (cloudTransport, error)
 	preparing          map[string]bool
-	// clock is the time retries are decided by (Service.instant): nil is
+	// clock is the time retries and shared ticks are decided by
+	// (Service.instant): nil is
 	// time.Now. Tests move it rather than sleep.
 	clock                  func() time.Time
 	automationMu           sync.Mutex

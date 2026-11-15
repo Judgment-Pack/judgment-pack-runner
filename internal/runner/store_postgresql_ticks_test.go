@@ -33,6 +33,9 @@ func TestPostgreSQLTwoRunnersCalledForOneSharedTickMakeOneOccurrence(t *testing.
 		t.Fatal(got.Code, got.Body.String())
 	}
 	tick := time.Now().UTC().Truncate(15 * time.Minute)
+	for _, sv := range runners {
+		sv.clock = func() time.Time { return tick }
+	}
 	held, hash := storedTrigger(t, runners[0], created.ID)
 	held.NextAt = tick.Format(time.RFC3339Nano)
 	must(t, runners[0].writeTrigger(held, hash, false))
