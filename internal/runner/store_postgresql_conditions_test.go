@@ -756,7 +756,10 @@ func TestPostgreSQLServesARunThroughItsHeldRoutes(t *testing.T) {
 	cfg := journalConfig(t)
 	connections := s.connections(db)
 	cfg.PostgreSQL = &connections
-	shortClaimTimes(t, 30*time.Millisecond, 2*time.Second)
+	// A renewal that takes longer than its interval loses the claim
+	// (claims.go), so the interval is one a renewal under the race detector
+	// on a busy machine stays within, and the Runtime runs for several.
+	shortClaimTimes(t, 300*time.Millisecond, 5*time.Second)
 	sv := openJournal(t, cfg)
 	defer sv.Close()
 	if !leases(sv.store) || !holdsScopes(sv.store) {
@@ -783,7 +786,7 @@ func TestPostgreSQLServesARunThroughItsHeldRoutes(t *testing.T) {
 		t.Fatal("another scope reached the job:", other.Code, other.Body.String())
 	}
 	go func() {
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(time.Second)
 		os.WriteFile(gate, nil, 0o600)
 	}()
 	if ran, err := sv.dispatchNext(context.Background()); !ran || err != nil {
