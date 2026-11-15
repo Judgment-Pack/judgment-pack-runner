@@ -277,6 +277,37 @@ func TestASharedTickReplayedAfterAnOutageMakesNoBurst(t *testing.T) {
 	}
 }
 
+// Section 5: a call may tick T up to 30 seconds before it. The trigger
+// paused and resumed after that call, still before T, is next due at the
+// tick after T, not at T again under its new revision: a retried call for T
+// records nothing, and T makes one occurrence.
+func TestASharedTickIsNotDueAgainAfterAPauseAndResume(t *testing.T) {
+	w := newTickWorld(t, ScheduleSettings{SharedIntervals: []string{"15m"}})
+	doc := readOpenAPI(t)
+	tick := instant("2026-11-15T10:15:00Z")
+	tr := w.trigger("", sharedSchedule("15m", ""), true, tick)
+	w.at(tick.Add(-20 * time.Second))
+	if r := tickResult(t, doc, w.tick("15m", ticked(tick))); r.Occurrences != 1 {
+		t.Fatalf("the tick admitted %d", r.Occurrences)
+	}
+	w.at(tick.Add(-10 * time.Second))
+	held, _ := storedTrigger(t, w.s, tr.ID)
+	paused, _, e := w.s.setTriggerState(tr.ID, held.Revision, true, false)
+	must(t, e)
+	resumed, _, e := w.s.setTriggerState(tr.ID, paused.Revision, false, true)
+	must(t, e)
+	if resumed.NextAt != tick.Add(15*time.Minute).Format(time.RFC3339Nano) {
+		t.Fatalf("the trigger resumed is next due %s", resumed.NextAt)
+	}
+	w.at(tick.Add(5 * time.Second))
+	if r := tickResult(t, doc, w.tick("15m", ticked(tick))); r.Occurrences != 0 {
+		t.Fatalf("the tick retried after a pause and a resume admitted %d", r.Occurrences)
+	}
+	if got := w.occurrencesOf(tr.ID); len(got) != 1 {
+		t.Fatalf("one tick made %+v", got)
+	}
+}
+
 // Section 4: the route is the installation's. A request without the
 // control API's credential, with another credential (a trigger's key
 // among them), naming a scope identifier, naming an interval the operator

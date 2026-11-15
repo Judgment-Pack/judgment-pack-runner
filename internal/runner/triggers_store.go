@@ -170,7 +170,15 @@ func (s *Service) setTriggerStateBy(st runStore, by requester, triggerID string,
 					return t, "", e
 				}
 			}
-			next := t.Config.Schedule.next(time.Now())
+			// A shared-interval schedule is next due after the Runner's
+			// clock plus the lead a call may name a tick within: a tick a
+			// call already made before the trigger was paused is never due
+			// again at the trigger's new revision (shared_ticks.go).
+			from := s.instant()
+			if t.Config.Schedule.Kind == "tick" {
+				from = from.Add(sharedTickLead)
+			}
+			next := t.Config.Schedule.next(from)
 			if next.IsZero() {
 				return t, "", bad("schedule_finished", "This schedule has no future occurrence.")
 			}

@@ -186,7 +186,11 @@ it meets the version moved on, and records nothing, failing nothing; the
 occurrence's identity, `schedule:<revision>:<due>`, keeps a second
 occurrence of one due time out whatever the order. A call for a tick before
 the trigger's `nextAt` records nothing; one for a tick more than one interval
-behind the Runner's clock is refused (section 6). No lock, row or column is added for
+behind the Runner's clock is refused (section 6). A `tick` trigger enabled,
+or paused and enabled again, is next due at its first tick more than 30
+seconds after the Runner's clock: a call may tick a time up to 30 seconds
+before it, and that tick is not due again under the trigger's new revision,
+whose identity would differ. No lock, row or column is added for
 it.
 
 ## 6. The missed rule
