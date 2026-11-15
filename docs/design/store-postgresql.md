@@ -70,7 +70,8 @@ makes, between the two runs of the twice mode below, the change that shows it
 
 - `admitOccurrenceAs` (`triggers_store.go`) wrote through its `*Occurrence`: a full queue or an
   overlap set it `skipped` and dropped its `Input` and `PendingInput`. Its callers' closures
-  captured the occurrence: `scheduleTick` and `fileTick` (`triggers_dispatch.go`), `receiveCloud`
+  captured the occurrence: `scheduleDue` (the schedule tick's, `scheduleTick` and `sharedTick`'s)
+  and `fileTick` (`triggers_dispatch.go`), `receiveCloud`
   (`cloud.go`) and `admitBoundEvent` (`triggers_store.go`). Run again after the queue drained or
   the overlap ended, it admitted the occurrence skipped, its input gone. It now works on a copy and
   returns the occurrence it recorded; no caller's closure assigns it before its end.
@@ -376,6 +377,10 @@ schema: a policy compares the new row with one list (`WITH CHECK`) and the old r
 (`USING`), never the two together, so "later" is a pair of lists kept in step with the code. (a)
 holds the row with a privilege, not a list.
 
+A schema later than the kind is written by a migration of its own: `0005_schedules.sql` (#246)
+raises the row to `7`, the schema of a store that may hold a cron or shared-interval schedule
+([schedules.md](schedules.md), section 7), and changes nothing else.
+
 Each release ships its set with `migrations.sha256`, the digest of every file in order, and its
 release notes state the versions it upgrades from (condition i). A migration only adds: a column
 is added with a default, a table is never dropped or truncated (condition g).
@@ -465,6 +470,7 @@ set for it; which scopes a caller may name is not this issue's.
 | Those naming a job, a run, a trigger or an occurrence in the path (`/v1/jobs/{job}/…`, `/v1/runs/{run}/…`, `/v1/triggers/{trigger}/…`, `/v1/occurrences/{occurrence}/…`), and `GET /v1/events` naming a job | Request | The scope the request names, `s:` when it names none (scope-identifiers.md, section 3); the scope check's own read (`recordScope`) too |
 | `GET /v1/jobs`, `GET /v1/runs`, `GET /v1/events`, naming a scope | Request | That scope |
 | The same, naming none | Worker | None: every scope's records, as today |
+| `POST /v1/ticks` (#246) | Worker | None: it ticks the triggers of every scope, as the Runner's clock does; one naming a scope is refused before it reads ([schedules.md](schedules.md), section 5) |
 | `POST /v1/jobs` | Request | The scope the body makes the job under, `s:` for none |
 | `POST /v1/previews` | Request | `s:`: a release and its entry carry no scope |
 | `GET` and `POST /v1/input-profiles`, `/v1/selected-profiles` | Request | `s:`: the profile rows (section 7) |
@@ -740,7 +746,9 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLASlowHolderLosesItsOccurrenceAndItsLateWriteIsRefused` (D18) | Built: a Runner holding a ready occurrence is slow past its lease; the other claims and dispatches it, and the slow holder's late write writes nothing; neither fails. |
 | `TestPostgreSQLARunnerStoppedMidAttemptHasItsRunInterruptedAfterTheLease` (D3, D11, D19) | Built: a Runner stopped while its run's attempt is under way has the run interrupted by the other's tick once the lease runs out by the database's clock, and not before; the run is not worked again by the other's dispatcher or a later start; its retry on a host without the attempt's directory is refused, `409 run_not_retryable`; the stopped Runner's late finish writes nothing. |
 | `TestPostgreSQLASecondRunnersStartLeavesTheFirstsWorkToIt` (D3, D18) | Built: a Runner's start leaves another Runner's run under a live claim running, and its preparation under a live claim preparing, and the holder finishes both. |
-| `TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile` (section 5, #245) | Built: a store migrated to `0003` is refused at the start until migrated, and the migration then applies `0004_several_runners.sql` alone. |
+| `TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile` (section 5, #245) | Built: a store migrated to `0003` is refused at the start until migrated, and the migration then applies `0004_several_runners.sql` and the files after it. |
+| `TestPostgreSQLRefusesAStoreWithoutTheSchedulesFile` (D15, #246) | Built: a store migrated to `0004` is refused at the start until migrated, and the migration then applies `0005_schedules.sql` alone. |
+| `TestPostgreSQLTwoRunnersCalledForOneSharedTickMakeOneOccurrence` (D17, #246) | Built: two Runners called for one shared tick at once, each having read the trigger at one version, record one occurrence between them, and neither fails; a later call for the tick on either records none, and one naming a scope identifier is refused. |
 | The conformance cases of D17 and D18 | Built, on every kind: a write that read a trigger before another wrote it is `conflict`; an occurrence is claimed in the state read, by one claimant at a time; a holder's write is fenced by its claim and lease and keeps the claim only when asked; a request's write overrules the claim and the holder's next write is refused; the restart and the tick fail only the preparations no live claim holds. `TestADispatcherThatLosesARunReadsTheQueueAgainAtOnce` holds the worker's lost race. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
 

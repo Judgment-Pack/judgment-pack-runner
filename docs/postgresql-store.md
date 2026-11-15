@@ -346,4 +346,5 @@ Each release ships its migration set and its digests. Before starting a newer `j
 store, stop every Runner of the store and run the newer release's `store migrate`; a Runner
 refuses a store whose set is not its own, an older set and a newer one alike, but only at its
 start. A migration only adds: no table is dropped or truncated. A store of an earlier release is
-refused until `0004_several_runners.sql` is applied.
+refused until `0004_several_runners.sql` is applied, and one migrated before #246 until
+`0005_schedules.sql` is.

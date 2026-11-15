@@ -75,6 +75,9 @@ Its members:
   (section 4).
 - **`acceptOtherHostsOverPlainHTTP`**, optional, `true` or `false`
   (section 3).
+- **`schedules`**, optional: the shared intervals `POST /v1/ticks` takes,
+  and the shortest and longest gap a cron expression may have
+  ([schedules](schedules.md), section 4).
 
 `executorOwnership` and `executorAdmission` are refused: both bind Runner to
 the host that starts it as its companion
