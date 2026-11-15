@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -668,5 +669,61 @@ func TestATriggerPausedAfterTheListMakesNoOccurrence(t *testing.T) {
 				t.Fatal("the tick wrote over the pause")
 			}
 		})
+	}
+}
+
+// readyReads counts the tick's reads of the next ready occurrence.
+type readyReads struct {
+	runStore
+	n int
+}
+
+func (q *readyReads) readyOccurrence() (Occurrence, error) {
+	q.n++
+	return q.runStore.readyOccurrence()
+}
+
+// A ready occurrence whose run the queue has no room for waits as it was
+// read, and ends the tick's dispatching: the tick does not read it, claim it
+// and submit it again until the next tick.
+func TestAFullQueueEndsTheTicksDispatching(t *testing.T) {
+	// The queue's runs stay queued: no dispatcher takes them.
+	cfg := testConfig(t)
+	cfg.disableAutomation, cfg.disableDispatcher = true, true
+	s, e := Open(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(s.Close)
+	j, e := s.createJob("Automation", testRelease(t, s).ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	tr, e := s.configureTrigger(j.ID, "", 0, constantTrigger(time.Now()))
+	if e != nil {
+		t.Fatal(e)
+	}
+	o := newOccurrence(tr, j, time.Now())
+	input := sample()
+	o.Input, o.InputDigest = &input, digest(encode(input))
+	admit(t, s, tr, &o, "full")
+	for i := range queueLimit {
+		if _, _, e = s.submit(j.ID, "fill-"+strconv.Itoa(i), sample()); e != nil {
+			t.Fatal(e)
+		}
+	}
+	inner := s.store
+	reads := &readyReads{runStore: inner}
+	s.store = reads
+	e = s.automationTick(time.Now())
+	s.store = inner
+	if e != nil {
+		t.Fatal(e)
+	}
+	if reads.n != 1 {
+		t.Fatalf("the tick read the ready occurrence %d times with no room in the queue", reads.n)
+	}
+	if held := storedOccurrence(t, s, o.ID); held.State != "accepted" || held.RunID != "" {
+		t.Fatalf("the occurrence did not wait for room in the queue: %+v", held)
 	}
 }

@@ -59,7 +59,9 @@ func (s *Service) automationTick(at time.Time) error {
 	}
 	// Each iteration handles a bounded number of accepted occurrences; the
 	// evaluator has its own durable queue and cannot block the scheduler clock.
-	// One another Runner of the store holds is passed by (D18).
+	// One another Runner of the store holds is passed by (D18). A queue with
+	// no room ends the iteration: the first ready occurrence, the one the next
+	// read would hand back, waits for the next tick.
 	for range 10 {
 		o, e := s.store.readyOccurrence()
 		if absent(e) {
@@ -68,11 +70,28 @@ func (s *Service) automationTick(at time.Time) error {
 		if e != nil {
 			return e
 		}
-		if e = s.dispatchOccurrence(o, at); e != nil {
+		e = s.dispatchReady(o, at)
+		if errors.Is(e, errQueueHasNoRoom) {
+			break
+		}
+		if e != nil {
 			return e
 		}
 	}
 	return nil
+}
+
+// errQueueHasNoRoom is the answer of a dispatch whose run the queue had no
+// room for: the occurrence waits as it was read, its claim released. It is
+// no error, and stops the tick's dispatching.
+var errQueueHasNoRoom = errors.New("the queue has no room for the occurrence's run")
+
+// queueWaits is a dispatch's error, nil for one the queue had no room for.
+func queueWaits(err error) error {
+	if errors.Is(err, errQueueHasNoRoom) {
+		return nil
+	}
+	return err
 }
 func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {
@@ -236,6 +255,12 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	}))
 }
 func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
+	return queueWaits(s.dispatchReady(o, at))
+}
+
+// dispatchReady is dispatchOccurrence, answering errQueueHasNoRoom for an
+// occurrence whose run the queue had no room for.
+func (s *Service) dispatchReady(o Occurrence, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {
 		return manualUnsupported()
 	}
@@ -254,9 +279,9 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 	return s.dispatchClaimed(o, at)
 }
 
-// dispatchClaimed is dispatchOccurrence once the occurrence is claimed. A
-// second Runner that claims it after this one's lease ran out finds the run
-// this one made by its request key, and submits no other.
+// dispatchClaimed is dispatchReady once the occurrence is claimed. A second
+// Runner that claims it after this one's lease ran out finds the run this
+// one made by its request key, and submits no other.
 func (s *Service) dispatchClaimed(o Occurrence, at time.Time) error {
 	// Reconcile admission first: a crash after run creation must not become a
 	// second evaluation or an expiry, even if source receipts have since aged.
@@ -309,10 +334,12 @@ func (s *Service) dispatchClaimed(o Occurrence, at time.Time) error {
 			if api.Status == 429 {
 				// The occurrence waits for room in the queue as it was
 				// read, its claim released on a kind that leases one.
-				if !leases(s.store) {
-					return nil
+				if leases(s.store) {
+					if e = s.settleOccurrence(o); e != nil {
+						return e
+					}
 				}
-				return s.settleOccurrence(o)
+				return errQueueHasNoRoom
 			}
 			o.State = "failed"
 			o.Reason = api.Message
