@@ -784,6 +784,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLAnOccurrenceBindsAProfileRegisteredThroughAnotherRunner` (section 12, #282) | Built: a profile and a job whose release binds it, made through one Runner; a Runner opened before claims the job's event occurrence and submits its run, and a third opened before dispatches the run to the Runtime, each reading the profiles again rather than refusing the profile. |
 | `TestPostgreSQLAnOccurrenceWithNoInputIsFailedOnceAndTheOtherRunnerGoesOn` (D18, #282) | Built: an accepted occurrence that holds no input is failed once by the Runner that claims it, journaled once, its claim released, and the other Runner's tick finds nothing to do and stays healthy. |
 | `TestPostgreSQLAStoreErrorUnderAClaimLeavesTheOccurrenceToTheNextClaimant` (D18, #282) | Built: a store error under a Runner's claim is returned with the claim released and the occurrence accepted as read; the other Runner claims it and submits its run. The default kind's `TestAnOccurrenceWhoseJobOrReleaseIsUnreadableIsFailedAndTheAutomationGoesOn` and `TestAnAcceptedOccurrenceWithNoReadableExpiryIsFailedAndTheAutomationGoesOn` hold the failures of the occurrence's own records. |
+| `TestPostgreSQLAStoreErrorUnderAPreparationsClaimReleasesIt` (D18, #282) | Built: a store error under a preparation's claim is returned with the claim released and the occurrence accepted as read; the other Runner can claim it. |
 | `TestPostgreSQLAFullQueueReleasesTheOccurrencesClaim` (D18, #282) | Built: with the run queue full, the Runner that claims an accepted occurrence finds no room, releases the claim and leaves the occurrence accepted as read, returning no error; once there is room, the other Runner claims it and submits its run. |
 | `TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile` (section 5, #245) | Built: a store migrated to `0003` is refused at the start until migrated, and the migration then applies `0004_several_runners.sql` and the files after it. |
 | `TestPostgreSQLRefusesAStoreWithoutTheSchedulesFile` (D15, #246) | Built: a store migrated to `0004` is refused at the start until migrated, and the migration then applies `0005_schedules.sql` and the files after it. |
@@ -924,7 +925,12 @@ flight among them. (a) A claim per occurrence, in D3's shape:
   (the store not answering, a conflict, a timeout, a submission that fails otherwise than by a
   refusal) releases the claim, the occurrence written as read, before it is returned
   (`releasedWith`), as a dispatch the queue had no room for does. Kept, the claim would hand the occurrence to the next Runner one lease later,
-  to meet the same error and stop that Runner's automation too.
+  to meet the same error and stop that Runner's automation too. A preparation follows the same
+  rule: an accepted occurrence with no readable expiry is failed, an unreadable job or release
+  record fails it, and any other error after its claim releases the claim. A durable step's writes
+  keep the claim (`keepOccurrence`, `keepPreparation`), so its claim is released with the
+  occurrence as the store holds it, read again (`releasedAsStored`): a source task whose intent the
+  step committed is kept, and the next step reconciles the same operation.
 - **Interruption.** The restart, and the dispatcher's tick (`interruptLapsed`), fail each
   occurrence held `preparing` that no live claim holds (`restartOccurrences`), with the reason the
   restart gives; one under a live claim is its holder's. An accepted or a waiting occurrence whose
