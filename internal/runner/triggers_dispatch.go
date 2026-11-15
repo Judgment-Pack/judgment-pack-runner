@@ -283,8 +283,9 @@ func (s *Service) dispatchReady(o Occurrence, at time.Time) error {
 // Runner that claims it after this one's lease ran out finds the run this
 // one made by its request key, and submits no other. No error is returned
 // with the claim held (#282): an occurrence whose own record cannot be
-// dispatched is failed (failHeld), and an error of the store's or of this
-// Runner's releases the claim first (releasedWith).
+// dispatched is failed (failHeld), its job or release record unreadable
+// included, and an error of the store's or of this Runner's releases the
+// claim first (releasedWith).
 func (s *Service) dispatchClaimed(o Occurrence, at time.Time) error {
 	// Reconcile admission first: a crash after run creation must not become a
 	// second evaluation or an expiry, even if source receipts have since aged.
@@ -320,7 +321,7 @@ func (s *Service) dispatchClaimed(o Occurrence, at time.Time) error {
 	}
 	job, e := s.job(o.JobID)
 	if e != nil {
-		return s.releasedWith(o, e)
+		return s.heldRecordOrReleased(o, e)
 	}
 	if job.ReleaseID != o.ReleaseID || job.Revision != o.JobRevision {
 		o.State = "failed"
@@ -350,7 +351,7 @@ func (s *Service) dispatchClaimed(o Occurrence, at time.Time) error {
 			o.Input = nil
 			return s.settleOccurrence(o)
 		}
-		return s.releasedWith(o, e)
+		return s.heldRecordOrReleased(o, e)
 	}
 	o.RunID = run.ID
 	o.State = "submitted"

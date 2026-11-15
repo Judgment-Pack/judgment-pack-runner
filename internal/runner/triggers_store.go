@@ -619,6 +619,20 @@ func (s *Service) failHeld(o Occurrence, reason string) error {
 	return s.settleOccurrence(o)
 }
 
+// heldRecordOrReleased is err, met while holding o's claim: an error that
+// the occurrence's own job or release record does not read as one
+// (faultUnreadable) fails the occurrence, naming the record (failHeld),
+// since every Runner's read of it meets the same error; any other, the
+// store not answering, a conflict, a timeout, is returned with the claim
+// released (releasedWith).
+func (s *Service) heldRecordOrReleased(o Occurrence, err error) error {
+	var held *storeError
+	if errors.As(err, &held) && held.fault == faultUnreadable && (held.op == "job" || held.op == "release") {
+		return s.failHeld(o, "The occurrence's "+held.op+" record cannot be read.")
+	}
+	return s.releasedWith(o, err)
+}
+
 // releasedWith is err, an error of the store's or of this Runner's met while
 // holding o's claim, returned once the claim is released on a kind that
 // leases one, o written as it was read, as a dispatch the queue had no room

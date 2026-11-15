@@ -743,6 +743,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLARunnerStartedEarlierKeepsAnotherRunnersProfiles` (section 12, #282) | Built: a Runner opened before another registered keeps the other's profiles in the store when it registers, and holds both after; the other holds them once it reads the rows again; so for selected profiles; an id taken in one namespace through one Runner is refused to the other through the other, and another definition under a taken id is `409 input_profile_conflict`; registrations through both at once all land. |
 | `TestPostgreSQLAnOccurrenceBindsAProfileRegisteredThroughAnotherRunner` (section 12, #282) | Built: a profile and a job whose release binds it, made through one Runner; a Runner opened before claims the job's event occurrence and submits its run, and a third opened before dispatches the run to the Runtime, each reading the profiles again rather than refusing the profile. |
 | `TestPostgreSQLAnOccurrenceWithNoInputIsFailedOnceAndTheOtherRunnerGoesOn` (D18, #282) | Built: an accepted occurrence that holds no input is failed once by the Runner that claims it, journaled once, its claim released, and the other Runner's tick finds nothing to do and stays healthy. |
+| `TestPostgreSQLAStoreErrorUnderAClaimLeavesTheOccurrenceToTheNextClaimant` (D18, #282) | Built: a store error under a Runner's claim is returned with the claim released and the occurrence accepted as read; the other Runner claims it and submits its run. The default kind's `TestAnOccurrenceWhoseJobOrReleaseIsUnreadableIsFailedAndTheAutomationGoesOn` and `TestAnAcceptedOccurrenceWithNoReadableExpiryIsFailedAndTheAutomationGoesOn` hold the failures of the occurrence's own records. |
 | `TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile` (section 5, #245) | Built: a store migrated to `0003` is refused at the start until migrated, and the migration then applies `0004_several_runners.sql` alone. |
 | The conformance cases of D17 and D18 | Built, on every kind: a write that read a trigger before another wrote it is `conflict`; an occurrence is claimed in the state read, by one claimant at a time; a holder's write is fenced by its claim and lease and keeps the claim only when asked; a request's write overrules the claim and the holder's next write is refused; the restart and the tick fail only the preparations no live claim holds. `TestADispatcherThatLosesARunReadsTheQueueAgainAtOnce` holds the worker's lost race. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
@@ -871,11 +872,12 @@ flight among them. (a) A claim per occurrence, in D3's shape:
   lost a run does.
 - **An error under the claim (#282).** A dispatch returns no error with the claim held. An
   occurrence whose own record cannot be dispatched, an accepted one that holds no input or no
-  readable expiry, is failed (`failHeld`, class `internal`, journaled `occurrence.failed`) and its
-  claim released with the write; an error of the store's or of the Runner's (a read of its run or
-  its job, a submission that fails otherwise than by a refusal) releases the claim, the
-  occurrence written as read, before it is returned (`releasedWith`), as a dispatch the queue had
-  no room for does. Kept, the claim would hand the occurrence to the next Runner one lease later,
+  readable expiry, or whose job's or release's record does not read as one (`unreadable`), is
+  failed (`failHeld`, class `internal`, journaled `occurrence.failed`) and its claim released with
+  the write: every Runner's read meets the same error. An error of the store's or of the Runner's
+  (the store not answering, a conflict, a timeout, a submission that fails otherwise than by a
+  refusal) releases the claim, the occurrence written as read, before it is returned
+  (`releasedWith`), as a dispatch the queue had no room for does. Kept, the claim would hand the occurrence to the next Runner one lease later,
   to meet the same error and stop that Runner's automation too.
 - **Interruption.** The restart, and the dispatcher's tick (`interruptLapsed`), fail each
   occurrence held `preparing` that no live claim holds (`restartOccurrences`), with the reason the
