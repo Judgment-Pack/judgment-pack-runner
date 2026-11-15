@@ -684,8 +684,9 @@ type runTx interface {
 	// raiseSchema marks the store as holding records that only a Runner
 	// that knows schema keeps, so that no earlier Runner opens it: the
 	// sqlite kind raises its schema to scopedStoreSchema from storeSchema,
-	// and to retryStoreSchema from either; a store raised already is left
-	// as it is. faultRefused for a schema the kind does not know.
+	// to retryStoreSchema from either, and to scheduleStoreSchema from any
+	// of the three; a store raised already is left as it is. faultRefused
+	// for a schema the kind does not know.
 	raiseSchema(schema string) error
 }
 

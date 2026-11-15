@@ -179,11 +179,12 @@ func (s *Service) scoped(handler http.HandlerFunc) http.HandlerFunc {
 			// On a kind that holds scopes, the route reaches rows only through
 			// the view of the store held to the scope named, "" for none; a
 			// store-wide listing naming none and no record, through the store
-			// for every scope, as it lists every scope's records. The journal
+			// for every scope, as it lists every scope's records, and an
+			// installation route, which names none, so too. The journal
 			// naming a job is that job's route (docs/design/store-postgresql.md,
 			// section 6): held to the scope named, none when it names none.
 			view := s.store
-			if named || !scopeListings[r.Pattern] || table != "" {
+			if named || !scopeListings[r.Pattern] && !installationRoutes[r.Pattern] || table != "" {
 				view = s.store.heldTo(scopeHeld(scope))
 			}
 			r = r.WithContext(context.WithValue(r.Context(), heldStoreContext{}, view))
@@ -346,7 +347,18 @@ var heldRoutes = map[string]bool{
 	"GET /v1/events":            true,
 	"GET /v1/jobs/{job}/events": true,
 	"GET /v1/run-chain":         true,
+	// A shared tick, the installation's: it takes no scope and ticks the
+	// triggers of every scope, through the store for every scope, as the
+	// Runner's own clock does (installationRoutes).
+	"POST /v1/ticks": true,
 }
+
+// installationRoutes are the routes that act for the installation: each
+// refuses a scope, and on a kind that holds scopes reaches rows through the
+// store for every scope, as the Runner's own clock does, never through a
+// view a request could hold to one scope (docs/design/schedules.md,
+// section 4). The control API's credential alone admits them.
+var installationRoutes = map[string]bool{"POST /v1/ticks": true}
 
 // errRouteNotHeld is the refusal of a route a Runner on a kind that holds
 // scopes does not serve: one not yet held to a request's scope.
