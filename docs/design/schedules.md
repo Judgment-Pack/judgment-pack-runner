@@ -179,7 +179,11 @@ and ticks each of the others at the tick, as the clock ticks a schedule
 before the tick admits its due time's occurrence, by its missed rule when
 that time is before the tick (section 6), and moves `nextAt` on to its next
 tick after the tick, in one transaction that writes the trigger first, at the
-row version the tick read (D17).
+row version the tick read (D17). Each occurrence a call records is journaled
+by the call's requester, the installation or, in service mode, the caller
+its identity token names, as an event published through the control API is
+by its publisher; the Runner's own clock's are the trigger's, at its
+revision.
 
 **A repeated or late call records nothing twice.** A second call for the same
 tick, on this Runner or another of the store, finds `nextAt` after the tick

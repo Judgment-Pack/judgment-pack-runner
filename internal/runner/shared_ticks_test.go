@@ -167,9 +167,16 @@ func TestASharedTickTicksEveryScopesTriggersOnce(t *testing.T) {
 			t.Fatalf("trigger %s, not the interval's, was ticked: %+v", tr.Config.Schedule.Kind+" "+tr.Config.Schedule.Tick, got)
 		}
 	}
-	// Each admission is journaled as the Runner's own tick's is.
-	if n := len(journalEntries(t, w.cfg)); n != entries+len(bound) {
+	// Each admission is journaled once, by the call's requester: here the
+	// installation, whose owner bearer the call carried.
+	all := journalEntries(t, w.cfg)
+	if n := len(all); n != entries+len(bound) {
 		t.Fatalf("the tick journaled %d entries", n-entries)
+	}
+	for _, entry := range all[entries:] {
+		if entry.Concerns.Occurrence == "" || entry.By.Kind != "installation" || entry.By.Owner != w.cfg.Owner || entry.By.Trigger != "" {
+			t.Fatalf("the tick journaled %+v", entry)
+		}
 	}
 
 	// The same tick again, and a tick already passed (one interval behind
@@ -287,8 +294,22 @@ func TestASharedTickIsNotDueAgainAfterAPauseAndResume(t *testing.T) {
 	tick := instant("2026-11-15T10:15:00Z")
 	tr := w.trigger("", sharedSchedule("15m", ""), true, tick)
 	w.at(tick.Add(-20 * time.Second))
-	if r := tickResult(t, doc, w.tick("15m", ticked(tick))); r.Occurrences != 1 {
-		t.Fatalf("the tick admitted %d", r.Occurrences)
+	// The call a caller made in service mode: the admission's entry names it.
+	caller := requester{issuer: "https://issuer.example", subject: "scheduler"}
+	if r, e := w.s.sharedTick(TickRequest{Interval: "15m", At: ticked(tick)}, caller); e != nil || r.Occurrences != 1 {
+		t.Fatalf("the tick admitted %+v: %v", r, e)
+	}
+	var named int
+	for _, entry := range journalEntries(t, w.cfg) {
+		if entry.Concerns.Trigger == tr.ID && entry.Concerns.Occurrence != "" {
+			if by := entry.By; by.Kind != "caller" || by.Issuer != caller.issuer || by.Subject != caller.subject || by.Trigger != "" {
+				t.Fatalf("the admission was journaled by %+v", entry.By)
+			}
+			named++
+		}
+	}
+	if named != 1 {
+		t.Fatalf("the tick journaled %d admissions", named)
 	}
 	w.at(tick.Add(-10 * time.Second))
 	held, _ := storedTrigger(t, w.s, tr.ID)

@@ -104,7 +104,7 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 	if sharedTicked(t, "") {
 		return nil
 	}
-	_, e := s.scheduleDue(t, hash, at, at, ownClockGrace)
+	_, e := s.scheduleDue(t, hash, at, at, ownClockGrace, nil)
 	return e
 }
 
@@ -121,8 +121,10 @@ const ownClockGrace = 30 * time.Second
 // in one transaction that expects the version read (D17). made says
 // whether this call recorded an occurrence; a due time after the tick, or
 // a trigger written since it was read (by a request, a repeated tick, or
-// another Runner's tick of the same due time), makes none.
-func (s *Service) scheduleDue(t Trigger, hash string, tick, now time.Time, grace time.Duration) (made bool, err error) {
+// another Runner's tick of the same due time), makes none. The occurrence's
+// entry names caller, a shared tick's requester, or with none the trigger
+// at its revision, as the Runner's own clock's tick does.
+func (s *Service) scheduleDue(t Trigger, hash string, tick, now time.Time, grace time.Duration, caller *EventActor) (made bool, err error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return false, manualUnsupported()
 	}
@@ -192,7 +194,7 @@ func (s *Service) scheduleDue(t Trigger, hash string, tick, now time.Time, grace
 		if err := tx.putTrigger(t, hash, false); err != nil {
 			return err
 		}
-		_, err := s.admitOccurrence(tx, t, o, identity, digest(encode(t.Config)))
+		_, err := s.admitOccurrenceAs(tx, t, o, identity, digest(encode(t.Config)), caller)
 		return err
 	})
 	return err == nil, tickLost(err)

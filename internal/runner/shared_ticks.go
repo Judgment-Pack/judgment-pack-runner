@@ -261,8 +261,9 @@ type TickResult struct {
 // admits its due time's occurrence and moves its next time on in one
 // transaction, which expects the trigger's row version (D17), so that a
 // repeated or late call, here or on another Runner of the store, admits
-// nothing twice.
-func (s *Service) sharedTick(req TickRequest) (TickResult, error) {
+// nothing twice. Each occurrence's entry names by, the call's requester, as
+// an event the control API publishes names its publisher.
+func (s *Service) sharedTick(req TickRequest, by requester) (TickResult, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return TickResult{}, manualUnsupported()
 	}
@@ -295,6 +296,7 @@ func (s *Service) sharedTick(req TickRequest) (TickResult, error) {
 		return TickResult{}, e
 	}
 	result := TickResult{Interval: req.Interval, At: tick.Format(time.RFC3339)}
+	caller := s.actor(by)
 	for _, id := range ids {
 		t, hash, e := s.trigger(id)
 		if absent(e) {
@@ -306,7 +308,7 @@ func (s *Service) sharedTick(req TickRequest) (TickResult, error) {
 		if t.Paused || !sharedTicked(t, req.Interval) {
 			continue
 		}
-		made, e := s.scheduleDue(t, hash, tick, now, 0)
+		made, e := s.scheduleDue(t, hash, tick, now, 0, &caller)
 		if e != nil {
 			return result, e
 		}
@@ -329,7 +331,7 @@ func (s *Service) sharedTickRoutes(mux routeMux) {
 			failure(w, e)
 			return
 		}
-		result, e := s.sharedTick(req)
+		result, e := s.sharedTick(req, requesterFrom(r.Context()))
 		if e != nil {
 			failure(w, e)
 			return

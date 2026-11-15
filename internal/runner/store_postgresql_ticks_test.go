@@ -53,7 +53,7 @@ func TestPostgreSQLTwoRunnersCalledForOneSharedTickMakeOneOccurrence(t *testing.
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i], errs[i] = sv.sharedTick(TickRequest{Interval: "15m", At: ticked(tick)})
+			results[i], errs[i] = sv.sharedTick(TickRequest{Interval: "15m", At: ticked(tick)}, requester{})
 		}()
 	}
 	wg.Wait()
