@@ -127,8 +127,18 @@ func mappingCoverage(m InputMapping, paths, requirements []string) ([]string, er
 			mappedEvidence[e.Requirement] = true
 		}
 	}
+	// In format 4.0.0 and 4.1.0 the case's rule writes targets too, and a
+	// source's rule may be of version 2.0.0 (dialect_format4.go).
+	four := fourFamily(m.FormatVersion)
+	reads := []SourceRead{}
+	if four && m.Case != nil && m.caseRule != nil {
+		reads = append(reads, SourceRead{Rule: m.caseRule})
+	}
 	for _, s := range m.Sources {
-		facts, ev, e := readTargets(s.Read)
+		reads = append(reads, s.Read)
+	}
+	for _, read := range reads {
+		facts, ev, e := readTargetsOf(read, four)
 		if e != nil {
 			return nil, e
 		}

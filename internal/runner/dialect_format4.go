@@ -8,22 +8,15 @@ import (
 )
 
 // format4 is the proposed dialect format 4.0.0 (spec/dialect.md §2.2, the
-// Spec's v0.5.2). Runner reads it in verify-preparation alone, through the
-// engine of the sdk/dialect package (internal/dialect4): a dialect of this
-// format is read as one of format 3.0.0 is, with the case's rule, the
-// parameter types, rule version 2.0.0 and its derived values added.
+// Spec's v0.5.2), read through the engine of the sdk/dialect package
+// (internal/dialect4): a dialect of this format is read as one of format
+// 3.0.0 is, with the case's rule, the parameter types, rule version 2.0.0 and
+// its derived values added. A release, a job and a run are on it as on format
+// 3.0.0 (docs/design/dialect-format-4.md, section 2): the Spec's staged
+// 0.6.0 records name it, the preparation by the dialect-recording schema of
+// version 2 and the release by RFC 0020's digest of the whole release
+// (releaseDigest).
 const format4 = "4.0.0"
-
-// codeFormatNotAdmitted is the refusal of a dialect of format 4.0.0 on every
-// path but verify-preparation's: a release, a job, a preview, a delivery or
-// a workflow on one. The Spec's workflow and recording schemas do not admit
-// the format yet (spec issue #324), so no record can name a preparation of
-// it.
-const codeFormatNotAdmitted = "dialect_format_not_admitted"
-
-func formatNotAdmitted(format string) error {
-	return bad(codeFormatNotAdmitted, "This dialect is of the proposed format "+format+". Runner reads it only in jpack-runner verify-preparation, and the sdk/dialect package prepares one with no source in process: a release, a job, a preview or a delivery on it waits for the Spec's workflow and recording schemas to admit the format (spec issue #324).")
-}
 
 // profileReason is why verify-preparation refuses a dialect's profile, code
 // being the refusal's: for format 4.0.0, the extended profile waits for the
@@ -207,10 +200,12 @@ func caseRuleOutcome(c derivedClaim) json.RawMessage {
 
 // format4Form holds what format 4.0.0 reads differently from format 3.0.0
 // to its form, before the rest of the dialect is read as format 3.0.0's is:
-// it is read offline alone, and a retained-column leaf is format 3.0.0's.
-func format4Form(m InputMapping, offline bool) error {
-	if !offline {
-		return formatNotAdmitted(m.FormatVersion)
+// a retained-column leaf is format 3.0.0's.
+func format4Form(m InputMapping) error {
+	// The extended profile is refused on the run path as verify-preparation
+	// refuses it (profileReason): its literal bound waits for spec issue #324.
+	if m.Profile != "" && m.Profile != "base" {
+		return codedProblem("profile-unsupported", "Mapping v3: the extended profile of format "+m.FormatVersion+" is not read until the Spec decides its literal bound (spec issue #324): Runner reads the base profile")
 	}
 	if hasColumnMapping(m) {
 		return codedProblem(codeMalformed, "Mapping v3: a copy of format 4.0.0 names a target and a source, or a requirement and a source: a retained-column leaf is read in format 3.0.0 alone")

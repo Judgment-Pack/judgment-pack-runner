@@ -28,8 +28,6 @@ type VerificationBundle struct {
 	Chain *RunChainExport `json:"chain,omitempty"`
 }
 
-func releaseDigest(r Release) string { b, _ := canonical(encode(r)); return digest(b) }
-
 // VerifyRun replays input preparation offline. Profiles and releaseDigest must
 // come from a separate trusted channel, never implicitly from the export.
 // The result is an input-lineage finding, not verification of policy truth,

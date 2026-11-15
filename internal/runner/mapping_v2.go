@@ -216,8 +216,8 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		return i, inputProblem("mapping v2 required")
 	}
 	m := c.Mapping
-	// A dialect of format 4.0.0 is read offline alone (dialect_format4.go):
-	// every other path refuses it, dialect_format_not_admitted.
+	// A dialect of format 4.0.0 or 4.1.0 is read on every path
+	// (dialect_format4.go); offline, its findings keep §11's order.
 	four := fourFamily(m.FormatVersion)
 	validate := m.validate
 	if four && offline {
@@ -557,6 +557,15 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			}
 			present = true
 		}
+		// On the run path a paged source's pages are its value's
+		// (paging_loop.go): {"pages": [...]} alone, and only a paged
+		// source's, as the verifier's acquisitions are (pagedAcquisitionForms).
+		if present && pages == nil && (paging != nil || len(value.Pages) > 0) {
+			if paging == nil || len(value.Pages) == 0 || len(value.Response) > 0 || len(value.Snapshot) > 0 || value.RetainedResponseJSON != "" {
+				return fail(withCode(codeMalformed, errors.New("a paged source's acquisition is its pages alone, and only a paged source's acquisition has pages")))
+			}
+			pages = value.Pages
+		}
 		var walked *pagedRead
 		used[source.Name] = true
 		claim := derivedClaim{json.RawMessage(`{}`), map[string]string{}, "unknown", "dependency-unavailable", []string{}}
@@ -641,7 +650,10 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 				}
 			}
 			if !present {
-				if planning && paging == nil {
+				if planning && paging != nil {
+					return i, &acquisitionNeeded{PlannedSource{Name: source.Name, Kind: source.Kind, Profile: source.Profile, Source: profile.Source, Arguments: args, Paging: source.Paging, paged: &plannedPaging{rule: paging, read: source.Read}}}
+				}
+				if planning {
 					return i, &acquisitionNeeded{PlannedSource{retainResponse: source.Read.Copy != nil && hasColumnCopy(*source.Read.Copy), Name: source.Name, Kind: source.Kind, Provider: source.Provider, Profile: source.Profile, Source: profile.Source, Arguments: args}}
 				}
 				return fail(withCode(codeMissing, errors.New("required source response is missing")))

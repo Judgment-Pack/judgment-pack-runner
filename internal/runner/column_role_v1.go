@@ -340,9 +340,16 @@ func conversionIdentityForm(m map[string]json.RawMessage) error {
 
 func (p *Preparation) UnmarshalJSON(raw []byte) error {
 	type plain Preparation
-	var held plain
-	if e := strictJSON(raw, &held); e != nil {
+	rest, format, e := fourPreparationMembers(raw)
+	if e != nil {
 		return e
+	}
+	var held plain
+	if e := strictJSON(rest, &held); e != nil {
+		return e
+	}
+	if format != "" {
+		held.Version, held.formatVersion = 3, format
 	}
 	m, e := exactMembers(raw)
 	if e != nil {

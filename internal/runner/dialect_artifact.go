@@ -165,12 +165,6 @@ func releaseDialectIdentity(r Release) (*DialectIdentity, error) {
 	if mapping.FormatVersion == "" {
 		return nil, nil
 	}
-	// No release, job or workflow is on a dialect of format 4.0.0 or 4.1.0
-	// until the Spec's workflow and recording schemas admit it
-	// (dialect_format4.go).
-	if fourFamily(mapping.FormatVersion) {
-		return nil, formatNotAdmitted(mapping.FormatVersion)
-	}
 	if err := mapping.validateArtifactIdentity(); err != nil {
 		return nil, err
 	}
@@ -179,6 +173,9 @@ func releaseDialectIdentity(r Release) (*DialectIdentity, error) {
 func admitJobDialect(tx runTx, r Release) error {
 	actual, err := releaseDialectIdentity(r)
 	if err != nil {
+		return err
+	}
+	if err = fourReleaseDigestible(r); err != nil {
 		return err
 	}
 	if actual == nil {

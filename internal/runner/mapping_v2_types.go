@@ -159,6 +159,10 @@ type SourceValue struct {
 	// the Draft producer path, mutually exclusive with Response/Snapshot.
 	// Its signature authenticates canonical content, not outer whitespace/spelling.
 	RetainedResponseJSON string `json:"retainedResponseJson,omitempty"`
+	// Pages are a paged source's acquisition in format 4.1.0, each page's
+	// envelope in call order (RFC 0033 section 4; paging_loop.go), never
+	// beside a response or a snapshot. Absent, a value encodes as before.
+	Pages []json.RawMessage `json:"pages,omitempty"`
 }
 type Citation struct {
 	SessionID string `json:"sessionId"`

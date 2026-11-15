@@ -332,7 +332,7 @@ func validateDialect(m InputMapping, open bool) error { return validateDialectMo
 func validateDialectMode(m InputMapping, open, offline bool) error {
 	four := fourFamily(m.FormatVersion)
 	if four {
-		if e := format4Form(m, offline); e != nil {
+		if e := format4Form(m); e != nil {
 			return e
 		}
 	}
