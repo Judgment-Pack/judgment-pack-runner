@@ -54,6 +54,9 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 	queued, _, err := w.s.submit(w.job.ID, "first", journalInput())
 	must(t, err)
 	fresh := journalRelease(t, w.s, completingRuntime(t, w.cfg.Dir))
+	event := TriggerConfig{Name: "Reviewed records", Kind: "event", Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+	trigger, err := w.s.configureTrigger(w.job.ID, "", 0, event)
+	must(t, err)
 	base := w.s.store
 	o := &onlyThroughHeld{base: base}
 	w.s.store = o
@@ -78,6 +81,18 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 		{"POST", "/v1/jobs", fmt.Sprintf(`{"name":"Held again","releaseId":%q,"reviewed":true}`, fresh.ID), nil, 409},
 		{"POST", "/v1/jobs/" + w.job.ID + "/upgrade", fmt.Sprintf(`{"baseRevision":1,"baseReleaseId":%q,"releaseId":%q,"reviewed":true}`, w.release.ID, w.release.ID), nil, 422},
 		{"GET", fmt.Sprintf("/v1/jobs/%s/upgrade-receipt?baseRevision=1&baseReleaseId=%s&releaseId=%s", w.job.ID, w.release.ID, fresh.ID), "", nil, 404},
+		// Triggers.
+		{"GET", "/v1/jobs/" + w.job.ID + "/triggers", "", nil, 200},
+		{"GET", "/v1/jobs/" + w.job.ID + "/triggers?scope=other", "", nil, 404},
+		{"POST", "/v1/jobs/" + w.job.ID + "/triggers", string(encode(map[string]any{"config": event})), nil, 200},
+		{"POST", "/v1/jobs/" + w.job.ID + "/triggers", string(encode(map[string]any{"id": trigger.ID, "revision": 1, "config": event})), nil, 200},
+		{"POST", "/v1/jobs/" + w.job.ID + "/triggers", string(encode(map[string]any{"id": trigger.ID, "revision": 1, "config": event})), nil, 409},
+		{"POST", "/v1/jobs/" + w.job.ID + "/triggers?scope=other", string(encode(map[string]any{"config": event})), nil, 404},
+		{"POST", "/v1/jobs/" + w.job.ID + "/triggers/preview", string(encode(event)), nil, 200},
+		{"POST", "/v1/triggers/" + trigger.ID + "/state", `{"revision":2,"paused":false,"reviewed":true}`, nil, 200},
+		{"POST", "/v1/triggers/" + trigger.ID + "/state?scope=other", `{"revision":3,"paused":true}`, nil, 404},
+		{"POST", "/v1/triggers/" + trigger.ID + "/rotate-key", `{"revision":3}`, nil, 200},
+		{"POST", "/v1/triggers/" + trigger.ID + "/rotate-key?scope=other", `{"revision":4}`, nil, 404},
 		// The journal and the chain.
 		{"GET", "/v1/jobs/" + w.job.ID + "/events", "", nil, 200},
 		{"GET", "/v1/jobs/" + w.job.ID + "/events?tail=true", "", nil, 200},
@@ -119,7 +134,7 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 		t.Error("the journal naming a job and no scope is not held to none:", every, o.held)
 	}
 	// Every other route is refused before it reads anything.
-	for _, route := range []string{"GET /v1/runs/" + queued.ID + "/diagnostics", "POST /v1/runs/" + queued.ID + "/retry", "GET /v1/jobs/" + w.job.ID + "/triggers", "GET /v1/input-profiles"} {
+	for _, route := range []string{"GET /v1/runs/" + queued.ID + "/diagnostics", "POST /v1/runs/" + queued.ID + "/retry", "GET /v1/jobs/" + w.job.ID + "/occurrences", "GET /v1/input-profiles"} {
 		method, path, _ := strings.Cut(route, " ")
 		got, every := throughHeld(t, w, method, path, "", nil)
 		if every || got.code != http.StatusNotImplemented || !strings.Contains(got.body, "store_route_unsupported") {

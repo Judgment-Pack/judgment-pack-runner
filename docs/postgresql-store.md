@@ -9,8 +9,8 @@ the operator who sets it up. The design, with every decision and its reasons, is
 SQLite stays the default. A Runner started without a `store` member, and the companion Desk
 starts, keep the sqlite kind exactly as before.
 
-**This kind serves part of the control API.** It holds the routes that make a job and run it, the
-journal and the run chain, and refuses every other route with `501 store_route_unsupported`
+**This kind serves part of the control API.** It holds the routes that make a job and run it, its
+triggers, the journal and the run chain, and refuses every other route with `501 store_route_unsupported`
 (below). Run one Runner per store:
 several Runners on one store is issue #245.
 
@@ -153,8 +153,8 @@ sqlite kind a job's journal also shows the refused creations of its release.
 The installation's rules (a release makes one job, a pack or dialect identity is never reused
 with other bytes, at most 128 triggers, the queue's limits, one trigger per cloud binding) are
 held across every scope, by keys and counter rows no policy narrows, and answered as on the
-sqlite kind. A request held to one scope can learn that some scope holds a release or an
-identity, never which. Journal sequences are shared across scopes: a page shows gaps where other
+sqlite kind. A request held to one scope can learn that some scope holds a release, an identity
+or a cloud binding, never which. Journal sequences are shared across scopes: a page shows gaps where other
 scopes' entries are.
 
 ## Claims and leases
@@ -222,10 +222,12 @@ These routes are served:
 - `POST /v1/jobs/{job}/upgrade`, `GET /v1/jobs/{job}/upgrade-receipt`
 - `GET /v1/runs`, `GET /v1/jobs/{job}/runs`, `POST /v1/jobs/{job}/runs`, `GET /v1/runs/{run}`
 - the journal, `GET /v1/events` and `GET /v1/jobs/{job}/events`, and `GET /v1/run-chain`
+- a job's triggers, `GET` and `POST /v1/jobs/{job}/triggers`, `POST /v1/jobs/{job}/triggers/preview`,
+  and `POST /v1/triggers/{trigger}/state` and `/rotate-key`
 
 Every other route of the control API answers `501` with the code `store_route_unsupported`
-before it reads anything: among them input and selected profiles, triggers and occurrences, a
-run's retry, diagnostics, verification and brief, the execution binding, and the input
+before it reads anything: among them input and selected profiles, event deliveries and
+occurrences, a run's retry, diagnostics, verification and brief, the execution binding, and the input
 preparation and background connection routes.
 
 Also refused with this kind: manual admission (above), and any `store` member other than

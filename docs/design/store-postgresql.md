@@ -478,8 +478,9 @@ reach rows only through it (`storeFor`), the scope check's read included:
 `GET /v1/status`, `POST /v1/previews`, `POST /v1/jobs`, `GET /v1/jobs`, `GET /v1/runs`,
 `GET /v1/jobs/{job}`, `GET /v1/jobs/{job}/runs`, `POST /v1/jobs/{job}/runs`, `GET /v1/runs/{run}`,
 `POST /v1/jobs/{job}/upgrade` and `GET /v1/jobs/{job}/upgrade-receipt`; held in #244's fifth
-slice, the journal, `GET /v1/events` and `GET /v1/jobs/{job}/events`, and `GET /v1/run-chain`
-(`heldRoutes`). `GET /v1/events` naming a job is that job's route: held to the scope named, none
+slice, the journal, `GET /v1/events` and `GET /v1/jobs/{job}/events`, and `GET /v1/run-chain`;
+a job's triggers, `GET` and `POST /v1/jobs/{job}/triggers` and `POST /v1/jobs/{job}/triggers/preview`,
+and a trigger's `POST /v1/triggers/{trigger}/state` and `/rotate-key` (`heldRoutes`). `GET /v1/events` naming a job is that job's route: held to the scope named, none
 when it names none, as the table says, and the store for every scope only when it names neither a
 scope nor a job. `GET /v1/health` reads no row. Every other route is refused on such a kind,
 `501 store_route_unsupported`, before it reads anything, until it is held to its scope as the
@@ -524,8 +525,8 @@ Every read in the code whose rows can lie in more than one scope:
 |---|---|---|---|
 | `jobCreation(release)` (a repeated creation) and `releaseUses(release)` | `POST /v1/jobs` (`store.go:357`, `:368`); `POST /v1/jobs/{job}/upgrade` (`job_revisions.go:119`) | The keys on `jobs.release_id`, `job_creations.release_id` and `job_revisions.release_id`, which no policy narrows: another scope's row reads `absent`, and the write meets the key as `taken` | `409 release_already_used`, with SQLite's message for the key that holds the release, a creation's or a revision's. The Runner answers those keys' `taken` so (`releaseTaken`); the sqlite kind, whose reads before the write see every scope, never meets one |
 | `packConflicts`, `dialectConflicts` | Both routes (`admitJobPack`, `job_revisions.go:34`; `dialect_artifact.go:159`) | `pack_identities` and `dialect_identities`, unscoped: each revision's release's identities are inserted (`ON CONFLICT DO NOTHING`) in its transaction, and their held digests read back | `409 artifact_identity_conflict`, as on SQLite |
-| `triggerCount()` | `POST /v1/jobs` with a trigger (`store.go:396`); `POST /v1/jobs/{job}/triggers` (`triggers_store.go:67`, outside the transaction) | `counts.triggers`, raised by `createTrigger` only while below 128 | `422 trigger_limit` at the installation's 128th trigger, as the Runner answers on SQLite |
-| `cloudBindings(except, connection, job)` | `POST /v1/jobs/{job}/triggers` (`triggers_store.go:77`, outside the transaction) | The binding's unique index on `triggers`, which no policy narrows: the write meets it as `taken` | `422 cloud_binding_used`, as the Runner answers on SQLite. Left: the Runner does not yet answer the index's `taken` so, and the trigger routes are refused on the kind; `POST /v1/jobs` with a cloud trigger meets the index as it does on the sqlite kind, which checks no binding before that write either |
+| `triggerCount()` | `POST /v1/jobs` with a trigger (`store.go:396`); `POST /v1/jobs/{job}/triggers` (`triggers_store.go:68`, outside the transaction) | `counts.triggers`, raised by `createTrigger` only while below 128 | `422 trigger_limit` at the installation's 128th trigger, as the Runner answers on SQLite: `triggerCount()` reads the row in any view |
+| `cloudBindings(except, connection, job)` | `POST /v1/jobs/{job}/triggers` (`triggers_store.go:78`, outside the transaction) | The binding's unique index on `triggers`, which no policy narrows: the write meets it as `taken` | `422 cloud_binding_used`, as the Runner answers on SQLite: `configureTriggerBy` answers the index's `taken` (`keyCloudBinding`) so. `POST /v1/jobs` with a cloud trigger meets the index as it does on the sqlite kind, which checks no binding before that write either, and answers as it does there |
 | `activeRuns()` | `POST /v1/jobs/{job}/runs` (`store.go:591`); `POST /v1/runs/{run}/retry` (`retries.go:364`) | `counts.active-runs`, moved by `createRun` and `putRun` as a run enters or leaves `queued` and `running` | `429 queue_full` at the installation's limit |
 | `pendingOccurrences()` | `POST /v1/triggers/{trigger}/events` and `/deliveries` (`triggers_store.go:469`) | `counts.pending-occurrences`, moved by `createOccurrence` and `putOccurrence` as an occurrence enters or leaves `accepted`, `preparing` and `waiting` | `429 queue_full` at the installation's limit |
 | `journalPage` with a job; `journalBegan()` | `GET /v1/jobs/{job}/events`, `GET /v1/events` | The read policy on `events` above | The page SQLite gives |
@@ -712,6 +713,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease` (D3) | Built: a finish and a renewal that wait for `journal_head`'s lock past their lease's end write nothing. |
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
 | `TestPostgreSQLHoldsTheJournalToItsScope` (section 6, D16) | Built in the fifth slice: on a Runner on the kind, a scope's job's journal is served held to its scope; another scope, or a request naming none, is answered `404` for it, by either route; a listing naming a scope holds that scope's entries alone; a refused creation shows in the listing naming no scope and in no scope's page. The conformance case "a refused creation is read only held to the none scope" holds D16 on the in-memory kind and the kind, and SQLite's pages unchanged. |
+| `TestPostgreSQLHoldsTriggersToTheirScope` (section 6, D9) | Built in the fifth slice: another scope neither lists, reads nor changes a scope's trigger, naming its id in the path or through a job of its own, and the trigger is as it was; the scope's own configuration, preview, resumption and key rotation are served and journaled in its scope; a binding another scope holds is refused by the index, `422 cloud_binding_used`, as the Runner's own read refuses it in one scope; the installation's count refuses a trigger in any scope at the limit, `422 trigger_limit`, and a refused trigger leaves the count as it was. |
 | `TestPostgreSQLMigratesAStoreAtTheGrantsForward` (c) | Built in the fifth slice: a store migrated to `0002`, as the previous release left it, is refused at the start; a run naming other logins applies nothing; the migration applies the later files alone, leaves the catalog a store migrated at once has, records the logins on the later file's row, and applies nothing on a second run. |
 | `TestPostgreSQLResolvesABuiltinBeforeTheSchema` | Built: with `now()`, `statement_timestamp()` and `set_config` made in the schema, by the owner, to fail, a claim, a renewal, a finish and a read held to a scope still call the built-ins; no relation of the schema has a name the catalog holds. |
 | `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLStartRefusesAConnectionWithoutItsSettings`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLADispatcherBehindAHeldLockGoesOn`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; a start over a pool whose connection was opened without the search path or one of the bounds is refused, naming it and the login; with another connection holding `journal_head`'s lock, a write is refused within the lock bound; a renewal is tried again, keeps the claim when the lock is let go before its deadline, and is refused at its deadline, its wait on the server ended, the claim reported lost; a dispatcher's end of a run in the queue, its tick for lapsed leases and its claim make nothing and its loop goes on, its finish lands once the lock is let go, the run completed and not interrupted, and the Runner stays healthy; a transaction left idle is ended by the server and the writer behind it goes on. |
@@ -743,9 +745,9 @@ leave SQLite's statements and rows as they are; the kind is written only after t
 4. The Runner's answers to the keys across scopes (D9): `taken` on a release's keys as
    `409 release_already_used`, on the cloud binding's index as `cloud_binding_used`. (The
    release's keys are built, #244's third slice: a `taken` names its key, `storeKey`, and
-   `releaseTaken` answers it. Left: the binding's answer. Its key is named; the Runner's own
-   check of the binding answers `422 cloud_binding_used`, and `trigger_limit` is `422` too,
-   which section 6 now states.)
+   `releaseTaken` answers it. The binding's answer is built in the fifth slice: `configureTriggerBy`
+   answers the index's `taken` as its own check of the binding does, `422 cloud_binding_used`;
+   `trigger_limit` is `422` too, which section 6 now states.)
 5. The kind: its migrations and commands, the rows of section 3, its policies, the lease and its
    renewal, the attempts' volume rows (D11), the pinned Runtime directory (D12), the CI service
    container, and the tests of section 10. (Built, #244's fourth slice: the kind
@@ -760,7 +762,10 @@ leave SQLite's statements and rows as they are; the kind is written only after t
 6. The routes section 6 lists and step 5 left refused, each held to its scope as the table says,
    with a migration file of their own (`0003_held_routes.sql`) for the policies they need; a
    store at `0002` is migrated forward by `jpack-runner store migrate`, which the start requires.
-   (#244's fifth slice, in progress: the journal and the run chain, with D16.)
+   (#244's fifth slice, in progress: the journal and the run chain, with D16; a job's triggers,
+   their preview, state and key, with the binding's answer of step 4. The trigger routes needed no
+   policy and no grant beyond `0002_grants.sql`: the request login already writes `triggers`,
+   `trigger_revisions` and `counts`, and the ticks, on the worker login, are as they were.)
 
 SQLite's bytes and schema are not changed by any of it: the claim's columns and the tables of
 section 3 are the second kind's own, and `store_sqlite_rows_test.go` holds the rows.
@@ -772,9 +777,9 @@ following. This is recorded for several Runners on one store (#245); the contrac
 for it in this issue.
 
 - `automationMu` serializes every trigger write. `putTrigger` writes a trigger whatever it holds,
-  and each writer read it under the mutex (`triggers_store.go:23`, `:93`, `:212`; the ticks). The
+  and each writer read it under the mutex (`triggers_store.go:35`, `:125`, `:247`; the ticks). The
   trigger limit and the cloud binding are checked outside the write's transaction under it
-  (`triggers_store.go:67`, `:77`). #245 must give `putTrigger` an expected revision, as `putRun`
+  (`triggers_store.go:68`, `:78`). #245 must give `putTrigger` an expected revision, as `putRun`
   has an expected state, and move both checks into the write's transaction, which D9's rows do for
   the second kind. #244 leaves it so: a trigger's record revision does not change with every
   write (a tick, the file cursor and the pending state change none), so an expected

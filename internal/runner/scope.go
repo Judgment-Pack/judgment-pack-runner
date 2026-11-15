@@ -320,6 +320,12 @@ var heldRoutes = map[string]bool{
 	"GET /v1/runs/{run}":                 true,
 	"POST /v1/jobs/{job}/upgrade":        true,
 	"GET /v1/jobs/{job}/upgrade-receipt": true,
+	// A job's triggers, and a trigger's state and key.
+	"GET /v1/jobs/{job}/triggers":            true,
+	"POST /v1/jobs/{job}/triggers":           true,
+	"POST /v1/jobs/{job}/triggers/preview":   true,
+	"POST /v1/triggers/{trigger}/state":      true,
+	"POST /v1/triggers/{trigger}/rotate-key": true,
 	// The journal and the chain of runs.
 	"GET /v1/events":            true,
 	"GET /v1/jobs/{job}/events": true,

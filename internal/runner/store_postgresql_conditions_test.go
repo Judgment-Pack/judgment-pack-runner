@@ -758,28 +758,7 @@ func TestPostgreSQLServesARunThroughItsHeldRoutes(t *testing.T) {
 // alone; a refused creation, journaled under the none scope, shows in no
 // scope's journal but the none scope's and the listing naming none.
 func TestPostgreSQLHoldsTheJournalToItsScope(t *testing.T) {
-	s := pgServer(t)
-	db := s.database(t)
-	cfg := journalConfig(t)
-	connections := s.connections(db)
-	cfg.PostgreSQL = &connections
-	sv := openJournal(t, cfg)
-	defer sv.Close()
-	if !holdsScopes(sv.store) {
-		t.Fatal("the kind opened is not the postgresql kind")
-	}
-	runtime := completingRuntime(t, cfg.Dir)
-	jobs := map[string]Job{}
-	for _, scope := range []string{"team-a", "team-b"} {
-		release := journalRelease(t, sv, runtime)
-		got := serve(t, sv, "POST", "/v1/jobs", `{"name":"Held","releaseId":"`+release.ID+`","reviewed":true,"scope":"`+scope+`"}`, nil)
-		if got.Code != 201 {
-			t.Fatal(got.Code, got.Body.String())
-		}
-		var j Job
-		must(t, json.Unmarshal(got.Body.Bytes(), &j))
-		jobs[scope] = j
-	}
+	_, _, sv, jobs := pgScopedRunner(t)
 	a, b := jobs["team-a"], jobs["team-b"]
 	// A creation from team-a's release, naming team-b, is refused and
 	// journaled under the none scope.
@@ -831,5 +810,130 @@ func TestPostgreSQLHoldsTheJournalToItsScope(t *testing.T) {
 	}
 	if got := serve(t, sv, "GET", "/v1/run-chain", "", nil); got.Code != 200 {
 		t.Fatal("the chain:", got.Code, got.Body.String())
+	}
+}
+
+// pgScopedRunner is a Runner opened on the kind, on a database of the test's
+// own, with no dispatcher or automation (journalConfig), holding a job in
+// each of the scopes team-a and team-b, each made through its route.
+func pgScopedRunner(t *testing.T) (*pgTestServer, string, *Service, map[string]Job) {
+	t.Helper()
+	s := pgServer(t)
+	db := s.database(t)
+	cfg := journalConfig(t)
+	connections := s.connections(db)
+	cfg.PostgreSQL = &connections
+	sv := openJournal(t, cfg)
+	t.Cleanup(sv.Close)
+	if !holdsScopes(sv.store) {
+		t.Fatal("the kind opened is not the postgresql kind")
+	}
+	runtime := completingRuntime(t, cfg.Dir)
+	jobs := map[string]Job{}
+	for _, scope := range []string{"team-a", "team-b"} {
+		release := journalRelease(t, sv, runtime)
+		got := serve(t, sv, "POST", "/v1/jobs", `{"name":"Held","releaseId":"`+release.ID+`","reviewed":true,"scope":"`+scope+`"}`, nil)
+		if got.Code != 201 {
+			t.Fatal(got.Code, got.Body.String())
+		}
+		var j Job
+		must(t, json.Unmarshal(got.Body.Bytes(), &j))
+		jobs[scope] = j
+	}
+	return s, db, sv, jobs
+}
+
+// Section 6 and D9, triggers: on a Runner on the kind, another scope neither
+// lists, reads nor changes a scope's trigger, guessing its id through a job
+// of its own or naming it in the path; the scope's own requests change it.
+// The trigger limit and the cloud binding hold across scopes: the binding's
+// index refuses another scope's binding, 422 cloud_binding_used, and the
+// installation's count refuses a trigger past the limit, 422 trigger_limit.
+func TestPostgreSQLHoldsTriggersToTheirScope(t *testing.T) {
+	s, db, sv, jobs := pgScopedRunner(t)
+	a, b := jobs["team-a"], jobs["team-b"]
+	event := TriggerConfig{Name: "Reviewed records", Kind: "event", Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+	call := func(method, path string, body any, want int) []byte {
+		t.Helper()
+		raw := ""
+		if body != nil {
+			raw = string(encode(body))
+		}
+		got := serve(t, sv, method, path, raw, nil)
+		if got.Code != want {
+			t.Fatalf("%s %s: %d %s, want %d", method, path, got.Code, got.Body.String(), want)
+		}
+		return got.Body.Bytes()
+	}
+	var ta Trigger
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+a.ID+"/triggers?scope=team-a", map[string]any{"config": event}, 200), &ta))
+	listed := func(job, scope string) []Trigger {
+		t.Helper()
+		var page struct {
+			Items []Trigger `json:"items"`
+		}
+		must(t, json.Unmarshal(call("GET", "/v1/jobs/"+job+"/triggers?scope="+scope, nil, 200), &page))
+		return page.Items
+	}
+	if got := listed(b.ID, "team-b"); len(got) != 0 {
+		t.Fatal("team-b's job lists another scope's trigger:", got)
+	}
+	call("GET", "/v1/jobs/"+a.ID+"/triggers?scope=team-b", nil, 404)
+	call("GET", "/v1/jobs/"+a.ID+"/triggers", nil, 404)
+	// Guessing the id: through team-b's own job, or naming it in the path.
+	call("POST", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", map[string]any{"id": ta.ID, "revision": 1, "config": event}, 404)
+	call("POST", "/v1/triggers/"+ta.ID+"/state?scope=team-b", map[string]any{"revision": 1, "paused": false, "reviewed": true}, 404)
+	call("POST", "/v1/triggers/"+ta.ID+"/rotate-key?scope=team-b", map[string]any{"revision": 1}, 404)
+	call("POST", "/v1/triggers/"+ta.ID+"/state", map[string]any{"revision": 1, "paused": false, "reviewed": true}, 404)
+	call("POST", "/v1/jobs/"+b.ID+"/triggers/preview?scope=team-a", event, 404)
+	if got := listed(a.ID, "team-a"); len(got) != 1 || got[0].ID != ta.ID || got[0].Revision != 1 || !got[0].Paused {
+		t.Fatal("another scope's requests changed the trigger:", got)
+	}
+	// The scope's own requests change it, each journaled in the scope.
+	call("POST", "/v1/jobs/"+a.ID+"/triggers/preview?scope=team-a", event, 200)
+	call("POST", "/v1/jobs/"+a.ID+"/triggers?scope=team-a", map[string]any{"id": ta.ID, "revision": 1, "config": event}, 200)
+	call("POST", "/v1/triggers/"+ta.ID+"/state?scope=team-a", map[string]any{"revision": 2, "paused": false, "reviewed": true}, 200)
+	call("POST", "/v1/triggers/"+ta.ID+"/rotate-key?scope=team-a", map[string]any{"revision": 3}, 200)
+	var page EventPage
+	must(t, json.Unmarshal(call("GET", "/v1/events?scope=team-b", nil, 200), &page))
+	for _, e := range page.Items {
+		if e.Concerns.Trigger != "" {
+			t.Fatal("team-b's journal holds a trigger's entry:", e.Kind, e.Concerns.Trigger)
+		}
+	}
+	must(t, json.Unmarshal(call("GET", "/v1/jobs/"+a.ID+"/events?scope=team-a", nil, 200), &page))
+	changes := 0
+	for _, e := range page.Items {
+		if e.Concerns.Trigger == ta.ID {
+			changes++
+		}
+	}
+	if changes != 4 {
+		t.Fatal("team-a's journal holds", changes, "of its trigger's four changes")
+	}
+
+	// The cloud binding, across scopes: team-a's binding is refused to
+	// team-b by the index, and to team-a by the Runner's own read.
+	conn := CloudConnection{ID: "google", Subscription: "projects/example-project/subscriptions/desk-inbox", CredentialsFile: "/nonexistent/test-adc.json"}
+	sv.cfg.CloudConnections = []CloudConnection{conn}
+	cloud := TriggerConfig{Name: "Scheduled", Kind: "cloud", Cloud: &CloudBinding{Connection: conn.ID, Subscription: conn.Subscription, Job: "projects/example-project/locations/us-central1/jobs/daily"}, Input: &AutomaticInput{Kind: "constant", Value: string(encode(journalInput()))}, Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+	call("POST", "/v1/jobs/"+a.ID+"/triggers?scope=team-a", map[string]any{"config": cloud}, 200)
+	for _, scope := range []string{"team-b", "team-a"} {
+		job := jobs[scope]
+		if got := call("POST", "/v1/jobs/"+job.ID+"/triggers?scope="+scope, map[string]any{"config": cloud}, 422); !strings.Contains(string(got), "cloud_binding_used") {
+			t.Fatal(scope, "was not refused the binding:", string(got))
+		}
+	}
+	// The trigger limit, across scopes: the installation's count.
+	suite := s.pool(t, pgRoleSuite, db)
+	var held int
+	must(t, suite.QueryRowContext(pgContext, "SELECT value FROM counts WHERE name='triggers'").Scan(&held))
+	if held != 2 {
+		t.Fatal("the installation's trigger count is", held, "want 2")
+	}
+	_, err := suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='triggers'", pgTriggerLimit)
+	must(t, err)
+	if got := call("POST", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", map[string]any{"config": event}, 422); !strings.Contains(string(got), "trigger_limit") {
+		t.Fatal("a trigger past the installation's limit was not refused:", string(got))
 	}
 }

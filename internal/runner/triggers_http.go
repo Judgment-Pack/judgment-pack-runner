@@ -53,11 +53,12 @@ func (s *Service) triggerRoutes(mux routeMux) {
 		write(w, 200, publicOccurrence(o))
 	})
 	mux.HandleFunc("GET /v1/jobs/{job}/triggers", func(w http.ResponseWriter, r *http.Request) {
-		if _, e := s.job(r.PathValue("job")); e != nil {
+		st := s.storeFor(r.Context())
+		if _, e := st.job(r.PathValue("job")); e != nil {
 			failure(w, e)
 			return
 		}
-		held, e := s.store.jobTriggers(r.PathValue("job"))
+		held, e := st.jobTriggers(r.PathValue("job"))
 		if e != nil {
 			failure(w, e)
 			return
@@ -87,7 +88,7 @@ func (s *Service) triggerRoutes(mux routeMux) {
 			failure(w, e)
 			return
 		}
-		t, e := s.configureTriggerBy(requesterFrom(r.Context()), r.PathValue("job"), req.ID, req.Revision, req.Config)
+		t, e := s.configureTriggerBy(s.storeFor(r.Context()), requesterFrom(r.Context()), r.PathValue("job"), req.ID, req.Revision, req.Config)
 		if e != nil {
 			failure(w, e)
 			return
@@ -100,12 +101,13 @@ func (s *Service) triggerRoutes(mux routeMux) {
 			failure(w, e)
 			return
 		}
-		job, e := s.job(r.PathValue("job"))
+		st := s.storeFor(r.Context())
+		job, e := st.job(r.PathValue("job"))
 		if e != nil {
 			failure(w, e)
 			return
 		}
-		release, e := s.release(job.ReleaseID)
+		release, e := st.release(job.ReleaseID)
 		if e != nil {
 			failure(w, e)
 			return
@@ -158,7 +160,7 @@ func (s *Service) triggerRoutes(mux routeMux) {
 			failure(w, e)
 			return
 		}
-		t, key, e := s.setTriggerStateBy(requesterFrom(r.Context()), r.PathValue("trigger"), req.Revision, req.Paused, req.Reviewed)
+		t, key, e := s.setTriggerStateBy(s.storeFor(r.Context()), requesterFrom(r.Context()), r.PathValue("trigger"), req.Revision, req.Paused, req.Reviewed)
 		if e != nil {
 			failure(w, e)
 			return
@@ -173,7 +175,7 @@ func (s *Service) triggerRoutes(mux routeMux) {
 			failure(w, e)
 			return
 		}
-		t, key, e := s.rotateTriggerKeyBy(requesterFrom(r.Context()), r.PathValue("trigger"), req.Revision)
+		t, key, e := s.rotateTriggerKeyBy(s.storeFor(r.Context()), requesterFrom(r.Context()), r.PathValue("trigger"), req.Revision)
 		if e != nil {
 			failure(w, e)
 			return

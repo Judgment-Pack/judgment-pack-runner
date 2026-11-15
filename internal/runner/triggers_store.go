@@ -13,21 +13,32 @@ func (s *Service) writeTrigger(t Trigger, hash string, history bool) error {
 	return s.store.update(func(tx runTx) error { return tx.putTrigger(t, hash, history) })
 }
 func (s *Service) configureTrigger(jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
-	return s.configureTriggerBy(requester{}, jobID, triggerID, revision, c)
+	return s.configureTriggerBy(s.store, requester{}, jobID, triggerID, revision, c)
 }
 
-// configureTriggerBy is configureTrigger, requested by by.
-func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
+// errCloudBindingUsed is the refusal of a cloud binding another trigger
+// holds.
+func errCloudBindingUsed() error {
+	return bad("cloud_binding_used", "This scheduler job is already bound to a trigger.")
+}
+
+// configureTriggerBy is configureTrigger, requested by by, its records read
+// and written in st, the store the request is held to (storeFor). The
+// trigger limit and the cloud binding are rules of the installation (D9):
+// on a kind that holds scopes, st's reads count the scope's triggers alone,
+// and the limit's row and the binding's index, which no policy narrows,
+// refuse the write, answered as the reads before it are.
+func (s *Service) configureTriggerBy(st runStore, by requester, jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	job, e := s.job(jobID)
+	job, e := st.job(jobID)
 	if e != nil {
 		return Trigger{}, e
 	}
-	release, e := s.release(job.ReleaseID)
+	release, e := st.release(job.ReleaseID)
 	if e != nil {
 		return Trigger{}, e
 	}
@@ -38,7 +49,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 	hash := ""
 	previous := 0
 	if triggerID != "" {
-		t, hash, e = s.trigger(triggerID)
+		t, hash, e = st.trigger(triggerID)
 		if e != nil {
 			return t, e
 		}
@@ -54,7 +65,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		previous = t.Revision
 		t.Revision++
 	} else {
-		count, e := s.store.triggerCount()
+		count, e := st.triggerCount()
 		if e != nil {
 			return t, e
 		}
@@ -64,12 +75,12 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		t = Trigger{ID: id("trg_"), JobID: jobID, Revision: 1, Authority: "local", CreatedAt: now(), Scope: job.Scope}
 	}
 	if c.Cloud != nil {
-		other, e := s.store.cloudBindings(t.ID, c.Cloud.Connection, c.Cloud.Job)
+		other, e := st.cloudBindings(t.ID, c.Cloud.Connection, c.Cloud.Job)
 		if e != nil {
 			return t, e
 		}
 		if other > 0 {
-			return t, bad("cloud_binding_used", "This scheduler job is already bound to a trigger.")
+			return t, errCloudBindingUsed()
 		}
 		t.Authority = "google-cloud"
 	}
@@ -80,7 +91,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 	t.Problem = ""
 	t.pending = ""
 	t.pendingAt = ""
-	return t, s.store.update(func(tx runTx) (err error) {
+	e = st.update(func(tx runTx) (err error) {
 		from := ""
 		if triggerID == "" {
 			if err = tx.createTrigger(t); err != nil {
@@ -95,19 +106,25 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		_, err = tx.appendJournal(change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}})
 		return err
 	})
+	if c.Cloud != nil && takenKey(e) == keyCloudBinding {
+		// Another scope's trigger holds the binding (D9).
+		return t, errCloudBindingUsed()
+	}
+	return t, e
 }
 func (s *Service) setTriggerState(triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
-	return s.setTriggerStateBy(requester{}, triggerID, revision, paused, reviewed)
+	return s.setTriggerStateBy(s.store, requester{}, triggerID, revision, paused, reviewed)
 }
 
-// setTriggerStateBy is setTriggerState, requested by by.
-func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
+// setTriggerStateBy is setTriggerState, requested by by, its records read
+// and written in st, the store the request is held to (storeFor).
+func (s *Service) setTriggerStateBy(st runStore, by requester, triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, "", manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	t, hash, e := s.trigger(triggerID)
+	t, hash, e := st.trigger(triggerID)
 	if e != nil {
 		return t, "", e
 	}
@@ -122,11 +139,11 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 	}
 	secret := ""
 	if !paused {
-		job, e := s.job(t.JobID)
+		job, e := st.job(t.JobID)
 		if e != nil {
 			return t, "", e
 		}
-		release, e := s.release(job.ReleaseID)
+		release, e := st.release(job.ReleaseID)
 		if e != nil {
 			return t, "", e
 		}
@@ -174,7 +191,7 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 	} else {
 		t.NextAt = ""
 	}
-	job, e := s.job(t.JobID)
+	job, e := st.job(t.JobID)
 	if e != nil {
 		return t, "", e
 	}
@@ -193,14 +210,19 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 		kind = "trigger.resumed"
 		detail.NextAt = t.NextAt
 	}
-	e = s.writeTriggerChange(t, hash, change{kind: kind, by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: triggerState(t.Paused), detail: detail})
+	e = writeTriggerChangeIn(st, t, hash, change{kind: kind, by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: triggerState(t.Paused), detail: detail})
 	return t, secret, e
 }
 
 // writeTriggerChange writes a trigger's new revision, its snapshot and the
 // change's entry in one transaction.
 func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
-	return s.store.update(func(tx runTx) (err error) {
+	return writeTriggerChangeIn(s.store, t, hash, c)
+}
+
+// writeTriggerChangeIn is writeTriggerChange, in st.
+func writeTriggerChangeIn(st runStore, t Trigger, hash string, c change) error {
+	return st.update(func(tx runTx) (err error) {
 		entry := c
 		if entry.from, err = triggerBefore(tx, t.ID, t.Revision-1); err != nil {
 			return err
@@ -213,17 +235,18 @@ func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
 	})
 }
 func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, string, error) {
-	return s.rotateTriggerKeyBy(requester{}, triggerID, revision)
+	return s.rotateTriggerKeyBy(s.store, requester{}, triggerID, revision)
 }
 
-// rotateTriggerKeyBy is rotateTriggerKey, requested by by.
-func (s *Service) rotateTriggerKeyBy(by requester, triggerID string, revision int) (Trigger, string, error) {
+// rotateTriggerKeyBy is rotateTriggerKey, requested by by, its records read
+// and written in st, the store the request is held to (storeFor).
+func (s *Service) rotateTriggerKeyBy(st runStore, by requester, triggerID string, revision int) (Trigger, string, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, "", manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	t, _, e := s.trigger(triggerID)
+	t, _, e := st.trigger(triggerID)
 	if e != nil {
 		return t, "", e
 	}
@@ -237,7 +260,7 @@ func (s *Service) rotateTriggerKeyBy(by requester, triggerID string, revision in
 	if _, e = rand.Read(key[:]); e != nil {
 		return t, "", e
 	}
-	job, e := s.job(t.JobID)
+	job, e := st.job(t.JobID)
 	if e != nil {
 		return t, "", e
 	}
@@ -248,7 +271,7 @@ func (s *Service) rotateTriggerKeyBy(by requester, triggerID string, revision in
 	issued := t.Revision
 	t.keyRevision = &issued
 	state := triggerState(t.Paused)
-	e = s.writeTriggerChange(t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(t.Revision - 1)}})
+	e = writeTriggerChangeIn(st, t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(t.Revision - 1)}})
 	return t, secret, e
 }
 func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
