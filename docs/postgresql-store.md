@@ -9,8 +9,9 @@ the operator who sets it up. The design, with every decision and its reasons, is
 SQLite stays the default. A Runner started without a `store` member, and the companion Desk
 starts, keep the sqlite kind exactly as before.
 
-**This kind serves part of the control API.** It holds the routes that make a job and run it, and
-refuses every other route with `501 store_route_unsupported` (below). Run one Runner per store:
+**This kind serves part of the control API.** It holds the routes that make a job and run it, the
+journal and the run chain, and refuses every other route with `501 store_route_unsupported`
+(below). Run one Runner per store:
 several Runners on one store is issue #245.
 
 ## What it needs
@@ -61,8 +62,14 @@ It is held to the service configuration's file rules: an absolute path, no symbo
 one regular file owned by Runner's user that neither its group nor others may read or write, at
 most 128 KiB. The command connects as the migration login, takes the owner's role for each file's
 transaction, applies each file not yet recorded in `jpack_runner.schema_migrations`, and prints
-the versions it applied, `{"applied":["0001","0002"]}` the first time and `{"applied":[]}` on a
-second run, which changes nothing.
+the versions it applied, `{"applied":["0001","0002","0003"]}` the first time and `{"applied":[]}`
+on a second run, which changes nothing.
+
+**Before starting a new release, run its `jpack-runner store migrate`.** A release may ship
+migration files the store does not hold yet, and the Runner refuses to open a store whose applied
+migrations are not exactly its own set (below). The command applies the files after the ones
+recorded, and nothing else: on a store the previous release migrated, it prints the new versions,
+`{"applied":["0003"]}` from a store at `0002`. Name the same logins as the first time.
 
 It refuses, and applies nothing more:
 
@@ -75,6 +82,8 @@ It refuses, and applies nothing more:
 The grants file (`0002_grants.sql`) gives the two run-time logins `USAGE` on the schema and the
 table privileges of the design's section 7, and no privilege on a sequence, and no `DELETE`,
 `TRUNCATE`, `REFERENCES` or `TRIGGER`: at run time the Runner deletes, truncates and drops nothing.
+A later file that names the logins (`0003_held_routes.sql`, the policies of the routes held in
+this release) is applied only with the logins the grants were made to, and records them too.
 
 ## Configure
 
@@ -136,8 +145,10 @@ Row security is enabled and forced on every table, the owner included. Every tra
 request login makes sets `jpack.scope` for that transaction alone (`set_config(..., true)`), to
 the scope identifier the request names, or to none; the policy on each table with scoped rows
 admits only the rows of that scope. A transaction that sets no scope reaches no scoped row. The
-journal also shows a request the entries of no scope that name no job (the Runner's own entries,
-previews and refused creations), as the sqlite kind does.
+journal also shows a request the entries of no scope that name no job (the Runner's own entries
+and previews), as the sqlite kind does. A refused job creation names a release and its caller,
+not a job, and is journaled under no scope: only a request that names no scope reads it. On the
+sqlite kind a job's journal also shows the refused creations of its release.
 
 The installation's rules (a release makes one job, a pack or dialect identity is never reused
 with other bytes, at most 128 triggers, the queue's limits, one trigger per cloud binding) are
@@ -210,12 +221,12 @@ These routes are served:
 - `POST /v1/jobs`, `GET /v1/jobs`, `GET /v1/jobs/{job}`
 - `POST /v1/jobs/{job}/upgrade`, `GET /v1/jobs/{job}/upgrade-receipt`
 - `GET /v1/runs`, `GET /v1/jobs/{job}/runs`, `POST /v1/jobs/{job}/runs`, `GET /v1/runs/{run}`
+- the journal, `GET /v1/events` and `GET /v1/jobs/{job}/events`, and `GET /v1/run-chain`
 
 Every other route of the control API answers `501` with the code `store_route_unsupported`
-before it reads anything: among them the journal (`GET /v1/events`, `GET /v1/jobs/{job}/events`),
-the run chain, input and selected profiles, triggers and occurrences, a run's retry, diagnostics,
-verification and brief, the execution binding, and the input preparation and background
-connection routes.
+before it reads anything: among them input and selected profiles, triggers and occurrences, a
+run's retry, diagnostics, verification and brief, the execution binding, and the input
+preparation and background connection routes.
 
 Also refused with this kind: manual admission (above), and any `store` member other than
 `{"kind":"postgresql","connection":...}`. `jpack-runner store` takes `migrate` and nothing else;

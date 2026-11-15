@@ -174,18 +174,20 @@ func (s *Service) scoped(handler http.HandlerFunc) http.HandlerFunc {
 			failure(w, err)
 			return
 		}
+		name, table, id := addressedRecord(r)
 		if holding {
 			// On a kind that holds scopes, the route reaches rows only through
 			// the view of the store held to the scope named, "" for none; a
-			// store-wide listing naming none, through the store for every
-			// scope, as it lists every scope's records.
+			// store-wide listing naming none and no record, through the store
+			// for every scope, as it lists every scope's records. The journal
+			// naming a job is that job's route (docs/design/store-postgresql.md,
+			// section 6): held to the scope named, none when it names none.
 			view := s.store
-			if named || !scopeListings[r.Pattern] {
+			if named || !scopeListings[r.Pattern] || table != "" {
 				view = s.store.heldTo(scopeHeld(scope))
 			}
 			r = r.WithContext(context.WithValue(r.Context(), heldStoreContext{}, view))
 		}
-		name, table, id := addressedRecord(r)
 		switch {
 		case table != "":
 			// The scope check's own read is the request's: on a kind that
@@ -318,6 +320,10 @@ var heldRoutes = map[string]bool{
 	"GET /v1/runs/{run}":                 true,
 	"POST /v1/jobs/{job}/upgrade":        true,
 	"GET /v1/jobs/{job}/upgrade-receipt": true,
+	// The journal and the chain of runs.
+	"GET /v1/events":            true,
+	"GET /v1/jobs/{job}/events": true,
+	"GET /v1/run-chain":         true,
 }
 
 // errRouteNotHeld is the refusal of a route a Runner on a kind that holds

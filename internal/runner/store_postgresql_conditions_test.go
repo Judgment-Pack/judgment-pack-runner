@@ -141,10 +141,11 @@ func TestPostgreSQLHoldsATransactionToItsScope(t *testing.T) {
 				must(t, tx.QueryRowContext(pgContext, "SELECT count(*) FROM "+table+" WHERE scope<>$1", scope).Scan(&other))
 			})
 			// The journal also shows a request the none scope's entries that
-			// name no job: the Runner's own (section 6).
+			// name no job: the Runner's own and previews, not refusals
+			// (section 6).
 			if table == "events" {
 				var shared int
-				must(t, suite.QueryRowContext(pgContext, "SELECT count(*) FROM events WHERE scope='' AND job_id=''").Scan(&shared))
+				must(t, suite.QueryRowContext(pgContext, "SELECT count(*) FROM events WHERE scope='' AND job_id='' AND kind<>'admission.refused'").Scan(&shared))
 				want += shared
 				other -= shared
 			}
@@ -340,8 +341,14 @@ func TestPostgreSQLMigrationIsIdempotent(t *testing.T) {
 		return n
 	}
 	roles, settings := count("SELECT count(*) FROM pg_roles"), count("SELECT count(*) FROM pg_db_role_setting")
+	set, err := postgresqlMigrations()
+	must(t, err)
+	var shipped []string
+	for _, f := range set {
+		shipped = append(shipped, f.version)
+	}
 	applied, err := MigratePostgreSQL(migration)
-	if err != nil || !slices.Equal(applied, []string{"0001", "0002"}) {
+	if err != nil || !slices.Equal(applied, shipped) {
 		t.Fatal("the first run did not apply the set:", applied, err)
 	}
 	if count("SELECT count(*) FROM pg_roles") != roles || count("SELECT count(*) FROM pg_db_role_setting") != settings {
@@ -387,6 +394,74 @@ func TestPostgreSQLMigrationIsIdempotent(t *testing.T) {
 	must(t, s.pool(t, pgRoleSuite, foreign).QueryRowContext(pgContext, "SELECT to_regnamespace('jpack_runner') IS NOT NULL").Scan(&made))
 	if made {
 		t.Fatal("the refused migration made the kind's schema")
+	}
+}
+
+// c and d. A store an earlier release left, migrated to the grants file
+// (0002), is refused at the start until it is migrated; the migration then
+// applies the files after it and nothing else, leaves the catalog a store
+// migrated at once has, and applies nothing on a second run. A run naming
+// other logins than the grants file recorded applies nothing.
+func TestPostgreSQLMigratesAStoreAtTheGrantsForward(t *testing.T) {
+	s := pgServer(t)
+	set, err := postgresqlMigrations()
+	must(t, err)
+	grants := slices.IndexFunc(set, func(f pgMigration) bool { return f.version == pgGrantsVersion })
+	if grants < 0 || grants == len(set)-1 {
+		t.Fatal("the set holds no file after the grants file:", len(set))
+	}
+	var later []string
+	for _, f := range set[grants+1:] {
+		later = append(later, f.version)
+	}
+	suite := func(db string) {
+		must(t, s.asOwner(db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(pgContext, "GRANT USAGE ON SCHEMA jpack_runner TO "+s.role(pgRoleSuite)+"; GRANT SELECT ON jpack_runner.schema_migrations TO "+s.role(pgRoleSuite)+"; CREATE POLICY suite_rows ON jpack_runner.schema_migrations TO "+s.role(pgRoleSuite)+" USING (true)")
+			return err
+		}))
+	}
+	at := func(db string) PostgreSQLMigration {
+		return PostgreSQLMigration{Connection: s.url(pgRoleMigration, db), Owner: s.role(pgRoleOwner), Request: s.role(pgRoleRequest), Worker: s.role(pgRoleWorker)}
+	}
+	once := pgFreshDatabase(t, s)
+	if _, err = MigratePostgreSQL(at(once)); err != nil {
+		t.Fatal(err)
+	}
+	suite(once)
+	db := pgFreshDatabase(t, s)
+	migration := at(db)
+	if applied, err := migratePostgreSQL(migration, set[:grants+1]); err != nil || len(applied) != grants+1 {
+		t.Fatal("the store an earlier release left was not made:", applied, err)
+	}
+	k := newPostgreSQLStore(s.pool(t, pgRoleRequest, db), s.pool(t, pgRoleWorker, db))
+	if err := k.checkMigrations(); err == nil || !strings.Contains(err.Error(), "run jpack-runner store migrate") {
+		t.Fatal("a store an earlier release left was not refused at the start:", err)
+	}
+	other := migration
+	other.Worker = s.role(pgRoleSuite)
+	if applied, err := MigratePostgreSQL(other); err == nil || len(applied) != 0 || !strings.Contains(err.Error(), "replacing a login is not a migration") {
+		t.Fatal("a run naming another login was not refused before the later files:", applied, err)
+	}
+	applied, err := MigratePostgreSQL(migration)
+	if err != nil || !slices.Equal(applied, later) {
+		t.Fatal("the migration did not apply the files after the grants file:", applied, err)
+	}
+	must(t, k.checkMigrations())
+	suite(db)
+	if forward, whole := pgCatalog(t, s, db), pgCatalog(t, s, once); forward != whole {
+		t.Fatalf("the store migrated forward is not the store migrated at once:\n%s\n---\n%s", forward, whole)
+	}
+	before := pgCatalog(t, s, db)
+	if applied, err = MigratePostgreSQL(migration); err != nil || len(applied) != 0 {
+		t.Fatal("a second run applied", applied, err)
+	}
+	if after := pgCatalog(t, s, db); after != before {
+		t.Fatalf("a second run changed the catalog:\n%s\n---\n%s", before, after)
+	}
+	var request, worker string
+	must(t, s.pool(t, pgRoleSuite, db).QueryRowContext(pgContext, "SELECT request_login, worker_login FROM jpack_runner.schema_migrations WHERE version=$1", later[0]).Scan(&request, &worker))
+	if request != s.role(pgRoleRequest) || worker != s.role(pgRoleWorker) {
+		t.Fatal("the later file's row does not record the logins:", request, worker)
 	}
 }
 
@@ -672,7 +747,89 @@ func TestPostgreSQLServesARunThroughItsHeldRoutes(t *testing.T) {
 	if got.Code != 200 || !strings.Contains(got.Body.String(), `"state":"completed"`) {
 		t.Fatal(got.Code, got.Body.String())
 	}
-	if refused := serve(t, sv, "GET", "/v1/events", "", nil); refused.Code != 501 || !strings.Contains(refused.Body.String(), "store_route_unsupported") {
+	if refused := serve(t, sv, "GET", "/v1/runs/"+queued.ID+"/diagnostics?scope=team-a", "", nil); refused.Code != 501 || !strings.Contains(refused.Body.String(), "store_route_unsupported") {
 		t.Fatal("a route not held was served:", refused.Code, refused.Body.String())
+	}
+}
+
+// Section 6, the journal: on a Runner opened on the kind, a scope's job's
+// journal is read held to its scope, and another scope neither reads it nor
+// learns it is there; a listing naming a scope holds that scope's entries
+// alone; a refused creation, journaled under the none scope, shows in no
+// scope's journal but the none scope's and the listing naming none.
+func TestPostgreSQLHoldsTheJournalToItsScope(t *testing.T) {
+	s := pgServer(t)
+	db := s.database(t)
+	cfg := journalConfig(t)
+	connections := s.connections(db)
+	cfg.PostgreSQL = &connections
+	sv := openJournal(t, cfg)
+	defer sv.Close()
+	if !holdsScopes(sv.store) {
+		t.Fatal("the kind opened is not the postgresql kind")
+	}
+	runtime := completingRuntime(t, cfg.Dir)
+	jobs := map[string]Job{}
+	for _, scope := range []string{"team-a", "team-b"} {
+		release := journalRelease(t, sv, runtime)
+		got := serve(t, sv, "POST", "/v1/jobs", `{"name":"Held","releaseId":"`+release.ID+`","reviewed":true,"scope":"`+scope+`"}`, nil)
+		if got.Code != 201 {
+			t.Fatal(got.Code, got.Body.String())
+		}
+		var j Job
+		must(t, json.Unmarshal(got.Body.Bytes(), &j))
+		jobs[scope] = j
+	}
+	a, b := jobs["team-a"], jobs["team-b"]
+	// A creation from team-a's release, naming team-b, is refused and
+	// journaled under the none scope.
+	if got := serve(t, sv, "POST", "/v1/jobs", `{"name":"Again","releaseId":"`+a.ReleaseID+`","reviewed":true,"scope":"team-b"}`, nil); got.Code != 409 {
+		t.Fatal(got.Code, got.Body.String())
+	}
+	page := func(path string) (int, []Event) {
+		t.Helper()
+		got := serve(t, sv, "GET", path, "", nil)
+		var p EventPage
+		if got.Code == 200 {
+			must(t, json.Unmarshal(got.Body.Bytes(), &p))
+		}
+		return got.Code, p.Items
+	}
+	refused := func(items []Event) bool {
+		for _, e := range items {
+			if e.Kind == "admission.refused" {
+				return true
+			}
+		}
+		return false
+	}
+	code, items := page("/v1/jobs/" + a.ID + "/events?scope=team-a")
+	if code != 200 || len(items) == 0 || refused(items) {
+		t.Fatal("team-a's job journal:", code, items)
+	}
+	for _, e := range items {
+		if e.Concerns.Job != a.ID && e.Concerns.Job != "" {
+			t.Fatal("team-a's job journal holds an entry of", e.Concerns.Job)
+		}
+	}
+	for _, path := range []string{"/v1/jobs/" + a.ID + "/events?scope=team-b", "/v1/events?job=" + a.ID + "&scope=team-b", "/v1/events?job=" + a.ID, "/v1/jobs/" + a.ID + "/events"} {
+		if code, _ := page(path); code != 404 {
+			t.Errorf("GET %s: %d, want 404", path, code)
+		}
+	}
+	code, items = page("/v1/events?scope=team-b")
+	if code != 200 || len(items) == 0 || refused(items) {
+		t.Fatal("team-b's journal:", code, items)
+	}
+	for _, e := range items {
+		if e.Concerns.Job != b.ID {
+			t.Fatal("team-b's journal holds an entry of", e.Concerns.Job, e.Kind)
+		}
+	}
+	if code, items = page("/v1/events"); code != 200 || !refused(items) {
+		t.Fatal("the journal naming no scope does not hold the refused creation:", code, items)
+	}
+	if got := serve(t, sv, "GET", "/v1/run-chain", "", nil); got.Code != 200 {
+		t.Fatal("the chain:", got.Code, got.Body.String())
 	}
 }

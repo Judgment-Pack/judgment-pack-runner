@@ -215,13 +215,6 @@ func (s *Service) runEntrySequence(run string) (int64, bool, error) {
 	return sequence, err == nil, err
 }
 
-// chainPage is up to limit entry lines after a sequence, in order, and the
-// sequence of the last. Rows are only ever appended, so pages read in turn are
-// a prefix of the chain as it stood at some moment during the reading.
-func (s *Service) chainPage(after int64, limit int) ([][]byte, int64, error) {
-	return s.store.chainPage(after, limit)
-}
-
 // checkpointOf is the checkpoint of an entry's line.
 func checkpointOf(line []byte) (Checkpoint, error) {
 	e, err := ParseChainEntry(line)

@@ -78,6 +78,16 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 		{"POST", "/v1/jobs", fmt.Sprintf(`{"name":"Held again","releaseId":%q,"reviewed":true}`, fresh.ID), nil, 409},
 		{"POST", "/v1/jobs/" + w.job.ID + "/upgrade", fmt.Sprintf(`{"baseRevision":1,"baseReleaseId":%q,"releaseId":%q,"reviewed":true}`, w.release.ID, w.release.ID), nil, 422},
 		{"GET", fmt.Sprintf("/v1/jobs/%s/upgrade-receipt?baseRevision=1&baseReleaseId=%s&releaseId=%s", w.job.ID, w.release.ID, fresh.ID), "", nil, 404},
+		// The journal and the chain.
+		{"GET", "/v1/jobs/" + w.job.ID + "/events", "", nil, 200},
+		{"GET", "/v1/jobs/" + w.job.ID + "/events?tail=true", "", nil, 200},
+		{"GET", "/v1/jobs/" + w.job.ID + "/events?scope=other", "", nil, 404},
+		{"GET", "/v1/events?job=" + w.job.ID, "", nil, 200},
+		{"GET", "/v1/events?job=" + w.job.ID + "&scope=other", "", nil, 404},
+		{"GET", "/v1/events?scope=other", "", nil, 200},
+		{"GET", "/v1/events?scope=other&tail=true", "", nil, 200},
+		{"GET", "/v1/run-chain", "", nil, 200},
+		{"GET", "/v1/run-chain?scope=other", "", nil, 400},
 	} {
 		got, every := throughHeld(t, w, c.method, c.path, c.body, c.header)
 		if every {
@@ -97,12 +107,19 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 		t.Fatal("a release's save is not held to no scope:", o.held)
 	}
 	// A listing naming no scope lists every scope's records: it reads the
-	// store for every scope.
-	if _, every := throughHeld(t, w, "GET", "/v1/jobs", "", nil); !every {
-		t.Fatal("a listing naming no scope was held to one")
+	// store for every scope. The journal naming a job and no scope is that
+	// job's route, held to none.
+	for _, path := range []string{"/v1/jobs", "/v1/runs", "/v1/events"} {
+		if _, every := throughHeld(t, w, "GET", path, "", nil); !every {
+			t.Errorf("GET %s naming no scope was held to one", path)
+		}
+	}
+	o.held = nil
+	if _, every := throughHeld(t, w, "GET", "/v1/events?job="+w.job.ID, "", nil); every || len(o.held) != 1 || o.held[0] != scopeHeld("") {
+		t.Error("the journal naming a job and no scope is not held to none:", every, o.held)
 	}
 	// Every other route is refused before it reads anything.
-	for _, route := range []string{"GET /v1/events", "GET /v1/runs/" + queued.ID + "/diagnostics", "POST /v1/runs/" + queued.ID + "/retry", "GET /v1/jobs/" + w.job.ID + "/triggers", "GET /v1/run-chain", "GET /v1/input-profiles"} {
+	for _, route := range []string{"GET /v1/runs/" + queued.ID + "/diagnostics", "POST /v1/runs/" + queued.ID + "/retry", "GET /v1/jobs/" + w.job.ID + "/triggers", "GET /v1/input-profiles"} {
 		method, path, _ := strings.Cut(route, " ")
 		got, every := throughHeld(t, w, method, path, "", nil)
 		if every || got.code != http.StatusNotImplemented || !strings.Contains(got.body, "store_route_unsupported") {

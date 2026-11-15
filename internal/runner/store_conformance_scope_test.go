@@ -154,6 +154,81 @@ var scopeStoreCases = []storeCase{
 			t.Fatal("a journal read held to the none scope holds the entries of", got)
 		}
 	}},
+	{"a refused creation is read only held to the none scope", func(t *testing.T, k storeKindUnderTest) {
+		// A refused creation names a release, not a job, and its caller; it
+		// is journaled under the none scope (journalRefusal). A scope's job
+		// made from that release does not show it, nor does any read held to
+		// another scope; a preview of the release, which also names no job,
+		// still shows (section 6).
+		w := newHeldWorld(t, k)
+		release := w.jobs["a"].ReleaseID
+		caller := EventActor{Kind: "caller", Issuer: "https://issuer.example", Subject: "another"}
+		refusal := change{kind: "admission.refused", by: caller, concerns: EventConcerns{Release: release}, detail: EventDetail{Request: "create-job", Status: 409, Code: "release_already_used"}, refusal: "create-job\x00refused"}
+		preview := change{kind: "release.previewed", by: caller, concerns: EventConcerns{Release: release}}
+		none := w.st.heldTo(storeScope{})
+		must(t, none.update(func(tx runTx) error {
+			for _, c := range []change{refusal, preview} {
+				if _, err := tx.appendJournal(c); err != nil {
+					return err
+				}
+			}
+			return nil
+		}))
+		kinds := func(st runStore, f journalFilter) []string {
+			items, _, err := st.journalPage(f, journalRange{limit: 100})
+			must(t, err)
+			var got []string
+			for _, e := range items {
+				if e.Kind == "admission.refused" || e.Kind == "release.previewed" {
+					got = append(got, e.Kind)
+				}
+			}
+			return got
+		}
+		last := func(st runStore) bool {
+			var found bool
+			must(t, st.update(func(tx runTx) error {
+				_, err := tx.lastRefusal(refusal.refusal)
+				if err != nil && !absent(err) {
+					return err
+				}
+				found = err == nil
+				return nil
+			}))
+			return found
+		}
+		both := []string{"admission.refused", "release.previewed"}
+		for _, c := range []struct {
+			name string
+			st   runStore
+			want []string
+			last bool
+			// jobA: job a's journal is read so, held to its scope or to
+			// every scope.
+			jobA bool
+		}{
+			{"the store opened", w.st, both, true, true},
+			{"held to the none scope", none, both, true, false},
+			{"held to scope a", w.st.heldTo(scopeHeld("a")), []string{"release.previewed"}, false, true},
+			{"held to scope b", w.st.heldTo(scopeHeld("b")), []string{"release.previewed"}, false, false},
+		} {
+			want, wantLast := c.want, c.last
+			if !k.holdsScopes {
+				// The sqlite kind holds no policy: its job's journal shows
+				// both, as it always has.
+				want, wantLast = both, true
+			}
+			if got := kinds(c.st, journalFilter{}); !slices.Equal(got, want) {
+				t.Errorf("%s: the journal holds %v, want %v", c.name, got, want)
+			}
+			if got := kinds(c.st, journalFilter{job: w.jobs["a"].ID}); c.jobA && !slices.Equal(got, want) {
+				t.Errorf("%s: job a's journal holds %v, want %v", c.name, got, want)
+			}
+			if got := last(c.st); got != wantLast {
+				t.Errorf("%s: the refusal's key read %v, want %v", c.name, got, wantLast)
+			}
+		}
+	}},
 	{"a transaction held to one scope writes no other scope's records", func(t *testing.T, k storeKindUnderTest) {
 		if !k.holdsScopes {
 			t.Skip("the kind holds no row policy: its process holds every scope")

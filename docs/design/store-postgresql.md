@@ -14,7 +14,7 @@ disk and what it costs, the driver, and the test that answers each of the issue'
 conditions and each decision here. SQLite stays the default kind, unchanged byte for byte
 (`store_sqlite_bytes_test.go` and `store_sqlite_rows_test.go` hold it).
 
-**Every decision a maintainer must make is marked D1 to D15, with its options; the recommendation
+**Every decision a maintainer must make is marked D1 to D16, with its options; the recommendation
 is the first option.** Section 14 lists them. Section 11 lists what the next slice changes in the
 Runner before it writes the kind.
 
@@ -408,11 +408,32 @@ USING (current_setting('jpack.scope', true) = 's:' || scope
        OR (starts_with(current_setting('jpack.scope', true), 's:') AND scope = '' AND job_id = ''))
 ```
 
-Those are the Runner's own entries (`journal.began`, `runner.started`, `runner.stopped`), previews
-and refused creations. On SQLite a scoped job's journal shows its releases' previews and refused
-creations, and every page says when the journal began (`journalBegan`); this keeps both. The
-journal's filter (`journalFilter`) still chooses what a page holds, and writing stays held to the
-transaction's scope.
+Those are the Runner's own entries (`journal.began`, `runner.started`, `runner.stopped`) and
+previews. On SQLite a scoped job's journal shows its releases' previews, and every page says when
+the journal began (`journalBegan`); this keeps both. The journal's filter (`journalFilter`) still
+chooses what a page holds, and writing stays held to the transaction's scope.
+
+**D16. A refused creation in another scope's journal.** A refused job creation names a release,
+not a job, and its caller's issuer and subject; it is journaled under `s:` (`refusedJobBy`), and on
+SQLite the journal of the job made from that release shows it, whichever caller and scope the
+refused body named. (a) A restrictive policy, `request_refusals_held` in `0003_held_routes.sql`,
+keeps the none scope's refusals that name no job out of every transaction held to another scope:
+
+```sql
+AS RESTRICTIVE FOR SELECT
+USING (current_setting('jpack.scope', true) = 's:' OR scope <> '' OR job_id <> '' OR kind <> 'admission.refused')
+```
+
+A refused creation then shows only to a request held to none, and to the listing naming no scope
+on the worker login. (b) Journal the refusal under the scope the body names: a body naming none,
+or a malformed one, still shows its caller to every scope's job made from the release, and the
+sqlite kind's entry would carry the scope, which changes its bytes and what `GET /v1/events` with
+`scope` lists there. (a) is the narrower: no scope but none reads another caller's refused
+creation, the refusal's coalescing (`lastRefusal`) still reads it held to `s:`, and SQLite's bytes
+and pages do not change. Its cost: a scoped job's journal on this kind no longer shows its
+release's refused creations, which the sqlite kind's does. A refused cloud signal naming no
+trigger is the only other entry it holds out, and no scope's page selected one. Previews, which
+also name a caller, are not narrowed by this issue.
 
 A transaction that set no scope reads and writes no scoped row. **Unscoped rows** (a job created
 under none, and every record about it; the Runner's own journal entries, a preview's, a refused
@@ -446,7 +467,7 @@ set for it; which scopes a caller may name is not this issue's.
 | `POST /v1/previews` | Request | `s:`: a release and its entry carry no scope |
 | `GET` and `POST /v1/input-profiles`, `/v1/selected-profiles` | Request | `s:`: the profile rows (section 7) |
 | `GET /v1/run-chain` | Request | `s:`: the chain is unscoped (D10) |
-| A refusal's entry (`journalRefusal`), in its own transaction | Request; worker for a cloud signal's | The scope of the job it names; `s:` for a refused creation, which names a release |
+| A refusal's entry (`journalRefusal`), in its own transaction | Request; worker for a cloud signal's | The scope of the job it names; `s:` for a refused creation, which names a release, and which no other scope reads (D16) |
 | `GET /v1/status`, `GET /v1/health`, `GET /v1/background-connections`, `POST /v1/inputs/next`, `/v1/inputs/preview`, `/v1/selected-inputs/next` | None | They read no row |
 | `GET /v1/jobs/{job}/execution-binding` | | Manual admission, refused with this kind (D4) |
 
@@ -456,8 +477,11 @@ when it names none), or the store itself for a listing that names no scope, and 
 reach rows only through it (`storeFor`), the scope check's read included:
 `GET /v1/status`, `POST /v1/previews`, `POST /v1/jobs`, `GET /v1/jobs`, `GET /v1/runs`,
 `GET /v1/jobs/{job}`, `GET /v1/jobs/{job}/runs`, `POST /v1/jobs/{job}/runs`, `GET /v1/runs/{run}`,
-`POST /v1/jobs/{job}/upgrade` and `GET /v1/jobs/{job}/upgrade-receipt` (`heldRoutes`);
-`GET /v1/health` reads no row. Every other route is refused on such a kind,
+`POST /v1/jobs/{job}/upgrade` and `GET /v1/jobs/{job}/upgrade-receipt`; held in #244's fifth
+slice, the journal, `GET /v1/events` and `GET /v1/jobs/{job}/events`, and `GET /v1/run-chain`
+(`heldRoutes`). `GET /v1/events` naming a job is that job's route: held to the scope named, none
+when it names none, as the table says, and the store for every scope only when it names neither a
+scope nor a job. `GET /v1/health` reads no row. Every other route is refused on such a kind,
 `501 store_route_unsupported`, before it reads anything, until it is held to its scope as the
 table says. `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` serves each held
 route on a store that panics on any read or write not made through a held view, and each refused
@@ -687,6 +711,8 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLADispatcherThatLosesARunEndedInTheQueueGoesOn` (D3) | Built: the same race on a run expired in the queue and on one whose release names a profile set aside; exactly one ends it, the other returns no error. |
 | `TestPostgreSQLFencesAClaimantWriteThatWaitedPastItsLease` (D3) | Built: a finish and a renewal that wait for `journal_head`'s lock past their lease's end write nothing. |
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
+| `TestPostgreSQLHoldsTheJournalToItsScope` (section 6, D16) | Built in the fifth slice: on a Runner on the kind, a scope's job's journal is served held to its scope; another scope, or a request naming none, is answered `404` for it, by either route; a listing naming a scope holds that scope's entries alone; a refused creation shows in the listing naming no scope and in no scope's page. The conformance case "a refused creation is read only held to the none scope" holds D16 on the in-memory kind and the kind, and SQLite's pages unchanged. |
+| `TestPostgreSQLMigratesAStoreAtTheGrantsForward` (c) | Built in the fifth slice: a store migrated to `0002`, as the previous release left it, is refused at the start; a run naming other logins applies nothing; the migration applies the later files alone, leaves the catalog a store migrated at once has, records the logins on the later file's row, and applies nothing on a second run. |
 | `TestPostgreSQLResolvesABuiltinBeforeTheSchema` | Built: with `now()`, `statement_timestamp()` and `set_config` made in the schema, by the owner, to fail, a claim, a renewal, a finish and a read held to a scope still call the built-ins; no relation of the schema has a name the catalog holds. |
 | `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLStartRefusesAConnectionWithoutItsSettings`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLADispatcherBehindAHeldLockGoesOn`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; a start over a pool whose connection was opened without the search path or one of the bounds is refused, naming it and the login; with another connection holding `journal_head`'s lock, a write is refused within the lock bound; a renewal is tried again, keeps the claim when the lock is let go before its deadline, and is refused at its deadline, its wait on the server ended, the claim reported lost; a dispatcher's end of a run in the queue, its tick for lapsed leases and its claim make nothing and its loop goes on, its finish lands once the lock is let go, the run completed and not interrupted, and the Runner stays healthy; a transaction left idle is ended by the server and the writer behind it goes on. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
@@ -731,6 +757,10 @@ leave SQLite's statements and rows as they are; the kind is written only after t
    marks built. Left: the routes not yet held, the attempts' volume rows, the pinned Runtime
    directory, `store remove-scope`, the migration's row marker, the binding's answer, and the
    tests section 10 marks not built.)
+6. The routes section 6 lists and step 5 left refused, each held to its scope as the table says,
+   with a migration file of their own (`0003_held_routes.sql`) for the policies they need; a
+   store at `0002` is migrated forward by `jpack-runner store migrate`, which the start requires.
+   (#244's fifth slice, in progress: the journal and the run chain, with D16.)
 
 SQLite's bytes and schema are not changed by any of it: the claim's columns and the tables of
 section 3 are the second kind's own, and `store_sqlite_rows_test.go` holds the rows.
@@ -782,3 +812,4 @@ Each with the recommendation first.
 | D13 | The journal's order | Writers one at a time behind a table lock, the sequence from a counter row; the counter row alone; a visibility horizon |
 | D14 | Two finishers and the chain | The chain's head row locked; a unique violation retried |
 | D15 | The schema row | The migration's alone; raised at run time under a policy |
+| D16 | A refused creation in another scope's journal | Read only held to none, by a restrictive policy; journaled under the scope the body names |
