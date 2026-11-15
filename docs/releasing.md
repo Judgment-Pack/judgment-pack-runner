@@ -50,6 +50,19 @@ The `darwin/amd64` archive is built, read and checksummed and is not run by anyt
 start a job: that needs Runtime and a boot line from Desk, which CI covers at the tagged
 commit from source.
 
+## Merging
+
+A pull request reaches main through the merge queue (squash). The queue makes a group of the
+pull request on top of main and of the groups ahead of it, and runs CI and `DCO` on that group
+(`merge_group`) before main moves, so a pull request is no longer brought up to date with main
+by hand or by a workflow. CI on a merge group runs the steps its changes map to, as on a pull
+request; the push to main that follows runs the whole list, and that run is the evidence a
+release takes. A new push to a pull request cancels that pull request's CI run in progress; a
+run of main or of a merge group is never cancelled.
+
+`DCO` is a workflow of this repository (`.github/workflows/dco.yml`): every commit of the pull
+request carries `Signed-off-by:` naming its own author; a commit an app made is exempt.
+
 ## Once, before the first release
 
 1. Create the `production` environment with a required reviewer. The workflow reads the
