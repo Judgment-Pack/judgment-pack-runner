@@ -998,6 +998,19 @@ func TestPostgreSQLHoldsTriggersToTheirScope(t *testing.T) {
 	}
 }
 
+// D9 and #279: on a Runner on the kind, POST /v1/jobs with a cloud trigger
+// whose binding a trigger of any scope holds meets the binding's index, and
+// is refused as the trigger route refuses it, 422 cloud_binding_used,
+// making nothing; under another scope, the same scope and none alike.
+func TestPostgreSQLCreatingAJobWithAUsedCloudBindingIsRefused(t *testing.T) {
+	s, db, sv, jobs := pgScopedRunner(t)
+	suite := s.pool(t, pgRoleSuite, db)
+	usedCloudBindingRefused(t, sv, completingRuntime(t, sv.cfg.Dir), jobs["team-a"], "team-a", []string{"team-b", "team-a", ""}, func() (n [2]int) {
+		must(t, suite.QueryRowContext(pgContext, "SELECT (SELECT count(*) FROM jobs), (SELECT count(*) FROM triggers)").Scan(&n[0], &n[1]))
+		return n
+	})
+}
+
 // pgHeldFrom says that a request login held to scope neither reads nor
 // changes the rows of another scope that each table holds, which the suite
 // login sees: the policy itself holds them, not the Runner's scope check in

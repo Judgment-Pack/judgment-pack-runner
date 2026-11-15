@@ -490,6 +490,12 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 	if errors.Is(err, errKeepNothing) {
 		return made, nil
 	}
+	if c != nil && c.Cloud != nil && takenKey(err) == keyCloudBinding {
+		// Another trigger holds the binding, in any scope: the index refuses
+		// the first trigger's write, answered as the trigger route answers
+		// it (configureTriggerBy; docs/design/store-postgresql.md, D9).
+		return Job{}, errCloudBindingUsed()
+	}
 	if err != nil {
 		return Job{}, releaseTaken(err)
 	}
