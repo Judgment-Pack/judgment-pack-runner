@@ -998,6 +998,19 @@ func TestPostgreSQLHoldsTriggersToTheirScope(t *testing.T) {
 	}
 }
 
+// D9 and #279: on a Runner on the kind, POST /v1/jobs with a cloud trigger
+// whose binding a trigger of any scope holds meets the binding's index, and
+// is refused as the trigger route refuses it, 422 cloud_binding_used,
+// making nothing; under another scope, the same scope and none alike.
+func TestPostgreSQLCreatingAJobWithAUsedCloudBindingIsRefused(t *testing.T) {
+	s, db, sv, jobs := pgScopedRunner(t)
+	suite := s.pool(t, pgRoleSuite, db)
+	usedCloudBindingRefused(t, sv, completingRuntime(t, sv.cfg.Dir), jobs["team-a"], "team-a", []string{"team-b", "team-a", ""}, func() (n [2]int) {
+		must(t, suite.QueryRowContext(pgContext, "SELECT (SELECT count(*) FROM jobs), (SELECT count(*) FROM triggers)").Scan(&n[0], &n[1]))
+		return n
+	})
+}
+
 // pgHeldFrom says that a request login held to scope neither reads nor
 // changes the rows of another scope that each table holds, which the suite
 // login sees: the policy itself holds them, not the Runner's scope check in
@@ -1217,6 +1230,74 @@ func TestPostgreSQLRetriesARunHeldToItsScope(t *testing.T) {
 			t.Fatal("team-b's journal holds the retried run's entry:", e.Kind)
 		}
 	}
+}
+
+// Section 7 and 0006_profile_rows_unscoped.sql: the request login writes the
+// profile rows only in a transaction held to the none scope, by the
+// database, not by the routes alone. Held to a scope identifier, or holding
+// none, it inserts no profile row and updates none, by a plain update or by
+// an insert that meets the row's key; held to the none scope it does both.
+func TestPostgreSQLHoldsTheProfileRowsToTheNoneScope(t *testing.T) {
+	s := pgServer(t)
+	db := s.database(t)
+	request := s.pool(t, pgRoleRequest, db)
+	suite := s.pool(t, pgRoleSuite, db)
+	upsert := "INSERT INTO metadata(key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=excluded.value"
+	refused := func(scope string, unset bool, query string, args ...any) {
+		t.Helper()
+		inScope(t, request, scope, unset, func(tx *sql.Tx) {
+			res, err := tx.ExecContext(pgContext, query, args...)
+			// A plain update the policy's USING clause hides the row from
+			// touches nothing and raises no error; an insert, plain or meeting
+			// the row's key, must be refused with 42501.
+			if err == nil && strings.HasPrefix(query, "UPDATE ") {
+				if n, _ := res.RowsAffected(); n == 0 {
+					return
+				}
+			}
+			if pgCode(err) != "42501" {
+				t.Fatalf("held to %q (unset %v), %s was not refused: %v", scope, unset, query, err)
+			}
+		})
+	}
+	written := func(query string, args ...any) {
+		t.Helper()
+		inScope(t, request, "", false, func(tx *sql.Tx) {
+			res, err := tx.ExecContext(pgContext, query, args...)
+			must(t, err)
+			if n, _ := res.RowsAffected(); n != 1 {
+				t.Fatalf("held to the none scope, %s wrote %d rows", query, n)
+			}
+		})
+	}
+	for _, key := range []string{registeredProfilesKey, selectedProfilesKey} {
+		// No row yet: an insert.
+		refused("team-a", false, upsert, key, "{}")
+		refused("", true, upsert, key, "{}")
+		written(upsert, key, "{}")
+		// A row held: an update, and an insert that meets its key.
+		pgExec(t, suite, "INSERT INTO metadata(key,value) VALUES ($1,'{}')", key)
+		for _, c := range []struct {
+			query string
+			args  []any
+		}{{"UPDATE metadata SET value='[]' WHERE key=$1", []any{key}}, {upsert, []any{key, "[]"}}} {
+			refused("team-a", false, c.query, c.args...)
+			refused("", true, c.query, c.args...)
+			written(c.query, c.args...)
+		}
+		var row string
+		must(t, suite.QueryRowContext(pgContext, "SELECT value FROM metadata WHERE key=$1", key).Scan(&row))
+		if row != "{}" {
+			t.Fatalf("a refused or rolled-back write changed the %s row: %s", key, row)
+		}
+	}
+}
+
+// Section 5: a store migrated to the file before
+// 0006_profile_rows_unscoped.sql is refused at the start until it is
+// migrated, and the migration then applies that file and the ones after it.
+func TestPostgreSQLRefusesAStoreWithoutTheProfileRowsFile(t *testing.T) {
+	pgRefusesAStoreWithout(t, "0006_")
 }
 
 // Section 6 and 7, the installation's profiles: on a Runner on the kind, an

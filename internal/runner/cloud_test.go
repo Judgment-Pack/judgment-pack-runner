@@ -117,6 +117,56 @@ func TestCloudPausedUnboundAndAdmissionFailure(t *testing.T) {
 		t.Fatal("acknowledged failed transaction")
 	}
 }
+
+// usedCloudBindingRefused configures a cloud trigger on job, under scope,
+// through its route on sv, then asks POST /v1/jobs for a job with the same
+// binding from a new release under each of scopes ("" for none): each is
+// refused as the trigger route refuses a used binding, 422
+// cloud_binding_used, and held, the store's count of jobs and triggers,
+// does not move (#279).
+func usedCloudBindingRefused(t *testing.T, sv *Service, runtime string, job Job, scope string, scopes []string, held func() [2]int) {
+	t.Helper()
+	conn := CloudConnection{ID: "google", Subscription: "projects/example-project/subscriptions/desk-inbox", CredentialsFile: "/nonexistent/test-adc.json"}
+	sv.cfg.CloudConnections = []CloudConnection{conn}
+	cloud := TriggerConfig{Name: "Scheduled", Kind: "cloud", Cloud: &CloudBinding{Connection: conn.ID, Subscription: conn.Subscription, Job: "projects/example-project/locations/us-central1/jobs/daily"}, Input: &AutomaticInput{Kind: "constant", Value: string(encode(journalInput()))}, Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+	path := "/v1/jobs/" + job.ID + "/triggers"
+	if scope != "" {
+		path += "?scope=" + scope
+	}
+	if got := serve(t, sv, "POST", path, string(encode(map[string]any{"config": cloud})), nil); got.Code != 200 {
+		t.Fatal(got.Code, got.Body.String())
+	}
+	before := held()
+	for _, scope := range scopes {
+		release := journalRelease(t, sv, runtime)
+		body := map[string]any{"name": "Bound", "releaseId": release.ID, "reviewed": true, "trigger": cloud}
+		if scope != "" {
+			body["scope"] = scope
+		}
+		got := serve(t, sv, "POST", "/v1/jobs", string(encode(body)), nil)
+		if got.Code != 422 || !strings.Contains(got.Body.String(), `"cloud_binding_used"`) {
+			t.Fatalf("under %q, a job with a used cloud binding: %d %s", scope, got.Code, got.Body.String())
+		}
+	}
+	if after := held(); after != before {
+		t.Fatal("the refused creations made jobs or triggers:", before, after)
+	}
+}
+
+// On the default kind: under the binding's own scope (none) and another.
+func TestCreatingAJobWithAUsedCloudBindingIsRefused(t *testing.T) {
+	cfg := journalConfig(t)
+	sv := openJournal(t, cfg)
+	t.Cleanup(sv.Close)
+	runtime := completingRuntime(t, cfg.Dir)
+	release := journalRelease(t, sv, runtime)
+	j, err := sv.createJob("Held", release.ID)
+	must(t, err)
+	usedCloudBindingRefused(t, sv, runtime, j, "", []string{"", "team-a"}, func() (n [2]int) {
+		must(t, sqliteDB(sv).QueryRow("SELECT (SELECT count(*) FROM jobs), (SELECT count(*) FROM triggers)").Scan(&n[0], &n[1]))
+		return n
+	})
+}
 func TestCloudInterruptedAcquisitionNeverRepeats(t *testing.T) {
 	s, cfg, _, tr, conn := cloudFixture(t)
 	tr, _, _ = s.setTriggerState(tr.ID, tr.Revision, false, true)
