@@ -1,8 +1,9 @@
 # Paging over a source, with a cursor kept between runs
 
-Status: proposed for #247. Nothing in it is built. It waits for one decision,
-section 3, which the dialect owns: how several pages of one source reach one
-evaluation. Sections 4 and 5 say what Runner builds under each answer.
+Status: decided for #247, answer A (section 3); nothing in it is built. The
+dialect amendment it needs is judgment-pack-spec #328; Runner builds section 4
+after that amendment's text and vectors are settled. Section 5 is kept as the
+record of the answers not taken.
 
 ## 1. What #247 asks
 
