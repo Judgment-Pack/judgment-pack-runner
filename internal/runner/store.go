@@ -828,13 +828,10 @@ func (s *Service) dispatch(ctx context.Context) (dispatched, error) {
 		// Queue time must not silently outlive source freshness. Verify now,
 		// while retaining the exact input snapshot frozen at admission.
 		class = classConfiguration
+		// A profile the release froze that this Runner's copy lacks, one
+		// registered through another Runner of the store since this one
+		// read the store's profiles, is read first (refuseSetAsideIDs, #282).
 		err = s.checkReleaseProfiles(release)
-		// A profile the release froze that this Runner's copy lacks may have
-		// been registered through another Runner of the store since this one
-		// read the store's profiles (#282): they are read once more.
-		if err != nil && leases(s.store) && s.refreshProfiles() {
-			err = s.checkReleaseProfiles(release)
-		}
 		if err == nil {
 			class = classPreparation
 			_, err = s.normalizeInput(r.Input)

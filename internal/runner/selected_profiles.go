@@ -285,22 +285,38 @@ func inputProfileIDs(i Input) []string {
 // selectedNextInput is next-input planning under the selected profiles alone.
 // It prepares and checks the supplied input, persists nothing and acquires
 // nothing. An input that names an ordinary profile is refused by that name,
-// and one that names a selected profile set aside by its own.
+// and one that names a selected profile set aside by its own. A profile this
+// Runner's copy lacks is read as an ordinary binding's is (refuseSetAsideIDs,
+// #282), and the ids checked again against the copy read.
 func (s *Service) selectedNextInput(i Input, at time.Time) (InputPlan, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return InputPlan{}, manualUnsupported()
 	}
-	for _, id := range inputProfileIDs(i) {
+	ids := inputProfileIDs(i)
+	e := s.refuseUnselected(ids)
+	if e == nil && s.lacksProfile(ids) && s.refreshProfiles() {
+		e = s.refuseUnselected(ids)
+	}
+	if e != nil {
+		return InputPlan{}, e
+	}
+	return nextInput(i, s.selectedInputProfiles(), at)
+}
+
+// refuseUnselected refuses the first of ids that names an ordinary profile,
+// or a selected profile set aside.
+func (s *Service) refuseUnselected(ids []string) error {
+	for _, id := range ids {
 		if s.ordinaryProfileID(id) {
-			return InputPlan{}, bad(codeSelectedOrdinary, fmt.Sprintf("The input profile %s is an ordinary installation profile. Selected preparation binds selected profiles only.", id))
+			return bad(codeSelectedOrdinary, fmt.Sprintf("The input profile %s is an ordinary installation profile. Selected preparation binds selected profiles only.", id))
 		}
 		for _, p := range s.selectedSetAside {
 			if p.ID == id {
-				return InputPlan{}, p.refusal()
+				return p.refusal()
 			}
 		}
 	}
-	return nextInput(i, s.selectedInputProfiles(), at)
+	return nil
 }
 
 // selectedUnselected is the refusal of a selected-profile route reached

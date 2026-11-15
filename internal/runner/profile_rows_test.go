@@ -4,14 +4,17 @@ package runner
 // (#282): a registration is applied to the row as its transaction reads it,
 // not to the Runner's copy, so that a Runner started before another
 // registered keeps the other's profiles in the store; and a Runner whose copy
-// lacks a profile reads the rows again (refreshProfiles).
+// lacks a profile reads the rows again (refreshProfiles) before a binding
+// that names it is refused (refuseSetAsideIDs).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 // rowIDs are the ids of the profiles the store's row under key holds, in its
@@ -202,5 +205,69 @@ func TestPostgreSQLARunnerStartedEarlierKeepsAnotherRunnersProfiles(t *testing.T
 	}
 	if got := profileIDs(c.selectedInputProfiles()); !slices.Equal(got, []string{"selected-on-b", "selected-on-a", "taken-on-b"}) {
 		t.Fatal("a Runner started after the admissions holds", got)
+	}
+}
+
+// #282 on the postgresql kind: a profile, and a job whose release binds it,
+// made through Runner b. Runner a, opened before, claims the occurrence of
+// the job's event trigger delivered through b and dispatches it: its copy
+// lacks the profile, and it reads the rows again rather than failing the
+// occurrence as naming a profile the installation does not hold. Runner c,
+// opened before too, dispatches the queued run so made, reading the rows
+// again as it checks the profiles its release froze, and the run reaches
+// the Runtime.
+func TestPostgreSQLAnOccurrenceBindsAProfileRegisteredThroughAnotherRunner(t *testing.T) {
+	p := pgRunners(t)
+	a, b, c := p.open(), p.open(), p.open()
+	input, profile, _, _ := v2Fixture(t)
+	if _, err := b.registerInputProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+	mapping := input.Source.Mapping
+	release := Release{SchemaVersion: "1", ID: id("release_"), Pack: journalPack, PackDigest: digest([]byte(journalPack)), PackID: "journal", PackVersion: "1.0.0", Title: "Journal", RuntimeDigest: p.runtime, CreatedAt: now(), Sample: input, Tests: "not-run", InputMapping: &mapping, InputProfiles: []InputProfile{profile}}
+	must(t, b.saveRelease(release))
+	call := pgCall(t, b)
+	var job Job
+	must(t, json.Unmarshal(call("POST", "/v1/jobs", map[string]any{"name": "Vendors", "releaseId": release.ID, "reviewed": true, "scope": "team-a"}, nil, 201), &job))
+	var created Trigger
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+job.ID+"/triggers?scope=team-a", map[string]any{"config": eventTriggerConfig()}, nil, 200), &created))
+	var resumed struct {
+		Token string `json:"token"`
+	}
+	must(t, json.Unmarshal(call("POST", "/v1/triggers/"+created.ID+"/state?scope=team-a", map[string]any{"revision": created.Revision, "paused": false, "reviewed": true}, nil, 200), &resumed))
+	var delivered struct {
+		Occurrence Occurrence `json:"occurrence"`
+	}
+	event := EventDelivery{ID: "vendor-7", OccurredAt: time.Now().UTC().Format(time.RFC3339), Input: input}
+	must(t, json.Unmarshal(call("POST", "/v1/triggers/"+created.ID+"/events?scope=team-a", event, map[string]string{"X-Trigger-Token": resumed.Token}, 202), &delivered))
+	for _, sv := range []*Service{a, c} {
+		if got := profileIDs(sv.inputProfiles()); slices.Contains(got, profile.ID) {
+			t.Fatal("a Runner opened before the registration holds the profile already:", got)
+		}
+	}
+
+	if err := a.dispatchOccurrence(storedOccurrence(t, a, delivered.Occurrence.ID), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	o := storedOccurrence(t, b, delivered.Occurrence.ID)
+	if o.State != "submitted" || o.RunID == "" {
+		t.Fatalf("the occurrence was not submitted: %+v", o)
+	}
+	queued, err := b.run(o.RunID)
+	if err != nil || queued.State != "queued" {
+		t.Fatal("the occurrence's run:", queued.State, err)
+	}
+
+	if worked, err := c.dispatchNext(context.Background()); !worked || err != nil {
+		t.Fatal(worked, err)
+	}
+	// The run passed the profiles' check and its preparation, and reached
+	// the Runtime: the test's Runtime names no release, so a run bound
+	// to a mapping goes no further (binding.go).
+	if ended, err := b.run(o.RunID); err != nil || ended.Problem != errRuntimeVersionUnread.Error() {
+		t.Fatalf("the run ended %s (%s): %v", ended.State, ended.Problem, err)
+	}
+	if got := profileIDs(c.inputProfiles()); !slices.Contains(got, profile.ID) {
+		t.Fatal("the Runner that dispatched the run holds", got)
 	}
 }
