@@ -74,7 +74,11 @@ func (s *Service) automationTick(at time.Time) error {
 			return e
 		}
 		e = s.dispatchReady(o, at)
-		if errors.Is(e, errQueueHasNoRoom) {
+		// A dispatch whose write waited out the store's lock bound made
+		// nothing, its claim released where it could be (releasedWith),
+		// and the occurrence waits for a later tick, as a run the
+		// dispatcher could not claim does (endInQueue).
+		if errors.Is(e, errQueueHasNoRoom) || onlyLockWaited(e) {
 			break
 		}
 		if e != nil {
@@ -108,7 +112,7 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 		return nil
 	}
 	_, e := s.scheduleDue(t, hash, at, at, ownClockGrace, nil)
-	return e
+	return tickLost(e)
 }
 
 // ownClockGrace is how late the Runner's own clock may tick a due time
@@ -200,19 +204,34 @@ func (s *Service) scheduleDue(t Trigger, hash string, tick, now time.Time, grace
 		_, err := s.admitOccurrenceAs(tx, t, o, identity, digest(encode(t.Config)), caller)
 		return err
 	})
-	return err == nil, tickLost(err)
+	return err == nil, writtenSince(err)
 }
 
-// tickLost is a tick's write that met a write of its trigger made since the
-// tick read it, by a request or by another Runner's tick on the same store
-// (D17), taken for no failure: the tick made nothing, and the next reads the
-// trigger again. Any other error, another conflict of the tick's transaction
-// among them, is the tick's.
-func tickLost(err error) error {
+// writtenSince is a tick's write that met a write of its trigger made since
+// the tick read it, by a request or by another Runner's tick on the same
+// store (D17), taken for no failure: the tick made nothing, and the next
+// reads the trigger again. Any other error, another conflict of the tick's
+// transaction among them, is the tick's. A write that waited out the
+// store's lock bound is returned: a shared tick's caller is answered with
+// it, and calls again (sharedTick); the Runner's own clock takes it for no
+// failure (tickLost).
+func writtenSince(err error) error {
 	if faultOf(err) == faultConflict && errors.Is(err, errTriggerWritten) {
 		return nil
 	}
 	return err
+}
+
+// tickLost is writtenSince for the Runner's own clock, whose tick that
+// waited out the store's lock bound, another connection holding a lock it
+// needed, is no failure either: it made nothing, the store is busy and not
+// failing, as the dispatcher takes it (endInQueue), and the next tick, a
+// second later, reads the trigger again. The Runner's automation goes on.
+func tickLost(err error) error {
+	if lockWaited(err) {
+		return nil
+	}
+	return writtenSince(err)
 }
 func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {

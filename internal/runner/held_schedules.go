@@ -46,7 +46,10 @@ const outsideSettingsKind = "trigger.outside-settings"
 // refusal's code and what it means for the trigger; the scope identifier is
 // the entry's own member, as on every entry about a job created under one,
 // and not in its reason. The entries are one transaction, and nothing about
-// the trigger is written.
+// the trigger is written. Every start journals each one it finds, a repeat
+// of the last start's included: the settings are the start's own, and the
+// entries are what it found under them (docs/design/schedules.md,
+// section 9).
 func (s *Service) checkHeldSchedules() (*heldSchedules, error) {
 	found := &heldSchedules{at: now()}
 	ids, err := s.store.enabledTriggers(false)

@@ -7,6 +7,7 @@ package runner
 // released, the occurrence left for the next claimant.
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -162,6 +163,34 @@ func TestPostgreSQLAStoreErrorUnderAClaimLeavesTheOccurrenceToTheNextClaimant(t 
 	}
 	if done := storedOccurrence(t, second, o.ID); done.State != "submitted" || done.RunID == "" {
 		t.Fatalf("the next claimant did not submit the occurrence: %+v", done)
+	}
+}
+
+// So for a preparation: the first Runner's read of the occurrence's job,
+// under the preparation's claim, is not answered. The preparation returns
+// the store's error with the claim released and the occurrence as it was
+// read, accepted, which the second Runner can claim.
+func TestPostgreSQLAStoreErrorUnderAPreparationsClaimReleasesIt(t *testing.T) {
+	p := pgRunners(t)
+	first, second := p.open(), p.open()
+	o, _ := p.admitted(first)
+	held := first.store
+	first.store = unansweredJob{held}
+	err := first.prepareLegacyOccurrence(context.Background(), o.ID)
+	first.store = held
+	if faultOf(err) != faultUnavailable {
+		t.Fatal("the preparation did not return the store's error:", err)
+	}
+	var claimed int
+	must(t, p.suite.QueryRowContext(pgContext, "SELECT count(*) FROM occurrences WHERE id=$1 AND claim_id IS NOT NULL", o.ID).Scan(&claimed))
+	if claimed != 0 {
+		t.Fatal("the preparation kept the occurrence's claim")
+	}
+	if left := storedOccurrence(t, second, o.ID); left.State != "accepted" || left.Input == nil {
+		t.Fatalf("the occurrence was not left as it was read: %+v", left)
+	}
+	if _, err := second.claimOccurrence(o.ID, "accepted"); err != nil {
+		t.Fatal("the next Runner could not claim the occurrence:", err)
 	}
 }
 

@@ -49,6 +49,15 @@ access control beyond the owner bearer, or, in service mode with an identity, th
 Whoever holds that bearer can do everything the control API offers, and so can every subject an
 identity lists: there are no permissions that differ between callers.
 
+**A scope identifier is a label and a filter, not a boundary.** Every caller the control API
+admits may name any scope, or none, and the runner has no caller bound to one scope. A gateway
+or proxy in front that binds its callers to scopes must hold each to its own: name the caller's
+scope on every request it forwards, and forward none of the installation's routes and members,
+which span every scope. `POST /v1/ticks` refuses a scope and ticks the shared-interval triggers
+of every scope; `GET /v1/status` lists, under `triggersOutsideSettings`, the ids of triggers of
+every scope. Forward neither to a scope-bound caller, or remove `triggersOutsideSettings` from
+the status first.
+
 **A companion's control API is local.** Started by its host, the runner binds an ephemeral IPv4
 loopback port and refuses direct browser origins. Its bearer arrives on stdin at start. It is not
 printed, not passed as an argument, not read from a project file, and not sent to the browser. The

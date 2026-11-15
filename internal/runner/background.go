@@ -246,7 +246,10 @@ func (s *Service) startBackground(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
-				if e := s.prepareOccurrence(ctx); e != nil {
+				// A preparation whose write waited out the store's lock
+				// bound made nothing, and is taken up again at a later
+				// pass: the store is busy, not failing (occurrenceLost).
+				if e := s.prepareOccurrence(ctx); e != nil && !onlyLockWaited(e) {
 					s.unhealthy.Store(true)
 					return
 				}
@@ -282,8 +285,14 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		s.automationMu.Unlock()
 		return occurrenceLost(e)
 	}
+	// No error is returned with the claim held, as a dispatch returns none
+	// (dispatchClaimed): an occurrence whose own record cannot be prepared
+	// is failed (failHeld), its job or release record unreadable included,
+	// and an error of the store's or of this Runner's releases the claim
+	// first (releasedWith, releasedAsStored).
 	expiry, e := time.Parse(time.RFC3339Nano, o.ExpiresAt)
 	if e != nil {
+		e = s.failHeld(o, "The accepted occurrence holds no readable expiry time.")
 		s.automationMu.Unlock()
 		return e
 	}
@@ -299,7 +308,12 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	// An occurrence waiting for its next attempt is not attempted before
 	// its time (retries.go), and its claim is released.
 	waiting, e := waitingForAttempt(o, s.instant())
-	if e == nil && waiting && leases(s.store) {
+	if e != nil {
+		e = s.releasedWith(o, e)
+		s.automationMu.Unlock()
+		return e
+	}
+	if waiting && leases(s.store) {
 		e = s.settleOccurrence(o)
 	}
 	if e != nil || waiting {
@@ -308,11 +322,13 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	}
 	policy, e := s.jobRetryPolicy(o.JobID)
 	if e != nil {
+		e = s.heldRecordOrReleased(o, e)
 		s.automationMu.Unlock()
 		return e
 	}
 	release, e := s.release(o.ReleaseID)
 	if e != nil {
+		e = s.heldRecordOrReleased(o, e)
 		s.automationMu.Unlock()
 		return e
 	}
@@ -326,6 +342,9 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	// attempt is (claims.go). The occurrence is then failed one lease later
 	// by the dispatcher's tick of a Runner of the store (interruptLapsed).
 	e = s.keepOccurrence(o, anyState)
+	if e != nil && !errors.Is(e, errPreparationStopped) {
+		e = s.releasedAsStored(o, e)
+	}
 	s.automationMu.Unlock()
 	if errors.Is(e, errPreparationStopped) {
 		return nil

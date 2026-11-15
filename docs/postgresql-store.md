@@ -64,14 +64,14 @@ It is held to the service configuration's file rules: an absolute path, no symbo
 one regular file owned by Runner's user that neither its group nor others may read or write, at
 most 128 KiB. The command connects as the migration login, takes the owner's role for each file's
 transaction, applies each file not yet recorded in `jpack_runner.schema_migrations`, and prints
-the versions it applied, `{"applied":["0001","0002","0003"]}` the first time and `{"applied":[]}`
+the versions it applied, `{"applied":["0001","0002","0003","0004","0005","0006"]}` the first time and `{"applied":[]}`
 on a second run, which changes nothing.
 
 **Before starting a new release, run its `jpack-runner store migrate`.** A release may ship
 migration files the store does not hold yet, and the Runner refuses to open a store whose applied
 migrations are not exactly its own set (below). The command applies the files after the ones
 recorded, and nothing else: on a store the previous release migrated, it prints the new versions,
-`{"applied":["0003"]}` from a store at `0002`. Name the same logins as the first time.
+`{"applied":["0003","0004","0005","0006"]}` from a store at `0002`, as v0.32.0 left it. Name the same logins as the first time.
 
 It refuses, and applies nothing more:
 
@@ -161,6 +161,13 @@ sqlite kind. A request held to one scope can learn that some scope holds a relea
 or a cloud binding, never which. Journal sequences are shared across scopes: a page shows gaps where other
 scopes' entries are.
 
+Row security holds a request to the scope it names; it does not choose that scope for the
+caller. The installation's routes take none and span every scope: `POST /v1/ticks` ticks every
+scope's shared-interval triggers through the store for every scope, and `GET /v1/status` lists
+under `triggersOutsideSettings` the trigger ids of every scope. A gateway or proxy in front that
+binds a caller to one scope must not forward either to that caller, or must remove the member
+first (SECURITY.md, "Security boundary").
+
 ## Claims and leases
 
 There is no process-wide lock. A run is held by its claim: a token and a lease of 60 seconds,
@@ -226,6 +233,18 @@ The dispatcher takes a lock wait for a store that is busy, not failing, and stay
   past it;
 - the claimant's finish is made again while its claim's lease is live. Its claim token and lease
   fence it, so it lands once or not at all.
+
+The trigger automation and the preparation workers take it the same way, and stay healthy:
+
+- a schedule or file-change trigger's tick by the Runner's own clock makes nothing, the trigger's
+  next time is not moved on, and the next tick, a second later, admits the due time. A due time
+  held up for less than 30 s is still on time;
+- the claim of a ready occurrence, its dispatch and the claim or a write of a preparation make
+  nothing; a claim already held is released where the release is not held up as well, and
+  otherwise lapses with its lease. The occurrence is taken up again at a later tick;
+- a `POST /v1/ticks` call whose trigger write is refused at the lock bound is answered with the
+  error, and the trigger's due time is still due: call again with the same `at`, as after any
+  error part-way through a tick (README, "Triggers").
 
 A finish still refused when the lease has run out, and any refusal for the statement or idle
 bound or the renewal's deadline, stops the dispatcher, as any store failure does, and
