@@ -275,12 +275,18 @@ func (s *Service) rotateTriggerKeyBy(st runStore, by requester, triggerID string
 	return t, secret, e
 }
 func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
+	return s.eventIn(s.store, triggerID, token, event)
+}
+
+// eventIn is event, its records read and written in st, the store the
+// request is held to (storeFor).
+func (s *Service) eventIn(st runStore, triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Occurrence{}, false, manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	t, hash, e := s.trigger(triggerID)
+	t, hash, e := st.trigger(triggerID)
 	if e != nil {
 		return Occurrence{}, false, &apiError{401, "invalid_trigger_token", "The event credential is invalid."}
 	}
@@ -290,45 +296,44 @@ func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrenc
 	// The credential is authenticated: a refusal from here on is its own,
 	// named by the revision its key was issued at, whatever happens to the
 	// key before the refusal is recorded.
-	o, replay, e := s.admitEvent(t, hash, event)
+	o, replay, e := s.admitBoundEvent(st, t, hash, event, "", requester{})
 	if e != nil {
 		e = &credentialRefusal{err: e, by: credentialActor(t.ID, t.keyRevision)}
 	}
 	return o, replay, e
 }
 
-func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occurrence, bool, error) {
-	return s.admitBoundEvent(t, hash, event, "", requester{})
-}
-
 // deliverRecord is called only by the authenticated local control API. The caller
 // persists the complete envelope before delivery; old timestamps are allowed, but
 // source freshness and queue expiry still apply at admission/execution.
 func (s *Service) deliverRecord(triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
-	return s.deliverRecordBy(requester{}, triggerID, releaseID, event)
+	return s.deliverRecordBy(s.store, requester{}, triggerID, releaseID, event)
 }
 
 // deliverRecordBy is deliverRecord, for a delivery by: the occurrence it
-// admits is published by by.
-func (s *Service) deliverRecordBy(by requester, triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
+// admits is published by by. Its records are read and written in st, the
+// store the request is held to (storeFor).
+func (s *Service) deliverRecordBy(st runStore, by requester, triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Occurrence{}, false, manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	t, _, e := s.trigger(triggerID)
+	t, _, e := st.trigger(triggerID)
 	if e != nil {
 		return Occurrence{}, false, e
 	}
 	if releaseID == "" {
 		return Occurrence{}, false, bad("release_required", "Bind this delivery to its reviewed release.")
 	}
-	return s.admitBoundEvent(t, "", event, releaseID, by)
+	return s.admitBoundEvent(st, t, "", event, releaseID, by)
 }
 
-// admitBoundEvent admits an event delivery: one bound to expectedRelease, a
-// record delivery, is published by by.
-func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, expectedRelease string, by requester) (Occurrence, bool, error) {
+// admitBoundEvent admits an event delivery in st: one bound to
+// expectedRelease, a record delivery, is published by by. The queue's limit
+// is the installation's (D9): the pending occurrences are counted for every
+// scope, in any view.
+func (s *Service) admitBoundEvent(st runStore, t Trigger, hash string, event EventDelivery, expectedRelease string, by requester) (Occurrence, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Occurrence{}, false, manualUnsupported()
 	}
@@ -348,7 +353,7 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 		return Occurrence{}, false, e
 	}
 	payload := digest(raw)
-	old, held, e := s.findOccurrence(t.ID, "event:"+event.ID)
+	old, held, e := st.identifiedOccurrence(t.ID, "event:"+event.ID)
 	if e == nil {
 		if held != payload {
 			return old, false, &apiError{409, "event_conflict", "This event ID was already received with a different payload."}
@@ -372,14 +377,14 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 	if event.Input.Preparation != nil {
 		return old, false, bad("invalid_event", "Supply original inputs, not caller-computed preparation.")
 	}
-	job, e := s.job(t.JobID)
+	job, e := st.job(t.JobID)
 	if e != nil {
 		return old, false, e
 	}
 	if expectedRelease != "" && job.ReleaseID != expectedRelease {
 		return old, false, &apiError{409, "release_changed", "The job no longer uses the reviewed release."}
 	}
-	release, e := s.release(job.ReleaseID)
+	release, e := st.release(job.ReleaseID)
 	if e != nil {
 		return old, false, e
 	}
@@ -399,7 +404,7 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 		publisher = &actor
 	}
 	var admitted Occurrence
-	e = s.store.update(func(tx runTx) error {
+	e = st.update(func(tx runTx) error {
 		a, err := s.admitOccurrenceAs(tx, t, o, "event:"+event.ID, payload, publisher)
 		if err != nil {
 			return err
@@ -441,13 +446,15 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 // token must be its trigger's current credential and the one that created the
 // occurrence; knowing an occurrence ID is not enough. Every other case gets one
 // refusal, which does not say whether the occurrence exists.
-func (s *Service) eventResult(triggerID, occurrenceID, token string) (map[string]any, error) {
-	_, hash, e := s.trigger(triggerID)
+//
+// Its records are read in st, the store the request is held to (storeFor).
+func (s *Service) eventResult(st runStore, triggerID, occurrenceID, token string) (map[string]any, error) {
+	_, hash, e := st.trigger(triggerID)
 	if e != nil || len(token) != 64 || hash == "" || subtle.ConstantTimeCompare([]byte(digest([]byte(token))), []byte(hash)) != 1 {
 		return nil, &apiError{401, "invalid_trigger_token", "The event credential is invalid."}
 	}
 	// One statement, so a rotation after the check above still refuses.
-	o, e := s.store.keyedOccurrence(occurrenceID, triggerID, hash)
+	o, e := st.keyedOccurrence(occurrenceID, triggerID, hash)
 	if absent(e) {
 		return nil, &apiError{404, "occurrence_not_found", "No occurrence with this ID was created with this credential."}
 	}
@@ -458,7 +465,7 @@ func (s *Service) eventResult(triggerID, occurrenceID, token string) (map[string
 	if o.RunID == "" {
 		return answer, nil
 	}
-	run, e := s.run(o.RunID)
+	run, e := st.run(o.RunID)
 	if e != nil {
 		return nil, e
 	}

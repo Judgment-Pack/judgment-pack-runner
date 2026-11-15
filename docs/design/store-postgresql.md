@@ -480,7 +480,15 @@ reach rows only through it (`storeFor`), the scope check's read included:
 `POST /v1/jobs/{job}/upgrade` and `GET /v1/jobs/{job}/upgrade-receipt`; held in #244's fifth
 slice, the journal, `GET /v1/events` and `GET /v1/jobs/{job}/events`, and `GET /v1/run-chain`;
 a job's triggers, `GET` and `POST /v1/jobs/{job}/triggers` and `POST /v1/jobs/{job}/triggers/preview`,
-and a trigger's `POST /v1/triggers/{trigger}/state` and `/rotate-key` (`heldRoutes`). `GET /v1/events` naming a job is that job's route: held to the scope named, none
+and a trigger's `POST /v1/triggers/{trigger}/state` and `/rotate-key`; deliveries,
+`POST /v1/triggers/{trigger}/events` and `/deliveries`, and their reads,
+`GET /v1/triggers/{trigger}/occurrences/{occurrence}` and `/deliveries/{event}`; a job's occurrences,
+`GET /v1/jobs/{job}/occurrences`, and `POST /v1/occurrences/{occurrence}/cancel` and `/reconcile`;
+and `POST /v1/runs/{run}/retry` (`heldRoutes`). A trigger the view does not hold answers an event
+credential as an unknown trigger does, `401 invalid_trigger_token`, and a delivery's refusal is
+journaled only for a trigger the view holds. The ticks, the dispatch of occurrences into runs and
+preparation are the store's own, on the worker login, as the work for every scope above says; the
+retry's reading of the attempt directories is the kind's (D11), not the view's. `GET /v1/events` naming a job is that job's route: held to the scope named, none
 when it names none, as the table says, and the store for every scope only when it names neither a
 scope nor a job. `GET /v1/health` reads no row. Every other route is refused on such a kind,
 `501 store_route_unsupported`, before it reads anything, until it is held to its scope as the
@@ -527,8 +535,8 @@ Every read in the code whose rows can lie in more than one scope:
 | `packConflicts`, `dialectConflicts` | Both routes (`admitJobPack`, `job_revisions.go:34`; `dialect_artifact.go:159`) | `pack_identities` and `dialect_identities`, unscoped: each revision's release's identities are inserted (`ON CONFLICT DO NOTHING`) in its transaction, and their held digests read back | `409 artifact_identity_conflict`, as on SQLite |
 | `triggerCount()` | `POST /v1/jobs` with a trigger (`store.go:396`); `POST /v1/jobs/{job}/triggers` (`triggers_store.go:68`, outside the transaction) | `counts.triggers`, raised by `createTrigger` only while below 128 | `422 trigger_limit` at the installation's 128th trigger, as the Runner answers on SQLite: `triggerCount()` reads the row in any view |
 | `cloudBindings(except, connection, job)` | `POST /v1/jobs/{job}/triggers` (`triggers_store.go:78`, outside the transaction) | The binding's unique index on `triggers`, which no policy narrows: the write meets it as `taken` | `422 cloud_binding_used`, as the Runner answers on SQLite: `configureTriggerBy` answers the index's `taken` (`keyCloudBinding`) so. `POST /v1/jobs` with a cloud trigger meets the index as it does on the sqlite kind, which checks no binding before that write either, and answers as it does there |
-| `activeRuns()` | `POST /v1/jobs/{job}/runs` (`store.go:591`); `POST /v1/runs/{run}/retry` (`retries.go:364`) | `counts.active-runs`, moved by `createRun` and `putRun` as a run enters or leaves `queued` and `running` | `429 queue_full` at the installation's limit |
-| `pendingOccurrences()` | `POST /v1/triggers/{trigger}/events` and `/deliveries` (`triggers_store.go:469`) | `counts.pending-occurrences`, moved by `createOccurrence` and `putOccurrence` as an occurrence enters or leaves `accepted`, `preparing` and `waiting` | `429 queue_full` at the installation's limit |
+| `activeRuns()` | `POST /v1/jobs/{job}/runs` (`store.go:637`); `POST /v1/runs/{run}/retry` (`retries.go:395`) | `counts.active-runs`, moved by `createRun` and `putRun` as a run enters or leaves `queued` and `running` | `429 queue_full` at the installation's limit |
+| `pendingOccurrences()` | `POST /v1/triggers/{trigger}/events` and `/deliveries` (`triggers_store.go:503`); the ticks, on the worker login | `counts.pending-occurrences`, moved by `createOccurrence` and `putOccurrence` as an occurrence enters or leaves `accepted`, `preparing` and `waiting` | `429 queue_full` at the installation's limit |
 | `journalPage` with a job; `journalBegan()` | `GET /v1/jobs/{job}/events`, `GET /v1/events` | The read policy on `events` above | The page SQLite gives |
 | `chainPage`, `entryLine`, `entrySequence` | `GET /v1/run-chain`; a run's routes | `run_chain` unscoped (D10) | The chain SQLite gives |
 | `recordScope(records, id)` | The scope check of every record route (`scope.go:236`) | Per scope by construction: another scope's record reads `absent` | The route answers as for a record not held, which is what the check makes it answer on SQLite |
@@ -613,7 +621,7 @@ the specification. (a) removes every record and keeps the chain checkable.
 | `attempts/<run>[.<n>]/` | A scratch directory for the attempt's Runtime, as now; a retry takes a missing one to be unknown (D11). | An interrupted run is retried by the retry route only on a host that holds every one of its attempt directories; otherwise its caller submits a new run. Diagnostics of an attempt whose directory is gone read nothing, and name the volume it ran on. |
 | `runtimes/<digest>` | Rebuilt at start from the pinned digests (below). | The image ships every Runtime a held release names. |
 
-**The attempts and the retry check.** `attemptsHoldNoAudit` (`retries.go:398`) refuses to evaluate
+**The attempts and the retry check.** `attemptsHoldNoAudit` (`retries.go:445`) refuses to evaluate
 an interrupted run again when an attempt's directory holds an audit trail, and takes a directory
 that does not exist to hold none. On another host, or on a new volume, every directory is gone, and
 that reading would let a retry evaluate again a run whose Runtime may have written an audit record:
@@ -627,8 +635,9 @@ keeps local state the issue removes. (c) The Runtime's audit trail copied into t
 is written, which needs the Runtime's cooperation. (a) is the smallest that keeps the refusal; it
 costs the retry of every interrupted run whose directories, an earlier attempt's among them, the
 host does not hold. The sqlite kind keeps today's reading. (Step 5 built the reading, the kind's
-`missingAttemptHoldsNoAudit` answering no; not the volume rows. The retry route is refused on the
-kind in any case.)
+`missingAttemptHoldsNoAudit` answering no; not the volume rows. The fifth slice serves the retry
+route held to its scope, and the kind's answer refuses a retry whose directory is missing,
+`409 run_not_retryable`.)
 
 **The pinned Runtime.** A release names the digest of the Runtime it was made with, and every
 evaluation reads `runtimes/<digest>` and refuses a file that is missing or changed
@@ -714,6 +723,8 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLServesARunThroughItsHeldRoutes` | Built: a Runner on the kind serves a job and a run end to end through its held routes. |
 | `TestPostgreSQLHoldsTheJournalToItsScope` (section 6, D16) | Built in the fifth slice: on a Runner on the kind, a scope's job's journal is served held to its scope; another scope, or a request naming none, is answered `404` for it, by either route; a listing naming a scope holds that scope's entries alone; a refused creation shows in the listing naming no scope and in no scope's page. The conformance case "a refused creation is read only held to the none scope" holds D16 on the in-memory kind and the kind, and SQLite's pages unchanged. |
 | `TestPostgreSQLHoldsTriggersToTheirScope` (section 6, D9) | Built in the fifth slice: another scope neither lists, reads nor changes a scope's trigger, naming its id in the path or through a job of its own, and the trigger is as it was; the scope's own configuration, preview, resumption and key rotation are served and journaled in its scope; a binding another scope holds is refused by the index, `422 cloud_binding_used`, as the Runner's own read refuses it in one scope; the installation's count refuses a trigger in any scope at the limit, `422 trigger_limit`, and a refused trigger leaves the count as it was. |
+| `TestPostgreSQLHoldsOccurrencesToTheirScope` (section 6, D9) | Built in the fifth slice: another scope, or a request naming none, neither delivers to a scope's trigger, reads an occurrence's result, delivers or reads a record, lists its job's occurrences, nor cancels or reconciles one: the trigger answers `401 invalid_trigger_token`, as an unknown one, the rest `404`; the scope's own requests are served; the tick, on the worker login, admits a schedule's occurrence in its job's scope and dispatches each scope's occurrence into a run of that scope, which another scope does not read; past the installation's pending count, an event is refused `429 queue_full` and a schedule's occurrence skipped. |
+| `TestPostgreSQLRetriesARunHeldToItsScope` (section 6, D11) | Built in the fifth slice: another scope, or a request naming none, does not retry a scope's interrupted run; the scope's retry is refused while the attempt's directory is missing, `409 run_not_retryable`, and queued once the directory holds no trail; the entry is not in another scope's journal. |
 | `TestPostgreSQLMigratesAStoreAtTheGrantsForward` (c) | Built in the fifth slice: a store migrated to `0002`, as the previous release left it, is refused at the start; a run naming other logins applies nothing; the migration applies the later files alone, leaves the catalog a store migrated at once has, records the logins on the later file's row, and applies nothing on a second run. |
 | `TestPostgreSQLResolvesABuiltinBeforeTheSchema` | Built: with `now()`, `statement_timestamp()` and `set_config` made in the schema, by the owner, to fail, a claim, a renewal, a finish and a read held to a scope still call the built-ins; no relation of the schema has a name the catalog holds. |
 | `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLStartRefusesAConnectionWithoutItsSettings`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLADispatcherBehindAHeldLockGoesOn`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; a start over a pool whose connection was opened without the search path or one of the bounds is refused, naming it and the login; with another connection holding `journal_head`'s lock, a write is refused within the lock bound; a renewal is tried again, keeps the claim when the lock is let go before its deadline, and is refused at its deadline, its wait on the server ended, the claim reported lost; a dispatcher's end of a run in the queue, its tick for lapsed leases and its claim make nothing and its loop goes on, its finish lands once the lock is let go, the run completed and not interrupted, and the Runner stays healthy; a transaction left idle is ended by the server and the writer behind it goes on. |
@@ -763,9 +774,13 @@ leave SQLite's statements and rows as they are; the kind is written only after t
    with a migration file of their own (`0003_held_routes.sql`) for the policies they need; a
    store at `0002` is migrated forward by `jpack-runner store migrate`, which the start requires.
    (#244's fifth slice, in progress: the journal and the run chain, with D16; a job's triggers,
-   their preview, state and key, with the binding's answer of step 4. The trigger routes needed no
+   their preview, state and key, with the binding's answer of step 4; deliveries, occurrences and
+   a run's retry, with `counts.pending-occurrences` and `occurrence_keys`. These routes needed no
    policy and no grant beyond `0002_grants.sql`: the request login already writes `triggers`,
-   `trigger_revisions` and `counts`, and the ticks, on the worker login, are as they were.)
+   `trigger_revisions`, `occurrences`, `occurrence_keys`, `runs` and `counts`, and the ticks, the
+   dispatch and preparation, on the worker login, write only what `0002` grants it. Left: input and
+   selected profiles, diagnostics, verification, briefs and the input preparation routes; one
+   occurrence's lease across several Runners is #245.)
 
 SQLite's bytes and schema are not changed by any of it: the claim's columns and the tables of
 section 3 are the second kind's own, and `store_sqlite_rows_test.go` holds the rows.

@@ -937,3 +937,191 @@ func TestPostgreSQLHoldsTriggersToTheirScope(t *testing.T) {
 		t.Fatal("a trigger past the installation's limit was not refused:", string(got))
 	}
 }
+
+// pgCall is a request to sv's routes that must answer want; it answers the
+// body.
+func pgCall(t *testing.T, sv *Service) func(method, path string, body any, headers map[string]string, want int) []byte {
+	return func(method, path string, body any, headers map[string]string, want int) []byte {
+		t.Helper()
+		raw := ""
+		if body != nil {
+			raw = string(encode(body))
+		}
+		got := serve(t, sv, method, path, raw, headers)
+		if got.Code != want {
+			t.Fatalf("%s %s: %d %s, want %d", method, path, got.Code, got.Body.String(), want)
+		}
+		return got.Body.Bytes()
+	}
+}
+
+// Section 6 and D9, occurrences: on a Runner on the kind, a scope's event
+// credential delivers held to its scope, and another scope, or a request
+// naming none, neither delivers to its trigger, reads an occurrence's
+// result, lists, cancels or reconciles its occurrences, nor reads a record
+// delivery, guessing the ids: the trigger answers as an unknown one, the
+// rest as absent. The tick, on the worker login, admits a schedule's
+// occurrence in its job's scope and dispatches every scope's into a run of
+// that scope. The queue's limit is the installation's count.
+func TestPostgreSQLHoldsOccurrencesToTheirScope(t *testing.T) {
+	s, db, sv, jobs := pgScopedRunner(t)
+	a, b := jobs["team-a"], jobs["team-b"]
+	call := pgCall(t, sv)
+	suite := s.pool(t, pgRoleSuite, db)
+	pending := func() int {
+		t.Helper()
+		var n int
+		must(t, suite.QueryRowContext(pgContext, "SELECT value FROM counts WHERE name='pending-occurrences'").Scan(&n))
+		return n
+	}
+	var created Trigger
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+a.ID+"/triggers?scope=team-a", map[string]any{"config": eventTriggerConfig()}, nil, 200), &created))
+	var resumed struct {
+		Trigger Trigger `json:"trigger"`
+		Token   string  `json:"token"`
+	}
+	must(t, json.Unmarshal(call("POST", "/v1/triggers/"+created.ID+"/state?scope=team-a", map[string]any{"revision": created.Revision, "paused": false, "reviewed": true}, nil, 200), &resumed))
+	token := map[string]string{"X-Trigger-Token": resumed.Token}
+	var delivered struct {
+		Occurrence Occurrence `json:"occurrence"`
+	}
+	must(t, json.Unmarshal(call("POST", "/v1/triggers/"+created.ID+"/events?scope=team-a", delivery("first"), token, 202), &delivered))
+	admitted := delivered.Occurrence
+	if admitted.State != "accepted" || admitted.Scope != "team-a" {
+		t.Fatalf("the event was not admitted in its scope: %+v", admitted)
+	}
+	call("POST", "/v1/triggers/"+created.ID+"/events?scope=team-a", delivery("first"), token, 200)
+	if n := pending(); n != 1 {
+		t.Fatal("the installation's pending count is", n, "want 1")
+	}
+	record := RecordDelivery{ReleaseID: a.ReleaseID, Event: delivery("record")}
+	for _, q := range []string{"?scope=team-b", ""} {
+		call("POST", "/v1/triggers/"+created.ID+"/events"+q, delivery("second"), token, 401)
+		call("GET", "/v1/triggers/"+created.ID+"/occurrences/"+admitted.ID+q, nil, token, 401)
+		call("POST", "/v1/triggers/"+created.ID+"/deliveries"+q, record, nil, 404)
+		call("GET", "/v1/triggers/"+created.ID+"/deliveries/first"+q, nil, nil, 404)
+		call("GET", "/v1/jobs/"+a.ID+"/occurrences"+q, nil, nil, 404)
+		call("POST", "/v1/occurrences/"+admitted.ID+"/cancel"+q, nil, nil, 404)
+		call("POST", "/v1/occurrences/"+admitted.ID+"/reconcile"+q, nil, nil, 404)
+	}
+	var page struct {
+		Items []Occurrence `json:"items"`
+	}
+	must(t, json.Unmarshal(call("GET", "/v1/jobs/"+b.ID+"/occurrences?scope=team-b", nil, nil, 200), &page))
+	if len(page.Items) != 0 {
+		t.Fatal("team-b's job lists another scope's occurrence:", page.Items)
+	}
+	// The scope's own requests: its credential reads the result, its
+	// record delivery is admitted and read, its occurrences listed; an
+	// accepted occurrence is neither cancelled nor reconciled.
+	call("GET", "/v1/triggers/"+created.ID+"/occurrences/"+admitted.ID+"?scope=team-a", nil, token, 200)
+	call("POST", "/v1/triggers/"+created.ID+"/deliveries?scope=team-a", record, nil, 202)
+	call("GET", "/v1/triggers/"+created.ID+"/deliveries/record?scope=team-a", nil, nil, 200)
+	must(t, json.Unmarshal(call("GET", "/v1/jobs/"+a.ID+"/occurrences?scope=team-a", nil, nil, 200), &page))
+	if len(page.Items) != 2 {
+		t.Fatal("team-a's job lists", len(page.Items), "occurrences, want 2")
+	}
+	call("POST", "/v1/occurrences/"+admitted.ID+"/cancel?scope=team-a", nil, nil, 409)
+	call("POST", "/v1/occurrences/"+admitted.ID+"/reconcile?scope=team-a", nil, nil, 409)
+	if n := pending(); n != 2 {
+		t.Fatal("the installation's pending count is", n, "want 2")
+	}
+
+	// The tick, on the worker login: team-b's schedule falls due, and every
+	// scope's accepted occurrence is dispatched into a run of its scope.
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", map[string]any{"config": scheduleTriggerConfig(time.Now())}, nil, 200), &created))
+	must(t, json.Unmarshal(call("POST", "/v1/triggers/"+created.ID+"/state?scope=team-b", map[string]any{"revision": created.Revision, "paused": false, "reviewed": true}, nil, 200), &resumed))
+	due, err := time.Parse(time.RFC3339Nano, resumed.Trigger.NextAt)
+	must(t, err)
+	must(t, sv.automationTick(due.Add(time.Second)))
+	if n := pending(); n != 0 {
+		t.Fatal("the tick left", n, "occurrences pending")
+	}
+	for _, scope := range []string{"team-a", "team-b"} {
+		job := jobs[scope]
+		must(t, json.Unmarshal(call("GET", "/v1/jobs/"+job.ID+"/occurrences?scope="+scope, nil, nil, 200), &page))
+		for _, o := range page.Items {
+			if o.State != "submitted" || o.RunID == "" {
+				t.Fatalf("%s's occurrence was not dispatched: %+v", scope, o)
+			}
+			var held string
+			must(t, suite.QueryRowContext(pgContext, "SELECT o.scope||'/'||r.scope FROM runs r JOIN occurrences o ON o.record::json->>'runId'=r.id WHERE o.id=$1", o.ID).Scan(&held))
+			if held != scope+"/"+scope {
+				t.Fatalf("%s's occurrence was dispatched into a run of %q", scope, held)
+			}
+			call("GET", "/v1/runs/"+o.RunID+"?scope="+scope, nil, nil, 200)
+			other := map[string]string{"team-a": "team-b", "team-b": "team-a"}[scope]
+			call("GET", "/v1/runs/"+o.RunID+"?scope="+other, nil, nil, 404)
+		}
+		if want := map[string]int{"team-a": 2, "team-b": 1}[scope]; len(page.Items) != want {
+			t.Fatal(scope, "holds", len(page.Items), "occurrences, want", want)
+		}
+	}
+
+	// The queue's limit is the installation's: past it, team-a's event is
+	// refused, and team-b's schedule, which has no sender, skipped.
+	_, err = suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='pending-occurrences'", queueLimit)
+	must(t, err)
+	if got := call("POST", "/v1/triggers/"+admitted.TriggerID+"/events?scope=team-a", delivery("third"), token, 429); !strings.Contains(string(got), "queue_full") {
+		t.Fatal("an event past the installation's queue was not refused:", string(got))
+	}
+	var listed struct {
+		Items []Trigger `json:"items"`
+	}
+	must(t, json.Unmarshal(call("GET", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", nil, nil, 200), &listed))
+	due, err = time.Parse(time.RFC3339Nano, listed.Items[0].NextAt)
+	must(t, err)
+	must(t, sv.automationTick(due.Add(time.Second)))
+	var reason string
+	must(t, suite.QueryRowContext(pgContext, "SELECT state||':'||(record::json->>'reason') FROM occurrences WHERE trigger_id=$1 ORDER BY seq DESC LIMIT 1", created.ID).Scan(&reason))
+	if reason != "skipped:queue-full" {
+		t.Fatal("team-b's schedule past the installation's queue:", reason)
+	}
+}
+
+// D11 and section 6, the retry: on a Runner on the kind, another scope, or a
+// request naming none, does not retry a scope's interrupted run; the scope's
+// own retry is refused while the attempt's directory is missing, which this
+// kind does not take to hold no audit record, and is queued once it holds no
+// trail.
+func TestPostgreSQLRetriesARunHeldToItsScope(t *testing.T) {
+	_, _, sv, jobs := pgScopedRunner(t)
+	a := jobs["team-a"]
+	call := pgCall(t, sv)
+	var queued Run
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+a.ID+"/runs?scope=team-a", journalInput(), map[string]string{"Idempotency-Key": "one"}, 202), &queued))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := sv.dispatchNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var r Run
+	must(t, json.Unmarshal(call("GET", "/v1/runs/"+queued.ID+"?scope=team-a", nil, nil, 200), &r))
+	if r.State != "interrupted" || r.Attempt != 1 {
+		t.Fatalf("the run was not interrupted: %+v", r)
+	}
+	for _, q := range []string{"?scope=team-b", ""} {
+		call("POST", "/v1/runs/"+r.ID+"/retry"+q, map[string]any{"attempt": 1}, nil, 404)
+	}
+	directory := filepath.Join(sv.cfg.Dir, "attempts", r.ID)
+	must(t, os.RemoveAll(directory))
+	if got := call("POST", "/v1/runs/"+r.ID+"/retry?scope=team-a", map[string]any{"attempt": 1}, nil, 409); !strings.Contains(string(got), "cannot be read") {
+		t.Fatal("a retry whose attempt directory is missing:", string(got))
+	}
+	must(t, os.MkdirAll(directory, 0o700))
+	var retried struct {
+		State    string    `json:"state"`
+		Attempts []Attempt `json:"attempts"`
+	}
+	must(t, json.Unmarshal(call("POST", "/v1/runs/"+r.ID+"/retry?scope=team-a", map[string]any{"attempt": 1}, nil, 202), &retried))
+	if retried.State != "queued" || len(retried.Attempts) != 1 {
+		t.Fatalf("the retry: %+v", retried)
+	}
+	var page EventPage
+	must(t, json.Unmarshal(call("GET", "/v1/events?scope=team-b", nil, nil, 200), &page))
+	for _, e := range page.Items {
+		if e.Concerns.Run == r.ID {
+			t.Fatal("team-b's journal holds the retried run's entry:", e.Kind)
+		}
+	}
+}

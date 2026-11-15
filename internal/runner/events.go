@@ -429,7 +429,12 @@ func recordOccurrence(tx runTx, o Occurrence, guard string, by EventActor, inter
 // changeOccurrence records an occurrence and the entry of its change of
 // state, if any, in one transaction.
 func (s *Service) changeOccurrence(o Occurrence, guard string, by EventActor) error {
-	return s.store.update(func(tx runTx) error {
+	return changeOccurrenceIn(s.store, o, guard, by)
+}
+
+// changeOccurrenceIn is changeOccurrence, in st.
+func changeOccurrenceIn(st runStore, o Occurrence, guard string, by EventActor) error {
+	return st.update(func(tx runTx) error {
 		return recordOccurrence(tx, o, guard, by, nil)
 	})
 }
@@ -631,11 +636,17 @@ func (s *Service) refusedEvent(triggerID string, err error) {
 // refusedEventBy is refusedEvent, for a delivery by: the authenticated
 // credential's, when the refusal says one was, and otherwise by's.
 func (s *Service) refusedEventBy(by requester, triggerID string, err error) {
-	t, _, e := s.trigger(triggerID)
+	s.refusedEventIn(s.store, by, triggerID, err)
+}
+
+// refusedEventIn is refusedEventBy, the trigger and its job read in st: a
+// trigger st does not reach is one the store does not hold.
+func (s *Service) refusedEventIn(st runStore, by requester, triggerID string, err error) {
+	t, _, e := st.trigger(triggerID)
 	if e != nil {
 		return
 	}
-	j, e := s.job(t.JobID)
+	j, e := st.job(t.JobID)
 	if e != nil {
 		return
 	}

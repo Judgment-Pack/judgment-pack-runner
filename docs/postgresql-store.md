@@ -10,7 +10,8 @@ SQLite stays the default. A Runner started without a `store` member, and the com
 starts, keep the sqlite kind exactly as before.
 
 **This kind serves part of the control API.** It holds the routes that make a job and run it, its
-triggers, the journal and the run chain, and refuses every other route with `501 store_route_unsupported`
+triggers, event and record deliveries, occurrences, a run's retry, the journal and the run chain,
+and refuses every other route with `501 store_route_unsupported`
 (below). Run one Runner per store:
 several Runners on one store is issue #245.
 
@@ -224,11 +225,20 @@ These routes are served:
 - the journal, `GET /v1/events` and `GET /v1/jobs/{job}/events`, and `GET /v1/run-chain`
 - a job's triggers, `GET` and `POST /v1/jobs/{job}/triggers`, `POST /v1/jobs/{job}/triggers/preview`,
   and `POST /v1/triggers/{trigger}/state` and `/rotate-key`
+- deliveries, `POST /v1/triggers/{trigger}/events`, `GET /v1/triggers/{trigger}/occurrences/{occurrence}`,
+  `POST /v1/triggers/{trigger}/deliveries` and `GET /v1/triggers/{trigger}/deliveries/{event}`
+- occurrences, `GET /v1/jobs/{job}/occurrences`, and `POST /v1/occurrences/{occurrence}/cancel` and
+  `/reconcile`
+- a run's retry, `POST /v1/runs/{run}/retry`
+
+A trigger another scope holds answers an event credential as an unknown trigger does, `401
+invalid_trigger_token`; every other record another scope holds answers `404`, as one that does not
+exist. The schedule, file and cloud ticks and the dispatch of occurrences into runs work for every
+scope, on the worker login.
 
 Every other route of the control API answers `501` with the code `store_route_unsupported`
-before it reads anything: among them input and selected profiles, event deliveries and
-occurrences, a run's retry, diagnostics, verification and brief, the execution binding, and the input
-preparation and background connection routes.
+before it reads anything: among them input and selected profiles, diagnostics, verification and
+briefs, the execution binding, and the input preparation and background connection routes.
 
 Also refused with this kind: manual admission (above), and any `store` member other than
 `{"kind":"postgresql","connection":...}`. `jpack-runner store` takes `migrate` and nothing else;
@@ -238,8 +248,8 @@ removing one scope's rows is not built.
 
 - **Attempt directories** (`attempts/` in the state directory). The kind takes an attempt
   directory that is missing to be unknown, never to hold no audit record, so a run whose
-  directories are gone is not evaluated again. The retry route is refused with this kind in any
-  case: a caller submits a new run.
+  directories are gone is not evaluated again: its retry is refused, `409 run_not_retryable`, and
+  a caller submits a new run.
 - **The pinned Runtime** (`runtimes/<digest>`). A Runner pins the Runtime it was started with. A
   release made with another Runtime fails its runs closed, as on the sqlite kind; a new host must
   be started with the same Runtime the held jobs' releases name.

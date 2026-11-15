@@ -20,6 +20,11 @@ type onlyThroughHeld struct {
 
 func (o *onlyThroughHeld) holdsScopes() bool { return true }
 
+// missingAttemptHoldsNoAudit is the kind's answer, which reads no row.
+func (o *onlyThroughHeld) missingAttemptHoldsNoAudit() bool {
+	return o.base.missingAttemptHoldsNoAudit()
+}
+
 func (o *onlyThroughHeld) heldTo(sc storeScope) runStore {
 	o.held = append(o.held, sc)
 	return o.base.heldTo(sc)
@@ -57,6 +62,11 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 	event := TriggerConfig{Name: "Reviewed records", Kind: "event", Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
 	trigger, err := w.s.configureTrigger(w.job.ID, "", 0, event)
 	must(t, err)
+	// An enabled event trigger, its key, and an occurrence it admitted.
+	deliveries, token := w.eventTrigger("queue")
+	occurrence, _, err := w.s.event(deliveries.ID, token, delivery("first"))
+	must(t, err)
+	tokenOf := map[string]string{"X-Trigger-Token": token}
 	base := w.s.store
 	o := &onlyThroughHeld{base: base}
 	w.s.store = o
@@ -93,6 +103,29 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 		{"POST", "/v1/triggers/" + trigger.ID + "/state?scope=other", `{"revision":3,"paused":true}`, nil, 404},
 		{"POST", "/v1/triggers/" + trigger.ID + "/rotate-key", `{"revision":3}`, nil, 200},
 		{"POST", "/v1/triggers/" + trigger.ID + "/rotate-key?scope=other", `{"revision":4}`, nil, 404},
+		// Event deliveries, occurrences and a run's retry.
+		{"POST", "/v1/triggers/" + deliveries.ID + "/events", string(encode(delivery("second"))), tokenOf, 202},
+		{"POST", "/v1/triggers/" + deliveries.ID + "/events", string(encode(delivery("second"))), tokenOf, 200},
+		{"POST", "/v1/triggers/" + deliveries.ID + "/events", string(encode(delivery("third"))), nil, 401},
+		{"POST", "/v1/triggers/" + deliveries.ID + "/events", `{"id":`, tokenOf, 400},
+		// A trigger another scope holds answers as an unknown one: the
+		// credential is invalid.
+		{"POST", "/v1/triggers/" + deliveries.ID + "/events?scope=other", string(encode(delivery("third"))), tokenOf, 401},
+		{"GET", "/v1/triggers/" + deliveries.ID + "/occurrences/" + occurrence.ID, "", tokenOf, 200},
+		{"GET", "/v1/triggers/" + deliveries.ID + "/occurrences/" + occurrence.ID + "?scope=other", "", tokenOf, 401},
+		{"POST", "/v1/triggers/" + deliveries.ID + "/deliveries", string(encode(RecordDelivery{ReleaseID: w.release.ID, Event: delivery("record")})), nil, 202},
+		{"POST", "/v1/triggers/" + deliveries.ID + "/deliveries", string(encode(RecordDelivery{Event: delivery("unbound")})), nil, 422},
+		{"GET", "/v1/triggers/" + deliveries.ID + "/deliveries/record", "", nil, 200},
+		{"GET", "/v1/triggers/" + deliveries.ID + "/deliveries/record?scope=other", "", nil, 404},
+		{"GET", "/v1/jobs/" + w.job.ID + "/occurrences", "", nil, 200},
+		{"GET", "/v1/jobs/" + w.job.ID + "/occurrences?preparations=1", "", nil, 200},
+		{"GET", "/v1/jobs/" + w.job.ID + "/occurrences?scope=other", "", nil, 404},
+		{"POST", "/v1/occurrences/" + occurrence.ID + "/cancel", "", nil, 409},
+		{"POST", "/v1/occurrences/" + occurrence.ID + "/reconcile", "", nil, 409},
+		{"POST", "/v1/occurrences/" + occurrence.ID + "/cancel?scope=other", "", nil, 404},
+		{"POST", "/v1/runs/" + queued.ID + "/retry", `{"attempt":0}`, nil, 409},
+		{"POST", "/v1/runs/" + queued.ID + "/retry", `{}`, nil, 400},
+		{"POST", "/v1/runs/" + queued.ID + "/retry?scope=other", `{"attempt":0}`, nil, 404},
 		// The journal and the chain.
 		{"GET", "/v1/jobs/" + w.job.ID + "/events", "", nil, 200},
 		{"GET", "/v1/jobs/" + w.job.ID + "/events?tail=true", "", nil, 200},
@@ -134,7 +167,7 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 		t.Error("the journal naming a job and no scope is not held to none:", every, o.held)
 	}
 	// Every other route is refused before it reads anything.
-	for _, route := range []string{"GET /v1/runs/" + queued.ID + "/diagnostics", "POST /v1/runs/" + queued.ID + "/retry", "GET /v1/jobs/" + w.job.ID + "/occurrences", "GET /v1/input-profiles"} {
+	for _, route := range []string{"GET /v1/runs/" + queued.ID + "/diagnostics", "GET /v1/runs/" + queued.ID + "/verification", "GET /v1/jobs/" + w.job.ID + "/briefs", "GET /v1/input-profiles"} {
 		method, path, _ := strings.Cut(route, " ")
 		got, every := throughHeld(t, w, method, path, "", nil)
 		if every || got.code != http.StatusNotImplemented || !strings.Contains(got.body, "store_route_unsupported") {

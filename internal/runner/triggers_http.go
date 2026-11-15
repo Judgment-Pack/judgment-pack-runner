@@ -9,7 +9,7 @@ import (
 
 func (s *Service) triggerRoutes(mux routeMux) {
 	mux.HandleFunc("GET /v1/triggers/{trigger}/deliveries/{event}", func(w http.ResponseWriter, r *http.Request) {
-		o, _, e := s.findOccurrence(r.PathValue("trigger"), "event:"+r.PathValue("event"))
+		o, _, e := s.storeFor(r.Context()).identifiedOccurrence(r.PathValue("trigger"), "event:"+r.PathValue("event"))
 		if e != nil {
 			failure(w, e)
 			return
@@ -18,15 +18,15 @@ func (s *Service) triggerRoutes(mux routeMux) {
 	})
 	mux.HandleFunc("POST /v1/triggers/{trigger}/deliveries", func(w http.ResponseWriter, r *http.Request) {
 		var req RecordDelivery
-		by := requesterFrom(r.Context())
+		by, st := requesterFrom(r.Context()), s.storeFor(r.Context())
 		if e := decodeInput(w, r, &req); e != nil {
-			s.refusedEventBy(by, r.PathValue("trigger"), e)
+			s.refusedEventIn(st, by, r.PathValue("trigger"), e)
 			failure(w, e)
 			return
 		}
-		o, replay, e := s.deliverRecordBy(by, r.PathValue("trigger"), req.ReleaseID, req.Event)
+		o, replay, e := s.deliverRecordBy(st, by, r.PathValue("trigger"), req.ReleaseID, req.Event)
 		if e != nil {
-			s.refusedEventBy(by, r.PathValue("trigger"), e)
+			s.refusedEventIn(st, by, r.PathValue("trigger"), e)
 			failure(w, e)
 			return
 		}
@@ -37,7 +37,7 @@ func (s *Service) triggerRoutes(mux routeMux) {
 		write(w, status, map[string]any{"occurrence": o, "replayed": replay})
 	})
 	mux.HandleFunc("POST /v1/occurrences/{occurrence}/reconcile", func(w http.ResponseWriter, r *http.Request) {
-		o, e := s.reconcileOccurrenceBy(requesterFrom(r.Context()), r.PathValue("occurrence"))
+		o, e := s.reconcileOccurrenceBy(s.storeFor(r.Context()), requesterFrom(r.Context()), r.PathValue("occurrence"))
 		if e != nil {
 			failure(w, e)
 			return
@@ -184,15 +184,15 @@ func (s *Service) triggerRoutes(mux routeMux) {
 	})
 	mux.HandleFunc("POST /v1/triggers/{trigger}/events", func(w http.ResponseWriter, r *http.Request) {
 		var delivery EventDelivery
-		by := requesterFrom(r.Context())
+		by, st := requesterFrom(r.Context()), s.storeFor(r.Context())
 		if e := decodeInput(w, r, &delivery); e != nil {
-			s.refusedEventBy(by, r.PathValue("trigger"), e)
+			s.refusedEventIn(st, by, r.PathValue("trigger"), e)
 			failure(w, e)
 			return
 		}
-		o, replay, e := s.event(r.PathValue("trigger"), r.Header.Get("X-Trigger-Token"), delivery)
+		o, replay, e := s.eventIn(st, r.PathValue("trigger"), r.Header.Get("X-Trigger-Token"), delivery)
 		if e != nil {
-			s.refusedEventBy(by, r.PathValue("trigger"), e)
+			s.refusedEventIn(st, by, r.PathValue("trigger"), e)
 			failure(w, e)
 			return
 		}
@@ -203,7 +203,7 @@ func (s *Service) triggerRoutes(mux routeMux) {
 		write(w, status, map[string]any{"occurrence": o, "replayed": replay})
 	})
 	mux.HandleFunc("GET /v1/triggers/{trigger}/occurrences/{occurrence}", func(w http.ResponseWriter, r *http.Request) {
-		answer, e := s.eventResult(r.PathValue("trigger"), r.PathValue("occurrence"), r.Header.Get("X-Trigger-Token"))
+		answer, e := s.eventResult(s.storeFor(r.Context()), r.PathValue("trigger"), r.PathValue("occurrence"), r.Header.Get("X-Trigger-Token"))
 		if e != nil {
 			failure(w, e)
 			return
@@ -211,7 +211,8 @@ func (s *Service) triggerRoutes(mux routeMux) {
 		write(w, 200, answer)
 	})
 	mux.HandleFunc("GET /v1/jobs/{job}/occurrences", func(w http.ResponseWriter, r *http.Request) {
-		if _, e := s.job(r.PathValue("job")); e != nil {
+		st := s.storeFor(r.Context())
+		if _, e := st.job(r.PathValue("job")); e != nil {
 			failure(w, e)
 			return
 		}
@@ -224,7 +225,7 @@ func (s *Service) triggerRoutes(mux routeMux) {
 			}
 			after = n
 		}
-		items, next, e := s.store.occurrencePage(r.PathValue("job"), after, r.URL.Query().Get("preparations") == "1", 50)
+		items, next, e := st.occurrencePage(r.PathValue("job"), after, r.URL.Query().Get("preparations") == "1", 50)
 		if e != nil {
 			failure(w, e)
 			return

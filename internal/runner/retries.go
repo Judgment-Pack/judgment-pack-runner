@@ -314,8 +314,9 @@ var errAttemptMismatch = &apiError{409, "attempt_mismatch", "This run's attempt 
 // interrupted attempt kept in its attempts (docs/design/retries.md, section
 // 6). attempt is the run's attempt as the caller read it. It returns the run
 // and whether the request repeated a retry already made. The run is read,
-// checked and queued again in one transaction.
-func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool, error) {
+// checked and queued again in one transaction, in st, the store the request
+// is held to (storeFor). The queue's limit is the installation's (D9).
+func (s *Service) retryRunBy(st runStore, by requester, runID string, attempt int) (Run, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Run{}, false, manualUnsupported()
 	}
@@ -328,7 +329,7 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 	// write them. The answer is given inside the transaction, and is theirs
 	// only for the interruption they were read after. A read that fails is
 	// answered as a failed read inside the transaction was.
-	checked, err := s.store.run(runID)
+	checked, err := st.run(runID)
 	if err != nil {
 		return Run{}, false, err
 	}
@@ -338,7 +339,7 @@ func (s *Service) retryRunBy(by requester, runID string, attempt int) (Run, bool
 	}
 	var result Run
 	repeated := false
-	err = s.store.update(func(tx runTx) error {
+	err = st.update(func(tx runTx) error {
 		r, err := tx.run(runID)
 		if err != nil {
 			return err
@@ -492,24 +493,24 @@ func attemptDirectory(r Run) string {
 }
 
 func (s *Service) retryRunHandler(w http.ResponseWriter, r *http.Request) {
-	by := requesterFrom(r.Context())
+	by, st := requesterFrom(r.Context()), s.storeFor(r.Context())
 	runID := r.PathValue("run")
 	var req struct {
 		Attempt *int `json:"attempt"`
 	}
 	if err := decode(w, r, &req); err != nil || req.Attempt == nil || *req.Attempt < 0 {
 		err = &apiError{400, "invalid_request", "Supply one bounded JSON request with supported fields and no duplicate members."}
-		s.refusedRetryBy(by, runID, err)
+		s.refusedRetryIn(st, by, runID, err)
 		failure(w, err)
 		return
 	}
-	run, repeated, err := s.retryRunBy(by, runID, *req.Attempt)
+	run, repeated, err := s.retryRunBy(st, by, runID, *req.Attempt)
 	if err != nil {
-		s.refusedRetryBy(by, runID, err)
+		s.refusedRetryIn(st, by, runID, err)
 		failure(w, err)
 		return
 	}
-	response, err := s.servedRun(run)
+	response, err := s.servedRunIn(st, run)
 	if err != nil {
 		failure(w, err)
 		return
@@ -521,9 +522,10 @@ func (s *Service) retryRunHandler(w http.ResponseWriter, r *http.Request) {
 	write(w, status, response)
 }
 
-// refusedRetryBy journals a refused retry of a run the store holds.
-func (s *Service) refusedRetryBy(by requester, runID string, err error) {
-	if r, e := s.store.run(runID); e == nil {
+// refusedRetryIn journals a refused retry of a run st holds: a run st does
+// not reach is one the store does not hold.
+func (s *Service) refusedRetryIn(st runStore, by requester, runID string, err error) {
+	if r, e := st.run(runID); e == nil {
 		s.refused("retry-run", err, s.actor(by), EventConcerns{Job: r.JobID, Release: r.ReleaseID, Run: r.ID}, r.Scope)
 	}
 }

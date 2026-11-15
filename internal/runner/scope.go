@@ -326,6 +326,16 @@ var heldRoutes = map[string]bool{
 	"POST /v1/jobs/{job}/triggers/preview":   true,
 	"POST /v1/triggers/{trigger}/state":      true,
 	"POST /v1/triggers/{trigger}/rotate-key": true,
+	// Event deliveries, the occurrences they and the ticks admit, and a
+	// run's retry.
+	"POST /v1/triggers/{trigger}/events":                  true,
+	"POST /v1/triggers/{trigger}/deliveries":              true,
+	"GET /v1/triggers/{trigger}/deliveries/{event}":       true,
+	"GET /v1/triggers/{trigger}/occurrences/{occurrence}": true,
+	"GET /v1/jobs/{job}/occurrences":                      true,
+	"POST /v1/occurrences/{occurrence}/cancel":            true,
+	"POST /v1/occurrences/{occurrence}/reconcile":         true,
+	"POST /v1/runs/{run}/retry":                           true,
 	// The journal and the chain of runs.
 	"GET /v1/events":            true,
 	"GET /v1/jobs/{job}/events": true,
