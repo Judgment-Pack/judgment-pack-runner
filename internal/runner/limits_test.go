@@ -96,6 +96,23 @@ func TestALimitOutOfItsBoundsIsRefusedAtTheStart(t *testing.T) {
 	}
 }
 
+// A limits member with both limits refused answers the refusal of triggers,
+// the first checked, every time, whatever order the members are read in.
+func TestALimitsMemberWithBothLimitsRefusedAnswersTheTriggersRefusal(t *testing.T) {
+	for _, raw := range []string{
+		`{"pendingOccurrences":0,"triggers":0}`,
+		`{"triggers":0,"pendingOccurrences":0}`,
+		`{"pendingOccurrences":0,"triggers":1001}`,
+		`{"triggers":1001,"pendingOccurrences":2001}`,
+	} {
+		for range 32 {
+			if _, e := ParseLimitSettings(json.RawMessage(raw)); e == nil || e.Error() != "limits.triggers is from 1 to 1000" {
+				t.Fatalf("%s: %v, want the refusal of triggers", raw, e)
+			}
+		}
+	}
+}
+
 // tickAtTheLimits gives each of n jobs, made by makeJob, one enabled
 // shared-interval trigger due at one tick, written as the store writes a
 // trigger (a kind that holds the trigger count in a row holds it to the

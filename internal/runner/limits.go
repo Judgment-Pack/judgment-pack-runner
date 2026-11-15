@@ -36,15 +36,29 @@ type LimitSettings struct {
 // ParseLimitSettings reads a service configuration's limits member: one
 // object of triggers and pendingOccurrences, each a whole number from 1 to
 // its maximum, each at most once and spelled exactly, none null, and nothing
-// else.
+// else. A member more is refused first; then the two are checked in this
+// order, triggers then pendingOccurrences, so that of two refusals the same
+// one is answered every time.
 func ParseLimitSettings(raw json.RawMessage) (LimitSettings, error) {
 	refused := errors.New("limits, when present, is an object of triggers and pendingOccurrences (whole numbers), each at most once, spelled so, and none null")
 	members, err := exactMembers(raw)
 	if err != nil {
 		return LimitSettings{}, refused
 	}
+	for name := range members {
+		if name != "triggers" && name != "pendingOccurrences" {
+			return LimitSettings{}, refused
+		}
+	}
 	var c LimitSettings
-	for name, v := range members {
+	for _, m := range []struct {
+		name string
+		to   *int
+	}{{"triggers", &c.Triggers}, {"pendingOccurrences", &c.PendingOccurrences}} {
+		v, ok := members[m.name]
+		if !ok {
+			continue
+		}
 		if string(v) == "null" {
 			return LimitSettings{}, refused
 		}
@@ -52,19 +66,15 @@ func ParseLimitSettings(raw json.RawMessage) (LimitSettings, error) {
 		if json.Unmarshal(v, &n) != nil {
 			return LimitSettings{}, refused
 		}
-		switch name {
-		case "triggers":
-			c.Triggers = n
-		case "pendingOccurrences":
-			c.PendingOccurrences = n
-		default:
-			return LimitSettings{}, refused
-		}
 		if n < 1 {
-			return LimitSettings{}, limitBounds(name)
+			return LimitSettings{}, limitBounds(m.name)
+		}
+		*m.to = n
+		if e := c.validate(); e != nil {
+			return LimitSettings{}, e
 		}
 	}
-	return c, c.validate()
+	return c, nil
 }
 
 // limitBounds is the refusal of a limit out of its bounds.
