@@ -41,6 +41,11 @@ func (s *Service) automationTick(at time.Time) error {
 		if e != nil {
 			return e
 		}
+		// One paused since the list was read, by a request on this Runner
+		// or another of the store, makes nothing.
+		if t.Paused {
+			continue
+		}
 		switch t.Config.Kind {
 		case "schedule":
 			if e = s.scheduleTick(t, hash, at); e != nil {

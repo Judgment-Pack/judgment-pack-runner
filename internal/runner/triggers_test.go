@@ -595,3 +595,78 @@ func TestEventTokenReadsOnlyItsOwnOccurrence(t *testing.T) {
 		}
 	}
 }
+
+// pauseAfterList pauses the trigger held under id, as a request would, once
+// the tick has read the list of triggers not paused, and before it reads the
+// trigger.
+type pauseAfterList struct {
+	runStore
+	id string
+}
+
+func (q *pauseAfterList) enabledTriggers() ([]string, error) {
+	ids, err := q.runStore.enabledTriggers()
+	if err != nil || q.id == "" {
+		return ids, err
+	}
+	tr, hash, err := q.runStore.trigger(q.id)
+	if err != nil {
+		return nil, err
+	}
+	q.id = ""
+	tr.Paused = true
+	return ids, q.runStore.update(func(tx runTx) error { return tx.putTrigger(tr, hash, false) })
+}
+
+// A trigger paused after the tick listed the triggers not paused, and
+// before it read the trigger, makes no occurrence: a schedule due, or a
+// file change stable, waits until the trigger is resumed.
+func TestATriggerPausedAfterTheListMakesNoOccurrence(t *testing.T) {
+	for _, kind := range []string{"schedule", "file"} {
+		t.Run(kind, func(t *testing.T) {
+			s, cfg, j, _ := automaticFixture(t)
+			at := time.Now().UTC().Truncate(time.Second)
+			c := constantTrigger(at)
+			file := filepath.Join(cfg.InputRoot, "input.json")
+			if kind == "file" {
+				os.WriteFile(file, encode(sample()), 0600)
+				c = TriggerConfig{Name: "File intake", Kind: "file", WatchPath: "input.json", StableSeconds: 2, Input: &AutomaticInput{Kind: "input-file", Path: "input.json"}, Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+			}
+			tr, e := s.configureTrigger(j.ID, "", 0, c)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if tr, _, e = s.setTriggerState(tr.ID, tr.Revision, false, true); e != nil {
+				t.Fatal(e)
+			}
+			due := at
+			if kind == "schedule" {
+				held, hash := storedTrigger(t, s, tr.ID)
+				held.NextAt = at.Add(-time.Second).Format(time.RFC3339)
+				must(t, s.writeTrigger(held, hash, false))
+			} else {
+				// The baseline, then a change seen, which is stable from
+				// due on.
+				must(t, s.automationTick(at))
+				changed := sample()
+				changed.Evidence = nil
+				os.WriteFile(file, encode(changed), 0600)
+				must(t, s.automationTick(at.Add(time.Second)))
+				due = at.Add(4 * time.Second)
+			}
+			inner := s.store
+			s.store = &pauseAfterList{runStore: inner, id: tr.ID}
+			e = s.automationTick(due)
+			s.store = inner
+			if e != nil {
+				t.Fatal(e)
+			}
+			if n := countRows(t, s, "occurrences"); n != 0 {
+				t.Fatalf("the paused %s trigger made %d occurrences", kind, n)
+			}
+			if held, _ := storedTrigger(t, s, tr.ID); !held.Paused {
+				t.Fatal("the tick wrote over the pause")
+			}
+		})
+	}
+}
