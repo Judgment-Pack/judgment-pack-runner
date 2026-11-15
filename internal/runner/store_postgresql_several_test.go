@@ -73,8 +73,8 @@ func (p *pgStoreRunners) admitted(sv *Service) (Occurrence, time.Time) {
 	return storedOccurrence(t, sv, items[0].ID), due
 }
 
-// kindsOf counts the entries of kind in st's journal that concern id.
-func kindsOf(t *testing.T, st runStore, kind, id string) int {
+// entriesOfKind counts the entries of kind in st's journal that concern id.
+func entriesOfKind(t *testing.T, st runStore, kind, id string) int {
 	t.Helper()
 	n := 0
 	for after := int64(0); ; {
@@ -153,7 +153,7 @@ func TestPostgreSQLTwoRunnersTickingOneScheduleMakeOneOccurrence(t *testing.T) {
 	if items[0].State != "submitted" || items[0].RunID == "" {
 		t.Fatalf("the occurrence was not dispatched: %+v", items[0])
 	}
-	if n := kindsOf(t, runners[0].store, "occurrence.submitted", items[0].ID); n != 1 {
+	if n := entriesOfKind(t, runners[0].store, "occurrence.submitted", items[0].ID); n != 1 {
 		t.Fatal("the occurrence was submitted", n, "times")
 	}
 	after, _ := storedTrigger(t, runners[0], tr.ID)
@@ -223,7 +223,7 @@ func TestPostgreSQLTwoRunnersWorkOneReadyOccurrenceOnce(t *testing.T) {
 	if held.State != "submitted" || held.RunID == "" {
 		t.Fatalf("the occurrence was not dispatched: %+v", held)
 	}
-	if n := kindsOf(t, runners[0].store, "occurrence.submitted", o.ID); n != 1 {
+	if n := entriesOfKind(t, runners[0].store, "occurrence.submitted", o.ID); n != 1 {
 		t.Fatal("the occurrence was submitted", n, "times")
 	}
 }
@@ -289,7 +289,7 @@ func TestPostgreSQLASlowHolderLosesItsOccurrenceAndItsLateWriteIsRefused(t *test
 	if held.State != "submitted" || held.RunID != dispatched.RunID {
 		t.Fatalf("the slow holder's late write was not refused: %+v", held)
 	}
-	if n := kindsOf(t, other.store, "occurrence.expired", o.ID); n != 0 {
+	if n := entriesOfKind(t, other.store, "occurrence.expired", o.ID); n != 0 {
 		t.Fatal("the slow holder's late expiry was journaled")
 	}
 }
@@ -323,7 +323,7 @@ func TestPostgreSQLARunnerStoppedMidAttemptHasItsRunInterruptedAfterTheLease(t *
 	if err != nil || r.State != "interrupted" || r.Attempt != 1 {
 		t.Fatalf("the run is held %s at attempt %d, %v; want interrupted at 1", r.State, r.Attempt, err)
 	}
-	if n := kindsOf(t, later.store, "run.interrupted", id); n != 1 {
+	if n := entriesOfKind(t, later.store, "run.interrupted", id); n != 1 {
 		t.Fatal("the run was interrupted", n, "times")
 	}
 	got := serve(t, other, "POST", "/v1/runs/"+id+"/retry?scope=team-a", `{"attempt":1}`, nil)
@@ -360,7 +360,7 @@ func TestPostgreSQLASecondRunnersStartLeavesTheFirstsWorkToIt(t *testing.T) {
 	preparing.State = "accepted"
 	must(t, first.saveOccurrence(preparing))
 	for _, c := range []struct{ kind, id string }{{"run.interrupted", id}, {"occurrence.failed", o.ID}} {
-		if n := kindsOf(t, second.store, c.kind, c.id); n != 0 {
+		if n := entriesOfKind(t, second.store, c.kind, c.id); n != 0 {
 			t.Fatalf("%s was journaled %d times", c.kind, n)
 		}
 	}
