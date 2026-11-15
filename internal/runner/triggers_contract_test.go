@@ -6,6 +6,8 @@ package runner
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -51,5 +53,26 @@ func TestALegacyPreparationPassesByAnOccurrenceNoLongerAccepted(t *testing.T) {
 	}
 	if e = s.prepareLegacyOccurrence(context.Background(), "occ_none"); e != nil {
 		t.Fatalf("a legacy preparation of an occurrence not held: %v", e)
+	}
+}
+
+// A tick takes the trigger's own conflict, a write of the trigger since the
+// tick read it, for a lost race (D17), and no other: a conflict of anything
+// else its transaction writes is the tick's error.
+func TestATickTakesOnlyItsTriggersConflictForALostRace(t *testing.T) {
+	if e := tickLost(storeFailure(faultConflict, "trigger", fmt.Errorf("%w: trg_1", errTriggerWritten))); e != nil {
+		t.Fatalf("the trigger's own conflict is the tick's error: %v", e)
+	}
+	for _, e := range []error{
+		storeFailure(faultConflict, "occurrence", errors.New("the occurrence is held under a claim the writer does not hold")),
+		storeFailure(faultConflict, "trigger", errors.New("another conflict")),
+		storeFailure(faultTaken, "occurrence", errTriggerWritten),
+	} {
+		if tickLost(e) == nil {
+			t.Fatalf("a tick took %v (%s) for a lost race", e, faultOf(e))
+		}
+	}
+	if tickLost(nil) != nil {
+		t.Fatal("a tick that wrote is an error")
 	}
 }

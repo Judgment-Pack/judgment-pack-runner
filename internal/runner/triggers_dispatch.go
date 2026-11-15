@@ -147,9 +147,10 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 // tickLost is a tick's write that met a write of its trigger made since the
 // tick read it, by a request or by another Runner's tick on the same store
 // (D17), taken for no failure: the tick made nothing, and the next reads the
-// trigger again. Any other error is the tick's.
+// trigger again. Any other error, another conflict of the tick's transaction
+// among them, is the tick's.
 func tickLost(err error) error {
-	if faultOf(err) == faultConflict {
+	if faultOf(err) == faultConflict && errors.Is(err, errTriggerWritten) {
 		return nil
 	}
 	return err

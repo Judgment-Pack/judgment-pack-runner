@@ -413,7 +413,7 @@ func (t *memoryTx) putTrigger(tr Trigger, hash string, history bool) error {
 	}
 	// The trigger is written only over the version its writer read (D17).
 	if a.triggers[i].version != tr.version {
-		return storeFailure(faultConflict, "trigger", errors.New("the trigger was written since it was read"))
+		return storeFailure(faultConflict, "trigger", errTriggerWritten)
 	}
 	if err := t.admits("trigger", encode(tr)); err != nil {
 		return err

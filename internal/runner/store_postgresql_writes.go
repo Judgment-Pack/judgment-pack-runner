@@ -288,14 +288,14 @@ func (t *pgTx) putTrigger(tr Trigger, hash string, history bool) error {
 		return pgFault("trigger", err, false)
 	}
 	if held != tr.version {
-		return storeFailure(faultConflict, "trigger", fmt.Errorf("the trigger %s was written since it was read", tr.ID))
+		return storeFailure(faultConflict, "trigger", fmt.Errorf("%w: %s", errTriggerWritten, tr.ID))
 	}
 	n, err := t.exec("trigger", "UPDATE triggers SET record=$1,key_hash=$2,observed=$3,pending=$4,pending_at=$5,key_revision=$6,version=version+1 WHERE id=$7 AND version=$8", string(encode(tr)), hash, tr.observed, tr.pending, tr.pendingAt, keyRevision, tr.ID, tr.version)
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return storeFailure(faultConflict, "trigger", fmt.Errorf("the trigger %s was written since it was read", tr.ID))
+		return storeFailure(faultConflict, "trigger", fmt.Errorf("%w: %s", errTriggerWritten, tr.ID))
 	}
 	if history {
 		_, err = t.exec("trigger", "INSERT INTO trigger_revisions(trigger_id,revision,record) VALUES ($1,$2,$3)", tr.ID, tr.Revision, string(encode(tr)))

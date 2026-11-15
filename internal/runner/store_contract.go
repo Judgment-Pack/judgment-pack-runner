@@ -140,6 +140,12 @@ func absent(err error) bool {
 // as it returns every error of the function's, and the caller expects it.
 var errKeepNothing = errors.New("store: the transaction keeps nothing")
 
+// errTriggerWritten is the cause of putTrigger's faultConflict on a kind
+// that versions its triggers (D17): the trigger was written since its writer
+// read it. A tick takes this conflict, and no other, for a lost race
+// (tickLost).
+var errTriggerWritten = errors.New("the trigger was written since it was read")
+
 // anyState is putRun's expected state when a writer changes a run whatever
 // state the store holds it in.
 const anyState = ""
@@ -587,8 +593,8 @@ type runTx interface {
 	//
 	// On a kind that versions its triggers, the trigger must be held at
 	// t.version, the row version it was read at (0 for one made in the
-	// transaction), or nothing is written and the fault is faultConflict:
-	// another writer, a Runner's tick or a request on another Runner of
+	// transaction), or nothing is written and the fault is faultConflict,
+	// its cause errTriggerWritten: another writer, a Runner's tick or a request on another Runner of
 	// the same store, wrote it since (docs/design/store-postgresql.md,
 	// D17). The write moves the version on. The sqlite kind holds no
 	// version and reads 0: its lock and automationMu keep every other

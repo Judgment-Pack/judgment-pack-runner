@@ -108,7 +108,13 @@ var triggerStoreCases = []storeCase{
 		first.Problem = "first"
 		must(t, w.st.update(func(tx runTx) error { return tx.putTrigger(first, "", false) }))
 		late.Problem = "late"
-		wantFault(t, w.st.update(func(tx runTx) error { return tx.putTrigger(late, "", false) }), faultConflict, "a trigger written over a write made since it was read")
+		err = w.st.update(func(tx runTx) error { return tx.putTrigger(late, "", false) })
+		wantFault(t, err, faultConflict, "a trigger written over a write made since it was read")
+		// The cause names the trigger's own conflict, the one a tick takes for
+		// a lost race (tickLost).
+		if !errors.Is(err, errTriggerWritten) {
+			t.Fatalf("a trigger written over a write made since it was read: %v, not errTriggerWritten", err)
+		}
 		held, _, err := w.st.trigger("trg_1")
 		must(t, err)
 		if held.Problem != "first" || held.version == first.version {
