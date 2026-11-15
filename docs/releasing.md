@@ -233,17 +233,18 @@ The release reuses that evidence only when all of this holds, and refuses otherw
   none unfinished. Pull request runs, other branches' runs and runs from forks neither count
   nor block. The attempt started at most 48 hours before the release reads it.
 - **Every job.** `Runner (ubuntu-latest)`, `Runner (macos-latest)`, `Release contents`,
-  `PostgreSQL store`, and the eight unit-test shards `Unit tests (ubuntu-latest, 1/4)` to
-  `Unit tests (macos-latest, 4/4)`, each `success` on a GitHub-hosted runner with its one label,
+  `PostgreSQL store`, and the seven unit-test shards `Unit tests (ubuntu-latest, 1/4)` to
+  `Unit tests (ubuntu-latest, 4/4)` and `Unit tests (macos-latest, 1/3)` to
+  `Unit tests (macos-latest, 3/3)`, each `success` on a GitHub-hosted runner with its one label,
   from the selected attempt; no job may be skipped and no other job may be there.
 - **Every check, passed.** The Runner legs: `local-paths`, `agent-docs`, `diff-check`,
   `go-fmt`, `go-vet`, `build-pinned`, `manual-gate`, `chain-tests`, `openapi`, `build`,
   `ci-evidence`. The Unit tests legs: `build-pinned`, `unit-tests`, each with
-  `JPACK_UNIT_SHARD=<i>/4`, which runs the test groups of row `i` of the shard table in
-  `scripts/checks/unit-tests.sh`; the script refuses a table that does not name every group and
-  the store conformance run exactly once, and `tools/test_ci_evidence.py` holds the shards
-  `ci.yml` names to running every group once between them, so the four shards' `PASS` on a
-  system is the whole step's. `Release contents`: `release-toolchain`, `third-party-notices`,
+  `JPACK_UNIT_SHARD=<i>/<n>`, which runs the test groups of row `i` of the shard table of `n`
+  rows in `scripts/checks/unit-tests.sh` (four on Linux, three on macOS); the script refuses
+  tables that do not name every group and the store conformance run exactly once, in the rows
+  their names say, and `tools/test_ci_evidence.py` holds the shards `ci.yml` names to running
+  every group once between them, so the shards' `PASS` on a system is the whole step's. `Release contents`: `release-toolchain`, `third-party-notices`,
   `release-archives`, `release-programs`. `PostgreSQL store`: `postgresql-store`. Each `PASS`;
   no skip is permitted.
 - **The real companions ran.** `build-pinned` builds the Runtime, earlier Runtime, old Runner

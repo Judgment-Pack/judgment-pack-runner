@@ -10,22 +10,38 @@ bin=$root/.ci/bin
 # Every invocation keeps race instrumentation and the default package timeout.
 retained='^(TestColumn|TestSelectedLeaf)'
 # CI runs the groups in shards, each in a job of its own (ci.yml, `Unit tests
-# (<os>, i/n)`): JPACK_UNIT_SHARD=i/n runs only the groups of shard i, and only
-# shard i runs the store conformance run (`store`) when its row names it. Rows
-# name groups by their number in unit_groups below. Every group and `store` are
-# in exactly one row, and every run, sharded or not, refuses a table where that
-# does not hold before it starts anything. Without JPACK_UNIT_SHARD every group
-# and the store conformance run run, as before the shards. The rows are balanced
-# by the groups' times on main, three at once on Linux (and two at once on
-# macOS): 758 s (507), 708 s (448), 714 s (479), 687 s (539) (#269).
-unit_shards=('1 3' '2 5 9 store' '4 8 10' '6 7 11')
+# (<os>, i/n)`): JPACK_UNIT_SHARD=i/n runs only the groups of row i of the shard
+# table of n rows, unit_shards_<n>, and only that shard runs the store
+# conformance run (`store`) when its row names it. There is a table for each
+# count of shards CI runs: four on Linux, three on macOS, whose hosted runners
+# the organization's repositories share (ci.yml). Rows name groups by their
+# number in unit_groups below. In each table every group and `store` are in
+# exactly one row and the table has the rows its name says, and every run,
+# sharded or not, refuses tables where that does not hold before it starts
+# anything. Without JPACK_UNIT_SHARD every group and the store conformance run
+# run, as before the shards. The rows are balanced by the time the last of their
+# groups ends, two at once as in a shard, with each group's time in the shards of
+# pull request #297's run (#269): on Linux 339 s, 344 s (with store), 359 s and
+# 373 s, the longest group's own time; on macOS 330 s (group 1 alone), 325 s
+# (with store) and 284 s.
+unit_shards_4=('1 3 8' '2 4 5 store' '6 7 9' '10 11')
+unit_shards_3=('1 2 6 7' '3 4 5 8 9 store' '10 11')
+unit_counts='3 4'
+# Sets unit_shards to the table of $1 rows; fails for a count with no table.
+unit_table() {
+  case "$1" in
+    3) unit_shards=("${unit_shards_3[@]}") ;;
+    4) unit_shards=("${unit_shards_4[@]}") ;;
+    *) return 1 ;;
+  esac
+}
 shard=
 if [ -n "${JPACK_UNIT_SHARD:-}" ]; then
   if [[ $JPACK_UNIT_SHARD =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] &&
-    [ "${BASH_REMATCH[2]}" = "${#unit_shards[@]}" ] && [ "${BASH_REMATCH[1]}" -le "${#unit_shards[@]}" ]; then
+    unit_table "${BASH_REMATCH[2]}" && [ "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ]; then
     shard=${BASH_REMATCH[1]}
   else
-    echo "unit-tests: JPACK_UNIT_SHARD is '$JPACK_UNIT_SHARD', not i/${#unit_shards[@]} with i from 1 to ${#unit_shards[@]}"
+    echo "unit-tests: JPACK_UNIT_SHARD is '$JPACK_UNIT_SHARD', not i/n with n one of $unit_counts (the shard tables' rows) and i from 1 to n"
     exit 2
   fi
 fi
@@ -130,25 +146,33 @@ unit_groups() {
   run_unit -run '^Test[B-M]' -skip "$retained"
   run_unit -skip '^(TestColumn|TestSelectedLeaf|TestWorkflow|Test[A-M])'
 }
-# The shard table names every group and `store` once, and nothing else.
+# Each shard table names every group and `store` once, and nothing else, in the
+# rows its name says. The table the run selected is set again afterwards.
 unit_groups
 total=$groups
-seen=' '
-for row in "${unit_shards[@]}"; do
-  [ -n "$row" ] || { echo "unit-tests: a shard of the table has no group"; exit 2; }
-  for item in $row; do
-    case "$item" in
-      store) ;;
-      '' | *[!0-9]* | 0*) echo "unit-tests: the shard table names '$item', which is not a group"; exit 2 ;;
-      *) [ "$item" -le "$total" ] || { echo "unit-tests: the shard table names group $item of $total"; exit 2; } ;;
-    esac
-    case "$seen" in *" $item "*) echo "unit-tests: the shard table names $item twice"; exit 2 ;; esac
-    seen="$seen$item "
+selected=("${unit_shards[@]}")
+for count in $unit_counts; do
+  unit_table "$count" || { echo "unit-tests: no shard table of $count rows"; exit 2; }
+  seen=' '
+  for row in "${unit_shards[@]}"; do
+    [ -n "$row" ] || { echo "unit-tests: a shard of the table has no group (unit_shards_$count)"; exit 2; }
+    for item in $row; do
+      case "$item" in
+        store) ;;
+        '' | *[!0-9]* | 0*) echo "unit-tests: the shard table names '$item', which is not a group (unit_shards_$count)"; exit 2 ;;
+        *) [ "$item" -le "$total" ] || { echo "unit-tests: the shard table names group $item of $total (unit_shards_$count)"; exit 2; } ;;
+      esac
+      case "$seen" in *" $item "*) echo "unit-tests: the shard table names $item twice (unit_shards_$count)"; exit 2 ;; esac
+      seen="$seen$item "
+    done
   done
+  for item in $(seq 1 "$total") store; do
+    case "$seen" in *" $item "*) ;; *) echo "unit-tests: the shard table names $item in no shard (unit_shards_$count)"; exit 2 ;; esac
+  done
+  [ "${#unit_shards[@]}" = "$count" ] ||
+    { echo "unit-tests: the shard table unit_shards_$count has ${#unit_shards[@]} rows, not $count"; exit 2; }
 done
-for item in $(seq 1 "$total") store; do
-  case "$seen" in *" $item "*) ;; *) echo "unit-tests: the shard table names $item in no shard"; exit 2 ;; esac
-done
+unit_shards=("${selected[@]}")
 logs=$(mktemp -d "${TMPDIR:-/tmp}/unit-tests.XXXXXX")
 trap 'wait; rm -rf "$logs"' EXIT
 # A group that ends writes its number here, which wakes the wait for a free

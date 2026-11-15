@@ -3,11 +3,11 @@ name: CI
 # The check list is dev.json, run by scripts/dev/check.sh (the development kit's vendored runner);
 # the longer steps are scripts under scripts/checks/ with the comments they had here. Branch
 # protection requires `Runner (<os>)`, `Release contents` and `PostgreSQL store` by their names:
-# `Unit tests (<os>, i/4)` runs one of the four shards of the unit-tests step on Linux and macOS,
-# `Runner (<os>)` runs every other step but the release ones once every shard has ended and fails
-# unless every shard succeeded, `Release contents` runs the release steps, and `PostgreSQL store`
-# runs the postgresql store kind's tests against a service container. Each sets up the exact
-# toolchain release.yml names. On a pull request the `Unit tests` and `Runner` jobs run only the
+# `Unit tests (<os>, i/n)` runs one of the shards of the unit-tests step, four on Linux and three
+# on macOS, `Runner (<os>)` runs every other step but the release ones once every shard has ended
+# and fails unless every shard succeeded, `Release contents` runs the release steps, and
+# `PostgreSQL store` runs the postgresql store kind's tests against a service container. Each sets
+# up the exact toolchain release.yml names. On a pull request the `Unit tests` and `Runner` jobs run only the
 # steps jpdev.json maps the changed paths to (`check.sh --changed`); on a push to main they run the
 # whole list. `Release contents` runs its four steps every time. A push to main also records each
 # job's evidence (scripts/dev/release_evidence.py capture), which the release takes at that commit
@@ -35,21 +35,34 @@ permissions:
   contents: read
 
 jobs:
-  # The unit-tests step in four shards (scripts/checks/unit-tests.sh, JPACK_UNIT_SHARD), each on a
-  # runner of its own, so that no runner holds more than about a quarter of the groups. A shard
-  # builds the pinned binaries its tests run (build-pinned) and runs its groups, two at once. On a
-  # pull request or a merge group it runs them only when the changed paths map to unit-tests, the
-  # same selection as the Runner job's, and otherwise ends with nothing run.
+  # The unit-tests step in shards (scripts/checks/unit-tests.sh, JPACK_UNIT_SHARD=i/n, which runs
+  # row i of the script's table of n rows), each on a runner of its own. A shard builds the pinned
+  # binaries its tests run (build-pinned) and runs its groups, two at once. Linux runs four shards
+  # and macOS three. The hosted macOS runners are shared by the organization's repositories, five
+  # at once: on pull request #297's run two of its four macOS shards waited 4.7 and 6.6 minutes for
+  # one while other repositories' macOS jobs held the rest. Three keep this run's macOS jobs at
+  # three at once, and macOS, whose groups took 1850 s in all against Linux's 2501 s, still ends
+  # its longest shard within the longest group's time. A table of its own for macOS is the change
+  # the script's refusal rules allow: JPACK_UNIT_SHARD=i/n selects the table of n rows, and every
+  # run checks every table. On a pull request or a merge group a shard runs its groups only when
+  # the changed paths map to unit-tests, the same selection as the Runner job's, and otherwise ends
+  # with nothing run.
   unit:
-    name: Unit tests (${{ matrix.os }}, ${{ matrix.shard }}/4)
+    name: Unit tests (${{ matrix.os }}, ${{ matrix.shard }}/${{ matrix.of }})
     runs-on: ${{ matrix.os }}
     # Each shard keeps the step's 50-minute bound; allow job setup and evidence headroom.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        shard: [1, 2, 3, 4]
+        include:
+          - {os: ubuntu-latest, shard: 1, of: 4}
+          - {os: ubuntu-latest, shard: 2, of: 4}
+          - {os: ubuntu-latest, shard: 3, of: 4}
+          - {os: ubuntu-latest, shard: 4, of: 4}
+          - {os: macos-latest, shard: 1, of: 3}
+          - {os: macos-latest, shard: 2, of: 3}
+          - {os: macos-latest, shard: 3, of: 3}
     steps:
       # The whole history, so that --changed finds the merge base with the base branch.
       - uses: actions/checkout@v4
@@ -60,12 +73,12 @@ jobs:
           go-version: '1.26.5'
           cache: true
       # The other steps of dev.json are skipped: the Runner job runs them.
-      - name: Unit tests, shard ${{ matrix.shard }} of 4
+      - name: Unit tests, shard ${{ matrix.shard }} of ${{ matrix.of }}
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           GROUP_BASE: ${{ github.event.merge_group.base_sha }}
-          JPACK_UNIT_SHARD: ${{ matrix.shard }}/4
+          JPACK_UNIT_SHARD: ${{ matrix.shard }}/${{ matrix.of }}
         run: |
           set -o pipefail
           if [ "$EVENT" = pull_request ]; then

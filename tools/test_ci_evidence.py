@@ -80,12 +80,14 @@ def steps(block):
     return ['- ' + part for part in re.split(r'^      - ', block, flags=re.M)[1:]]
 
 
-MATRIX_AXES = ('os', 'shard')
+MATRIX_AXES = ('os',)
+MATRIX_LEG = re.compile(r'          - \{([a-z]+: [A-Za-z0-9_.-]+(?:, [a-z]+: [A-Za-z0-9_.-]+)*)\}')
 
 
 def legs(key, block):
     """The display name, labels and matrix values of each leg of a job: one leg for each
-    combination of the values of its matrix axes (os, and shard for the unit-test shards)."""
+    combination of the values of its matrix axes (os), or one for each entry of a matrix that
+    lists its legs under include: (the unit-test shards: os, shard and the shard count of)."""
     name = one(re.findall(r'^    name: (.+)$', block, re.M), key + ' name')
     runs_on = one(re.findall(r'^    runs-on: (.+)$', block, re.M), key + ' runs-on')
     combinations = [{}]
@@ -95,6 +97,16 @@ def legs(key, block):
             values = [value.strip() for value in one(matrix, key + ' matrix ' + axis).split(',')]
             combinations = [dict(combination, **{axis: value})
                             for combination in combinations for value in values]
+    include = re.findall(r'^        include:\n((?:          - .*\n?)+)', block, re.M)
+    if include:
+        if combinations != [{}] or re.search(r'^        [a-z]+: \[', block, re.M):
+            raise AssertionError(key + ': a matrix with both axes and include:')
+        combinations = []
+        for line in one(include, key + ' matrix include').rstrip('\n').split('\n'):
+            entry = MATRIX_LEG.fullmatch(line)
+            if not entry:
+                raise AssertionError('%s: matrix include entry %r is not {key: value, ...}' % (key, line))
+            combinations.append(dict(item.split(': ') for item in entry.group(1).split(', ')))
     result = []
     for combination in combinations:
         def expand(text, combination=combination):
@@ -184,23 +196,35 @@ if '^TestStoreKindsConform$' in args:
 
 
 UNIT_SCRIPT = 'scripts/checks/unit-tests.sh'
-UNIT_TABLE = re.compile(r"^unit_shards=\(('[^']*'(?: '[^']*')*)\)$", re.M)
+UNIT_TABLE = re.compile(r"^unit_shards_([1-9][0-9]*)=\(('[^']*'(?: '[^']*')*)\)$", re.M)
 
 
-def unit_shard_rows(script):
-    """The rows of unit-tests.sh's shard table, each the groups (and store) one shard runs."""
-    return re.findall(r"'([^']*)'", one(UNIT_TABLE.findall(script), 'shard table'))
+def unit_shard_tables(script):
+    """unit-tests.sh's shard tables by their count of shards, each a list of rows, each row the
+    groups (and store) one shard runs. The script's list of counts names exactly these."""
+    tables = {int(count): re.findall(r"'([^']*)'", rows) for count, rows in UNIT_TABLE.findall(script)}
+    if len(tables) != len(UNIT_TABLE.findall(script)) or not tables:
+        raise AssertionError('shard tables %r' % UNIT_TABLE.findall(script))
+    counts = one(re.findall(r"^unit_counts='([0-9 ]+)'$", script, re.M), 'unit_counts')
+    if sorted(int(count) for count in counts.split()) != sorted(tables):
+        raise AssertionError('unit_counts %r names other tables than %r' % (counts, sorted(tables)))
+    return tables
 
 
-def with_unit_shard_rows(script, rows):
-    return UNIT_TABLE.sub("unit_shards=(%s)" % ' '.join("'%s'" % row for row in rows), script, count=1)
+def with_unit_shard_rows(script, count, rows):
+    """The script with its table of count shards replaced by rows (the name keeps count)."""
+    pattern = re.compile(r"^unit_shards_%d=\(('[^']*'(?: '[^']*')*)\)$" % count, re.M)
+    one(pattern.findall(script), 'shard table %d' % count)
+    return pattern.sub("unit_shards_%d=(%s)" % (count, ' '.join("'%s'" % row for row in rows)), script, count=1)
 
 
 def without_unit_group(script, group):
-    """The script with group (a number) left out of its shard table: what a script that has one
-    group fewer needs for its table to name every group once."""
-    rows = [' '.join(item for item in row.split() if item != str(group)) for row in unit_shard_rows(script)]
-    return with_unit_shard_rows(script, rows)
+    """The script with group (a number) left out of its shard tables: what a script that has one
+    group fewer needs for its tables to name every group once."""
+    for count, table in unit_shard_tables(script).items():
+        rows = [' '.join(item for item in row.split() if item != str(group)) for row in table]
+        script = with_unit_shard_rows(script, count, rows)
+    return script
 
 
 class Jobs(unittest.TestCase):
@@ -370,41 +394,59 @@ class Checks(unittest.TestCase):
                                  sorted(json.dumps(call['args']) for call in everything))
 
     def test_unit_script_refuses_a_shard_table_that_does_not_name_every_group_once(self):
+        """Each table, whichever one the run selects (or none), is checked before anything runs."""
         script = read(UNIT_SCRIPT)
-        rows = unit_shard_rows(script)
-        longest = max(range(len(rows)), key=lambda index: len(rows[index].split()))
-        first = rows[longest].split()[0]
-        other = (longest + 1) % len(rows)
+        tables = unit_shard_tables(script)
+        self.assertGreater(len(tables), 1)
+        for count, rows in tables.items():
+            longest = max(range(len(rows)), key=lambda index: len(rows[index].split()))
+            first = rows[longest].split()[0]
+            other = (longest + 1) % len(rows)
 
-        def changed(index, row):
-            return [row if number == index else value for number, value in enumerate(rows)]
-        mutants = [
-            (changed(longest, ' '.join(rows[longest].split()[1:])), 'the shard table names %s in no shard' % first),
-            ([' '.join(item for item in row.split() if item != 'store') for row in rows],
-             'the shard table names store in no shard'),
-            (changed(other, rows[other] + ' ' + first), 'the shard table names %s twice' % first),
-            (changed(other, rows[other] + ' 12'), 'the shard table names group 12 of 11'),
-            (changed(other, rows[other] + ' x'), "the shard table names 'x', which is not a group"),
-            (rows + [''], 'a shard of the table has no group'),
-        ]
-        for mutated, message in mutants:
-            for shard in (None, '1/%d' % len(mutated)):
-                with self.subTest(table=mutated, shard=shard):
-                    process, calls = unit_partition_trace(ROOT / UNIT_SCRIPT, shard=shard,
-                                                          script_text=with_unit_shard_rows(script, mutated))
-                    self.assertEqual(process.returncode, 2, process.stdout)
-                    self.assertEqual(calls, [])
-                    self.assertIn(message, process.stdout)
+            def changed(index, row, rows=rows):
+                return [row if number == index else value for number, value in enumerate(rows)]
+            mutants = [
+                (changed(longest, ' '.join(rows[longest].split()[1:])), 'the shard table names %s in no shard' % first),
+                ([' '.join(item for item in row.split() if item != 'store') for row in rows],
+                 'the shard table names store in no shard'),
+                (changed(other, rows[other] + ' ' + first), 'the shard table names %s twice' % first),
+                (changed(other, rows[other] + ' 12'), 'the shard table names group 12 of 11'),
+                (changed(other, rows[other] + ' x'), "the shard table names 'x', which is not a group"),
+                (rows + [''], 'a shard of the table has no group'),
+                # Every group once, in one row fewer or one more than the table's name says.
+                ([rows[0] + ' ' + rows[1]] + rows[2:],
+                 'the shard table unit_shards_%d has %d rows, not %d' % (count, count - 1, count)),
+                (rows[:-1] + [' '.join(rows[-1].split()[:1]), ' '.join(rows[-1].split()[1:])],
+                 'the shard table unit_shards_%d has %d rows, not %d' % (count, count + 1, count)),
+            ]
+            other_count = next(other for other in tables if other != count)
+            for mutated, message in mutants:
+                # Unsharded, sharded by this table and sharded by another table.
+                for shard in (None, '1/%d' % count, '1/%d' % other_count):
+                    with self.subTest(count=count, table=mutated, shard=shard):
+                        process, calls = unit_partition_trace(
+                            ROOT / UNIT_SCRIPT, shard=shard, script_text=with_unit_shard_rows(script, count, mutated))
+                        self.assertEqual(process.returncode, 2, process.stdout)
+                        self.assertEqual(calls, [])
+                        self.assertIn(message, process.stdout)
+                        # The refusal names the table that is wrong, not the one the run selected.
+                        self.assertIn('unit_shards_%d' % count, process.stdout)
 
-    def test_unit_script_refuses_a_shard_that_is_not_one_of_its_table(self):
-        count = len(unit_shard_rows(read(UNIT_SCRIPT)))
-        for shard in ('0/%d' % count, '%d/%d' % (count + 1, count), '1/%d' % (count + 1), '1/%d' % (count - 1),
-                      '1', 'a/%d' % count, '01/%d' % count, ' 1/%d' % count, '1/%d ' % count, '1/%d/1' % count):
+    def test_unit_script_refuses_a_shard_that_is_not_one_of_its_tables(self):
+        counts = sorted(unit_shard_tables(read(UNIT_SCRIPT)))
+        absent = [count for count in range(1, max(counts) + 2) if count not in counts]
+        self.assertTrue(absent)
+        shards = ['1/%d' % count for count in absent] + ['1', '1/0', '1/%d/1' % counts[0]]
+        for count in counts:
+            shards += ['0/%d' % count, '%d/%d' % (count + 1, count), 'a/%d' % count, '01/%d' % count,
+                       '1/0%d' % count, ' 1/%d' % count, '1/%d ' % count]
+        for shard in shards:
             with self.subTest(shard=shard):
                 process, calls = unit_partition_trace(ROOT / UNIT_SCRIPT, shard=shard)
                 self.assertEqual(process.returncode, 2, process.stdout)
                 self.assertEqual(calls, [])
-                self.assertIn('not i/%d with i from 1 to %d' % (count, count), process.stdout)
+                self.assertIn('not i/n with n one of %s (the shard tables\' rows) and i from 1 to n'
+                              % ' '.join(str(count) for count in counts), process.stdout)
 
     def assert_unit_partition_calls(self, calls):
         main = [call for call in calls if '^TestStoreKindsConform$' not in call['args']]
