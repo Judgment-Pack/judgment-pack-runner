@@ -166,7 +166,7 @@ refused by them answers the same `422` code, not `409`
 `trigger_upgrade_incompatible`, which stays the answer for a trigger the new
 release cannot serve. A trigger
 enabled before the operator narrowed them keeps its schedule until it is
-changed or enabled again (section 9).
+changed or enabled again, and each start reports it (section 9).
 
 ## 5. The shared tick
 
@@ -447,8 +447,29 @@ triggers is safe:
   records the limits, and a Runner restarted with other limits holds the new
   ones from its start, the triggers already held past a lowered limit kept.
 - **The bounds are the installation's,** not a job's or a scope's.
-- A trigger enabled before the operator narrowed the bounds is not paused
-  or refused at its next tick.
+- **Every Runner on one store must name the same shared intervals and
+  bounds.** The settings are the configuration's, not the store's: a trigger
+  enabled under one Runner's settings stays enabled under another's, and
+  under the next start's. A trigger bound to a shared interval a Runner does
+  not name is never ticked by that Runner, whose tick call for the interval is
+  refused (`422` `unknown_shared_interval`); one whose cron expression is
+  outside a Runner's bounds goes on being ticked on its schedule until it is
+  changed or enabled again, which the bounds in force then hold. Neither is
+  paused, changed or refused at its tick. Each start holds every enabled
+  trigger, of every scope, to its settings, as enabling it does, and reports
+  each one refused (#286):
+  - in the [journal](activity-journal.md), one `trigger.outside-settings`
+    entry for each, by the Runner, naming the trigger at its revision, its
+    job and release, with the refusal's `code` and the scope identifier as
+    the entry's own member, never in its text;
+  - in `GET /v1/status`, under `triggersOutsideSettings`: when the start
+    checked, and under `unknownSharedInterval` and `outsideBounds` the count
+    and the trigger ids, as the start found them.
+
+  Each start under the same settings reports the same triggers again, one
+  entry each. A start under manual admission checks nothing. The health
+  route, which answers without a credential in service mode, says nothing of
+  them ([service-mode.md](service-mode.md), section 6).
 - No seconds field, no names, no `L`, `W` or `#`, no `@` macros.
 - No shared interval on a companion's boot line.
 - The `interval`, `daily`, `weekly` and `once` kinds are unchanged, and not

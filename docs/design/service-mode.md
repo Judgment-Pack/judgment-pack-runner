@@ -77,7 +77,10 @@ Its members:
   (section 3).
 - **`schedules`**, optional: the shared intervals `POST /v1/ticks` takes,
   and the shortest and longest gap a cron expression may have
-  ([schedules](schedules.md), section 4).
+  ([schedules](schedules.md), section 4). Every Runner on one store must name
+  the same shared intervals and bounds: each start reports, in the journal
+  and in `GET /v1/status`, the enabled triggers its settings refuse, and
+  changes none ([schedules](schedules.md), section 9).
 - **`limits`**, optional: the most triggers the installation holds
   (`triggers`, default 128, at most 1000), the most occurrences pending at
   once (`pendingOccurrences`, default 100, at most 2000) and the most runs

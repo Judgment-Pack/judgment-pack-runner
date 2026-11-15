@@ -61,7 +61,7 @@ const (
 
 // eventKinds are the kinds of entry Runner writes, in the record's order.
 var eventKinds = []string{
-	"trigger.configured", "trigger.paused", "trigger.resumed", "trigger.key-rotated",
+	"trigger.configured", "trigger.paused", "trigger.resumed", "trigger.key-rotated", "trigger.outside-settings",
 	"occurrence.received", "occurrence.skipped", "occurrence.preparing", "occurrence.ready",
 	"occurrence.submitted", "occurrence.failed", "occurrence.expired", "occurrence.needs-attention",
 	"occurrence.cancelled", "occurrence.reconciled", "occurrence.retry-scheduled",

@@ -1034,6 +1034,7 @@
                   "trigger.paused",
                   "trigger.resumed",
                   "trigger.key-rotated",
+                  "trigger.outside-settings",
                   "occurrence.received",
                   "occurrence.skipped",
                   "occurrence.preparing",
@@ -1182,6 +1183,7 @@
                   "trigger.paused",
                   "trigger.resumed",
                   "trigger.key-rotated",
+                  "trigger.outside-settings",
                   "occurrence.received",
                   "occurrence.skipped",
                   "occurrence.preparing",
@@ -3796,8 +3798,50 @@
               "runQueue"
             ],
             "additionalProperties": false
+          },
+          "triggersOutsideSettings": {
+            "type": "object",
+            "description": "What the start found, absent under manual admission: the enabled triggers, of every scope, whose schedule the schedule settings in force refuse, each journaled once at the start as trigger.outside-settings and none changed. unknownSharedInterval is those bound to a shared interval the settings do not name, which this Runner does not tick; outsideBounds is those whose cron expression is outside the bounds, ticked on their schedule until changed or enabled again. Each lists the trigger ids in the order the triggers were made. A trigger changed since the start stays listed until the next start. Every Runner on one store must name the same shared intervals and bounds.",
+            "properties": {
+              "checkedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "unknownSharedInterval": {
+                "$ref": "#/components/schemas/TriggersFound"
+              },
+              "outsideBounds": {
+                "$ref": "#/components/schemas/TriggersFound"
+              }
+            },
+            "required": [
+              "checkedAt",
+              "unknownSharedInterval",
+              "outsideBounds"
+            ],
+            "additionalProperties": false
           }
         }
+      },
+      "TriggersFound": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "count",
+          "triggers"
+        ],
+        "additionalProperties": false
       },
       "Error": {
         "type": "object",
@@ -6919,6 +6963,7 @@
               "trigger.paused",
               "trigger.resumed",
               "trigger.key-rotated",
+              "trigger.outside-settings",
               "occurrence.received",
               "occurrence.skipped",
               "occurrence.preparing",
@@ -6962,7 +7007,7 @@
           "revision": {
             "type": "integer",
             "minimum": 1,
-            "description": "The trigger revision: after the change, for a change of a trigger; the one an occurrence was admitted under, for the occurrence and its run."
+            "description": "The trigger revision: after the change, for a change of a trigger; the one an occurrence was admitted under, for the occurrence and its run; the one the start found, for trigger.outside-settings."
           },
           "from": {
             "type": [
@@ -7087,7 +7132,7 @@
           },
           "code": {
             "type": "string",
-            "description": "admission.refused: the error code the request was answered with. Absent for a cloud signal."
+            "description": "admission.refused: the error code the request was answered with. Absent for a cloud signal. trigger.outside-settings: the code configuring the trigger would be refused with under the schedule settings in force, unknown_shared_interval or a cron_ code."
           },
           "coalescedSeconds": {
             "const": 60,

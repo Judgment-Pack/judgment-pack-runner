@@ -975,7 +975,12 @@ real-time timer. The computer must be awake and Desk running.
 In service mode, one external scheduler job per shared interval can tick every scope's
 shared-interval triggers through `POST /v1/ticks`, with the control API's credential and
 no scope identifier; a repeated or late call, on this Runner or another of the store,
-records nothing twice. The evaluation, bounds, refusal codes and measured cost are in
+records nothing twice. Every Runner on one store must name the same shared intervals and
+bounds: at each start, Runner reports every enabled trigger bound to an interval its
+configuration does not name, or whose cron expression is outside its bounds, one
+`trigger.outside-settings` journal entry each and, in `GET /v1/status`, under
+`triggersOutsideSettings`, the counts and trigger ids; it changes none of them. The
+evaluation, bounds, refusal codes and measured cost are in
 [schedules](docs/design/schedules.md).
 
 Overlap defaults to **Skip this occurrence**; **Queue this occurrence** uses a
