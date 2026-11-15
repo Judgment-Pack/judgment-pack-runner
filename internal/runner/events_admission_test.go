@@ -201,13 +201,13 @@ func TestEveryAdmissionRefusalIsJournaledOnce(t *testing.T) {
 		}},
 		{"deliver-event: a record delivery while the queue is full", 429, &want{"deliver-event", "queue_full", "installation"}, func(w *coverWorld) int {
 			tr, _ := w.eventTrigger("queue")
-			for range queueLimit {
+			for range defaultPendingOccurrences {
 				w.admitted(tr, nil)
 			}
 			return post(w, "/v1/triggers/"+tr.ID+"/deliveries", string(encode(RecordDelivery{ReleaseID: w.job.ReleaseID, Event: EventDelivery{ID: "e", OccurredAt: now(), Input: journalInput()}})), nil)
 		}},
 		{"deliver-event: a credential's delivery while the queue is full", 429, &want{"deliver-event", "queue_full", "trigger-credential"}, deliver(func(w *coverWorld, tr Trigger, key string) {
-			for range queueLimit {
+			for range defaultPendingOccurrences {
 				w.admitted(tr, nil)
 			}
 		}, valid("e"), theKey)},

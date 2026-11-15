@@ -991,7 +991,7 @@ func TestPostgreSQLHoldsTriggersToTheirScope(t *testing.T) {
 	if held != 2 {
 		t.Fatal("the installation's trigger count is", held, "want 2")
 	}
-	_, err := suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='triggers'", pgTriggerLimit)
+	_, err := suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='triggers'", defaultTriggerLimit)
 	must(t, err)
 	if got := call("POST", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", map[string]any{"config": event}, 422); !strings.Contains(string(got), "trigger_limit") {
 		t.Fatal("a trigger past the installation's limit was not refused:", string(got))
@@ -1153,7 +1153,7 @@ func TestPostgreSQLHoldsOccurrencesToTheirScope(t *testing.T) {
 
 	// The queue's limit is the installation's: past it, team-a's event is
 	// refused, and team-b's schedule, which has no sender, skipped.
-	_, err = suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='pending-occurrences'", queueLimit)
+	_, err = suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='pending-occurrences'", defaultPendingOccurrences)
 	must(t, err)
 	if got := call("POST", "/v1/triggers/"+admitted.TriggerID+"/events?scope=team-a", delivery("third"), token, 429); !strings.Contains(string(got), "queue_full") {
 		t.Fatal("an event past the installation's queue was not refused:", string(got))

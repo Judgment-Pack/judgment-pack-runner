@@ -145,6 +145,11 @@ starts it), and:
   2048 bits or more, EC P-256 or Ed25519; no private member), read once at start. Others may read that
   file; no one but its owner, Runner's user or root, may write it.
 - `acceptOtherHostsOverPlainHTTP`, optional, `true` or `false`.
+- `limits`, optional: `triggers`, the most triggers the installation holds (default
+  128, at most 1000), and `pendingOccurrences`, the most occurrences pending at once
+  (default 100, at most 2000). Runners that share a store are configured with the same
+  limits; configured otherwise, each refuses at its own number. The
+  [schedules design](docs/design/schedules.md) (sections 8 and 9) has the measured cost.
 - `store`, optional: `{"kind":"postgresql","connection":"<absolute path>"}` keeps the queue and
   records in PostgreSQL 16 instead of the SQLite database under `dir`. The connection file is
   held to this file's rules and refused inside the state directory. That kind serves the routes
@@ -974,7 +979,8 @@ records nothing twice. The evaluation, bounds, refusal codes and measured cost a
 
 Overlap defaults to **Skip this occurrence**; **Queue this occurrence** uses a
 bounded queue. Up to 100 occurrences can await admission, alongside the existing
-bounded run queue. The limit is the store's, shared by every trigger. A schedule, a
+bounded run queue; a service's `limits` member sets this limit, up to 2000. The limit
+is the installation's, shared by every trigger. A schedule, a
 file change or a cloud signal that finds it reached has no sender to answer, and is
 recorded `skipped`, reason `queue-full`; an event delivery is refused instead, with
 429 `queue_full` ([below](#event-delivery)). Queue expiry is explicit, from 1 minute
@@ -1040,8 +1046,9 @@ retries. New deliveries to a paused trigger return 409 without acceptance.
 A 202 acknowledges the occurrence, not a completed decision: inspect its state,
 including `skipped` for overlap. No input is exposed in the receipt.
 
-While 100 occurrences are pending in the store (`accepted`, `preparing` or
-`waiting`, of any trigger), a new delivery is refused with 429 `queue_full`
+While the store holds its limit of pending occurrences (100 unless a service's
+`limits` sets it; `accepted`, `preparing` or `waiting`, of any trigger), a new
+delivery is refused with 429 `queue_full`
 (`retryable: true`) and nothing is admitted. Its ID stays unused: send the same
 bytes again later, and they are admitted once the queue has room, as long as
 `occurredAt` is no more than five minutes old. After that the same bytes are
@@ -1087,7 +1094,8 @@ existed have no recorded credential and cannot be read with a token.
 Direct Runner callers need the private owner bearer, or a service's identity token, plus
 `X-Trigger-Token`, as for delivery. Desk does not expose this read yet.
 
-There are at most 128 configured triggers per local store. Trigger revisions and
+There are at most 128 configured triggers per store, or the number a service's
+`limits` member sets, up to 1000. Trigger revisions and
 occurrences are retained in `runs.sqlite`; backups must include the entire stopped
 Runner state directory, including releases, runtimes and attempts. Desk chat backups
 still exclude Jobs. Automatic retention, archive/delete controls, managed services

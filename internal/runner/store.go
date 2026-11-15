@@ -59,7 +59,11 @@ type Config struct {
 	SigningPublicKey string
 	// Schedules are the operator's shared intervals and the bounds of a cron
 	// schedule (shared_ticks.go). The zero value names no shared interval.
-	Schedules         ScheduleSettings
+	Schedules ScheduleSettings
+	// Limits are the operator's limits of the installation, its triggers
+	// and its pending occurrences (limits.go). The zero value is the
+	// defaults, 128 and 100.
+	Limits            LimitSettings
 	disableAutomation bool
 	// disableDispatcher leaves queued runs for a test to dispatch, one at a
 	// time, with dispatchNext.
@@ -74,6 +78,9 @@ type Service struct {
 	cloudProblems      map[string]string
 	cloudFactory       func(context.Context, CloudConnection) (cloudTransport, error)
 	preparing          map[string]bool
+	// betweenSharedTicks, when a test sets it, runs between two triggers of
+	// a shared tick's fan-out, the automation lock not held (sharedTick).
+	betweenSharedTicks func()
 	// clock is the time retries and shared ticks are decided by
 	// (Service.instant): nil is
 	// time.Now. Tests move it rather than sleep.
@@ -134,6 +141,9 @@ func Open(cfg Config) (_ *Service, err error) {
 	// held to their bounds before anything is touched.
 	cfg.Schedules.SharedIntervals = slices.Clone(cfg.Schedules.SharedIntervals)
 	if err = cfg.Schedules.validate(); err != nil {
+		return nil, err
+	}
+	if err = cfg.Limits.validate(); err != nil {
 		return nil, err
 	}
 	if cfg.ExecutorAdmission != nil {
@@ -242,6 +252,7 @@ func Open(cfg Config) (_ *Service, err error) {
 	s.store, err = openStore(kind, storeOpening{
 		dir: cfg.Dir, workspace: cfg.Workspace, owner: cfg.Owner, inputRoot: cfg.InputRoot, postgresql: connections,
 		migrate: cfg.ExecutorAdmission == nil, manualAdmission: cfg.ExecutorAdmission != nil,
+		triggerLimit: cfg.Limits.triggers(),
 		afterLock: func() error {
 			for _, n := range []string{"releases", "attempts", "runtimes"} {
 				if err := privateDir(filepath.Join(cfg.Dir, n)); err != nil {
@@ -427,8 +438,9 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 			if err != nil {
 				return err
 			}
-			if count >= 128 {
-				return bad("trigger_limit", "This local runner supports up to 128 triggers.")
+			limit := s.cfg.Limits.triggers()
+			if count >= limit {
+				return errTriggerLimit(limit)
 			}
 			t := Trigger{ID: id("trg_"), JobID: j.ID, Revision: 1, Authority: "local", Config: *c, Paused: true, CreatedAt: now(), UpdatedAt: now(), Scope: j.Scope}
 			if c.Kind == "cloud" {
@@ -436,7 +448,7 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 			}
 			j.InitialTriggerID = t.ID
 			if err = tx.createTrigger(t); err != nil {
-				return err
+				return triggerLimitHeld(err, limit)
 			}
 			if err = tx.putTrigger(t, "", true); err != nil {
 				return err

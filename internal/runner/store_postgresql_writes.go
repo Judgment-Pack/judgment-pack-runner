@@ -23,10 +23,6 @@ import (
 // of a lease run out keeps now(), which takes it to run out later.
 var pgLeaseUntil = "now() + interval '" + strconv.Itoa(int(claimLease/time.Second)) + " seconds'"
 
-// pgTriggerLimit is the installation's trigger limit, which the Runner
-// checks before it makes a trigger (store.go) and counts.triggers holds.
-const pgTriggerLimit = 128
-
 // The states a count holds a record in (D9).
 var (
 	pgActiveStates  = []string{"queued", "running"}
@@ -257,17 +253,20 @@ func (t *pgTx) putBrief(subject string, record []byte) error {
 	return nil
 }
 
-// createTrigger raises counts.triggers while it is below the limit (D9).
+// createTrigger raises counts.triggers while it is below the installation's
+// trigger limit, as this Runner is configured with it (D9; the Runner checks
+// it before it makes a trigger, store.go). Runners of one store configured
+// with different limits each hold the row to their own.
 func (t *pgTx) createTrigger(tr Trigger) error {
 	if _, err := t.exec("trigger", "INSERT INTO triggers(id,job_id,record) VALUES ($1,$2,$3)", tr.ID, tr.JobID, string(encode(tr))); err != nil {
 		return err
 	}
-	n, err := t.exec("trigger", "UPDATE counts SET value=value+1 WHERE name='triggers' AND value<$1", pgTriggerLimit)
+	n, err := t.exec("trigger", "UPDATE counts SET value=value+1 WHERE name='triggers' AND value<$1", t.p.triggerLimit)
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return storeFailure(faultRefused, "trigger", errors.New("the installation holds its limit of triggers"))
+		return storeFailure(faultRefused, "trigger", errTriggerLimitHeld)
 	}
 	return nil
 }

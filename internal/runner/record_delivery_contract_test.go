@@ -634,7 +634,7 @@ func TestARecordDeliveryIsRefusedNotSkippedWhileTheQueueIsFull(t *testing.T) {
 	w := newCoverWorld(t)
 	tr, key := w.eventTrigger("queue")
 	var queued []Occurrence
-	for range queueLimit {
+	for range defaultPendingOccurrences {
 		queued = append(queued, w.admitted(tr, nil))
 	}
 	const event = "collection-a:record-7:revision-1"
@@ -649,12 +649,12 @@ func TestARecordDeliveryIsRefusedNotSkippedWhileTheQueueIsFull(t *testing.T) {
 		if code != 429 || a.Error.Code != "queue_full" || !a.Error.Retryable {
 			t.Fatal("a record delivery to a full queue", code, a)
 		}
-		if want := "The local queue is full. Deliver the same record again after queued occurrences are submitted."; a.Error.Message != want {
+		if want := "The local queue is full, at its limit of 100 pending occurrences. Deliver the same record again after queued occurrences are submitted."; a.Error.Message != want {
 			t.Fatalf("a record delivery to a full queue says %q, want %q", a.Error.Message, want)
 		}
 	}
 	read := serve(t, w.s, "GET", "/v1/triggers/"+tr.ID+"/deliveries/"+url.PathEscape(event), "", nil)
-	if read.Code != 404 || countRows(t, w.s, "occurrences") != queueLimit {
+	if read.Code != 404 || countRows(t, w.s, "occurrences") != defaultPendingOccurrences {
 		t.Fatal("a refused record delivery was admitted", read.Code, read.Body.String())
 	}
 	var refused []Event
@@ -668,7 +668,7 @@ func TestARecordDeliveryIsRefusedNotSkippedWhileTheQueueIsFull(t *testing.T) {
 		t.Fatalf("%+v", refused)
 	}
 	token := serve(t, w.s, "POST", "/v1/triggers/"+tr.ID+"/events", string(encode(delivery("credential-event"))), map[string]string{"X-Trigger-Token": key})
-	if code, a := answerOf(t, token.Code, token.Body.Bytes()); code != 429 || a.Error.Code != "queue_full" || !a.Error.Retryable || countRows(t, w.s, "occurrences") != queueLimit {
+	if code, a := answerOf(t, token.Code, token.Body.Bytes()); code != 429 || a.Error.Code != "queue_full" || !a.Error.Retryable || countRows(t, w.s, "occurrences") != defaultPendingOccurrences {
 		t.Fatal("a credential's delivery to a full queue", code, a)
 	}
 	room := queued[0]

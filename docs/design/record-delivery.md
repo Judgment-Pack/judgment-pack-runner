@@ -82,8 +82,9 @@ refusal under clause 5.
    `queueSeconds` of its admission is `expired`, reason `queue-expired`, also
    for good, and a run not started by then fails with that reason.
 
-   While the store holds 100 pending occurrences (`accepted`, `preparing` or
-   `waiting`), a record delivery is refused, `429 queue_full` with
+   While the store holds its limit of pending occurrences (`accepted`,
+   `preparing` or `waiting`; 100 unless a service's `limits` sets it,
+   [schedules](schedules.md), section 9), a record delivery is refused, `429 queue_full` with
    `retryable: true`, and nothing is admitted; the refusal is journaled. This
    is the change #70 needed. Runner admitted such a delivery `skipped`, reason
    `queue-full`, as it admitted a credential's delivery to `deliverEvent` until

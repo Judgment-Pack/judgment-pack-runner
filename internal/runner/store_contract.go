@@ -641,7 +641,7 @@ type runTx interface {
 	// created it, by the key's digest: faultTaken when it is bound.
 	createOccurrenceKey(occurrence, hash string) error
 	// pendingOccurrences counts the occurrences accepted, preparing or
-	// waiting: the automatic queue (queueLimit).
+	// waiting: the automatic queue (LimitSettings.pendingOccurrences).
 	pendingOccurrences() (int, error)
 	// jobActivity counts a job's runs queued or running and its occurrences
 	// accepted, preparing, waiting or needing attention.
@@ -717,6 +717,12 @@ type storeOpening struct {
 	// postgresql are the postgresql kind's logins. Only that kind reads
 	// them.
 	postgresql PostgreSQLConnections
+	// triggerLimit is the most triggers the installation holds
+	// (LimitSettings.triggers). The Runner checks it before it makes a
+	// trigger; a kind that holds the count in a row of its own raises the
+	// row only below it (docs/design/store-postgresql.md, D9). Zero is the
+	// default.
+	triggerLimit int
 }
 
 // manualState is the manual-admission state the sqlite kind keeps beside

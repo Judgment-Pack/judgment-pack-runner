@@ -63,6 +63,10 @@ type pgPools struct {
 	// commit makes a transaction durable: (*sql.Tx).Commit, which a test
 	// replaces to make a commit fail.
 	commit func(*sql.Tx) error
+	// triggerLimit is the installation's trigger limit, as the Runner is
+	// configured with it (storeOpening.triggerLimit): createTrigger raises
+	// counts.triggers only below it.
+	triggerLimit int
 }
 
 // pgReads are the reads of a view held to sc: inside a transaction through
@@ -374,7 +378,7 @@ func pgPoolConfig(conn string) (*pgxpool.Config, error) {
 // newPostgreSQLStore is a store over two pools, every scope's, closing
 // closers when it closes.
 func newPostgreSQLStore(request, worker *sql.DB, closers ...func()) *pgStore {
-	return &pgStore{pgReads{&pgPools{request: request, worker: worker, closers: closers, commit: (*sql.Tx).Commit}, everyScope, nil, nil}}
+	return &pgStore{pgReads{&pgPools{request: request, worker: worker, closers: closers, commit: (*sql.Tx).Commit, triggerLimit: defaultTriggerLimit}, everyScope, nil, nil}}
 }
 
 // openPostgreSQLStore is the kind's constructor. It opens a pool for each
@@ -414,6 +418,9 @@ func openPostgreSQLStore(o storeOpening) (_ *pgStore, err error) {
 // refusal by name, and then starts it: the settings its connections hold,
 // the logins, the migrations and the live schema.
 func (k *pgStore) open(owner string, o storeOpening) error {
+	if o.triggerLimit > 0 {
+		k.p.triggerLimit = o.triggerLimit
+	}
 	if err := k.checkSettings(); err != nil {
 		return err
 	}
