@@ -10,8 +10,9 @@ SQLite stays the default. A Runner started without a `store` member, and the com
 starts, keep the sqlite kind exactly as before.
 
 **This kind serves part of the control API.** It holds the routes that make a job and run it, its
-triggers, event and record deliveries, occurrences, a run's retry, the journal and the run chain,
-and refuses every other route with `501 store_route_unsupported`
+triggers, event and record deliveries, occurrences, a run's retry, the installation's input and
+selected profiles, the journal and the run chain, and refuses every other route with
+`501 store_route_unsupported`
 (below). Run one Runner per store:
 several Runners on one store is issue #245.
 
@@ -230,6 +231,8 @@ These routes are served:
 - occurrences, `GET /v1/jobs/{job}/occurrences`, and `POST /v1/occurrences/{occurrence}/cancel` and
   `/reconcile`
 - a run's retry, `POST /v1/runs/{run}/retry`
+- the installation's profiles, `GET` and `POST /v1/input-profiles` and `/v1/selected-profiles`, which
+  take no scope
 
 A trigger another scope holds answers an event credential as an unknown trigger does, `401
 invalid_trigger_token`; every other record another scope holds answers `404`, as one that does not
@@ -237,8 +240,9 @@ exist. The schedule, file and cloud ticks and the dispatch of occurrences into r
 scope, on the worker login.
 
 Every other route of the control API answers `501` with the code `store_route_unsupported`
-before it reads anything: among them input and selected profiles, diagnostics, verification and
-briefs, the execution binding, and the input preparation and background connection routes.
+before it reads anything: a run's diagnostics and verification, the briefs of a job or a run,
+the execution binding, `GET /v1/background-connections`, and the input preparation routes
+(`POST /v1/inputs/next`, `/v1/inputs/preview` and `/v1/selected-inputs/next`).
 
 Also refused with this kind: manual admission (above), and any `store` member other than
 `{"kind":"postgresql","connection":...}`. `jpack-runner store` takes `migrate` and nothing else;

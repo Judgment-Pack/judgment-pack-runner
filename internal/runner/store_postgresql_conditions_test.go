@@ -1125,3 +1125,40 @@ func TestPostgreSQLRetriesARunHeldToItsScope(t *testing.T) {
 		}
 	}
 }
+
+// Section 6 and 7, the installation's profiles: on a Runner on the kind, an
+// input profile and a selected profile are registered held to the none
+// scope, on the request login, which alone may write their rows; a request
+// naming a scope is refused, and a repeated registration changes nothing.
+func TestPostgreSQLRegistersTheInstallationsProfiles(t *testing.T) {
+	s, db, sv, _ := pgScopedRunner(t)
+	call := pgCall(t, sv)
+	_, ordinary, _, _ := v2Fixture(t)
+	selected := selectedProducer(t).profile
+	conversion := map[string]string{"JPack-Conversion-Contract": selectedHeader(selectedContract())}
+	call("POST", "/v1/input-profiles?scope=team-a", ordinary, nil, 400)
+	call("POST", "/v1/input-profiles", ordinary, nil, 201)
+	call("POST", "/v1/input-profiles", ordinary, nil, 200)
+	call("POST", "/v1/retained-column/1/selected-profiles", selected, conversion, 201)
+	call("POST", "/v1/retained-column/1/selected-profiles", selected, conversion, 200)
+	var listed []struct {
+		Profile InputProfile `json:"profile"`
+	}
+	must(t, json.Unmarshal(call("GET", "/v1/input-profiles", nil, nil, 200), &listed))
+	found := false
+	for _, p := range listed {
+		found = found || p.Profile.ID == ordinary.ID
+	}
+	if !found {
+		t.Fatal("the registered profile is not listed:", listed)
+	}
+	call("GET", "/v1/retained-column/1/selected-profiles", nil, conversion, 200)
+	suite := s.pool(t, pgRoleSuite, db)
+	for key, id := range map[string]string{registeredProfilesKey: ordinary.ID, selectedProfilesKey: selected.ID} {
+		var row string
+		must(t, suite.QueryRowContext(pgContext, "SELECT value FROM metadata WHERE key=$1", key).Scan(&row))
+		if !strings.Contains(row, `"id":"`+id+`"`) {
+			t.Fatalf("the %s row does not hold %s: %s", key, id, row)
+		}
+	}
+}

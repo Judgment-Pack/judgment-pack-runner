@@ -336,6 +336,12 @@ var heldRoutes = map[string]bool{
 	"POST /v1/occurrences/{occurrence}/cancel":            true,
 	"POST /v1/occurrences/{occurrence}/reconcile":         true,
 	"POST /v1/runs/{run}/retry":                           true,
+	// The installation's input and selected profiles, held to the none
+	// scope: their rows carry none, and the listings read no row.
+	"GET /v1/input-profiles":     true,
+	"POST /v1/input-profiles":    true,
+	"GET /v1/selected-profiles":  true,
+	"POST /v1/selected-profiles": true,
 	// The journal and the chain of runs.
 	"GET /v1/events":            true,
 	"GET /v1/jobs/{job}/events": true,

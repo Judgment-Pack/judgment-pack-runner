@@ -484,7 +484,10 @@ and a trigger's `POST /v1/triggers/{trigger}/state` and `/rotate-key`; deliverie
 `POST /v1/triggers/{trigger}/events` and `/deliveries`, and their reads,
 `GET /v1/triggers/{trigger}/occurrences/{occurrence}` and `/deliveries/{event}`; a job's occurrences,
 `GET /v1/jobs/{job}/occurrences`, and `POST /v1/occurrences/{occurrence}/cancel` and `/reconcile`;
-and `POST /v1/runs/{run}/retry` (`heldRoutes`). A trigger the view does not hold answers an event
+`POST /v1/runs/{run}/retry`; and the installation's profiles, `GET` and `POST /v1/input-profiles`
+and `/v1/selected-profiles`, whose rows a registration writes held to none on any kind, on the
+request login, which alone may write them (section 7), and whose listings read no row
+(`heldRoutes`). A trigger the view does not hold answers an event
 credential as an unknown trigger does, `401 invalid_trigger_token`, and a delivery's refusal is
 journaled only for a trigger the view holds. The ticks, the dispatch of occurrences into runs and
 preparation are the store's own, on the worker login, as the work for every scope above says; the
@@ -725,6 +728,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLHoldsTriggersToTheirScope` (section 6, D9) | Built in the fifth slice: another scope neither lists, reads nor changes a scope's trigger, naming its id in the path or through a job of its own, and the trigger is as it was; the scope's own configuration, preview, resumption and key rotation are served and journaled in its scope; a binding another scope holds is refused by the index, `422 cloud_binding_used`, as the Runner's own read refuses it in one scope; the installation's count refuses a trigger in any scope at the limit, `422 trigger_limit`, and a refused trigger leaves the count as it was. |
 | `TestPostgreSQLHoldsOccurrencesToTheirScope` (section 6, D9) | Built in the fifth slice: another scope, or a request naming none, neither delivers to a scope's trigger, reads an occurrence's result, delivers or reads a record, lists its job's occurrences, nor cancels or reconciles one: the trigger answers `401 invalid_trigger_token`, as an unknown one, the rest `404`; the scope's own requests are served; the tick, on the worker login, admits a schedule's occurrence in its job's scope and dispatches each scope's occurrence into a run of that scope, which another scope does not read; past the installation's pending count, an event is refused `429 queue_full` and a schedule's occurrence skipped. |
 | `TestPostgreSQLRetriesARunHeldToItsScope` (section 6, D11) | Built in the fifth slice: another scope, or a request naming none, does not retry a scope's interrupted run; the scope's retry is refused while the attempt's directory is missing, `409 run_not_retryable`, and queued once the directory holds no trail; the entry is not in another scope's journal. |
+| `TestPostgreSQLRegistersTheInstallationsProfiles` (sections 6 and 7) | Built in the fifth slice: an input profile and a selected profile are registered through their routes, their rows written on the request login held to none; a request naming a scope is refused `400`; a repeated registration answers `200`. |
 | `TestPostgreSQLMigratesAStoreAtTheGrantsForward` (c) | Built in the fifth slice: a store migrated to `0002`, as the previous release left it, is refused at the start; a run naming other logins applies nothing; the migration applies the later files alone, leaves the catalog a store migrated at once has, records the logins on the later file's row, and applies nothing on a second run. |
 | `TestPostgreSQLResolvesABuiltinBeforeTheSchema` | Built: with `now()`, `statement_timestamp()` and `set_config` made in the schema, by the owner, to fail, a claim, a renewal, a finish and a read held to a scope still call the built-ins; no relation of the schema has a name the catalog holds. |
 | `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLStartRefusesAConnectionWithoutItsSettings`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLADispatcherBehindAHeldLockGoesOn`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; a start over a pool whose connection was opened without the search path or one of the bounds is refused, naming it and the login; with another connection holding `journal_head`'s lock, a write is refused within the lock bound; a renewal is tried again, keeps the claim when the lock is let go before its deadline, and is refused at its deadline, its wait on the server ended, the claim reported lost; a dispatcher's end of a run in the queue, its tick for lapsed leases and its claim make nothing and its loop goes on, its finish lands once the lock is let go, the run completed and not interrupted, and the Runner stays healthy; a transaction left idle is ended by the server and the writer behind it goes on. |
@@ -778,8 +782,9 @@ leave SQLite's statements and rows as they are; the kind is written only after t
    a run's retry, with `counts.pending-occurrences` and `occurrence_keys`. These routes needed no
    policy and no grant beyond `0002_grants.sql`: the request login already writes `triggers`,
    `trigger_revisions`, `occurrences`, `occurrence_keys`, `runs` and `counts`, and the ticks, the
-   dispatch and preparation, on the worker login, write only what `0002` grants it. Left: input and
-   selected profiles, diagnostics, verification, briefs and the input preparation routes; one
+   dispatch and preparation, on the worker login, write only what `0002` grants it; and the input
+   and selected profiles, written held to none. Left: diagnostics, verification, briefs, the
+   execution binding (D4), `GET /v1/background-connections` and the input preparation routes; one
    occurrence's lease across several Runners is #245.)
 
 SQLite's bytes and schema are not changed by any of it: the claim's columns and the tables of

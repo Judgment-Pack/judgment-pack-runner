@@ -67,6 +67,11 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 	occurrence, _, err := w.s.event(deliveries.ID, token, delivery("first"))
 	must(t, err)
 	tokenOf := map[string]string{"X-Trigger-Token": token}
+	// An installation input profile, and a selected one, each served
+	// through its conversion's path.
+	_, ordinary, _, _ := v2Fixture(t)
+	selected := selectedProducer(t).profile
+	conversion := map[string]string{"JPack-Conversion-Contract": selectedHeader(selectedContract())}
 	base := w.s.store
 	o := &onlyThroughHeld{base: base}
 	w.s.store = o
@@ -126,6 +131,14 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 		{"POST", "/v1/runs/" + queued.ID + "/retry", `{"attempt":0}`, nil, 409},
 		{"POST", "/v1/runs/" + queued.ID + "/retry", `{}`, nil, 400},
 		{"POST", "/v1/runs/" + queued.ID + "/retry?scope=other", `{"attempt":0}`, nil, 404},
+		// The installation's profiles, held to none.
+		{"POST", "/v1/input-profiles", string(encode(ordinary)), nil, 201},
+		{"POST", "/v1/input-profiles", string(encode(ordinary)), nil, 200},
+		{"POST", "/v1/input-profiles?scope=other", string(encode(ordinary)), nil, 400},
+		{"GET", "/v1/input-profiles", "", nil, 200},
+		{"POST", "/v1/retained-column/1/selected-profiles", string(encode(selected)), conversion, 201},
+		{"POST", "/v1/retained-column/1/selected-profiles", string(encode(selected)), conversion, 200},
+		{"GET", "/v1/retained-column/1/selected-profiles", "", conversion, 200},
 		// The journal and the chain.
 		{"GET", "/v1/jobs/" + w.job.ID + "/events", "", nil, 200},
 		{"GET", "/v1/jobs/" + w.job.ID + "/events?tail=true", "", nil, 200},
@@ -167,7 +180,7 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 		t.Error("the journal naming a job and no scope is not held to none:", every, o.held)
 	}
 	// Every other route is refused before it reads anything.
-	for _, route := range []string{"GET /v1/runs/" + queued.ID + "/diagnostics", "GET /v1/runs/" + queued.ID + "/verification", "GET /v1/jobs/" + w.job.ID + "/briefs", "GET /v1/input-profiles"} {
+	for _, route := range []string{"GET /v1/runs/" + queued.ID + "/diagnostics", "GET /v1/runs/" + queued.ID + "/verification", "GET /v1/jobs/" + w.job.ID + "/briefs", "GET /v1/background-connections", "POST /v1/inputs/next"} {
 		method, path, _ := strings.Cut(route, " ")
 		got, every := throughHeld(t, w, method, path, "", nil)
 		if every || got.code != http.StatusNotImplemented || !strings.Contains(got.body, "store_route_unsupported") {
