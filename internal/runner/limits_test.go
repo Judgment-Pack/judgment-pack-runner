@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -220,6 +221,45 @@ func TestASharedTickLetsARequestInBetweenItsTriggers(t *testing.T) {
 	}
 	for i, tr := range due {
 		if got := len(w.occurrencesOf(tr.ID)); got != map[bool]int{true: 0, false: 1}[i == n-1] {
+			t.Fatalf("trigger %d admitted %d occurrences", i, got)
+		}
+	}
+}
+
+// Section 5: two calls for one tick at the same time on one Runner share
+// the triggers due: each trigger admits one occurrence, and the two answers'
+// counts add up to the triggers due.
+func TestTwoCallsForOneTickAtOnceAdmitEachTriggerOnce(t *testing.T) {
+	w := newTickWorld(t, ScheduleSettings{SharedIntervals: []string{"15m"}})
+	tick := w.at(time.Now()).UTC().Truncate(15 * time.Minute)
+	const n = 16
+	var due []Trigger
+	for range n {
+		due = append(due, w.trigger("", sharedSchedule("15m", ""), true, tick))
+	}
+	start := make(chan struct{})
+	answers := make([]*httptest.ResponseRecorder, 2)
+	var calls sync.WaitGroup
+	for i := range answers {
+		calls.Add(1)
+		go func() {
+			defer calls.Done()
+			<-start
+			answers[i] = w.tick("15m", ticked(tick))
+		}()
+	}
+	close(start)
+	calls.Wait()
+	doc := readOpenAPI(t)
+	total := 0
+	for _, got := range answers {
+		total += tickResult(t, doc, got).Occurrences
+	}
+	if total != n {
+		t.Fatalf("the two calls answered %d occurrences in all, want %d", total, n)
+	}
+	for i, tr := range due {
+		if got := len(w.occurrencesOf(tr.ID)); got != 1 {
 			t.Fatalf("trigger %d admitted %d occurrences", i, got)
 		}
 	}
