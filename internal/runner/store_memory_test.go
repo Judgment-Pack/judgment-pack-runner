@@ -159,13 +159,14 @@ func (r memoryReads) admits(op string, record []byte) error {
 }
 
 // seesEntry is the journal's read policy (section 6): a scope's entries, and
-// the none scope's entries that name no job.
+// the none scope's entries that name no job, but for its refusals, which only
+// a read held to the none scope sees.
 func (r memoryReads) seesEntry(row journalRow) bool {
 	if r.scope.every {
 		return true
 	}
 	scope, _, err := memberText([]byte(row.detail), "scope")
-	return err == nil && (scope == r.scope.id || scope == "" && row.job == "")
+	return err == nil && (scope == r.scope.id || scope == "" && row.job == "" && row.kind != "admission.refused")
 }
 
 // subjectRecord is the record a brief's subject names (job:<id>, run:<id>),

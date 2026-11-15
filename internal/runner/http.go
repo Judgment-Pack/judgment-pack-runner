@@ -502,7 +502,10 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string)
 // begun aborts it, so a reader sees a failed transfer, never a shorter chain.
 func (s *Service) runChainHandler(w http.ResponseWriter, r *http.Request) {
 	const page = 1000
-	lines, last, err := s.chainPage(0, page)
+	// The chain is unscoped (docs/design/store-postgresql.md, D10): it is read
+	// through the store the request is held to, whose policy admits every line.
+	st := s.storeFor(r.Context())
+	lines, last, err := st.chainPage(0, page)
 	if err != nil {
 		failure(w, err)
 		return
@@ -521,7 +524,7 @@ func (s *Service) runChainHandler(w http.ResponseWriter, r *http.Request) {
 		if len(lines) < page {
 			return
 		}
-		if lines, last, err = s.chainPage(last, page); err != nil {
+		if lines, last, err = st.chainPage(last, page); err != nil {
 			panic(http.ErrAbortHandler)
 		}
 	}

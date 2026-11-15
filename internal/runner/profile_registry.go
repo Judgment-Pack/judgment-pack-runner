@@ -226,7 +226,10 @@ func (s *Service) registerInputProfile(p InputProfile) (bool, error) {
 	}
 	// One atomic, synchronous write precedes making the profile visible.
 	// A retry after an uncertain response can only observe this same definition.
-	if err := s.store.update(func(tx runTx) error { return tx.putProfileRow(registeredProfilesKey, row) }); err != nil {
+	// The row is the installation's, held to the none scope on any kind
+	// (docs/design/store-postgresql.md, section 7): on the postgresql kind the
+	// request login writes it, as no other login may.
+	if err := s.store.heldTo(scopeHeld("")).update(func(tx runTx) error { return tx.putProfileRow(registeredProfilesKey, row) }); err != nil {
 		return false, err
 	}
 	s.storedProfiles = stored

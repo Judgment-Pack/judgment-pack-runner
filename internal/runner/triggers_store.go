@@ -13,21 +13,32 @@ func (s *Service) writeTrigger(t Trigger, hash string, history bool) error {
 	return s.store.update(func(tx runTx) error { return tx.putTrigger(t, hash, history) })
 }
 func (s *Service) configureTrigger(jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
-	return s.configureTriggerBy(requester{}, jobID, triggerID, revision, c)
+	return s.configureTriggerBy(s.store, requester{}, jobID, triggerID, revision, c)
 }
 
-// configureTriggerBy is configureTrigger, requested by by.
-func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
+// errCloudBindingUsed is the refusal of a cloud binding another trigger
+// holds.
+func errCloudBindingUsed() error {
+	return bad("cloud_binding_used", "This scheduler job is already bound to a trigger.")
+}
+
+// configureTriggerBy is configureTrigger, requested by by, its records read
+// and written in st, the store the request is held to (storeFor). The
+// trigger limit and the cloud binding are rules of the installation (D9):
+// on a kind that holds scopes, st's reads count the scope's triggers alone,
+// and the limit's row and the binding's index, which no policy narrows,
+// refuse the write, answered as the reads before it are.
+func (s *Service) configureTriggerBy(st runStore, by requester, jobID, triggerID string, revision int, c TriggerConfig) (Trigger, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	job, e := s.job(jobID)
+	job, e := st.job(jobID)
 	if e != nil {
 		return Trigger{}, e
 	}
-	release, e := s.release(job.ReleaseID)
+	release, e := st.release(job.ReleaseID)
 	if e != nil {
 		return Trigger{}, e
 	}
@@ -38,7 +49,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 	hash := ""
 	previous := 0
 	if triggerID != "" {
-		t, hash, e = s.trigger(triggerID)
+		t, hash, e = st.trigger(triggerID)
 		if e != nil {
 			return t, e
 		}
@@ -54,7 +65,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		previous = t.Revision
 		t.Revision++
 	} else {
-		count, e := s.store.triggerCount()
+		count, e := st.triggerCount()
 		if e != nil {
 			return t, e
 		}
@@ -64,12 +75,12 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		t = Trigger{ID: id("trg_"), JobID: jobID, Revision: 1, Authority: "local", CreatedAt: now(), Scope: job.Scope}
 	}
 	if c.Cloud != nil {
-		other, e := s.store.cloudBindings(t.ID, c.Cloud.Connection, c.Cloud.Job)
+		other, e := st.cloudBindings(t.ID, c.Cloud.Connection, c.Cloud.Job)
 		if e != nil {
 			return t, e
 		}
 		if other > 0 {
-			return t, bad("cloud_binding_used", "This scheduler job is already bound to a trigger.")
+			return t, errCloudBindingUsed()
 		}
 		t.Authority = "google-cloud"
 	}
@@ -80,7 +91,7 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 	t.Problem = ""
 	t.pending = ""
 	t.pendingAt = ""
-	return t, s.store.update(func(tx runTx) (err error) {
+	e = st.update(func(tx runTx) (err error) {
 		from := ""
 		if triggerID == "" {
 			if err = tx.createTrigger(t); err != nil {
@@ -95,19 +106,25 @@ func (s *Service) configureTriggerBy(by requester, jobID, triggerID string, revi
 		_, err = tx.appendJournal(change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}})
 		return err
 	})
+	if c.Cloud != nil && takenKey(e) == keyCloudBinding {
+		// Another scope's trigger holds the binding (D9).
+		return t, errCloudBindingUsed()
+	}
+	return t, e
 }
 func (s *Service) setTriggerState(triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
-	return s.setTriggerStateBy(requester{}, triggerID, revision, paused, reviewed)
+	return s.setTriggerStateBy(s.store, requester{}, triggerID, revision, paused, reviewed)
 }
 
-// setTriggerStateBy is setTriggerState, requested by by.
-func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
+// setTriggerStateBy is setTriggerState, requested by by, its records read
+// and written in st, the store the request is held to (storeFor).
+func (s *Service) setTriggerStateBy(st runStore, by requester, triggerID string, revision int, paused, reviewed bool) (Trigger, string, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, "", manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	t, hash, e := s.trigger(triggerID)
+	t, hash, e := st.trigger(triggerID)
 	if e != nil {
 		return t, "", e
 	}
@@ -122,11 +139,11 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 	}
 	secret := ""
 	if !paused {
-		job, e := s.job(t.JobID)
+		job, e := st.job(t.JobID)
 		if e != nil {
 			return t, "", e
 		}
-		release, e := s.release(job.ReleaseID)
+		release, e := st.release(job.ReleaseID)
 		if e != nil {
 			return t, "", e
 		}
@@ -174,7 +191,7 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 	} else {
 		t.NextAt = ""
 	}
-	job, e := s.job(t.JobID)
+	job, e := st.job(t.JobID)
 	if e != nil {
 		return t, "", e
 	}
@@ -193,14 +210,19 @@ func (s *Service) setTriggerStateBy(by requester, triggerID string, revision int
 		kind = "trigger.resumed"
 		detail.NextAt = t.NextAt
 	}
-	e = s.writeTriggerChange(t, hash, change{kind: kind, by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: triggerState(t.Paused), detail: detail})
+	e = writeTriggerChangeIn(st, t, hash, change{kind: kind, by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: triggerState(t.Paused), detail: detail})
 	return t, secret, e
 }
 
 // writeTriggerChange writes a trigger's new revision, its snapshot and the
 // change's entry in one transaction.
 func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
-	return s.store.update(func(tx runTx) (err error) {
+	return writeTriggerChangeIn(s.store, t, hash, c)
+}
+
+// writeTriggerChangeIn is writeTriggerChange, in st.
+func writeTriggerChangeIn(st runStore, t Trigger, hash string, c change) error {
+	return st.update(func(tx runTx) (err error) {
 		entry := c
 		if entry.from, err = triggerBefore(tx, t.ID, t.Revision-1); err != nil {
 			return err
@@ -213,17 +235,18 @@ func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
 	})
 }
 func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, string, error) {
-	return s.rotateTriggerKeyBy(requester{}, triggerID, revision)
+	return s.rotateTriggerKeyBy(s.store, requester{}, triggerID, revision)
 }
 
-// rotateTriggerKeyBy is rotateTriggerKey, requested by by.
-func (s *Service) rotateTriggerKeyBy(by requester, triggerID string, revision int) (Trigger, string, error) {
+// rotateTriggerKeyBy is rotateTriggerKey, requested by by, its records read
+// and written in st, the store the request is held to (storeFor).
+func (s *Service) rotateTriggerKeyBy(st runStore, by requester, triggerID string, revision int) (Trigger, string, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Trigger{}, "", manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	t, _, e := s.trigger(triggerID)
+	t, _, e := st.trigger(triggerID)
 	if e != nil {
 		return t, "", e
 	}
@@ -237,7 +260,7 @@ func (s *Service) rotateTriggerKeyBy(by requester, triggerID string, revision in
 	if _, e = rand.Read(key[:]); e != nil {
 		return t, "", e
 	}
-	job, e := s.job(t.JobID)
+	job, e := st.job(t.JobID)
 	if e != nil {
 		return t, "", e
 	}
@@ -248,16 +271,22 @@ func (s *Service) rotateTriggerKeyBy(by requester, triggerID string, revision in
 	issued := t.Revision
 	t.keyRevision = &issued
 	state := triggerState(t.Paused)
-	e = s.writeTriggerChange(t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(t.Revision - 1)}})
+	e = writeTriggerChangeIn(st, t, digest([]byte(secret)), change{kind: "trigger.key-rotated", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: state, to: state, detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(t.Revision - 1)}})
 	return t, secret, e
 }
 func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
+	return s.eventIn(s.store, triggerID, token, event)
+}
+
+// eventIn is event, its records read and written in st, the store the
+// request is held to (storeFor).
+func (s *Service) eventIn(st runStore, triggerID, token string, event EventDelivery) (Occurrence, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Occurrence{}, false, manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	t, hash, e := s.trigger(triggerID)
+	t, hash, e := st.trigger(triggerID)
 	if e != nil {
 		return Occurrence{}, false, &apiError{401, "invalid_trigger_token", "The event credential is invalid."}
 	}
@@ -267,45 +296,44 @@ func (s *Service) event(triggerID, token string, event EventDelivery) (Occurrenc
 	// The credential is authenticated: a refusal from here on is its own,
 	// named by the revision its key was issued at, whatever happens to the
 	// key before the refusal is recorded.
-	o, replay, e := s.admitEvent(t, hash, event)
+	o, replay, e := s.admitBoundEvent(st, t, hash, event, "", requester{})
 	if e != nil {
 		e = &credentialRefusal{err: e, by: credentialActor(t.ID, t.keyRevision)}
 	}
 	return o, replay, e
 }
 
-func (s *Service) admitEvent(t Trigger, hash string, event EventDelivery) (Occurrence, bool, error) {
-	return s.admitBoundEvent(t, hash, event, "", requester{})
-}
-
 // deliverRecord is called only by the authenticated local control API. The caller
 // persists the complete envelope before delivery; old timestamps are allowed, but
 // source freshness and queue expiry still apply at admission/execution.
 func (s *Service) deliverRecord(triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
-	return s.deliverRecordBy(requester{}, triggerID, releaseID, event)
+	return s.deliverRecordBy(s.store, requester{}, triggerID, releaseID, event)
 }
 
 // deliverRecordBy is deliverRecord, for a delivery by: the occurrence it
-// admits is published by by.
-func (s *Service) deliverRecordBy(by requester, triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
+// admits is published by by. Its records are read and written in st, the
+// store the request is held to (storeFor).
+func (s *Service) deliverRecordBy(st runStore, by requester, triggerID, releaseID string, event EventDelivery) (Occurrence, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Occurrence{}, false, manualUnsupported()
 	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	t, _, e := s.trigger(triggerID)
+	t, _, e := st.trigger(triggerID)
 	if e != nil {
 		return Occurrence{}, false, e
 	}
 	if releaseID == "" {
 		return Occurrence{}, false, bad("release_required", "Bind this delivery to its reviewed release.")
 	}
-	return s.admitBoundEvent(t, "", event, releaseID, by)
+	return s.admitBoundEvent(st, t, "", event, releaseID, by)
 }
 
-// admitBoundEvent admits an event delivery: one bound to expectedRelease, a
-// record delivery, is published by by.
-func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, expectedRelease string, by requester) (Occurrence, bool, error) {
+// admitBoundEvent admits an event delivery in st: one bound to
+// expectedRelease, a record delivery, is published by by. The queue's limit
+// is the installation's (D9): the pending occurrences are counted for every
+// scope, in any view.
+func (s *Service) admitBoundEvent(st runStore, t Trigger, hash string, event EventDelivery, expectedRelease string, by requester) (Occurrence, bool, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Occurrence{}, false, manualUnsupported()
 	}
@@ -325,7 +353,7 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 		return Occurrence{}, false, e
 	}
 	payload := digest(raw)
-	old, held, e := s.findOccurrence(t.ID, "event:"+event.ID)
+	old, held, e := st.identifiedOccurrence(t.ID, "event:"+event.ID)
 	if e == nil {
 		if held != payload {
 			return old, false, &apiError{409, "event_conflict", "This event ID was already received with a different payload."}
@@ -349,14 +377,14 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 	if event.Input.Preparation != nil {
 		return old, false, bad("invalid_event", "Supply original inputs, not caller-computed preparation.")
 	}
-	job, e := s.job(t.JobID)
+	job, e := st.job(t.JobID)
 	if e != nil {
 		return old, false, e
 	}
 	if expectedRelease != "" && job.ReleaseID != expectedRelease {
 		return old, false, &apiError{409, "release_changed", "The job no longer uses the reviewed release."}
 	}
-	release, e := s.release(job.ReleaseID)
+	release, e := st.release(job.ReleaseID)
 	if e != nil {
 		return old, false, e
 	}
@@ -376,7 +404,7 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 		publisher = &actor
 	}
 	var admitted Occurrence
-	e = s.store.update(func(tx runTx) error {
+	e = st.update(func(tx runTx) error {
 		a, err := s.admitOccurrenceAs(tx, t, o, "event:"+event.ID, payload, publisher)
 		if err != nil {
 			return err
@@ -418,13 +446,15 @@ func (s *Service) admitBoundEvent(t Trigger, hash string, event EventDelivery, e
 // token must be its trigger's current credential and the one that created the
 // occurrence; knowing an occurrence ID is not enough. Every other case gets one
 // refusal, which does not say whether the occurrence exists.
-func (s *Service) eventResult(triggerID, occurrenceID, token string) (map[string]any, error) {
-	_, hash, e := s.trigger(triggerID)
+//
+// Its records are read in st, the store the request is held to (storeFor).
+func (s *Service) eventResult(st runStore, triggerID, occurrenceID, token string) (map[string]any, error) {
+	_, hash, e := st.trigger(triggerID)
 	if e != nil || len(token) != 64 || hash == "" || subtle.ConstantTimeCompare([]byte(digest([]byte(token))), []byte(hash)) != 1 {
 		return nil, &apiError{401, "invalid_trigger_token", "The event credential is invalid."}
 	}
 	// One statement, so a rotation after the check above still refuses.
-	o, e := s.store.keyedOccurrence(occurrenceID, triggerID, hash)
+	o, e := st.keyedOccurrence(occurrenceID, triggerID, hash)
 	if absent(e) {
 		return nil, &apiError{404, "occurrence_not_found", "No occurrence with this ID was created with this credential."}
 	}
@@ -435,7 +465,7 @@ func (s *Service) eventResult(triggerID, occurrenceID, token string) (map[string
 	if o.RunID == "" {
 		return answer, nil
 	}
-	run, e := s.run(o.RunID)
+	run, e := st.run(o.RunID)
 	if e != nil {
 		return nil, e
 	}

@@ -141,10 +141,11 @@ func TestPostgreSQLHoldsATransactionToItsScope(t *testing.T) {
 				must(t, tx.QueryRowContext(pgContext, "SELECT count(*) FROM "+table+" WHERE scope<>$1", scope).Scan(&other))
 			})
 			// The journal also shows a request the none scope's entries that
-			// name no job: the Runner's own (section 6).
+			// name no job: the Runner's own and previews, not refusals
+			// (section 6).
 			if table == "events" {
 				var shared int
-				must(t, suite.QueryRowContext(pgContext, "SELECT count(*) FROM events WHERE scope='' AND job_id=''").Scan(&shared))
+				must(t, suite.QueryRowContext(pgContext, "SELECT count(*) FROM events WHERE scope='' AND job_id='' AND kind<>'admission.refused'").Scan(&shared))
 				want += shared
 				other -= shared
 			}
@@ -299,6 +300,62 @@ func TestPostgreSQLRolesHoldOnlyWhatTheyNeed(t *testing.T) {
 	must(t, k.checkLogins(s.role(pgRoleOwner)))
 }
 
+// Section 7: each run-time login holds on each of the store's tables the
+// privileges the section's table names and no other, so the work for every
+// scope, on the worker login, holds no more than the ticks, the dispatch and
+// preparation write; a table the section does not name is held by neither.
+func TestPostgreSQLLoginsHoldOnlyTheirTablesPrivileges(t *testing.T) {
+	s, db, _, _ := pgConditionWorld(t)
+	held := map[string]map[string]string{
+		pgRoleRequest: {
+			"releases": "SELECT INSERT", "metadata": "SELECT INSERT UPDATE",
+			"jobs": "SELECT INSERT UPDATE", "triggers": "SELECT INSERT UPDATE", "occurrences": "SELECT INSERT UPDATE",
+			"runs": "SELECT INSERT UPDATE", "briefs": "SELECT INSERT UPDATE",
+			"job_creations": "SELECT INSERT", "job_revisions": "SELECT INSERT", "trigger_revisions": "INSERT",
+			"occurrence_keys": "SELECT INSERT", "events": "SELECT INSERT", "run_chain": "SELECT",
+			"journal_head": "SELECT UPDATE", "counts": "SELECT UPDATE",
+			"pack_identities": "SELECT INSERT", "dialect_identities": "SELECT INSERT", "schema_migrations": "SELECT",
+		},
+		pgRoleWorker: {
+			"releases": "SELECT", "metadata": "SELECT INSERT",
+			"jobs": "SELECT", "triggers": "SELECT UPDATE", "occurrences": "SELECT INSERT UPDATE",
+			"runs": "SELECT INSERT UPDATE", "job_creations": "SELECT", "job_revisions": "SELECT",
+			"events": "SELECT INSERT", "run_chain": "SELECT INSERT", "journal_head": "SELECT UPDATE",
+			"chain_head": "SELECT UPDATE", "counts": "SELECT UPDATE",
+			"pack_identities": "SELECT", "dialect_identities": "SELECT", "schema_migrations": "SELECT",
+		},
+	}
+	suite := s.pool(t, pgRoleSuite, db)
+	rows, err := suite.QueryContext(pgContext, "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p') ORDER BY c.relname", postgresqlSchema)
+	must(t, err)
+	var tables []string
+	for rows.Next() {
+		var name string
+		must(t, rows.Scan(&name))
+		tables = append(tables, name)
+	}
+	must(t, rows.Err())
+	rows.Close()
+	if len(tables) == 0 {
+		t.Fatal("the store holds no table")
+	}
+	for login, want := range held {
+		for _, table := range tables {
+			var privileges []string
+			for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+				var has bool
+				must(t, suite.QueryRowContext(pgContext, "SELECT has_table_privilege($1, $2, $3)", s.role(login), postgresqlSchema+"."+table, privilege).Scan(&has))
+				if has {
+					privileges = append(privileges, privilege)
+				}
+			}
+			if got := strings.Join(privileges, " "); got != want[table] {
+				t.Errorf("the %s login holds %q on %s, want %q", login, got, table, want[table])
+			}
+		}
+	}
+}
+
 // pgFreshDatabase is an empty database of the test's own, in which the owner
 // may make its schema.
 func pgFreshDatabase(t *testing.T, s *pgTestServer) string {
@@ -340,8 +397,14 @@ func TestPostgreSQLMigrationIsIdempotent(t *testing.T) {
 		return n
 	}
 	roles, settings := count("SELECT count(*) FROM pg_roles"), count("SELECT count(*) FROM pg_db_role_setting")
+	set, err := postgresqlMigrations()
+	must(t, err)
+	var shipped []string
+	for _, f := range set {
+		shipped = append(shipped, f.version)
+	}
 	applied, err := MigratePostgreSQL(migration)
-	if err != nil || !slices.Equal(applied, []string{"0001", "0002"}) {
+	if err != nil || !slices.Equal(applied, shipped) {
 		t.Fatal("the first run did not apply the set:", applied, err)
 	}
 	if count("SELECT count(*) FROM pg_roles") != roles || count("SELECT count(*) FROM pg_db_role_setting") != settings {
@@ -387,6 +450,74 @@ func TestPostgreSQLMigrationIsIdempotent(t *testing.T) {
 	must(t, s.pool(t, pgRoleSuite, foreign).QueryRowContext(pgContext, "SELECT to_regnamespace('jpack_runner') IS NOT NULL").Scan(&made))
 	if made {
 		t.Fatal("the refused migration made the kind's schema")
+	}
+}
+
+// c and d. A store an earlier release left, migrated to the grants file
+// (0002), is refused at the start until it is migrated; the migration then
+// applies the files after it and nothing else, leaves the catalog a store
+// migrated at once has, and applies nothing on a second run. A run naming
+// other logins than the grants file recorded applies nothing.
+func TestPostgreSQLMigratesAStoreAtTheGrantsForward(t *testing.T) {
+	s := pgServer(t)
+	set, err := postgresqlMigrations()
+	must(t, err)
+	grants := slices.IndexFunc(set, func(f pgMigration) bool { return f.version == pgGrantsVersion })
+	if grants < 0 || grants == len(set)-1 {
+		t.Fatal("the set holds no file after the grants file:", len(set))
+	}
+	var later []string
+	for _, f := range set[grants+1:] {
+		later = append(later, f.version)
+	}
+	suite := func(db string) {
+		must(t, s.asOwner(db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(pgContext, "GRANT USAGE ON SCHEMA jpack_runner TO "+s.role(pgRoleSuite)+"; GRANT SELECT ON jpack_runner.schema_migrations TO "+s.role(pgRoleSuite)+"; CREATE POLICY suite_rows ON jpack_runner.schema_migrations TO "+s.role(pgRoleSuite)+" USING (true)")
+			return err
+		}))
+	}
+	at := func(db string) PostgreSQLMigration {
+		return PostgreSQLMigration{Connection: s.url(pgRoleMigration, db), Owner: s.role(pgRoleOwner), Request: s.role(pgRoleRequest), Worker: s.role(pgRoleWorker)}
+	}
+	once := pgFreshDatabase(t, s)
+	if _, err = MigratePostgreSQL(at(once)); err != nil {
+		t.Fatal(err)
+	}
+	suite(once)
+	db := pgFreshDatabase(t, s)
+	migration := at(db)
+	if applied, err := migratePostgreSQL(migration, set[:grants+1]); err != nil || len(applied) != grants+1 {
+		t.Fatal("the store an earlier release left was not made:", applied, err)
+	}
+	k := newPostgreSQLStore(s.pool(t, pgRoleRequest, db), s.pool(t, pgRoleWorker, db))
+	if err := k.checkMigrations(); err == nil || !strings.Contains(err.Error(), "run jpack-runner store migrate") {
+		t.Fatal("a store an earlier release left was not refused at the start:", err)
+	}
+	other := migration
+	other.Worker = s.role(pgRoleSuite)
+	if applied, err := MigratePostgreSQL(other); err == nil || len(applied) != 0 || !strings.Contains(err.Error(), "replacing a login is not a migration") {
+		t.Fatal("a run naming another login was not refused before the later files:", applied, err)
+	}
+	applied, err := MigratePostgreSQL(migration)
+	if err != nil || !slices.Equal(applied, later) {
+		t.Fatal("the migration did not apply the files after the grants file:", applied, err)
+	}
+	must(t, k.checkMigrations())
+	suite(db)
+	if forward, whole := pgCatalog(t, s, db), pgCatalog(t, s, once); forward != whole {
+		t.Fatalf("the store migrated forward is not the store migrated at once:\n%s\n---\n%s", forward, whole)
+	}
+	before := pgCatalog(t, s, db)
+	if applied, err = MigratePostgreSQL(migration); err != nil || len(applied) != 0 {
+		t.Fatal("a second run applied", applied, err)
+	}
+	if after := pgCatalog(t, s, db); after != before {
+		t.Fatalf("a second run changed the catalog:\n%s\n---\n%s", before, after)
+	}
+	var request, worker string
+	must(t, s.pool(t, pgRoleSuite, db).QueryRowContext(pgContext, "SELECT request_login, worker_login FROM jpack_runner.schema_migrations WHERE version=$1", later[0]).Scan(&request, &worker))
+	if request != s.role(pgRoleRequest) || worker != s.role(pgRoleWorker) {
+		t.Fatal("the later file's row does not record the logins:", request, worker)
 	}
 }
 
@@ -672,7 +803,452 @@ func TestPostgreSQLServesARunThroughItsHeldRoutes(t *testing.T) {
 	if got.Code != 200 || !strings.Contains(got.Body.String(), `"state":"completed"`) {
 		t.Fatal(got.Code, got.Body.String())
 	}
-	if refused := serve(t, sv, "GET", "/v1/events", "", nil); refused.Code != 501 || !strings.Contains(refused.Body.String(), "store_route_unsupported") {
+	if refused := serve(t, sv, "GET", "/v1/runs/"+queued.ID+"/diagnostics?scope=team-a", "", nil); refused.Code != 501 || !strings.Contains(refused.Body.String(), "store_route_unsupported") {
 		t.Fatal("a route not held was served:", refused.Code, refused.Body.String())
+	}
+}
+
+// Section 6, the journal: on a Runner opened on the kind, a scope's job's
+// journal is read held to its scope, and another scope neither reads it nor
+// learns it is there; a listing naming a scope holds that scope's entries
+// alone; a refused creation, journaled under the none scope, shows in no
+// scope's journal but the none scope's and the listing naming none.
+func TestPostgreSQLHoldsTheJournalToItsScope(t *testing.T) {
+	_, _, sv, jobs := pgScopedRunner(t)
+	a, b := jobs["team-a"], jobs["team-b"]
+	// A creation from team-a's release, naming team-b, is refused and
+	// journaled under the none scope.
+	if got := serve(t, sv, "POST", "/v1/jobs", `{"name":"Again","releaseId":"`+a.ReleaseID+`","reviewed":true,"scope":"team-b"}`, nil); got.Code != 409 {
+		t.Fatal(got.Code, got.Body.String())
+	}
+	page := func(path string) (int, []Event) {
+		t.Helper()
+		got := serve(t, sv, "GET", path, "", nil)
+		var p EventPage
+		if got.Code == 200 {
+			must(t, json.Unmarshal(got.Body.Bytes(), &p))
+		}
+		return got.Code, p.Items
+	}
+	refused := func(items []Event) bool {
+		for _, e := range items {
+			if e.Kind == "admission.refused" {
+				return true
+			}
+		}
+		return false
+	}
+	code, items := page("/v1/jobs/" + a.ID + "/events?scope=team-a")
+	if code != 200 || len(items) == 0 || refused(items) {
+		t.Fatal("team-a's job journal:", code, items)
+	}
+	for _, e := range items {
+		if e.Concerns.Job != a.ID && e.Concerns.Job != "" {
+			t.Fatal("team-a's job journal holds an entry of", e.Concerns.Job)
+		}
+	}
+	for _, path := range []string{"/v1/jobs/" + a.ID + "/events?scope=team-b", "/v1/events?job=" + a.ID + "&scope=team-b", "/v1/events?job=" + a.ID, "/v1/jobs/" + a.ID + "/events"} {
+		if code, _ := page(path); code != 404 {
+			t.Errorf("GET %s: %d, want 404", path, code)
+		}
+	}
+	code, items = page("/v1/events?scope=team-b")
+	if code != 200 || len(items) == 0 || refused(items) {
+		t.Fatal("team-b's journal:", code, items)
+	}
+	for _, e := range items {
+		if e.Concerns.Job != b.ID {
+			t.Fatal("team-b's journal holds an entry of", e.Concerns.Job, e.Kind)
+		}
+	}
+	if code, items = page("/v1/events"); code != 200 || !refused(items) {
+		t.Fatal("the journal naming no scope does not hold the refused creation:", code, items)
+	}
+	if got := serve(t, sv, "GET", "/v1/run-chain", "", nil); got.Code != 200 {
+		t.Fatal("the chain:", got.Code, got.Body.String())
+	}
+}
+
+// pgScopedRunner is a Runner opened on the kind, on a database of the test's
+// own, with no dispatcher or automation (journalConfig), holding a job in
+// each of the scopes team-a and team-b, each made through its route.
+func pgScopedRunner(t *testing.T) (*pgTestServer, string, *Service, map[string]Job) {
+	t.Helper()
+	s := pgServer(t)
+	db := s.database(t)
+	cfg := journalConfig(t)
+	connections := s.connections(db)
+	cfg.PostgreSQL = &connections
+	sv := openJournal(t, cfg)
+	t.Cleanup(sv.Close)
+	if !holdsScopes(sv.store) {
+		t.Fatal("the kind opened is not the postgresql kind")
+	}
+	runtime := completingRuntime(t, cfg.Dir)
+	jobs := map[string]Job{}
+	for _, scope := range []string{"team-a", "team-b"} {
+		release := journalRelease(t, sv, runtime)
+		got := serve(t, sv, "POST", "/v1/jobs", `{"name":"Held","releaseId":"`+release.ID+`","reviewed":true,"scope":"`+scope+`"}`, nil)
+		if got.Code != 201 {
+			t.Fatal(got.Code, got.Body.String())
+		}
+		var j Job
+		must(t, json.Unmarshal(got.Body.Bytes(), &j))
+		jobs[scope] = j
+	}
+	return s, db, sv, jobs
+}
+
+// Section 6 and D9, triggers: on a Runner on the kind, another scope neither
+// lists, reads nor changes a scope's trigger, guessing its id through a job
+// of its own or naming it in the path; the scope's own requests change it.
+// The trigger limit and the cloud binding hold across scopes: the binding's
+// index refuses another scope's binding, 422 cloud_binding_used, and the
+// installation's count refuses a trigger past the limit, 422 trigger_limit.
+func TestPostgreSQLHoldsTriggersToTheirScope(t *testing.T) {
+	s, db, sv, jobs := pgScopedRunner(t)
+	a, b := jobs["team-a"], jobs["team-b"]
+	event := TriggerConfig{Name: "Reviewed records", Kind: "event", Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+	call := func(method, path string, body any, want int) []byte {
+		t.Helper()
+		raw := ""
+		if body != nil {
+			raw = string(encode(body))
+		}
+		got := serve(t, sv, method, path, raw, nil)
+		if got.Code != want {
+			t.Fatalf("%s %s: %d %s, want %d", method, path, got.Code, got.Body.String(), want)
+		}
+		return got.Body.Bytes()
+	}
+	var ta Trigger
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+a.ID+"/triggers?scope=team-a", map[string]any{"config": event}, 200), &ta))
+	listed := func(job, scope string) []Trigger {
+		t.Helper()
+		var page struct {
+			Items []Trigger `json:"items"`
+		}
+		must(t, json.Unmarshal(call("GET", "/v1/jobs/"+job+"/triggers?scope="+scope, nil, 200), &page))
+		return page.Items
+	}
+	if got := listed(b.ID, "team-b"); len(got) != 0 {
+		t.Fatal("team-b's job lists another scope's trigger:", got)
+	}
+	pgHeldFrom(t, s, db, "team-b", "triggers")
+	call("GET", "/v1/jobs/"+a.ID+"/triggers?scope=team-b", nil, 404)
+	call("GET", "/v1/jobs/"+a.ID+"/triggers", nil, 404)
+	// Guessing the id: through team-b's own job, or naming it in the path.
+	call("POST", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", map[string]any{"id": ta.ID, "revision": 1, "config": event}, 404)
+	call("POST", "/v1/triggers/"+ta.ID+"/state?scope=team-b", map[string]any{"revision": 1, "paused": false, "reviewed": true}, 404)
+	call("POST", "/v1/triggers/"+ta.ID+"/rotate-key?scope=team-b", map[string]any{"revision": 1}, 404)
+	call("POST", "/v1/triggers/"+ta.ID+"/state", map[string]any{"revision": 1, "paused": false, "reviewed": true}, 404)
+	call("POST", "/v1/jobs/"+b.ID+"/triggers/preview?scope=team-a", event, 404)
+	if got := listed(a.ID, "team-a"); len(got) != 1 || got[0].ID != ta.ID || got[0].Revision != 1 || !got[0].Paused {
+		t.Fatal("another scope's requests changed the trigger:", got)
+	}
+	// The scope's own requests change it, each journaled in the scope.
+	call("POST", "/v1/jobs/"+a.ID+"/triggers/preview?scope=team-a", event, 200)
+	call("POST", "/v1/jobs/"+a.ID+"/triggers?scope=team-a", map[string]any{"id": ta.ID, "revision": 1, "config": event}, 200)
+	call("POST", "/v1/triggers/"+ta.ID+"/state?scope=team-a", map[string]any{"revision": 2, "paused": false, "reviewed": true}, 200)
+	call("POST", "/v1/triggers/"+ta.ID+"/rotate-key?scope=team-a", map[string]any{"revision": 3}, 200)
+	var page EventPage
+	must(t, json.Unmarshal(call("GET", "/v1/events?scope=team-b", nil, 200), &page))
+	for _, e := range page.Items {
+		if e.Concerns.Trigger != "" {
+			t.Fatal("team-b's journal holds a trigger's entry:", e.Kind, e.Concerns.Trigger)
+		}
+	}
+	must(t, json.Unmarshal(call("GET", "/v1/jobs/"+a.ID+"/events?scope=team-a", nil, 200), &page))
+	changes := 0
+	for _, e := range page.Items {
+		if e.Concerns.Trigger == ta.ID {
+			changes++
+		}
+	}
+	if changes != 4 {
+		t.Fatal("team-a's journal holds", changes, "of its trigger's four changes")
+	}
+
+	// The cloud binding, across scopes: team-a's binding is refused to
+	// team-b by the index, and to team-a by the Runner's own read.
+	conn := CloudConnection{ID: "google", Subscription: "projects/example-project/subscriptions/desk-inbox", CredentialsFile: "/nonexistent/test-adc.json"}
+	sv.cfg.CloudConnections = []CloudConnection{conn}
+	cloud := TriggerConfig{Name: "Scheduled", Kind: "cloud", Cloud: &CloudBinding{Connection: conn.ID, Subscription: conn.Subscription, Job: "projects/example-project/locations/us-central1/jobs/daily"}, Input: &AutomaticInput{Kind: "constant", Value: string(encode(journalInput()))}, Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+	call("POST", "/v1/jobs/"+a.ID+"/triggers?scope=team-a", map[string]any{"config": cloud}, 200)
+	for _, scope := range []string{"team-b", "team-a"} {
+		job := jobs[scope]
+		if got := call("POST", "/v1/jobs/"+job.ID+"/triggers?scope="+scope, map[string]any{"config": cloud}, 422); !strings.Contains(string(got), "cloud_binding_used") {
+			t.Fatal(scope, "was not refused the binding:", string(got))
+		}
+	}
+	// The trigger limit, across scopes: the installation's count.
+	suite := s.pool(t, pgRoleSuite, db)
+	var held int
+	must(t, suite.QueryRowContext(pgContext, "SELECT value FROM counts WHERE name='triggers'").Scan(&held))
+	if held != 2 {
+		t.Fatal("the installation's trigger count is", held, "want 2")
+	}
+	_, err := suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='triggers'", pgTriggerLimit)
+	must(t, err)
+	if got := call("POST", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", map[string]any{"config": event}, 422); !strings.Contains(string(got), "trigger_limit") {
+		t.Fatal("a trigger past the installation's limit was not refused:", string(got))
+	}
+}
+
+// pgHeldFrom says that a request login held to scope neither reads nor
+// changes the rows of another scope that each table holds, which the suite
+// login sees: the policy itself holds them, not the Runner's scope check in
+// front of it, which answers a record of another scope as absent too.
+func pgHeldFrom(t *testing.T, s *pgTestServer, db, scope string, tables ...string) {
+	t.Helper()
+	suite := s.pool(t, pgRoleSuite, db)
+	request := s.pool(t, pgRoleRequest, db)
+	for _, table := range tables {
+		var others int
+		must(t, suite.QueryRowContext(pgContext, "SELECT count(*) FROM "+table+" WHERE scope<>$1", scope).Scan(&others))
+		if others == 0 {
+			t.Fatalf("%s holds no row of another scope than %s", table, scope)
+		}
+		var updatable bool
+		must(t, request.QueryRowContext(pgContext, "SELECT has_table_privilege(current_user, $1, 'UPDATE')", postgresqlSchema+"."+table).Scan(&updatable))
+		inScope(t, request, scope, false, func(tx *sql.Tx) {
+			var read int
+			must(t, tx.QueryRowContext(pgContext, "SELECT count(*) FROM "+table+" WHERE scope<>$1", scope).Scan(&read))
+			var changed int64
+			if updatable {
+				res, err := tx.ExecContext(pgContext, "UPDATE "+table+" SET record=record WHERE scope<>$1", scope)
+				must(t, err)
+				changed, _ = res.RowsAffected()
+			}
+			if read != 0 || changed != 0 {
+				t.Errorf("a request held to %s read %d and changed %d of %d rows of another scope in %s", scope, read, changed, others, table)
+			}
+		})
+	}
+}
+
+// pgCall is a request to sv's routes that must answer want; it answers the
+// body.
+func pgCall(t *testing.T, sv *Service) func(method, path string, body any, headers map[string]string, want int) []byte {
+	return func(method, path string, body any, headers map[string]string, want int) []byte {
+		t.Helper()
+		raw := ""
+		if body != nil {
+			raw = string(encode(body))
+		}
+		got := serve(t, sv, method, path, raw, headers)
+		if got.Code != want {
+			t.Fatalf("%s %s: %d %s, want %d", method, path, got.Code, got.Body.String(), want)
+		}
+		return got.Body.Bytes()
+	}
+}
+
+// Section 6 and D9, occurrences: on a Runner on the kind, a scope's event
+// credential delivers held to its scope, and another scope, or a request
+// naming none, neither delivers to its trigger, reads an occurrence's
+// result, lists, cancels or reconciles its occurrences, nor reads a record
+// delivery, guessing the ids: the trigger answers as an unknown one, the
+// rest as absent. The tick, on the worker login, admits a schedule's
+// occurrence in its job's scope and dispatches every scope's into a run of
+// that scope. The queue's limit is the installation's count.
+func TestPostgreSQLHoldsOccurrencesToTheirScope(t *testing.T) {
+	s, db, sv, jobs := pgScopedRunner(t)
+	a, b := jobs["team-a"], jobs["team-b"]
+	call := pgCall(t, sv)
+	suite := s.pool(t, pgRoleSuite, db)
+	pending := func() int {
+		t.Helper()
+		var n int
+		must(t, suite.QueryRowContext(pgContext, "SELECT value FROM counts WHERE name='pending-occurrences'").Scan(&n))
+		return n
+	}
+	var created Trigger
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+a.ID+"/triggers?scope=team-a", map[string]any{"config": eventTriggerConfig()}, nil, 200), &created))
+	var resumed struct {
+		Trigger Trigger `json:"trigger"`
+		Token   string  `json:"token"`
+	}
+	must(t, json.Unmarshal(call("POST", "/v1/triggers/"+created.ID+"/state?scope=team-a", map[string]any{"revision": created.Revision, "paused": false, "reviewed": true}, nil, 200), &resumed))
+	token := map[string]string{"X-Trigger-Token": resumed.Token}
+	var delivered struct {
+		Occurrence Occurrence `json:"occurrence"`
+	}
+	must(t, json.Unmarshal(call("POST", "/v1/triggers/"+created.ID+"/events?scope=team-a", delivery("first"), token, 202), &delivered))
+	admitted := delivered.Occurrence
+	if admitted.State != "accepted" || admitted.Scope != "team-a" {
+		t.Fatalf("the event was not admitted in its scope: %+v", admitted)
+	}
+	call("POST", "/v1/triggers/"+created.ID+"/events?scope=team-a", delivery("first"), token, 200)
+	if n := pending(); n != 1 {
+		t.Fatal("the installation's pending count is", n, "want 1")
+	}
+	pgHeldFrom(t, s, db, "team-b", "occurrences", "occurrence_keys")
+	record := RecordDelivery{ReleaseID: a.ReleaseID, Event: delivery("record")}
+	for _, q := range []string{"?scope=team-b", ""} {
+		call("POST", "/v1/triggers/"+created.ID+"/events"+q, delivery("second"), token, 401)
+		call("GET", "/v1/triggers/"+created.ID+"/occurrences/"+admitted.ID+q, nil, token, 401)
+		call("POST", "/v1/triggers/"+created.ID+"/deliveries"+q, record, nil, 404)
+		call("GET", "/v1/triggers/"+created.ID+"/deliveries/first"+q, nil, nil, 404)
+		call("GET", "/v1/jobs/"+a.ID+"/occurrences"+q, nil, nil, 404)
+		call("POST", "/v1/occurrences/"+admitted.ID+"/cancel"+q, nil, nil, 404)
+		call("POST", "/v1/occurrences/"+admitted.ID+"/reconcile"+q, nil, nil, 404)
+	}
+	var page struct {
+		Items []Occurrence `json:"items"`
+	}
+	must(t, json.Unmarshal(call("GET", "/v1/jobs/"+b.ID+"/occurrences?scope=team-b", nil, nil, 200), &page))
+	if len(page.Items) != 0 {
+		t.Fatal("team-b's job lists another scope's occurrence:", page.Items)
+	}
+	// The scope's own requests: its credential reads the result, its
+	// record delivery is admitted and read, its occurrences listed; an
+	// accepted occurrence is neither cancelled nor reconciled.
+	call("GET", "/v1/triggers/"+created.ID+"/occurrences/"+admitted.ID+"?scope=team-a", nil, token, 200)
+	call("POST", "/v1/triggers/"+created.ID+"/deliveries?scope=team-a", record, nil, 202)
+	call("GET", "/v1/triggers/"+created.ID+"/deliveries/record?scope=team-a", nil, nil, 200)
+	must(t, json.Unmarshal(call("GET", "/v1/jobs/"+a.ID+"/occurrences?scope=team-a", nil, nil, 200), &page))
+	if len(page.Items) != 2 {
+		t.Fatal("team-a's job lists", len(page.Items), "occurrences, want 2")
+	}
+	call("POST", "/v1/occurrences/"+admitted.ID+"/cancel?scope=team-a", nil, nil, 409)
+	call("POST", "/v1/occurrences/"+admitted.ID+"/reconcile?scope=team-a", nil, nil, 409)
+	if n := pending(); n != 2 {
+		t.Fatal("the installation's pending count is", n, "want 2")
+	}
+
+	// The tick, on the worker login: team-b's schedule falls due, and every
+	// scope's accepted occurrence is dispatched into a run of its scope.
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", map[string]any{"config": scheduleTriggerConfig(time.Now())}, nil, 200), &created))
+	must(t, json.Unmarshal(call("POST", "/v1/triggers/"+created.ID+"/state?scope=team-b", map[string]any{"revision": created.Revision, "paused": false, "reviewed": true}, nil, 200), &resumed))
+	due, err := time.Parse(time.RFC3339Nano, resumed.Trigger.NextAt)
+	must(t, err)
+	must(t, sv.automationTick(due.Add(time.Second)))
+	if n := pending(); n != 0 {
+		t.Fatal("the tick left", n, "occurrences pending")
+	}
+	for _, scope := range []string{"team-a", "team-b"} {
+		job := jobs[scope]
+		must(t, json.Unmarshal(call("GET", "/v1/jobs/"+job.ID+"/occurrences?scope="+scope, nil, nil, 200), &page))
+		for _, o := range page.Items {
+			if o.State != "submitted" || o.RunID == "" {
+				t.Fatalf("%s's occurrence was not dispatched: %+v", scope, o)
+			}
+			var held string
+			must(t, suite.QueryRowContext(pgContext, "SELECT o.scope||'/'||r.scope FROM runs r JOIN occurrences o ON o.record::json->>'runId'=r.id WHERE o.id=$1", o.ID).Scan(&held))
+			if held != scope+"/"+scope {
+				t.Fatalf("%s's occurrence was dispatched into a run of %q", scope, held)
+			}
+			call("GET", "/v1/runs/"+o.RunID+"?scope="+scope, nil, nil, 200)
+			other := map[string]string{"team-a": "team-b", "team-b": "team-a"}[scope]
+			call("GET", "/v1/runs/"+o.RunID+"?scope="+other, nil, nil, 404)
+		}
+		if want := map[string]int{"team-a": 2, "team-b": 1}[scope]; len(page.Items) != want {
+			t.Fatal(scope, "holds", len(page.Items), "occurrences, want", want)
+		}
+	}
+
+	// The queue's limit is the installation's: past it, team-a's event is
+	// refused, and team-b's schedule, which has no sender, skipped.
+	_, err = suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='pending-occurrences'", queueLimit)
+	must(t, err)
+	if got := call("POST", "/v1/triggers/"+admitted.TriggerID+"/events?scope=team-a", delivery("third"), token, 429); !strings.Contains(string(got), "queue_full") {
+		t.Fatal("an event past the installation's queue was not refused:", string(got))
+	}
+	var listed struct {
+		Items []Trigger `json:"items"`
+	}
+	must(t, json.Unmarshal(call("GET", "/v1/jobs/"+b.ID+"/triggers?scope=team-b", nil, nil, 200), &listed))
+	due, err = time.Parse(time.RFC3339Nano, listed.Items[0].NextAt)
+	must(t, err)
+	must(t, sv.automationTick(due.Add(time.Second)))
+	var reason string
+	must(t, suite.QueryRowContext(pgContext, "SELECT state||':'||(record::json->>'reason') FROM occurrences WHERE trigger_id=$1 ORDER BY seq DESC LIMIT 1", created.ID).Scan(&reason))
+	if reason != "skipped:queue-full" {
+		t.Fatal("team-b's schedule past the installation's queue:", reason)
+	}
+}
+
+// D11 and section 6, the retry: on a Runner on the kind, another scope, or a
+// request naming none, does not retry a scope's interrupted run; the scope's
+// own retry is refused while the attempt's directory is missing, which this
+// kind does not take to hold no audit record, and is queued once it holds no
+// trail.
+func TestPostgreSQLRetriesARunHeldToItsScope(t *testing.T) {
+	_, _, sv, jobs := pgScopedRunner(t)
+	a := jobs["team-a"]
+	call := pgCall(t, sv)
+	var queued Run
+	must(t, json.Unmarshal(call("POST", "/v1/jobs/"+a.ID+"/runs?scope=team-a", journalInput(), map[string]string{"Idempotency-Key": "one"}, 202), &queued))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := sv.dispatchNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var r Run
+	must(t, json.Unmarshal(call("GET", "/v1/runs/"+queued.ID+"?scope=team-a", nil, nil, 200), &r))
+	if r.State != "interrupted" || r.Attempt != 1 {
+		t.Fatalf("the run was not interrupted: %+v", r)
+	}
+	for _, q := range []string{"?scope=team-b", ""} {
+		call("POST", "/v1/runs/"+r.ID+"/retry"+q, map[string]any{"attempt": 1}, nil, 404)
+	}
+	directory := filepath.Join(sv.cfg.Dir, "attempts", r.ID)
+	must(t, os.RemoveAll(directory))
+	if got := call("POST", "/v1/runs/"+r.ID+"/retry?scope=team-a", map[string]any{"attempt": 1}, nil, 409); !strings.Contains(string(got), "cannot be read") {
+		t.Fatal("a retry whose attempt directory is missing:", string(got))
+	}
+	must(t, os.MkdirAll(directory, 0o700))
+	var retried struct {
+		State    string    `json:"state"`
+		Attempts []Attempt `json:"attempts"`
+	}
+	must(t, json.Unmarshal(call("POST", "/v1/runs/"+r.ID+"/retry?scope=team-a", map[string]any{"attempt": 1}, nil, 202), &retried))
+	if retried.State != "queued" || len(retried.Attempts) != 1 {
+		t.Fatalf("the retry: %+v", retried)
+	}
+	var page EventPage
+	must(t, json.Unmarshal(call("GET", "/v1/events?scope=team-b", nil, nil, 200), &page))
+	for _, e := range page.Items {
+		if e.Concerns.Run == r.ID {
+			t.Fatal("team-b's journal holds the retried run's entry:", e.Kind)
+		}
+	}
+}
+
+// Section 6 and 7, the installation's profiles: on a Runner on the kind, an
+// input profile and a selected profile are registered held to the none
+// scope, on the request login, which alone may write their rows; a request
+// naming a scope is refused, and a repeated registration changes nothing.
+func TestPostgreSQLRegistersTheInstallationsProfiles(t *testing.T) {
+	s, db, sv, _ := pgScopedRunner(t)
+	call := pgCall(t, sv)
+	_, ordinary, _, _ := v2Fixture(t)
+	selected := selectedProducer(t).profile
+	conversion := map[string]string{"JPack-Conversion-Contract": selectedHeader(selectedContract())}
+	call("POST", "/v1/input-profiles?scope=team-a", ordinary, nil, 400)
+	call("POST", "/v1/input-profiles", ordinary, nil, 201)
+	call("POST", "/v1/input-profiles", ordinary, nil, 200)
+	call("POST", "/v1/retained-column/1/selected-profiles", selected, conversion, 201)
+	call("POST", "/v1/retained-column/1/selected-profiles", selected, conversion, 200)
+	var listed []struct {
+		Profile InputProfile `json:"profile"`
+	}
+	must(t, json.Unmarshal(call("GET", "/v1/input-profiles", nil, nil, 200), &listed))
+	found := false
+	for _, p := range listed {
+		found = found || p.Profile.ID == ordinary.ID
+	}
+	if !found {
+		t.Fatal("the registered profile is not listed:", listed)
+	}
+	call("GET", "/v1/retained-column/1/selected-profiles", nil, conversion, 200)
+	suite := s.pool(t, pgRoleSuite, db)
+	for key, id := range map[string]string{registeredProfilesKey: ordinary.ID, selectedProfilesKey: selected.ID} {
+		var row string
+		must(t, suite.QueryRowContext(pgContext, "SELECT value FROM metadata WHERE key=$1", key).Scan(&row))
+		if !strings.Contains(row, `"id":"`+id+`"`) {
+			t.Fatalf("the %s row does not hold %s: %s", key, id, row)
+		}
 	}
 }

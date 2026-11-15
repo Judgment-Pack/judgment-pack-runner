@@ -92,3 +92,10 @@ D12. Where the build differs from the note, the note says so: the identity rows 
 release, a failed renewal stopping the Runtime at once, a refusal's entry written held to its
 job's scope, and `422` for `trigger_limit` and `cloud_binding_used`. Every route the note does
 not yet hold to its scope is refused on the kind with `501 store_route_unsupported`.
+
+2026-11-15: #244's fifth slice (section 11, step 6, in progress) holds the journal and the run
+chain, a job's triggers, deliveries, occurrences, a run's retry and the installation's profiles
+to their scope, takes D9's cloud binding answer and D16 (a refused creation is read only held to
+the none scope), and adds `0003_held_routes.sql`, one policy and no grant. Diagnostics,
+verification, briefs, the execution binding, `GET /v1/background-connections` and the input
+preparation routes are still refused.

@@ -232,8 +232,8 @@ func (s *Service) admitSelectedProfile(p InputProfile) (bool, error) {
 		return false, e
 	}
 	// One synchronous write precedes making the profile visible, as an
-	// ordinary registration's does.
-	if err := s.store.update(func(tx runTx) error { return tx.putProfileRow(selectedProfilesKey, storedRow(stored)) }); err != nil {
+	// ordinary registration's does, held to the none scope as its row is.
+	if err := s.store.heldTo(scopeHeld("")).update(func(tx runTx) error { return tx.putProfileRow(selectedProfilesKey, storedRow(stored)) }); err != nil {
 		return false, err
 	}
 	admitted := append(s.selectedInputProfiles(), frozen)

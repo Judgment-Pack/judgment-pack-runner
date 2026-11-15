@@ -148,8 +148,11 @@ starts it), and:
 - `store`, optional: `{"kind":"postgresql","connection":"<absolute path>"}` keeps the queue and
   records in PostgreSQL 16 instead of the SQLite database under `dir`. The connection file is
   held to this file's rules and refused inside the state directory. That kind serves the routes
-  that make and run a job and refuses the rest with `501 store_route_unsupported`;
-  [docs/postgresql-store.md](docs/postgresql-store.md) has its roles, migration and limits.
+  that make and run a job, its triggers, deliveries and occurrences, a run's retry, the input
+  and selected profiles, the journal and the run chain, and refuses the rest with
+  `501 store_route_unsupported`; run its `jpack-runner store migrate` before starting a new
+  release. [docs/postgresql-store.md](docs/postgresql-store.md) has its roles, migration and
+  limits, and the routes served.
   Without `store`, nothing changes.
 
 ```json

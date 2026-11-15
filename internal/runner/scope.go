@@ -174,18 +174,20 @@ func (s *Service) scoped(handler http.HandlerFunc) http.HandlerFunc {
 			failure(w, err)
 			return
 		}
+		name, table, id := addressedRecord(r)
 		if holding {
 			// On a kind that holds scopes, the route reaches rows only through
 			// the view of the store held to the scope named, "" for none; a
-			// store-wide listing naming none, through the store for every
-			// scope, as it lists every scope's records.
+			// store-wide listing naming none and no record, through the store
+			// for every scope, as it lists every scope's records. The journal
+			// naming a job is that job's route (docs/design/store-postgresql.md,
+			// section 6): held to the scope named, none when it names none.
 			view := s.store
-			if named || !scopeListings[r.Pattern] {
+			if named || !scopeListings[r.Pattern] || table != "" {
 				view = s.store.heldTo(scopeHeld(scope))
 			}
 			r = r.WithContext(context.WithValue(r.Context(), heldStoreContext{}, view))
 		}
-		name, table, id := addressedRecord(r)
 		switch {
 		case table != "":
 			// The scope check's own read is the request's: on a kind that
@@ -318,6 +320,32 @@ var heldRoutes = map[string]bool{
 	"GET /v1/runs/{run}":                 true,
 	"POST /v1/jobs/{job}/upgrade":        true,
 	"GET /v1/jobs/{job}/upgrade-receipt": true,
+	// A job's triggers, and a trigger's state and key.
+	"GET /v1/jobs/{job}/triggers":            true,
+	"POST /v1/jobs/{job}/triggers":           true,
+	"POST /v1/jobs/{job}/triggers/preview":   true,
+	"POST /v1/triggers/{trigger}/state":      true,
+	"POST /v1/triggers/{trigger}/rotate-key": true,
+	// Event deliveries, the occurrences they and the ticks admit, and a
+	// run's retry.
+	"POST /v1/triggers/{trigger}/events":                  true,
+	"POST /v1/triggers/{trigger}/deliveries":              true,
+	"GET /v1/triggers/{trigger}/deliveries/{event}":       true,
+	"GET /v1/triggers/{trigger}/occurrences/{occurrence}": true,
+	"GET /v1/jobs/{job}/occurrences":                      true,
+	"POST /v1/occurrences/{occurrence}/cancel":            true,
+	"POST /v1/occurrences/{occurrence}/reconcile":         true,
+	"POST /v1/runs/{run}/retry":                           true,
+	// The installation's input and selected profiles, held to the none
+	// scope: their rows carry none, and the listings read no row.
+	"GET /v1/input-profiles":     true,
+	"POST /v1/input-profiles":    true,
+	"GET /v1/selected-profiles":  true,
+	"POST /v1/selected-profiles": true,
+	// The journal and the chain of runs.
+	"GET /v1/events":            true,
+	"GET /v1/jobs/{job}/events": true,
+	"GET /v1/run-chain":         true,
 }
 
 // errRouteNotHeld is the refusal of a route a Runner on a kind that holds

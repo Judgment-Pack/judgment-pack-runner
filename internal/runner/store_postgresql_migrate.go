@@ -27,11 +27,20 @@ import (
 var pgMigrationFiles embed.FS
 
 // pgGrantsVersion is the version of the grants file (D6), whose row records
-// the logins it was applied with.
+// the logins it was applied with, which the start reads. A later file that
+// grants to the logins records them on its row too (namesLogins), and is
+// applied only with the logins the grants file recorded.
 const pgGrantsVersion = "0002"
 
 // pgMigration is one file of the set.
 type pgMigration struct{ version, name, digest, text string }
+
+// namesLogins says the file grants to the run-time logins: `jpack-runner store
+// migrate` fills its {{request}} and {{worker}} with the logins' names, and
+// records them on its row.
+func (m pgMigration) namesLogins() bool {
+	return strings.Contains(m.text, "{{request}}") || strings.Contains(m.text, "{{worker}}")
+}
 
 // postgresqlMigrations is the set this Runner ships, in order, each held to
 // its line of migrations.sha256 (condition i).
@@ -101,6 +110,12 @@ func MigratePostgreSQL(m PostgreSQLMigration) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return migratePostgreSQL(m, set)
+}
+
+// migratePostgreSQL is MigratePostgreSQL, applying set, a prefix of the set
+// shipped: a test makes with it a store an earlier release left.
+func migratePostgreSQL(m PostgreSQLMigration, set []pgMigration) ([]string, error) {
 	cfg, err := pgx.ParseConfig(m.Connection)
 	if err != nil {
 		return nil, errors.New("the migration login's connection string does not read")
@@ -160,14 +175,14 @@ func MigratePostgreSQL(m PostgreSQLMigration) ([]string, error) {
 			if r.digest != f.digest {
 				return applied, fmt.Errorf("the migration %s is recorded under another digest: nothing after it is applied", f.name)
 			}
-			if f.version == pgGrantsVersion && (r.request != m.Request || r.worker != m.Worker) {
+			if f.namesLogins() && (r.request != m.Request || r.worker != m.Worker) {
 				return applied, fmt.Errorf("the grants were made to the request login %q and the worker login %q: replacing a login is not a migration", r.request, r.worker)
 			}
 			continue
 		}
 		text := f.text
 		request, worker := "", ""
-		if f.version == pgGrantsVersion {
+		if f.namesLogins() {
 			request, worker = m.Request, m.Worker
 			text = strings.NewReplacer("{{request}}", pgx.Identifier{m.Request}.Sanitize(), "{{worker}}", pgx.Identifier{m.Worker}.Sanitize()).Replace(text)
 		}

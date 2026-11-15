@@ -429,7 +429,12 @@ func recordOccurrence(tx runTx, o Occurrence, guard string, by EventActor, inter
 // changeOccurrence records an occurrence and the entry of its change of
 // state, if any, in one transaction.
 func (s *Service) changeOccurrence(o Occurrence, guard string, by EventActor) error {
-	return s.store.update(func(tx runTx) error {
+	return changeOccurrenceIn(s.store, o, guard, by)
+}
+
+// changeOccurrenceIn is changeOccurrence, in st.
+func changeOccurrenceIn(st runStore, o Occurrence, guard string, by EventActor) error {
+	return st.update(func(tx runTx) error {
 		return recordOccurrence(tx, o, guard, by, nil)
 	})
 }
@@ -631,11 +636,17 @@ func (s *Service) refusedEvent(triggerID string, err error) {
 // refusedEventBy is refusedEvent, for a delivery by: the authenticated
 // credential's, when the refusal says one was, and otherwise by's.
 func (s *Service) refusedEventBy(by requester, triggerID string, err error) {
-	t, _, e := s.trigger(triggerID)
+	s.refusedEventIn(s.store, by, triggerID, err)
+}
+
+// refusedEventIn is refusedEventBy, the trigger and its job read in st: a
+// trigger st does not reach is one the store does not hold.
+func (s *Service) refusedEventIn(st runStore, by requester, triggerID string, err error) {
+	t, _, e := st.trigger(triggerID)
 	if e != nil {
 		return
 	}
-	j, e := s.job(t.JobID)
+	j, e := st.job(t.JobID)
 	if e != nil {
 		return
 	}
@@ -730,14 +741,15 @@ func eventQuery(raw string) (eventRequest, error) {
 	return r, nil
 }
 
-// eventPageFor answers a request: forward from its cursor, or backward,
-// among the entries f keeps with the results the request names.
-func (s *Service) eventPageFor(r eventRequest, f journalFilter) (EventPage, error) {
+// eventPageFor answers a request from st, the store it is held to:
+// forward from its cursor, or backward, among the entries f keeps with the
+// results the request names.
+func eventPageFor(st journalReads, r eventRequest, f journalFilter) (EventPage, error) {
 	f.results = r.results
 	if r.backward {
-		return eventPageBefore(s.store, r.tail, r.before, f)
+		return eventPageBefore(st, r.tail, r.before, f)
 	}
-	return eventPageFrom(s.store, r.after, f)
+	return eventPageFrom(st, r.after, f)
 }
 
 // event is the entry a row holds at sequence, as the routes serve it.
@@ -813,12 +825,13 @@ func (s *Service) jobEventsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
-	j, err := s.job(r.PathValue("job"))
+	st := s.storeFor(r.Context())
+	j, err := st.job(r.PathValue("job"))
 	if err != nil {
 		failure(w, err)
 		return
 	}
-	page, err := s.eventPageFor(req, journalFilter{job: j.ID})
+	page, err := eventPageFor(st, req, journalFilter{job: j.ID})
 	if err != nil {
 		failure(w, err)
 		return
@@ -836,9 +849,10 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		failure(w, err)
 		return
 	}
+	st := s.storeFor(r.Context())
 	var f journalFilter
 	if req.job != "" {
-		j, err := s.job(req.job)
+		j, err := st.job(req.job)
 		if err != nil {
 			failure(w, err)
 			return
@@ -847,7 +861,7 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		f.job, f.runnerOwn = j.ID, true
 	}
 	f.scope = scopeNamed(r.Context())
-	page, err := s.eventPageFor(req, f)
+	page, err := eventPageFor(st, req, f)
 	if err != nil {
 		failure(w, err)
 		return
