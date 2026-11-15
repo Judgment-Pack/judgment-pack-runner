@@ -107,7 +107,9 @@
     "ci": {
       "$comment": [
         "Every job of ci.yml is required on a push to main; none is skipped there. The four release steps are",
-        "left out of the Runner legs by ci.yml and run in Release contents, so each leg lists what it runs."
+        "left out of the Runner legs by ci.yml and run in Release contents, and unit-tests is left out of them and",
+        "runs in the four Unit tests shards of each system (scripts/checks/unit-tests.sh holds every group to",
+        "exactly one shard), so each leg lists what it runs."
       ],
       "path": ".github/workflows/ci.yml",
       "name": "CI",
@@ -115,6 +117,102 @@
         "push"
       ],
       "jobs": {
+        "unit-ubuntu-latest-1": {
+          "name": "Unit tests (ubuntu-latest, 1/4)",
+          "job_id": "unit",
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "profile": "linux",
+          "checks": [
+            "build-pinned",
+            "unit-tests"
+          ]
+        },
+        "unit-ubuntu-latest-2": {
+          "name": "Unit tests (ubuntu-latest, 2/4)",
+          "job_id": "unit",
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "profile": "linux",
+          "checks": [
+            "build-pinned",
+            "unit-tests"
+          ]
+        },
+        "unit-ubuntu-latest-3": {
+          "name": "Unit tests (ubuntu-latest, 3/4)",
+          "job_id": "unit",
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "profile": "linux",
+          "checks": [
+            "build-pinned",
+            "unit-tests"
+          ]
+        },
+        "unit-ubuntu-latest-4": {
+          "name": "Unit tests (ubuntu-latest, 4/4)",
+          "job_id": "unit",
+          "labels": [
+            "ubuntu-latest"
+          ],
+          "profile": "linux",
+          "checks": [
+            "build-pinned",
+            "unit-tests"
+          ]
+        },
+        "unit-macos-latest-1": {
+          "name": "Unit tests (macos-latest, 1/4)",
+          "job_id": "unit",
+          "labels": [
+            "macos-latest"
+          ],
+          "profile": "macos",
+          "checks": [
+            "build-pinned",
+            "unit-tests"
+          ]
+        },
+        "unit-macos-latest-2": {
+          "name": "Unit tests (macos-latest, 2/4)",
+          "job_id": "unit",
+          "labels": [
+            "macos-latest"
+          ],
+          "profile": "macos",
+          "checks": [
+            "build-pinned",
+            "unit-tests"
+          ]
+        },
+        "unit-macos-latest-3": {
+          "name": "Unit tests (macos-latest, 3/4)",
+          "job_id": "unit",
+          "labels": [
+            "macos-latest"
+          ],
+          "profile": "macos",
+          "checks": [
+            "build-pinned",
+            "unit-tests"
+          ]
+        },
+        "unit-macos-latest-4": {
+          "name": "Unit tests (macos-latest, 4/4)",
+          "job_id": "unit",
+          "labels": [
+            "macos-latest"
+          ],
+          "profile": "macos",
+          "checks": [
+            "build-pinned",
+            "unit-tests"
+          ]
+        },
         "runner-ubuntu-latest": {
           "name": "Runner (ubuntu-latest)",
           "job_id": "check",
@@ -130,7 +228,6 @@
             "go-vet",
             "build-pinned",
             "manual-gate",
-            "unit-tests",
             "chain-tests",
             "openapi",
             "build",
@@ -152,7 +249,6 @@
             "go-vet",
             "build-pinned",
             "manual-gate",
-            "unit-tests",
             "chain-tests",
             "openapi",
             "build",
