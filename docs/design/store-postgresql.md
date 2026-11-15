@@ -596,7 +596,11 @@ now says so rather than change what the sqlite kind answers.
 `UPDATE` on `journal_head` is what `LOCK TABLE ... IN EXCLUSIVE MODE` requires (D13). **The policy
 on `metadata`**: both logins read every row; the request login writes only the rows of the profile
 registry and the selected profiles (`USING` and `WITH CHECK` on `key IN
-('registered-input-profiles-v1', 'selected-input-profiles-v1')`); the worker login inserts only the
+('registered-input-profiles-v1', 'selected-input-profiles-v1')`), and only in a transaction held to
+the none scope: a restrictive policy for `INSERT` and one for `UPDATE`, in
+`0006_profile_rows_unscoped.sql` (#279), require `current_setting('jpack.scope', true) = 's:'`, so
+that a later code path held to a scope identifier, or setting none, writes no profile row, not
+only the routes that refuse a scope; the worker login inserts only the
 store's identity (`workspace`, `owner`, `inputRoot`) and, holding no `UPDATE`, never changes it; and
 the `schema` row is the migration's (D15).
 
@@ -751,7 +755,8 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLAnOccurrenceWithNoInputIsFailedOnceAndTheOtherRunnerGoesOn` (D18, #282) | Built: an accepted occurrence that holds no input is failed once by the Runner that claims it, journaled once, its claim released, and the other Runner's tick finds nothing to do and stays healthy. |
 | `TestPostgreSQLAStoreErrorUnderAClaimLeavesTheOccurrenceToTheNextClaimant` (D18, #282) | Built: a store error under a Runner's claim is returned with the claim released and the occurrence accepted as read; the other Runner claims it and submits its run. The default kind's `TestAnOccurrenceWhoseJobOrReleaseIsUnreadableIsFailedAndTheAutomationGoesOn` and `TestAnAcceptedOccurrenceWithNoReadableExpiryIsFailedAndTheAutomationGoesOn` hold the failures of the occurrence's own records. |
 | `TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile` (section 5, #245) | Built: a store migrated to `0003` is refused at the start until migrated, and the migration then applies `0004_several_runners.sql` and the files after it. |
-| `TestPostgreSQLRefusesAStoreWithoutTheSchedulesFile` (D15, #246) | Built: a store migrated to `0004` is refused at the start until migrated, and the migration then applies `0005_schedules.sql` alone. |
+| `TestPostgreSQLRefusesAStoreWithoutTheSchedulesFile` (D15, #246) | Built: a store migrated to `0004` is refused at the start until migrated, and the migration then applies `0005_schedules.sql` and the files after it. |
+| `TestPostgreSQLHoldsTheProfileRowsToTheNoneScope` (section 7, #279) | Built: on the request login directly, a transaction held to a scope identifier, or setting none, inserts no profile row and updates none, by a plain update or an insert meeting the row's key; one held to the none scope does both. `TestPostgreSQLRefusesAStoreWithoutTheProfileRowsFile`: a store migrated to `0005` is refused at the start until `0006_profile_rows_unscoped.sql` is applied. |
 | `TestPostgreSQLTwoRunnersCalledForOneSharedTickMakeOneOccurrence` (D17, #246) | Built: two Runners called for one shared tick at once, each having read the trigger at one version, record one occurrence between them, and neither fails; a later call for the tick on either records none, and one naming a scope identifier is refused. |
 | The conformance cases of D17 and D18 | Built, on every kind: a write that read a trigger before another wrote it is `conflict`; an occurrence is claimed in the state read, by one claimant at a time; a holder's write is fenced by its claim and lease and keeps the claim only when asked; a request's write overrules the claim and the holder's next write is refused; the restart and the tick fail only the preparations no live claim holds. `TestADispatcherThatLosesARunReadsTheQueueAgainAtOnce` holds the worker's lost race. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
