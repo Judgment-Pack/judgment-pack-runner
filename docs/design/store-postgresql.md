@@ -2,7 +2,8 @@
 
 Issue #244. Status: built in part. The Runner's changes before the kind (section 11, steps 1 to
 4) are built, and the kind (step 5) is built for the routes section 6 lists as held; section 11
-says what step 5 built, where it differs from this note, and what is left. The decision is
+says what step 5 built, where it differs from this note, and what is left. Section 12 is the
+first step of #245, several Runners on one store of this kind, and is built. The decision is
 recorded in [ADR 0001](../adr/0001-second-storage-kind.md); the operator's page is
 [docs/postgresql-store.md](../postgresql-store.md).
 
@@ -14,7 +15,7 @@ disk and what it costs, the driver, and the test that answers each of the issue'
 conditions and each decision here. SQLite stays the default kind, unchanged byte for byte
 (`store_sqlite_bytes_test.go` and `store_sqlite_rows_test.go` hold it).
 
-**Every decision a maintainer must make is marked D1 to D16, with its options; the recommendation
+**Every decision a maintainer must make is marked D1 to D20, with its options; the recommendation
 is the first option.** Section 14 lists them. Section 11 lists what the next slice changes in the
 Runner before it writes the kind.
 
@@ -135,7 +136,8 @@ The lease, as (a) builds it:
   dispatchers that read one queued run meet here, or on the write that ends it in the queue
   (expired there, or naming a profile set aside; `endInQueue`): the second is `conflict`, and its
   dispatcher works nothing and goes on (`dispatchNext`), not stopping as for a failure of the
-  store; any other conflict still stops it.
+  store; any other conflict still stops it. Its worker then reads the queue again at once, as
+  after a run worked, not a second later as after an empty queue (#245, section 12).
 - **Expiry is the database's clock.** Every comparison with `lease_until` is with `now()` in the
   statement that makes it. No Runner's clock is compared with it or written into it. As built, a
   claimant's fence (`lease_until >`, a finish's and a renewal's) is with `statement_timestamp()`
@@ -733,6 +735,13 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLMigratesAStoreAtTheGrantsForward` (c) | Built in the fifth slice: a store migrated to `0002`, as the previous release left it, is refused at the start; a run naming other logins applies nothing; the migration applies the later files alone, leaves the catalog a store migrated at once has, records the logins on the later file's row, and applies nothing on a second run. |
 | `TestPostgreSQLResolvesABuiltinBeforeTheSchema` | Built: with `now()`, `statement_timestamp()` and `set_config` made in the schema, by the owner, to fail, a claim, a renewal, a finish and a read held to a scope still call the built-ins; no relation of the schema has a name the catalog holds. |
 | `TestPostgreSQLHoldsEveryConnectionToItsTimeBounds`, `TestPostgreSQLStartRefusesAConnectionWithoutItsSettings`, `TestPostgreSQLRefusesAWriteThatWaitsOnAHeldLock`, `TestPostgreSQLADispatcherBehindAHeldLockGoesOn`, `TestPostgreSQLHoldsARenewalToItsDeadline`, `TestPostgreSQLEndsATransactionLeftIdle` (D13's time bounds) | Built: both pools hold the bounds whatever the connection string names; a start over a pool whose connection was opened without the search path or one of the bounds is refused, naming it and the login; with another connection holding `journal_head`'s lock, a write is refused within the lock bound; a renewal is tried again, keeps the claim when the lock is let go before its deadline, and is refused at its deadline, its wait on the server ended, the claim reported lost; a dispatcher's end of a run in the queue, its tick for lapsed leases and its claim make nothing and its loop goes on, its finish lands once the lock is let go, the run completed and not interrupted, and the Runner stays healthy; a transaction left idle is ended by the server and the writer behind it goes on. |
+| `TestPostgreSQLTwoRunnersTickingOneScheduleMakeOneOccurrence` (D17, #245) | Built: two Runners tick one schedule trigger at once, each having read it at one version; one writes it and admits the due time's occurrence, the other's write meets the version moved on and makes nothing; neither fails, and the occurrence is dispatched once. |
+| `TestPostgreSQLTwoRunnersWorkOneReadyOccurrenceOnce` (D18) | Built: two Runners dispatch one ready occurrence both read; one claims and works it, the other passes it by, making nothing and failing nothing. |
+| `TestPostgreSQLASlowHolderLosesItsOccurrenceAndItsLateWriteIsRefused` (D18) | Built: a Runner holding a ready occurrence is slow past its lease; the other claims and dispatches it, and the slow holder's late write writes nothing; neither fails. |
+| `TestPostgreSQLARunnerStoppedMidAttemptHasItsRunInterruptedAfterTheLease` (D3, D11, D19) | Built: a Runner stopped while its run's attempt is under way has the run interrupted by the other's tick once the lease runs out by the database's clock, and not before; the run is not worked again by the other's dispatcher or a later start; its retry on a host without the attempt's directory is refused, `409 run_not_retryable`; the stopped Runner's late finish writes nothing. |
+| `TestPostgreSQLASecondRunnersStartLeavesTheFirstsWorkToIt` (D3, D18) | Built: a Runner's start leaves another Runner's run under a live claim running, and its preparation under a live claim preparing, and the holder finishes both. |
+| `TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile` (section 5, #245) | Built: a store migrated to `0003` is refused at the start until migrated, and the migration then applies `0004_several_runners.sql` alone. |
+| The conformance cases of D17 and D18 | Built, on every kind: a write that read a trigger before another wrote it is `conflict`; an occurrence is claimed in the state read, by one claimant at a time; a holder's write is fenced by its claim and lease and keeps the claim only when asked; a request's write overrules the claim and the holder's next write is refused; the restart and the tick fail only the preparations no live claim holds. `TestADispatcherThatLosesARunReadsTheQueueAgainAtOnce` holds the worker's lost race. |
 | h, D5, D9's own test, D11, D13, D14, section 5's marker, `TestPostgreSQLRoutesUseTheirLogins` | Not built. D9's rules are held by conformance cases on every kind; section 6's routes by `TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView` and the end-to-end test. |
 
 ## 11. What the slice after this one builds
@@ -786,36 +795,169 @@ leave SQLite's statements and rows as they are; the kind is written only after t
    dispatch and preparation, on the worker login, write only what `0002` grants it; and the input
    and selected profiles, written held to none. Left: diagnostics, verification, briefs, the
    execution binding (D4), `GET /v1/background-connections` and the input preparation routes; one
-   occurrence's lease across several Runners is #245.)
+   occurrence's lease across several Runners is #245's, section 12.)
 
 SQLite's bytes and schema are not changed by any of it: the claim's columns and the tables of
 section 3 are the second kind's own, and `store_sqlite_rows_test.go` holds the rows.
 
-## 12. What the Runner, not the kind, holds today
+## 12. Several Runners on one store (#245)
 
-The contract is safe for one Runner per store because the Runner, not any kind, holds the
-following. This is recorded for several Runners on one store (#245); the contract does not change
-for it in this issue.
+#244 left the kind safe for one Runner per store: the Runner, not the kind, held in its process
+what a second Runner on the store would race. #245's first step makes several Runners on one store
+of this kind safe for the routes the kind serves, with no lock and no row per Runner: each piece
+of shared work is held by a claim with a lease, in D3's shape, or fenced by a row version, in the
+store. The sqlite kind is unchanged: its lock (`runner.lock`) still keeps one Runner per state
+directory, and it holds no claim or version.
 
-- `automationMu` serializes every trigger write. `putTrigger` writes a trigger whatever it holds,
-  and each writer read it under the mutex (`triggers_store.go:35`, `:125`, `:247`; the ticks). The
-  trigger limit and the cloud binding are checked outside the write's transaction under it
-  (`triggers_store.go:68`, `:78`). #245 must give `putTrigger` an expected revision, as `putRun`
-  has an expected state, and move both checks into the write's transaction, which D9's rows do for
-  the second kind. #244 leaves it so: a trigger's record revision does not change with every
-  write (a tick, the file cursor and the pending state change none), so an expected
-  revision needs a row version the sqlite kind's schema does not have.
-- The profile rows are written whole from the process's copies (`storedProfiles` and the selected
-  profiles, under `profilesMu`: `profile_registry.go:222-232`, `selected_profiles.go:236`), and a
-  job's creation reads those copies (section 2). #245 must version the rows and read them in the
-  transaction that writes them.
-- The occurrences being prepared, the cloud bindings' problems, the profiles set aside and the
-  unhealthy flag (store-interface.md, section 9.3).
+| What one Runner held in its process | On this kind, with several Runners |
+|---|---|
+| `automationMu` serializes every trigger write, a tick's and a request's | D17: each write expects the row version it read. |
+| The trigger limit and the cloud binding, checked outside the write's transaction | D9's rows, `counts` and the binding's index, in the write's transaction (#244's fifth slice). |
+| Which Runner prepares an occurrence, or dispatches a ready one | D18: the occurrence's claim. |
+| The restart fails every occurrence held `preparing` | D18: the restart, and the dispatcher's tick, fail only those no live claim holds. |
+| The restart interrupts every run held running | D3, built in #244: only those no live claim holds. |
+| A dispatcher that lost a queued run waited a second | It reads the queue again at once (section 2, D3). |
+| The profile rows, written whole from the process's copies | Not changed: below. |
+| The cloud bindings' problems, the profiles set aside, the unhealthy flag | Each Runner's own, as before; each reports its own health. |
+
+**D17. A trigger's write against another's.** Every trigger write read the trigger under
+`automationMu`, which holds one process. Two Runners' ticks of one due time each read the trigger,
+and the second's write lands over the first's; so does a request on one Runner over a tick on
+another. The schedule's identity (`schedule:<revision>:<due>`, unique per trigger) keeps the second
+occurrence out, but the second tick's transaction then fails `taken`, which stops that Runner's
+automation and reports it unhealthy. (a) A row version, `triggers.version`, read with the trigger
+and expected by every `putTrigger`, which moves it on: a write that meets a write made since its
+read is `conflict` and writes nothing. A tick writes its trigger first in its transaction, so a
+tick that lost admits nothing and returns no error (`tickLost`); the next tick reads the trigger
+again. A request answers `409 trigger_changed`, as for a revision changed since the caller read
+it. (b) The record's revision as the expected value: a tick, the file cursor and the pending state
+do not move it, so it fences none of them. (c) A lock row per trigger, taken for the tick: a
+process-wide lock in another shape. (a) is D3's fence for a trigger; its cost is one column, and a
+`409` for a request that met another Runner's tick between its read and its write, the caller's
+revision still current, so that its reload reads the same revision. The sqlite kind holds no
+version and reads 0, its lock keeping one writer; the in-memory kind holds one, so the suite
+tests it.
+
+**D18. An occurrence's claim.** `readyOccurrence` hands the dispatch the oldest accepted
+occurrence, and `preparableOccurrences` hands out the preparations, to whichever Runner reads
+them. A run's submission is idempotent by its request key, but two preparations of one occurrence
+make two acquisitions, and a restart failed every occurrence held `preparing`, another Runner's in
+flight among them. (a) A claim per occurrence, in D3's shape:
+
+- **The claim.** `claimOccurrence(id, state, claim)` writes a token (16 random bytes, new for each
+  claim) and a lease of 60 seconds on the occurrence's row, only in the state its claimant read and
+  only while no live claim holds it (`claim_id IS NULL OR lease_until<=now()`); otherwise it is
+  `conflict`, and the claimant passes the occurrence by. A Runner claims an occurrence before it
+  dispatches it and before each step of its preparation. The readers that hand out work pass by an
+  occurrence a live claim holds.
+- **Every write is fenced.** `putOccurrence` takes an expectation (`occurrenceExpected`) beside the
+  state: a write under a claim lands only while that claim holds the row and its lease is live by
+  `statement_timestamp()`, as a run's finish (D3); a write under none lands only while no live
+  claim holds the row, so a writer that is not the holder does not overwrite the holder's work; a
+  request, a cancellation or a reconciliation, overrules the claim, still fenced by the state it
+  read, and clears it, so the holder's next write is refused. A write keeps the claim only when
+  asked (`keep`); otherwise it releases it. An occurrence read from the store carries no claim (the
+  token is never read back).
+- **The lease.** A legacy preparation's acquisition renews the lease every 15 seconds
+  (`renewOccurrenceClaim`, by `holdLease`, D3's loop and margin); a renewal that fails stops the
+  acquisition and the worker, as a lost run claim does. A durable preparation's step and a
+  dispatch take no renewal: each is one bounded step (an operation call is held to 3 seconds) well
+  inside the lease.
+- **A refused write.** A claimant whose claim was taken, whose lease ran out, or whose occurrence a
+  request ended writes nothing, and goes on with no error (`settleOccurrence`), as a dispatcher that
+  lost a run does.
+- **Interruption.** The restart, and the dispatcher's tick (`interruptLapsed`), fail each
+  occurrence held `preparing` that no live claim holds (`restartOccurrences`), with the reason the
+  restart gives; one under a live claim is its holder's. An accepted or a waiting occurrence whose
+  claim ran out is handed out again, and its dispatch or its next step is made by whichever Runner
+  claims it; a run's submission made before is found by its request key, not made again.
+
+(b) One row per Runner with a heartbeat. (c) An advisory lock. (a) is D3's, and the issue rules
+out the others; its cost is two columns on `occurrences`, a claim's write before each dispatch and
+each preparation step, and an occurrence left by a Runner that stopped worked again, or failed,
+one lease later. The sqlite kind checks the state a claim expects and holds no claim, its lock
+being the fence; the in-memory kind holds the claim by its own clock, so the suite tests it.
+
+**D19. What each host keeps.** Each Runner keeps its attempt directories, its pinned Runtime and a
+preview's scratch directory on its own host, and reads its project's files there (section 8).
+(a) Each stays on its host, and no decision takes another host's state to be known:
+
+- A retry of an interrupted run whose attempt directory the serving host does not hold is refused,
+  `409 run_not_retryable` (D11, unchanged): another Runner's directory is a missing directory.
+- A run's diagnostics, when the kind serves them (refused now, section 6), read the attempt
+  directory on the host that serves the request, and read nothing for another host's attempt.
+- Every Runner of one store pins the Runtime the held jobs' releases name and holds the same
+  project (one image): an input read from the project is read on whichever Runner admits it.
+- A file trigger reads its watched path on whichever Runner ticks: a file that differs between
+  hosts reads as a change each time the tick moves from one to another. Several Runners serve a
+  file trigger only on one host, or with the watched path on storage they share.
+- Every Runner of one store runs one release: the start refuses a store whose migrations are not
+  exactly the Runner's own (section 5), and a store is migrated with every Runner of it stopped,
+  since a Runner of the earlier release writes no claim and no version.
+
+(b) The attempt directories and the project on a durable shared volume. (c) The audit trail and
+the files in the database. (a) builds nothing; (b) and (c) are shared storage, which this step
+does not build. Its cost is the retry of a run interrupted on another host, refused where its
+caller submits a new run, and a file trigger held to one host.
+
+**D20. The clocks of several Runners.** Every lease is compared with the database's clock (D3,
+D18), and each Runner's margin before its lease ends is its own monotonic clock, so no claim
+depends on Runners agreeing on the time. These decisions read the wall clock of the Runner that
+makes them, against a time that another Runner may have written by its own:
+
+- a schedule's due time (`nextAt`, from the clock of the Runner that ticked last) and its lateness
+  (more than 30 seconds late is missed, below);
+- a file's stability (`pendingAt`, written by the Runner that saw the change, against
+  `stableSeconds`, 1 to 3600);
+- an occurrence's expiry in the queue (`expiresAt`, the admitting Runner's time and
+  `queueSeconds`, 60 at least), and a run's from a trigger (`runQueueExpired`);
+- a durable preparation's deadline (`preparationSeconds`, 60 at least), its next check and its
+  ready window, and the next acquisition attempt (`nextAttemptAt`).
+
+(a) A bound: the Runners of one store keep their wall clocks within 1 second of each other, which
+any time service keeps with room to spare. Under it each decision above moves by at most that
+second: a due time is ticked at most a second early, and never twice (D17); the 30 seconds of
+lateness, and the queue's and a preparation's windows, of 60 seconds at least, move by at most
+1 second; a file's stability window is shortened by at most 1 second, so a file trigger served by
+Runners on several hosts takes `stableSeconds` of 2 or more. (b) Each such decision on the
+database's clock, the tick reading `now()` once for its time: no bound, at the cost of a read per
+tick and of ticks that differ between the two kinds. (c) One Runner ticks for every other, under
+a lease on a row: a lock in another shape. (a) changes nothing; its cost is a requirement the
+operator's page states, and journal entries whose times come from several clocks, so that their
+times need not follow the journal's order, which is the order of commits (D13).
+
+**The missed-tick rule with several Runners.** Each Runner's automation ticks every second while
+it is healthy, and a due time is ticked by the first Runner whose clock reaches it, once (D17). The
+trigger's `missed` rule (`skip` records the due time skipped, `missed`; `latest` admits the latest
+due time, `latest-after-missed`) applies when that tick comes more than 30 seconds after the due
+time by the ticking Runner's clock: when no Runner of the store ticked the trigger within 30
+seconds, each being stopped, unhealthy, or refused its write by the store. A Runner that stops
+makes no due time missed while another goes on. Under D20's bound a due time some Runner ticked
+within 29 seconds of it is not missed.
+
+**The installation's profiles.** Not changed by this step, and not fenced. A Runner reads the
+registered and the selected profiles at its start, and a registration writes the row whole from
+the Runner's copy (`profile_registry.go`, `selected_profiles.go`): a registration on one Runner is
+not seen by another until that one starts again, and a registration on a Runner whose copy is
+older than the row writes the newer profiles out of it. Until the rows are versioned, profiles are
+registered through one Runner, and the others are started again after it. (#245 asks to version
+them; this step kept to the rule of doing so when a test of two Runners showed the loss, and none
+has been run.)
+
+**As built.** `0004_several_runners.sql` adds `triggers.version` and `occurrences.claim_id` and
+`lease_until`, each with a default, and no policy and no grant: `0002_grants.sql`'s table
+privileges cover the columns. A store without it is refused at the start until it is migrated.
+The contract's changes: `putTrigger` expects `Trigger.version`; `putOccurrence(o, expected)`;
+`claimOccurrence` and `renewOccurrenceClaim`; `readyOccurrence` and `preparableOccurrences` pass
+by a live claim; `restartOccurrences` spares it; the dispatcher's tick fails lapsed preparations
+in the transaction that interrupts lapsed runs. The tests are section 10's.
 
 ## 13. Not in this issue
 
-Several Runners on one store (#245), beyond not making it harder; which scopes a caller may name;
-the removal issue's retention rules; a third kind.
+Beyond #245's first step (section 12): several Runners on the sqlite kind; shared storage for the
+attempt directories and the project (D19 (b) and (c)); the profile rows' versions (section 12);
+the routes the kind refuses; which scopes a caller may name; the removal issue's retention rules;
+a third kind.
 
 ## 14. Decisions for a maintainer
 
@@ -839,3 +981,7 @@ Each with the recommendation first.
 | D14 | Two finishers and the chain | The chain's head row locked; a unique violation retried |
 | D15 | The schema row | The migration's alone; raised at run time under a policy |
 | D16 | A refused creation in another scope's journal | Read only held to none, by a restrictive policy; journaled under the scope the body names |
+| D17 | A trigger's write against another's | A row version every write expects and moves on; the record's revision; a lock row per trigger |
+| D18 | An occurrence's claim | A lease per claim in D3's shape, fencing every write, a request overruling it; a heartbeat per Runner; an advisory lock (ruled out) |
+| D19 | What each host keeps | Each on its host, no decision taking another host's state as known; a durable shared volume; the trail and the files in the database |
+| D20 | The clocks of several Runners | A bound of 1 second between the Runners' clocks; the database's clock for every such decision; one Runner ticking for all |
