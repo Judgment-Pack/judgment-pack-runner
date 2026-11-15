@@ -310,6 +310,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			Trigger   *TriggerConfig `json:"trigger,omitempty"`
 			Scope     *string        `json:"scope,omitempty"`
 			Retry     *RetryPolicy   `json:"retry,omitempty"`
+			Paging    *JobPaging     `json:"paging,omitempty"`
 		}
 		by := requesterFrom(r.Context())
 		raw, err := decodeRaw(w, r, &req)
@@ -337,7 +338,13 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			failure(w, err)
 			return
 		}
-		j, err := s.createJobWith(by, req.Name, req.ReleaseID, scope, req.Trigger, retry)
+		paging, err := jobPaging(raw, req.Paging)
+		if err != nil {
+			s.refusedJobBy(by, req.ReleaseID, err)
+			failure(w, err)
+			return
+		}
+		j, err := s.createJobPaged(by, req.Name, req.ReleaseID, scope, req.Trigger, retry, paging)
 		if err != nil {
 			s.refusedJobBy(by, req.ReleaseID, err)
 			failure(w, err)

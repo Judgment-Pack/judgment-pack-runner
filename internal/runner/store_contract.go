@@ -290,6 +290,9 @@ type storeReads interface {
 	cloudBindings(except, connection, job string) (int, error)
 	// occurrence is the occurrence held under id, or faultAbsent.
 	occurrence(id string) (Occurrence, error)
+	// pagingCursors are a job's cursor rows, by paged source
+	// (paging_loop.go): none when no run of it has advanced one.
+	pagingCursors(job string) (map[string]PagingCursor, error)
 	// identifiedOccurrence is the occurrence trigger admitted under identity
 	// (its event, schedule time, file change or signal), with the digest of
 	// the payload it was admitted with, or faultAbsent.
@@ -688,10 +691,16 @@ type runTx interface {
 	// raiseSchema marks the store as holding records that only a Runner
 	// that knows schema keeps, so that no earlier Runner opens it: the
 	// sqlite kind raises its schema to scopedStoreSchema from storeSchema,
-	// to retryStoreSchema from either, and to scheduleStoreSchema from any
-	// of the three; a store raised already is left as it is. faultRefused
+	// to retryStoreSchema from either, to scheduleStoreSchema from any of
+	// the three, and to pagingStoreSchema from any of the four; a store
+	// raised already is left as it is. faultRefused
 	// for a schema the kind does not know.
 	raiseSchema(schema string) error
+	// advancePagingCursor writes c, a job's cursor for one paged source, in
+	// the transaction that records the run completed (paging_loop.go): only
+	// while the row still holds read, or, read being "", while there is
+	// none. It says whether it wrote; a row that moved on is left as it is.
+	advancePagingCursor(c PagingCursor, read string) (bool, error)
 }
 
 // storeOpening is what the Runner gives a kind's constructor.

@@ -138,7 +138,7 @@ func (k *twiceStore) heldTo(sc storeScope) runStore {
 }
 
 // transactionOpener is the function that called update, as runtime names
-// it without its package: "(*Service).createJobWith", "finishRunIn". A
+// it without its package: "(*Service).createJobPaged", "finishRunIn". A
 // closure is its enclosing function's.
 func transactionOpener() string {
 	pc := make([]uintptr, 1)
@@ -505,7 +505,7 @@ func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
 			return r
 		}
 		first, next := release(), release()
-		record.betweenRuns(t, "(*Service).createJobWith", func(runStore) error {
+		record.betweenRuns(t, "(*Service).createJobPaged", func(runStore) error {
 			_, err := w.s.admitSelectedProfile(f.profile)
 			return err
 		})

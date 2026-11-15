@@ -249,13 +249,15 @@ var widenedStoreCases = []storeCase{
 				t.Fatalf("raising %s leaves the store at %s, want %s", schema, got, want)
 			}
 		}
+		top := scheduleStoreSchema
 		if k.migratedSchema {
 			// The migration wrote the latest schema: a raise finds it raised.
-			if got := k.schema(t, st); got != scheduleStoreSchema {
+			if got := k.schema(t, st); got != pagingStoreSchema {
 				t.Fatalf("a migrated store is at %s", got)
 			}
-			raise(scopedStoreSchema, scheduleStoreSchema)
-			raise(retryStoreSchema, scheduleStoreSchema)
+			top = pagingStoreSchema
+			raise(scopedStoreSchema, top)
+			raise(retryStoreSchema, top)
 		} else {
 			if got := k.schema(t, st); got != storeSchema {
 				t.Fatalf("a new store is at %s", got)
@@ -265,22 +267,27 @@ var widenedStoreCases = []storeCase{
 			raise(retryStoreSchema, retryStoreSchema)
 			raise(scopedStoreSchema, retryStoreSchema)
 		}
-		raise(scheduleStoreSchema, scheduleStoreSchema)
-		raise(retryStoreSchema, scheduleStoreSchema)
-		raise(scopedStoreSchema, scheduleStoreSchema)
-		for _, schema := range []string{storeSchema, manualStoreSchema, "8", ""} {
+		raise(scheduleStoreSchema, top)
+		raise(retryStoreSchema, top)
+		raise(scopedStoreSchema, top)
+		// A store that holds a job keeping a cursor is at the paging schema,
+		// which no earlier schema lowers.
+		raise(pagingStoreSchema, pagingStoreSchema)
+		raise(scheduleStoreSchema, pagingStoreSchema)
+		raise(scopedStoreSchema, pagingStoreSchema)
+		for _, schema := range []string{storeSchema, manualStoreSchema, "9", ""} {
 			err := st.update(func(tx runTx) error { return tx.raiseSchema(schema) })
 			wantFault(t, err, faultRefused, "raising "+schema)
 		}
-		if got := k.schema(t, st); got != scheduleStoreSchema {
+		if got := k.schema(t, st); got != pagingStoreSchema {
 			t.Fatalf("a refused raise left the store at %s", got)
 		}
 		// Each schema raised from a new store, as the migration left it.
-		for _, schema := range []string{retryStoreSchema, scheduleStoreSchema} {
+		for _, schema := range []string{retryStoreSchema, scheduleStoreSchema, pagingStoreSchema} {
 			other := k.open(t)
 			want := schema
 			if k.migratedSchema {
-				want = scheduleStoreSchema
+				want = pagingStoreSchema
 			}
 			must(t, other.update(func(tx runTx) error { return tx.raiseSchema(schema) }))
 			if got := k.schema(t, other); got != want {

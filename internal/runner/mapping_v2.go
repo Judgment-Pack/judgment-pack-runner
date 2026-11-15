@@ -651,7 +651,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			}
 			if !present {
 				if planning && paging != nil {
-					return i, &acquisitionNeeded{PlannedSource{Name: source.Name, Kind: source.Kind, Profile: source.Profile, Source: profile.Source, Arguments: args, Paging: source.Paging, paged: &plannedPaging{rule: paging, read: source.Read}}}
+					return i, &acquisitionNeeded{PlannedSource{Name: source.Name, Kind: source.Kind, Profile: source.Profile, Source: profile.Source, Arguments: args, Paging: source.Paging, paged: &plannedPaging{rule: paging, sourceRead: source.Read}}}
 				}
 				if planning {
 					return i, &acquisitionNeeded{PlannedSource{retainResponse: source.Read.Copy != nil && hasColumnCopy(*source.Read.Copy), Name: source.Name, Kind: source.Kind, Provider: source.Provider, Profile: source.Profile, Source: profile.Source, Arguments: args}}

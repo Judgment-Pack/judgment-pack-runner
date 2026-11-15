@@ -84,6 +84,11 @@ type Job struct {
 	// fixed for as long as the job exists. A job created without one makes
 	// one attempt, and encodes as every job did before.
 	Retry *RetryPolicy `json:"retry,omitempty"`
+	// Paging is the cursor the job keeps between runs for each paged source
+	// of its release's dialect (paging_loop.go), fixed at creation and held
+	// to each new release's dialect by an upgrade. A job created without one
+	// keeps none, and encodes as every job did before.
+	Paging *JobPaging `json:"paging,omitempty"`
 }
 type Run struct {
 	manual        *manualIntentInput `json:"-"` // private exact-byte storage; never exported as authority

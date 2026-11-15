@@ -135,13 +135,23 @@ func (s *Service) automaticInputSnapshot(c *AutomaticInput, r Release, snapshots
 	return s.automaticInputContext(context.Background(), c, r, snapshots)
 }
 func (s *Service) automaticInputContext(ctx context.Context, c *AutomaticInput, r Release, snapshots map[string][]byte) (Input, error) {
+	return s.automaticInputPaged(ctx, c, r, snapshots, &occurrencePaging{})
+}
+
+// automaticInputPaged is automaticInputContext with the paged sources' state
+// p (paging_loop.go): the job's cursors fill the case before any source is
+// acquired.
+func (s *Service) automaticInputPaged(ctx context.Context, c *AutomaticInput, r Release, snapshots map[string][]byte, p *occurrencePaging) (Input, error) {
 	input, e := s.automaticInputSeed(c, r, snapshots)
 	if e != nil {
 		return input, e
 	}
+	if p.advances, e = cursorSeed(&input, p.rules, p.cursors, p.at); e != nil {
+		return input, e
+	}
 	if c.Kind == "mapped-sources" {
 		var e error
-		input, e = s.acquireAutomatic(ctx, input)
+		input, e = s.acquireAutomaticPaged(ctx, input, p)
 		if e != nil {
 			return input, e
 		}

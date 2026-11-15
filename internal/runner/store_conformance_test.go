@@ -162,7 +162,7 @@ func memoryOf(st runStore) *memoryStore { return underlying(st).(*memoryStore) }
 func TestStoreKindsConform(t *testing.T) {
 	for _, k := range storeKindsUnderTest() {
 		t.Run(k.name, func(t *testing.T) {
-			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, readsStoreCases, claimStoreCases, occurrenceClaimStoreCases, k.own) {
+			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, readsStoreCases, claimStoreCases, occurrenceClaimStoreCases, pagingStoreCases, k.own) {
 				t.Run(c.name, func(t *testing.T) { c.run(t, k) })
 			}
 		})
@@ -479,7 +479,7 @@ var storeCases = []storeCase{
 		if len(again.Attempts) != 1 || again.Attempts[0] != next.Attempts[0] {
 			t.Fatalf("the kept attempt is not held: %+v", again.Attempts)
 		}
-		wantFault(t, w.st.update(func(tx runTx) error { return tx.raiseSchema("8") }), faultRefused, "a schema the kind does not know")
+		wantFault(t, w.st.update(func(tx runTx) error { return tx.raiseSchema("9") }), faultRefused, "a schema the kind does not know")
 	}},
 	{"a finished run keeps its counts and its error class", func(t *testing.T, k storeKindUnderTest) {
 		// The counts and the class are members of the run's record

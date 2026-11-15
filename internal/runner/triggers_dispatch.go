@@ -384,7 +384,7 @@ func (s *Service) dispatchClaimed(o Occurrence, at time.Time) error {
 		o.Input = nil
 		return s.settleOccurrence(o)
 	}
-	origin := &TriggerOrigin{OccurrenceID: o.ID, TriggerID: o.TriggerID, TriggerRevision: o.TriggerRevision, Kind: o.Kind, ScheduledAt: o.ScheduledAt, EventID: o.EventID, InputDigest: o.InputDigest, ExpiresAt: expires}
+	origin := &TriggerOrigin{OccurrenceID: o.ID, TriggerID: o.TriggerID, TriggerRevision: o.TriggerRevision, Kind: o.Kind, ScheduledAt: o.ScheduledAt, EventID: o.EventID, InputDigest: o.InputDigest, ExpiresAt: expires, Paging: o.Paging}
 	run, _, e := s.submitInternal(o.JobID, o.ID, *o.Input, origin)
 	if e != nil {
 		var api *apiError

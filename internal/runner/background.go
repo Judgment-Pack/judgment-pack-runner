@@ -103,6 +103,13 @@ func (s *Service) validateGatewayMapping(r Release) error {
 var automaticHTTP = &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("Gateway redirect refused") }}
 
 func (s *Service) acquireAutomatic(parent context.Context, input Input) (Input, error) {
+	return s.acquireAutomaticPaged(parent, input, &occurrencePaging{})
+}
+
+// acquireAutomaticPaged is acquireAutomatic with the paged sources' state p
+// (paging_loop.go): a paged source's pages are asked in its loop, and an
+// expired reference starts its read again from the cursor's first value.
+func (s *Service) acquireAutomaticPaged(parent context.Context, input Input, p *occurrencePaging) (Input, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return Input{}, manualUnsupported()
 	}
@@ -117,6 +124,7 @@ func (s *Service) acquireAutomatic(parent context.Context, input Input) (Input, 
 	}
 	ctx, cancel := context.WithTimeout(parent, 120*time.Second)
 	defer cancel()
+	restarted := false
 	for step := 0; step <= len(input.Source.Mapping.Sources); step++ {
 		plan, e := s.nextInput(input, time.Now())
 		if e != nil {
@@ -129,14 +137,31 @@ func (s *Service) acquireAutomatic(parent context.Context, input Input) (Input, 
 		if next == nil || next.Kind != "operation" {
 			return input, bad("automatic_source_unavailable", "A fresh local source is missing.")
 		}
-		value, err := s.acquirePlannedOperation(ctx, *next)
+		var value SourceValue
+		var err error
+		if next.paged != nil {
+			value, err = s.acquirePages(ctx, *next, p, combinedLimit(input)-len(encode(input)))
+		} else {
+			value, err = s.acquirePlannedOperation(ctx, *next)
+		}
 		if err != nil {
+			// An expired reference starts a change cursor's read again
+			// from its first value, once (paging_loop.go).
+			if next.paged != nil && expiredReference(err) && p.restart(&input, next.Name) {
+				restarted = true
+				step--
+				continue
+			}
 			// A failure after a call that answered is not retried as the
 			// whole acquisition: it would call that call's source again.
-			if answer, ok := err.(*gatewayAnswer); ok && step > 0 {
+			// A paged source's pages held for the next attempt are its
+			// own calls alone, and only when no other call answered.
+			if answer, ok := err.(*gatewayAnswer); ok && (step > 0 || restarted) {
 				held := *answer
 				held.afterAcquisition = true
 				err = &held
+				s.sealHeld(ctx, p.held)
+				p.held = nil
 			}
 			return input, err
 		}
@@ -228,7 +253,15 @@ func automaticCall(ctx context.Context, target string, body []byte, limit int64)
 	if res.StatusCode != 200 {
 		// The status and Retry-After are kept for a job's retry policy
 		// (retries.go); the error is the one it always was.
-		return nil, &gatewayAnswer{err: bad("gateway_refused", "The Gateway refused the operation. Check the installed connection and provider access."), status: res.StatusCode, retryAfter: res.Header.Get("Retry-After"), own: gatewayRefusal(res.Header.Get("Content-Type"), raw)}
+		answer := &gatewayAnswer{err: bad("gateway_refused", "The Gateway refused the operation. Check the installed connection and provider access."), status: res.StatusCode, retryAfter: res.Header.Get("Retry-After"), own: gatewayRefusal(res.Header.Get("Content-Type"), raw)}
+		if answer.own {
+			var body struct {
+				Code string `json:"code"`
+			}
+			_ = json.Unmarshal(raw, &body)
+			answer.code = body.Code
+		}
+		return nil, answer
 	}
 	return raw, nil
 }
@@ -332,6 +365,14 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		s.automationMu.Unlock()
 		return e
 	}
+	// The job's cursors are read when the input is seeded (paging_loop.go),
+	// and the pages an earlier attempt received before a throttle resumed.
+	paging, e := s.occurrencePagingOf(o, policy != nil)
+	if e != nil {
+		e = s.heldRecordOrReleased(o, e)
+		s.automationMu.Unlock()
+		return e
+	}
 	o.State = "preparing"
 	if policy != nil {
 		openAttempt(&o, s.instant())
@@ -354,9 +395,16 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	}
 	held, releaseClaim := s.holdLease(ctx, claimed, func(tx runTx) error { return tx.renewOccurrenceClaim(o.ID, o.claim) })
 	bounded, stop := context.WithDeadline(held, expiry)
-	input, acquisitionError := s.automaticInputContext(bounded, o.PendingInput, release, nil)
+	input, acquisitionError := s.automaticInputPaged(bounded, o.PendingInput, release, nil, paging)
 	cut := bounded.Err() != nil
 	stop()
+	// Pages held for an attempt that will not come are sealed, after the
+	// lock is given up.
+	defer func() {
+		if paging.held != nil {
+			s.sealHeld(ctx, paging.held)
+		}
+	}()
 	if _, e = releaseClaim(); e != nil {
 		return e
 	}
@@ -368,12 +416,14 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		var scheduled bool
 		if scheduled, ending = closeAttempt(&o, *policy, acquisitionError, expiry, at, cut); scheduled {
 			// Another attempt is scheduled: the occurrence waits for it
-			// with its pending input.
+			// with its pending input, and the pages it holds.
 			o.State = "accepted"
+			o.HeldPages, paging.held = paging.held, nil
 			return s.settleOccurrence(o)
 		}
 	}
 	o.PendingInput = nil
+	o.HeldPages = nil
 	if acquisitionError != nil {
 		o.State = "failed"
 		o.Reason = acquisitionError.Error()
@@ -389,6 +439,7 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		o.State = "accepted"
 		o.Input = &input
 		o.InputDigest = digest(encode(input))
+		o.Paging = paging.result()
 	}
 	return s.settleOccurrence(o)
 }

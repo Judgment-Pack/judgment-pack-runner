@@ -161,6 +161,11 @@ type EventDetail struct {
 	Disposition *EventDisposition `json:"disposition,omitempty"`
 	ErrorClass  string            `json:"errorClass,omitempty"`
 	Counts      *RunCounts        `json:"counts,omitempty"`
+	// FullReRead names the paged sources an occurrence read again in full
+	// from its cursor's first value after an expired reference
+	// (paging_loop.go), on the entry of its acceptance. An entry that holds
+	// it has pagingEntryVersion.
+	FullReRead []string `json:"fullReRead,omitempty"`
 }
 
 // EventInterruption is an interruption's own time: the moment Runner saw the
@@ -278,6 +283,9 @@ func journalRowOf(c change) journalRow {
 	if c.detail.Disposition != nil || c.detail.ErrorClass != "" || c.detail.Counts != nil {
 		version = resultEntryVersion
 	}
+	if len(c.detail.FullReRead) > 0 {
+		version = pagingEntryVersion
+	}
 	return journalRow{version: version, kind: c.kind, at: c.at, by: string(encode(c.by)), concerns: string(encode(c.concerns)), revision: revision, from: from, to: to,
 		reason: boundedReason(c.reason), detail: string(encode(c.detail)), job: c.concerns.Job, release: c.concerns.Release, refusal: c.refusal}
 }
@@ -355,6 +363,13 @@ func occurrenceChange(o Occurrence, from string, by EventActor) change {
 		c.detail.ReadyUntil = o.ReadyUntil
 	}
 	c.detail.Scope = o.Scope
+	if from == "preparing" && o.State == "accepted" {
+		for _, read := range o.Paging {
+			if read.FullReRead {
+				c.detail.FullReRead = append(c.detail.FullReRead, read.Source)
+			}
+		}
+	}
 	if endedOccurrence(o.State) {
 		c.detail.ErrorClass = o.ErrorClass
 	}
