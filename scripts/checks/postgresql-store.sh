@@ -21,7 +21,9 @@ export JPACK_TEST_POSTGRESQL_REQUIRED=1
 # that keeps only its start names no failing test (#273).
 out="$(go test -race -count=1 -v -timeout 20m -run '^(TestStoreKindsConform|TestPostgreSQL)' ./internal/runner 2>&1)" || {
   echo "postgresql-store: the tests failed; the failing tests, then the last 60 lines of the output:"
-  printf '%s\n' "$out" | grep -E -A 20 -- '^[[:space:]]*--- FAIL: |^panic: |^FAIL|WARNING: DATA RACE' | head -n 300 || true
+  # A -v run writes what a test logged before its FAIL line, so the lines
+  # before are kept too.
+  printf '%s\n' "$out" | grep -E -B 25 -A 20 -- '^[[:space:]]*--- FAIL: |^panic: |^FAIL|WARNING: DATA RACE' | head -n 300 || true
   echo "postgresql-store: the last 60 lines:"
   printf '%s\n' "$out" | tail -n 60
   exit 1
