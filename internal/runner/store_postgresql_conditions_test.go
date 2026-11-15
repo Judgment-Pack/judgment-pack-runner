@@ -934,6 +934,7 @@ func TestPostgreSQLHoldsTriggersToTheirScope(t *testing.T) {
 	if got := listed(b.ID, "team-b"); len(got) != 0 {
 		t.Fatal("team-b's job lists another scope's trigger:", got)
 	}
+	pgHeldFrom(t, s, db, "team-b", "triggers")
 	call("GET", "/v1/jobs/"+a.ID+"/triggers?scope=team-b", nil, 404)
 	call("GET", "/v1/jobs/"+a.ID+"/triggers", nil, 404)
 	// Guessing the id: through team-b's own job, or naming it in the path.
@@ -994,6 +995,38 @@ func TestPostgreSQLHoldsTriggersToTheirScope(t *testing.T) {
 	}
 }
 
+// pgHeldFrom says that a request login held to scope neither reads nor
+// changes the rows of another scope that each table holds, which the suite
+// login sees: the policy itself holds them, not the Runner's scope check in
+// front of it, which answers a record of another scope as absent too.
+func pgHeldFrom(t *testing.T, s *pgTestServer, db, scope string, tables ...string) {
+	t.Helper()
+	suite := s.pool(t, pgRoleSuite, db)
+	request := s.pool(t, pgRoleRequest, db)
+	for _, table := range tables {
+		var others int
+		must(t, suite.QueryRowContext(pgContext, "SELECT count(*) FROM "+table+" WHERE scope<>$1", scope).Scan(&others))
+		if others == 0 {
+			t.Fatalf("%s holds no row of another scope than %s", table, scope)
+		}
+		var updatable bool
+		must(t, request.QueryRowContext(pgContext, "SELECT has_table_privilege(current_user, $1, 'UPDATE')", postgresqlSchema+"."+table).Scan(&updatable))
+		inScope(t, request, scope, false, func(tx *sql.Tx) {
+			var read int
+			must(t, tx.QueryRowContext(pgContext, "SELECT count(*) FROM "+table+" WHERE scope<>$1", scope).Scan(&read))
+			var changed int64
+			if updatable {
+				res, err := tx.ExecContext(pgContext, "UPDATE "+table+" SET record=record WHERE scope<>$1", scope)
+				must(t, err)
+				changed, _ = res.RowsAffected()
+			}
+			if read != 0 || changed != 0 {
+				t.Errorf("a request held to %s read %d and changed %d of %d rows of another scope in %s", scope, read, changed, others, table)
+			}
+		})
+	}
+}
+
 // pgCall is a request to sv's routes that must answer want; it answers the
 // body.
 func pgCall(t *testing.T, sv *Service) func(method, path string, body any, headers map[string]string, want int) []byte {
@@ -1050,6 +1083,7 @@ func TestPostgreSQLHoldsOccurrencesToTheirScope(t *testing.T) {
 	if n := pending(); n != 1 {
 		t.Fatal("the installation's pending count is", n, "want 1")
 	}
+	pgHeldFrom(t, s, db, "team-b", "occurrences", "occurrence_keys")
 	record := RecordDelivery{ReleaseID: a.ReleaseID, Event: delivery("record")}
 	for _, q := range []string{"?scope=team-b", ""} {
 		call("POST", "/v1/triggers/"+created.ID+"/events"+q, delivery("second"), token, 401)
