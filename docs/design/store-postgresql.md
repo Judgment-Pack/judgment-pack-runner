@@ -571,6 +571,32 @@ Section 11, step 4, read the `400` of the table above, as first written, as a ch
 Runner answers `trigger_limit` and `cloud_binding_used` with `422` on every kind, and the table
 now says so rather than change what the sqlite kind answers.
 
+**The input root is the installation's.** A file input names a path under the Runner's one input
+root (`inputRoot`, the store's identity), on both storage kinds; the root has no subtree per scope.
+A trigger preview held to one scope (`POST /v1/jobs/{job}/triggers/preview`) may name a file
+another scope's jobs use, and its answer carries the file's facts and evidence. Row security holds
+the store's rows to a scope, not the files under the input root, which every Runner of one store
+shares (the store holds them to one `inputRoot`): scopes whose inputs must stay apart are given
+separate installations (#279).
+
+**What a request held to one scope can infer.** Row security keeps another scope's rows from a
+request held to one scope; it does not keep that request from learning that other scopes are
+active. The known channels, each accepted (D8, D9, D10):
+
+- The chain of runs, held to no scope (D10): `GET /v1/run-chain` lists every scope's entries, each
+  a run id and its audit record's digest, so a request in any scope sees how many runs the
+  installation recorded, and in what order among its own.
+- Gaps in the journal's sequence (D8): an entry's sequence is the installation's, so the gaps
+  between a scope's own entries say how many entries other scopes wrote between them.
+- The installation-wide counts and keys (D9): `422 trigger_limit` at the installation's trigger
+  limit; `429 queue_full` at the pending-occurrence limit (a delivery) and at the run queue's limit
+  (a submission or a retry); `422 cloud_binding_used` for a binding another scope holds; and
+  `409 release_already_used` and `409 artifact_identity_conflict` for a release or a pack or
+  dialect identity another scope holds. Each says that some scope holds the rows, never which.
+
+D9 and D10 accept these as the cost of one installation's rules and one checkable chain; a
+deployment that needs scopes not to see each other's activity gives them separate installations.
+
 ## 7. Privileges, append-only tables, removal
 
 | Table | Request login | Worker login | Append-only |
