@@ -248,15 +248,31 @@ func (s *Service) holdProfiles(rows profileRows) {
 // one registered through another Runner of the store since this one read
 // them (#282). A read the store or currentProfiles refuses leaves the copy
 // as it was.
+//
+// The rows are read before profilesMu is taken, so that no registration
+// waits on the read. A registration through this Runner may then hold a
+// newer copy than the read: each row only grows, a profile appended to it,
+// so the copy of each namespace is replaced only by a longer row, and one a
+// registration made longer meanwhile is kept.
 func (s *Service) refreshProfiles() bool {
-	s.profilesMu.Lock()
-	defer s.profilesMu.Unlock()
 	rows, err := s.currentProfiles(s.store)
-	if err != nil || len(rows.stored) == len(s.storedProfiles) && len(rows.selectedStored) == len(s.selectedStored) {
+	if err != nil {
 		return false
 	}
-	s.holdProfiles(rows)
-	return true
+	s.profilesMu.Lock()
+	defer s.profilesMu.Unlock()
+	gained := false
+	if len(rows.stored) > len(s.storedProfiles) {
+		s.storedProfiles = rows.stored
+		s.registeredProfiles.Store(&rows.admitted)
+		gained = true
+	}
+	if len(rows.selectedStored) > len(s.selectedStored) {
+		s.selectedStored = rows.selectedStored
+		s.selectedProfiles.Store(&rows.selected)
+		gained = true
+	}
+	return gained
 }
 
 // requiredProfileMembers are the members a profile is registered with, each
