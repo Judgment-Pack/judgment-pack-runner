@@ -99,7 +99,11 @@ run_unit -run '^TestColumnRoleLiteralSeparatorWireCustody$'
 run_unit -run '^TestColumnRole' -skip "$large_roles"
 run_unit -run "$retained" -skip '^TestColumnRole'
 run_unit -run '^TestWorkflow'
-run_unit -run '^Test[A-M]' -skip "$retained"
+# Tests named A... are more than half of the tests from A to M. As one group
+# beside two others they took 604 s of the test binary's 600 s in one run, so
+# they are a group of their own (#269).
+run_unit -run '^TestA'
+run_unit -run '^Test[B-M]' -skip "$retained"
 run_unit -skip '^(TestColumn|TestSelectedLeaf|TestWorkflow|Test[A-M])'
 while [ "$running" != 0 ]; do
   read -r -t 5 -u 3 ended || true

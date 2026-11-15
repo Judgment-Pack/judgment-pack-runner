@@ -320,7 +320,7 @@ class Checks(unittest.TestCase):
         for index, group in enumerate(groups):
             for other in groups[index + 1:]:
                 self.assertFalse(group & other, 'unit partitions repeat cases')
-        self.assertEqual(len(groups), 10)
+        self.assertEqual(len(groups), 11)
         self.assertEqual(len(rest), 1, 'one unit partition takes what the others leave')
         for name in ('ExampleFuture', 'ExampleColumn', 'FuzzFuture', 'FuzzSelectedLeaf'):
             self.assertIn(name, rest[0])
@@ -368,7 +368,7 @@ class Checks(unittest.TestCase):
         serial, serial_calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', jobs='1')
         self.assertEqual(serial.returncode, 0, serial.stdout)
         self.assert_unit_partition_calls(serial_calls)
-        self.assertIn('unit-tests: 10 groups, at most 1 at once, ', serial.stdout)
+        self.assertIn('unit-tests: 11 groups, at most 1 at once, ', serial.stdout)
         default = '2' if platform.system() == 'Darwin' else '3'
         for jobs, at_most in ((None, default), ('4', '4'), ('10', '10')):
             with self.subTest(jobs=jobs):
@@ -376,10 +376,10 @@ class Checks(unittest.TestCase):
                 self.assertEqual(process.returncode, 0, process.stdout)
                 self.assertEqual(sorted(call['args'] for call in calls), sorted(call['args'] for call in serial_calls))
                 self.assertEqual(calls[-1]['args'], serial_calls[-1]['args'], 'conformance did not run last')
-                listing = [line for line in process.stdout.splitlines() if line.startswith('unit-tests: 10 groups')]
+                listing = [line for line in process.stdout.splitlines() if line.startswith('unit-tests: 11 groups')]
                 self.assertEqual(len(listing), 1, process.stdout)
                 self.assertIn(', at most %s at once, ' % at_most, listing[0])
-                for group in range(1, 11):
+                for group in range(1, 12):
                     self.assertRegex(listing[0], r'(: |, )%d ok [0-9]+s' % group)
 
     def test_unit_script_refuses_a_job_count_that_is_not_a_whole_number_above_zero(self):
@@ -402,7 +402,7 @@ class Checks(unittest.TestCase):
         # Side by side, a failed group fails the step, its output is shown whole, and the
         # store conformance run does not start.
         _, everything = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', jobs='1')
-        groups = [call['args'] for call in everything[:10]]
+        groups = [call['args'] for call in everything[:11]]
         for number, args in enumerate(groups, 1):
             with self.subTest(group=number):
                 process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh', fail_args=args)
@@ -410,8 +410,8 @@ class Checks(unittest.TestCase):
                 self.assertIn('fake Go failure at call ', process.stdout)
                 self.assertIn('== the output of group %d ==' % number, process.stdout)
                 self.assertRegex(process.stdout, r'(?m)^group %d FAIL \(7\) in ' % number)
-                self.assertRegex(process.stdout, r'(?m)^unit-tests: 10 groups, .*\b%d FAIL \(7\)' % number)
-                self.assertNotIn(everything[10]['args'], [call['args'] for call in calls],
+                self.assertRegex(process.stdout, r'(?m)^unit-tests: 11 groups, .*\b%d FAIL \(7\)' % number)
+                self.assertNotIn(everything[11]['args'], [call['args'] for call in calls],
                                  'store conformance ran after a group failed')
                 self.assertIn(args, [call['args'] for call in calls])
 
@@ -421,7 +421,7 @@ class Checks(unittest.TestCase):
             process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh',
                                                    script_text=script_text, conformance=kinds)
             self.assertNotEqual(process.returncode, 0, 'script accepted missing store conformance')
-            self.assertEqual(len(calls), 11)
+            self.assertEqual(len(calls), 12)
             self.assertIn('TestStoreKindsConform/%s did not run and pass' % missing, process.stdout)
 
     def test_unit_script_requires_every_actual_store_conformance_kind(self):
