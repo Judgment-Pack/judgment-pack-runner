@@ -374,7 +374,7 @@ func TestAClosureRunAgainDecidesFromTheStore(t *testing.T) {
 		must(t, w.s.writeTrigger(tr, "", false))
 		blocking := w.admitted(tr, nil)
 		before := len(w.entries())
-		record.betweenRuns(t, "(*Service).scheduleTick", ended(blocking))
+		record.betweenRuns(t, "(*Service).scheduleDue", ended(blocking))
 		must(t, w.s.scheduleTick(tr, "", at))
 		admittedAccepted(w, before)
 	})

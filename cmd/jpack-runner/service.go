@@ -38,7 +38,7 @@ import (
 
 // serviceMembers are the members a service configuration holds beside the
 // boot line's.
-var serviceMembers = []string{"listen", "identity", "acceptOtherHostsOverPlainHTTP", "store"}
+var serviceMembers = []string{"listen", "identity", "acceptOtherHostsOverPlainHTTP", "store", "schedules"}
 
 // companionMembers are boot members a service configuration does not take:
 // both bind Runner to the host that starts it (docs/design/
@@ -81,7 +81,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) error {
 // line's members, read by the boot line's rules, but for executorOwnership
 // and executorAdmission, which it refuses; token, the owner bearer, which a
 // configuration with identity does not take and one without needs; listen;
-// and acceptOtherHostsOverPlainHTTP, true or false.
+// acceptOtherHostsOverPlainHTTP, true or false; and schedules, the shared
+// intervals and the cron bounds.
 func readServiceConfig(path string) (serviceConfig, error) {
 	raw, err := runner.ReadServiceConfig(path)
 	if err != nil {
@@ -159,6 +160,14 @@ func readServiceConfig(path string) (serviceConfig, error) {
 			return serviceConfig{}, err
 		}
 		c.runner.PostgreSQL = &connections
+	}
+	// The operator's shared intervals and cron bounds (docs/design/
+	// schedules.md). Without the member the Runner names no shared interval
+	// and holds cron expressions to its defaults.
+	if v, present := members["schedules"]; present {
+		if c.runner.Schedules, err = runner.ParseScheduleSettings(v); err != nil {
+			return serviceConfig{}, err
+		}
 	}
 	return c, nil
 }

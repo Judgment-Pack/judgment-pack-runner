@@ -104,6 +104,13 @@ func (s *Service) configureTriggerBy(st runStore, by requester, jobID, triggerID
 		if err = tx.putTrigger(t, hash, true); err != nil {
 			return err
 		}
+		// A store's first cron or shared-interval schedule raises its
+		// schema in the same transaction (shared_ticks.go).
+		if c.needsScheduleSchema() {
+			if err = tx.raiseSchema(scheduleStoreSchema); err != nil {
+				return err
+			}
+		}
 		_, err = tx.appendJournal(change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}})
 		return err
 	})

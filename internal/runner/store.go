@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,7 +56,10 @@ type Config struct {
 	// When given, the key read at start must have it, or Runner refuses to
 	// start, and it is the expected key for as long as Runner runs. Without
 	// it, the expected key is the one read at start.
-	SigningPublicKey  string
+	SigningPublicKey string
+	// Schedules are the operator's shared intervals and the bounds of a cron
+	// schedule (shared_ticks.go). The zero value names no shared interval.
+	Schedules         ScheduleSettings
 	disableAutomation bool
 	// disableDispatcher leaves queued runs for a test to dispatch, one at a
 	// time, with dispatchNext.
@@ -121,6 +125,12 @@ func Open(cfg Config) (_ *Service, err error) {
 	// The host's paths are in the path domain (path_domain.go), before any
 	// lease, directory or store is touched.
 	if err = checkPaths("dir", cfg.Dir, "workspace", cfg.Workspace, "runtime", cfg.Runtime, "inputRoot", cfg.InputRoot); err != nil {
+		return nil, err
+	}
+	// The schedule settings are snapshotted, as the other settings are, and
+	// held to their bounds before anything is touched.
+	cfg.Schedules.SharedIntervals = slices.Clone(cfg.Schedules.SharedIntervals)
+	if err = cfg.Schedules.validate(); err != nil {
 		return nil, err
 	}
 	if cfg.ExecutorAdmission != nil {
@@ -439,9 +449,15 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 				return err
 			}
 		}
-		// Likewise its first job with a retry policy (retries.go).
+		// Likewise its first job with a retry policy (retries.go), and its
+		// first cron or shared-interval schedule (shared_ticks.go).
 		if j.Retry != nil {
 			if err = tx.raiseSchema(retryStoreSchema); err != nil {
+				return err
+			}
+		}
+		if c.needsScheduleSchema() {
+			if err = tx.raiseSchema(scheduleStoreSchema); err != nil {
 				return err
 			}
 		}
