@@ -617,12 +617,30 @@ func (s *Service) claimOccurrence(id, state string) (Occurrence, error) {
 // occurrenceLost is nil for a claim's error that says the occurrence is not
 // this Runner's to work: another Runner holds it, or it moved on or is gone
 // since it was read. The Runner wrote nothing of it, and goes on to the next
-// (#245). Any other error is err.
+// (#245). So too a claim that waited out the store's lock bound: it made
+// nothing, the store is busy and not failing, and the occurrence is claimed
+// at a later tick. Any other error is err.
 func occurrenceLost(err error) error {
-	if faultOf(err) == faultConflict || absent(err) {
+	if faultOf(err) == faultConflict || absent(err) || lockWaited(err) {
 		return nil
 	}
 	return err
+}
+
+// onlyLockWaited says whether err is a lock wait and nothing else: every
+// error it joins (releasedWith) waited out the store's lock bound, so that a
+// failure joined to a lock wait is not taken for a busy store.
+func onlyLockWaited(err error) bool {
+	if many, ok := err.(interface{ Unwrap() []error }); ok {
+		errs := many.Unwrap()
+		for _, e := range errs {
+			if !onlyLockWaited(e) {
+				return false
+			}
+		}
+		return len(errs) > 0
+	}
+	return lockWaited(err)
 }
 
 // failHeld fails o, held under this Runner's claim, whose own record cannot
@@ -636,6 +654,7 @@ func (s *Service) failHeld(o Occurrence, reason string) error {
 	o.Reason = reason
 	o.ErrorClass = classInternal
 	o.Input = nil
+	o.PendingInput = nil
 	return s.settleOccurrence(o)
 }
 
@@ -666,4 +685,24 @@ func (s *Service) releasedWith(o Occurrence, err error) error {
 		}
 	}
 	return err
+}
+
+// releasedAsStored is releasedWith for a preparation, whose writes under
+// the claim (keepOccurrence, keepPreparation) leave the occurrence held as
+// the step last kept it, and which met err after one of them: the claim is
+// released with the occurrence written as the store holds it, read again,
+// so that the intent of a source task the step committed is kept and the
+// next step reconciles the same operation. The write is fenced by the
+// claim: a cancellation made since the read, which clears it, wins
+// (settleOccurrence).
+func (s *Service) releasedAsStored(o Occurrence, err error) error {
+	if !leases(s.store) {
+		return err
+	}
+	stored, e := s.store.occurrence(o.ID)
+	if e != nil {
+		return errors.Join(err, e)
+	}
+	stored.claim = o.claim
+	return s.releasedWith(stored, err)
 }

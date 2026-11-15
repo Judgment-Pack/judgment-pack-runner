@@ -132,11 +132,13 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 		s.automationMu.Unlock()
 		return occurrenceLost(e)
 	}
+	// No error is returned with the claim held (prepareLegacyOccurrence).
 	if o.Preparation == nil {
 		expires, err := time.Parse(time.RFC3339Nano, o.ExpiresAt)
 		if err != nil {
+			e = s.failHeld(o, "The accepted occurrence holds no readable expiry time.")
 			s.automationMu.Unlock()
-			return err
+			return e
 		}
 		if !time.Now().Before(expires) {
 			o.State = "expired"
@@ -167,6 +169,9 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 	// The claim is kept for the step's network call, bounded well within
 	// its lease (operationCall).
 	e = s.keepOccurrence(o, anyState)
+	if e != nil && !errors.Is(e, errPreparationStopped) {
+		e = s.releasedAsStored(o, e)
+	}
 	s.automationMu.Unlock()
 	if errors.Is(e, errPreparationStopped) {
 		return nil
@@ -177,6 +182,15 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 	e = s.advancePreparation(ctx, o)
 	if errors.Is(e, errPreparationStopped) {
 		return nil
+	}
+	if e != nil {
+		// Every write of the step releases the claim or keeps it
+		// (savePreparation, keepPreparation): one that did not land, or
+		// an error before it, leaves the claim held, and it is released
+		// with the occurrence as the step last kept it.
+		s.automationMu.Lock()
+		e = s.releasedAsStored(o, e)
+		s.automationMu.Unlock()
 	}
 	return e
 }

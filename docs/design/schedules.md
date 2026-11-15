@@ -467,7 +467,15 @@ triggers is safe:
     and the trigger ids, as the start found them.
 
   Each start under the same settings reports the same triggers again, one
-  entry each. A start under manual admission checks nothing. The health
+  entry each, and this is kept on purpose: the settings are each start's
+  own configuration, not the store's, so an entry records what that start
+  found under the settings it started with. A Runner restarted under other
+  settings, or another Runner of the store under different ones, finds
+  other triggers, and the last entry for a trigger may be another start's
+  under other settings; leaving a repeat out would need every start to read
+  back every scope's journal for the last entry of each trigger, and would
+  leave a reader of one start's entries without the full set it found. The
+  cost is one entry per refused trigger per start, in one transaction. A start under manual admission checks nothing. The health
   route, which answers without a credential in service mode, says nothing of
   them ([service-mode.md](service-mode.md), section 6).
 - No seconds field, no names, no `L`, `W` or `#`, no `@` macros.
