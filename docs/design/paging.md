@@ -1,14 +1,12 @@
 # Paging over a source, with a cursor kept between runs
 
-Status: decided for #247, answer A (section 3). The dialect amendment is the
-Spec's RFC 0033 (format `4.1.0`, in Review), and Runner reads it in
-`verify-preparation` ([dialect-format-4.md](dialect-format-4.md), section 7):
+Status: built for #247, answer A (section 3). The dialect amendment is the
+Spec's RFC 0033 (format `4.1.0`), read in `verify-preparation`
+([dialect-format-4.md](dialect-format-4.md), section 7) and on the run path:
 the rule of section 4.1 is the dialect's `paging`, and the pages, receipts and
-citations of section 4.3 are its preparation's. Sections 4.2 and 4.4 to 4.6, the
-run's loop and the cursor, are not built: a run does not prepare through
-format `4.0.0` or `4.1.0` until the Spec's recording and workflow schemas admit
-them (spec issue #326). Section 5 is kept as the record of the answers not
-taken.
+citations of section 4.3 are its preparation's. Sections 4.1 to 4.6 are built
+as section 7 says, where it differs from section 4. Section 5 is kept as the
+record of the answers not taken.
 
 ## 1. What #247 asks
 
@@ -64,7 +62,8 @@ verifier holds the pages as one sealed sequence. A page answered `429` or `503`
 is not receipted and takes no call index; it is asked again in the same
 session. An endpoint's other refusing statuses, an expired reference's `410`
 among them, reach the caller as `400` `source failed`, like any other source
-failure. Runner names a session of its own for each unattended acquisition,
+failure. (Since then the gateway classes an expired reference: `410` in its own
+form, with the code `source_reference_expired`; section 7.) Runner names a session of its own for each unattended acquisition,
 takes the answer only as its first call, and seals it after.
 
 **Throttling reaches the retry policy.** The gateway answers a throttled
@@ -194,3 +193,34 @@ names a next reference fails its occurrence and leaves the cursor.
 - Paging an acquisition over a durable connection, whose operations are never
   repeated ([durable-sources.md](durable-sources.md)).
 - Evaluating records one by one (bulk evaluation).
+
+## 7. As built
+
+- **The job's member** is `paging: {"sources": [rule, ...]}`, 1 to 16 rules,
+  each `{source, kind, parameter, end?, reference?, first}`: `reference` (a
+  change cursor's pointer into the last page) and `end` (a window's end
+  parameter) are each named only by their kind. `paging: null`, or the member
+  named in another case, is `invalid_paging_rule`. A release whose dialect is
+  not of format `4.1.0` has no paged source: `paging_source_unknown`.
+- **The cursor's advance** names `read` (the row's value, absent when none),
+  `from` (the value filled into the case: the row's, or `first`) and `to`. It
+  is written only while the row holds `read`, so a run that read no row writes
+  one only when none was written since. A read the bound ended, which left pages
+  unread, carries no `to` and moves nothing; a window wider than the bound's
+  pages never moves until its end is reached in one run.
+- **A window** ends at the instant the occurrence is prepared, which fills the
+  end parameter and is the next `from`.
+- **Held pages** (4.4) are the occurrence's `heldPages`: the source, the open
+  session, the first page's request and each received page. A throttle holds
+  them only when the job has a retry policy and no other source answered in the
+  attempt; otherwise the attempt fails as before and the session is sealed.
+- **An expired reference** (4.6) is the gateway's `410`
+  `source_reference_expired`. A change cursor's read from a value other than its
+  `first` is started again from `first`, once, in a new session; the
+  occurrence's and run's paged read say `fullReRead`, and the occurrence's
+  `occurrence.ready` entry names the source in `fullReRead` (entry version
+  `"6"`). A `410` to a read from `first`, or to a window's read, fails the
+  occurrence and leaves the cursor.
+- **Storage**: PostgreSQL `0007_paging_cursors.sql`; the sqlite kind makes its
+  table in the transaction that raises its schema to `8` with the first job
+  that keeps a cursor, so a store with none keeps the earlier schema.

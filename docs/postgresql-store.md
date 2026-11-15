@@ -64,14 +64,14 @@ It is held to the service configuration's file rules: an absolute path, no symbo
 one regular file owned by Runner's user that neither its group nor others may read or write, at
 most 128 KiB. The command connects as the migration login, takes the owner's role for each file's
 transaction, applies each file not yet recorded in `jpack_runner.schema_migrations`, and prints
-the versions it applied, `{"applied":["0001","0002","0003","0004","0005","0006"]}` the first time and `{"applied":[]}`
+the versions it applied, `{"applied":["0001","0002","0003","0004","0005","0006","0007"]}` the first time and `{"applied":[]}`
 on a second run, which changes nothing.
 
 **Before starting a new release, run its `jpack-runner store migrate`.** A release may ship
 migration files the store does not hold yet, and the Runner refuses to open a store whose applied
 migrations are not exactly its own set (below). The command applies the files after the ones
 recorded, and nothing else: on a store the previous release migrated, it prints the new versions,
-`{"applied":["0003","0004","0005","0006"]}` from a store at `0002`, as v0.32.0 left it. Name the same logins as the first time.
+`{"applied":["0003","0004","0005","0006","0007"]}` from a store at `0002`, as v0.32.0 left it. Name the same logins as the first time.
 
 It refuses, and applies nothing more:
 
@@ -86,7 +86,9 @@ table privileges of the design's section 7, and no privilege on a sequence, and 
 `TRUNCATE`, `REFERENCES` or `TRIGGER`: at run time the Runner deletes, truncates and drops nothing.
 A later file that names the logins (`0003_held_routes.sql`, the policies of the routes held in
 this release; `0006_profile_rows_unscoped.sql`, which holds the request login's writes of the
-profile rows to the none scope) is applied only with the logins the grants were made to, and
+profile rows to the none scope; `0007_paging_cursors.sql`, the jobs' cursors between runs, which
+the request login reads in its scope and the worker login reads and writes for every scope) is
+applied only with the logins the grants were made to, and
 records them too.
 
 ## Configure
@@ -376,4 +378,6 @@ store, stop every Runner of the store and run the newer release's `store migrate
 refuses a store whose set is not its own, an older set and a newer one alike, but only at its
 start. A migration only adds: no table is dropped or truncated. A store of an earlier release is
 refused until `0004_several_runners.sql` is applied, one migrated before #246 until
-`0005_schedules.sql` is, and one migrated before #279 until `0006_profile_rows_unscoped.sql` is.
+`0005_schedules.sql` is, one migrated before #279 until `0006_profile_rows_unscoped.sql` is, and one migrated before
+#247 until `0007_paging_cursors.sql` is, which raises the store's schema to `8`: an earlier
+Runner refuses the store after it.
