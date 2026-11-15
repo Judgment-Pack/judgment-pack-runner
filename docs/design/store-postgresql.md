@@ -526,13 +526,13 @@ first, since they create objects in it unqualified; the start refuses a function
 in the schema that another role owns (section 5).
 
 **D9. Rules across scopes.** A rule the Runner keeps over every scope's records (a release makes
-one job, a pack identity is never reused with other bytes, 128 triggers, the queues' limits, one
+one job, a pack identity is never reused with other bytes, the trigger limit, the queues' limits, one
 trigger per cloud binding) reads rows a transaction held to one scope cannot see: under row
 security each such read would count one scope's rows, and the rule would hold per scope, silently.
 (a) Each is held for the installation by a key or a row no policy narrows, as the table below
 says, and the Runner answers as it does on SQLite. (b) Each is held per scope on purpose: a client
 in one scope could then make a job from a release another scope made one from, reuse a pack
-identity with other bytes, and hold 128 triggers and a full queue of its own, none of which the
+identity with other bytes, and hold the installation's limit of triggers and a full queue of its own, none of which the
 sqlite kind allows. (a) keeps one installation's rules the installation's. Its cost is the rows of
 section 3, kept by the kind in the statements of its own operations, and that a request held to
 one scope learns that some scope holds a release, a pack identity or a binding, never which, as
@@ -544,7 +544,7 @@ Every read in the code whose rows can lie in more than one scope:
 |---|---|---|---|
 | `jobCreation(release)` (a repeated creation) and `releaseUses(release)` | `POST /v1/jobs` (`store.go:357`, `:368`); `POST /v1/jobs/{job}/upgrade` (`job_revisions.go:119`) | The keys on `jobs.release_id`, `job_creations.release_id` and `job_revisions.release_id`, which no policy narrows: another scope's row reads `absent`, and the write meets the key as `taken` | `409 release_already_used`, with SQLite's message for the key that holds the release, a creation's or a revision's. The Runner answers those keys' `taken` so (`releaseTaken`); the sqlite kind, whose reads before the write see every scope, never meets one |
 | `packConflicts`, `dialectConflicts` | Both routes (`admitJobPack`, `job_revisions.go:34`; `dialect_artifact.go:159`) | `pack_identities` and `dialect_identities`, unscoped: each revision's release's identities are inserted (`ON CONFLICT DO NOTHING`) in its transaction, and their held digests read back | `409 artifact_identity_conflict`, as on SQLite |
-| `triggerCount()` | `POST /v1/jobs` with a trigger (`store.go:396`); `POST /v1/jobs/{job}/triggers` (`triggers_store.go:68`, outside the transaction) | `counts.triggers`, raised by `createTrigger` only while below 128 | `422 trigger_limit` at the installation's 128th trigger, as the Runner answers on SQLite: `triggerCount()` reads the row in any view |
+| `triggerCount()` | `POST /v1/jobs` with a trigger (`store.go:396`); `POST /v1/jobs/{job}/triggers` (`triggers_store.go:68`, outside the transaction) | `counts.triggers`, raised by `createTrigger` only while below the limit of the Runner that raises it (128 unless its configuration's `limits` sets it; [schedules](schedules.md), section 9) | `422 trigger_limit` at the installation's last trigger, stating the limit, as the Runner answers on SQLite: `triggerCount()` reads the row in any view. Runners of one store configured with different limits each refuse at their own |
 | `cloudBindings(except, connection, job)` | `POST /v1/jobs/{job}/triggers` (`triggers_store.go:78`, outside the transaction) | The binding's unique index on `triggers`, which no policy narrows: the write meets it as `taken` | `422 cloud_binding_used`, as the Runner answers on SQLite: `configureTriggerBy` answers the index's `taken` (`keyCloudBinding`) so. `POST /v1/jobs` with a cloud trigger meets the index as it does on the sqlite kind, which checks no binding before that write either, and answers as it does there |
 | `activeRuns()` | `POST /v1/jobs/{job}/runs` (`store.go:637`); `POST /v1/runs/{run}/retry` (`retries.go:395`) | `counts.active-runs`, moved by `createRun` and `putRun` as a run enters or leaves `queued` and `running` | `429 queue_full` at the installation's limit |
 | `pendingOccurrences()` | `POST /v1/triggers/{trigger}/events` and `/deliveries` (`triggers_store.go:503`); the ticks, on the worker login | `counts.pending-occurrences`, moved by `createOccurrence` and `putOccurrence` as an occurrence enters or leaves `accepted`, `preparing` and `waiting` | `429 queue_full` at the installation's limit |

@@ -119,6 +119,20 @@ boot line takes no `schedules`: it has the defaults and no shared interval.
 `GET /v1/status` states the settings in force, under `schedules`, and lists
 the capabilities `cron-schedules` and `shared-interval-ticks`.
 
+The configuration's optional `limits` member is one object of:
+
+- `triggers`: the most triggers the installation holds, from 1 to 1000,
+  default 128;
+- `pendingOccurrences`: the most occurrences pending (accepted, preparing or
+  waiting) at once, from 1 to 2000, default 100.
+
+Each a whole number, at most once, spelled exactly, none null, and nothing
+else; a refusal stops the start. Without the member, or without one of the
+two, the default holds, as it does on a companion's boot line, which takes
+no `limits`. `GET /v1/status` states the limits in force, under `limits`.
+Section 9 says what they hold and what Runners that share a store need;
+section 8 says how the maximums were chosen.
+
 **The gaps** of an expression are read on the local wall clock over one
 whole 400-year Gregorian cycle, from its last match back round to its first,
 so a gap that falls once in four years or more (a match on 29 February) is
@@ -175,10 +189,12 @@ names a scope cannot narrow a tick to it, nor tick another scope's jobs under
 it. On the postgresql kind the tick reads the store for every scope, as the
 clock does ([store-postgresql.md](store-postgresql.md), section 6).
 
-**What it does.** Under the lock the Runner's own automation takes, it reads
-every enabled trigger, passes by those paused or not bound to the interval,
-and ticks each of the others at the tick, as the clock ticks a schedule
-(`scheduleDue`, `triggers_dispatch.go`): a trigger whose `nextAt` is at or
+**What it does.** It reads the list of every enabled trigger, then takes each
+in turn under the lock the Runner's own automation takes, held for that one
+trigger (section 8): it reads the trigger again, passes it by if it is gone,
+paused or not bound to the interval, and otherwise ticks it at the tick, as
+the clock ticks a schedule (`scheduleDue`, `triggers_dispatch.go`): a trigger
+whose `nextAt` is at or
 before the tick admits its due time's occurrence, by its missed rule when
 that time is before the tick (section 6), and moves `nextAt` on to its next
 tick after the tick, in one transaction that writes the trigger first, at the
@@ -200,7 +216,14 @@ or paused and enabled again, is next due at its first tick more than 30
 seconds after the Runner's clock: a call may tick a time up to 30 seconds
 before it, and that tick is not due again under the trigger's new revision,
 whose identity would differ. No lock, row or column is added for
-it.
+it. Two calls for one tick at the same time may share the triggers between
+them: each trigger due is ticked by the call that takes it first, and the
+other finds its `nextAt` after the tick, so each call answers the
+occurrences it recorded, and the two answers add up to the triggers due. A
+Runner found unhealthy part way through a call answers `503`
+`runner_unavailable` for it; the triggers ticked before stay ticked, and a
+retry of the call after the restart ticks the rest, while the tick is no
+more than one interval old (section 6).
 
 ## 6. The missed rule
 
@@ -245,43 +268,108 @@ is raised to schema **7**, which such a Runner refuses.
 
 ## 8. The cost of one tick
 
-`TestASharedTickAtSeveralHundredJobsReportsItsCost` makes 400 jobs across
-four scopes, each with one enabled `tick` trigger due at one tick (written
-past the installation's trigger limit, which is 128), and calls the tick
-once, then again. On a development machine (Linux under a virtual machine,
-the sqlite kind, no race detector), one run measured:
+Measured on one machine: a development machine (Linux under a virtual
+machine, no race detector), the postgresql kind on PostgreSQL 17 in a
+container on the same machine. N jobs, across several scopes, each with one
+enabled `tick` trigger due at one tick, on a Runner whose limits hold them
+all; the tick called once, then again. Every trigger's occurrence was
+accepted, none skipped `queue-full`.
 
-| Call | Time |
-|---|---|
-| The tick, 400 triggers due: 100 occurrences accepted, 300 skipped `queue-full` | 3.56 s, about 9 ms a trigger |
-| The same tick again: 400 triggers read, none due | 22 ms |
+| Kind | N | The tick | Each trigger due | The same tick again | One pass of the Runner's own clock |
+|---|---|---|---|---|---|
+| sqlite | 128 | 1.21 s | 9.5 ms | 11 ms | 11 ms |
+| sqlite | 1000 | 7.4 s | 7.4 ms | 50 ms | 32 ms |
+| sqlite | 2000 | 13.5 s | 6.8 ms | 105 ms | 88 ms |
+| postgresql | 128 | 1.28 s | 10 ms | 57 ms | 77 ms |
+| postgresql | 1000 | 7.8 s | 7.8 ms | 331 ms | 315 ms |
+| postgresql | 2000 | 17.7 s | 8.9 ms | 858 ms | 757 ms |
 
-This is one machine's figure, not a bound: it varies with the disk, the
-store's kind and size, and the load beside it. The test reports it and holds
-only the counts. Each trigger due costs one transaction, so the cost grows
-with the triggers due at the tick; the triggers read but not due cost a read
-each. The postgresql kind was not measured.
+- **Each trigger due is one transaction**: on the postgresql kind, 14
+  statements and one commit (counted by `pg_stat_statements`), at every N. The
+  triggers read but not due cost a read each ("the same tick again").
+- **The lock is held for one trigger at a time**, about the time of one
+  trigger due, 7 to 10 ms. A probe that took the lock every millisecond
+  during the tick waited at most 28 to 127 ms on the postgresql kind and 30 to
+  40 ms on the sqlite kind (once 1.1 s, at 1000 on sqlite, a stall of the
+  disk). Held for the whole fan-out, as before this change, the lock would
+  have been held for the whole tick, 1.2 to 18 s.
+- **The Runner's own clock reads every enabled trigger once a second**, the
+  shared-interval ones included, under the lock ("one pass" above). With the
+  clock running beside the tick, the tick took 7.6 s at 1000 and 16.3 s at
+  2000 on sqlite, and 17.1 s at 1000 and 79 s at 2000 on postgresql, where
+  the clock's passes held the lock for about 350 ms of every second at 1000
+  and 710 ms at 2000; the clock waited at most 25 ms for the lock.
 
-**One call holds the automation lock for its whole fan-out.** The tick takes
-the lock the Runner's own automation takes, and keeps it until every trigger
-due has been ticked: the Runner's own clock, the trigger routes and another
-tick call wait for it. The hold is bounded by the triggers due, at most the
-installation's 128, each one transaction and, for a `constant` or `file`
-input, the read and check of that input under the input root (a
-`mapped-sources` input is not read at the tick: its occurrence is recorded
-pending preparation). At the figure above, 128 due triggers hold it for about
-1.2 s; a slow disk under the input root, or the postgresql kind's round trips,
-lengthens it, and no time limit cuts it short. A hold longer than the
-30-second grace of the Runner's own clock would make that clock find its own
-schedules' due times missed when it resumes.
+These are one machine's figures, not bounds: they vary with the disk, the
+network to the database, the store's size, and the load beside it. The tests
+report their own figure and hold only the counts.
+
+**The maximums.** `triggers` is at most 1000: at 2000 on the postgresql kind
+the Runner's own clock spends about three quarters of every second reading
+the triggers, and a tick with the clock running took longer than one minute,
+the shortest shared interval; at 1000 the tick took under 20 s on both kinds
+and the clock's pass about a third of a second. `pendingOccurrences` is at
+most 2000: the tick's check of the queue is one count in each trigger's
+transaction (a row on the postgresql kind), and the ticks at 2000 cost no
+more per trigger than at 128. A larger queue is a longer wait for its last
+occurrence, which the run queue (section 9) takes in turn.
+
+**One call holds the automation lock for one trigger at a time.** The tick
+takes the lock the Runner's own automation takes for each trigger, reads the
+trigger again under it, ticks it, and lets it go before the next: the
+Runner's own clock, the trigger routes and another tick call wait at most
+one trigger's tick, not the fan-out. Each hold is one transaction and, for a
+`constant` or `file` input, the read and check of that input under the input
+root (a `mapped-sources` input is not read at the tick: its occurrence is
+recorded pending preparation). So the 30-second grace of the Runner's own
+clock is not consumed by a long fan-out, at any N. Releasing the lock between
+triggers is safe:
+
+- *Rows written at the version read (D17).* Each trigger is read again under
+  the lock and written in one transaction at the row version read
+  ([store-postgresql.md](store-postgresql.md), D17); on the sqlite kind its
+  lock and the automation lock keep other writers out of that transaction. A
+  request served between two triggers (a pause, a change, a disable) is seen
+  by the fan-out when it reaches that trigger, as a tick of that one trigger
+  sees it; a write by another Runner meets the version moved on, as before.
+- *Claims and leases (D18).* The tick claims nothing and holds no lease: the
+  occurrences it admits are recorded unclaimed, and preparing or running them
+  is claimed later, by the dispatcher, under its own lease.
+- *The queue.* The queue's count is read in each trigger's transaction, so an
+  occurrence admitted between two triggers is counted, and the limit holds.
+- *What the call no longer has* is one instant over its fan-out: a trigger
+  paused between two triggers of the call is passed by, and two calls at the
+  same time share the triggers (section 5). The list of triggers is read
+  once, at the start: a trigger enabled during the call is next due after the
+  tick (section 5) and is not missed.
+
+**Not in this change.** The Runner's own clock reads every enabled trigger
+each second, the shared-interval ones included, which it never ticks; at the
+maximum that pass is the larger cost. Leaving them out of its pass is a
+change to the clock, not to the tick, and is left for its own change.
 
 ## 9. Limits, and not in this change
 
-- **The installation's limits hold.** An installation holds at most 128
-  triggers, and at most 100 occurrences await admission: a tick that finds
-  more due than the queue has room for records the rest `skipped`, reason
-  `queue-full`, as the clock does. Several hundred jobs on one tick need
-  those limits raised, which this change does not do.
+- **The installation's limits are the operator's** (section 4). A companion
+  keeps the defaults, 128 triggers and 100 pending occurrences. The trigger
+  past the limit, configured or made with its job, is refused, `422`
+  `trigger_limit`, stating the limit ("This local runner supports up to 1000
+  triggers."). A tick that finds more due than the queue has room for records
+  the rest `skipped`, reason `queue-full`, as the clock does; an event or a
+  record delivered at the full queue is refused, `429` `queue_full`, its
+  message stating the limit. The run queue, the runs queued or running, stays
+  at 100 and is not a setting.
+- **Runners that share a store are configured with the same limits.** Each
+  Runner holds the store to its own: on both kinds the Runner reads the count
+  against its configured limit, and on the postgresql kind the `triggers` row
+  of `counts` is raised only while below the limit of the Runner that raises
+  it ([store-postgresql.md](store-postgresql.md), D9). Runners configured
+  differently each refuse at their own number, and nothing breaks: the one
+  with the lower limit refuses a new trigger, or admits no occurrence, once
+  the store holds its number, and goes on ticking, changing and running those
+  the store holds; the one with the higher goes on to its own. No store row
+  records the limits, and a Runner restarted with other limits holds the new
+  ones from its start, the triggers already held past a lowered limit kept.
 - **The bounds are the installation's,** not a job's or a scope's.
 - A trigger enabled before the operator narrowed the bounds is not paused
   or refused at its next tick.

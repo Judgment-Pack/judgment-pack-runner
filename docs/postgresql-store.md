@@ -153,7 +153,7 @@ not a job, and is journaled under no scope: only a request that names no scope r
 sqlite kind a job's journal also shows the refused creations of its release.
 
 The installation's rules (a release makes one job, a pack or dialect identity is never reused
-with other bytes, at most 128 triggers, the queue's limits, one trigger per cloud binding) are
+with other bytes, the trigger limit, the queue's limits, one trigger per cloud binding) are
 held across every scope, by keys and counter rows no policy narrows, and answered as on the
 sqlite kind. A request held to one scope can learn that some scope holds a release, an identity
 or a cloud binding, never which. Journal sequences are shared across scopes: a page shows gaps where other
