@@ -506,13 +506,14 @@ func (t *memoryTx) renewClaim(run string, claim runClaim) error {
 }
 
 // raiseSchema raises as the sqlite kind does: a new store is at storeSchema
-// (""), the scoped schema is raised only from it, and the retry schema from
-// it or the scoped schema.
+// (""), the scoped schema is raised only from it, the retry schema from it
+// or the scoped schema, and the schedule schema from any of the three.
 func (t *memoryTx) raiseSchema(schema string) error {
 	switch {
-	case schema == scopedStoreSchema && t.s.schema == "", schema == retryStoreSchema && (t.s.schema == "" || t.s.schema == scopedStoreSchema):
+	case schema == scopedStoreSchema && t.s.schema == "", schema == retryStoreSchema && (t.s.schema == "" || t.s.schema == scopedStoreSchema),
+		schema == scheduleStoreSchema && t.s.schema != scheduleStoreSchema:
 		t.s.schema = schema
-	case schema != scopedStoreSchema && schema != retryStoreSchema:
+	case schema != scopedStoreSchema && schema != retryStoreSchema && schema != scheduleStoreSchema:
 		return storeFailure(faultRefused, "schema", errors.New("the schema is not raised through the contract"))
 	}
 	return nil

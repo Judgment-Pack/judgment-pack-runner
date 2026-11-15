@@ -479,7 +479,7 @@ var storeCases = []storeCase{
 		if len(again.Attempts) != 1 || again.Attempts[0] != next.Attempts[0] {
 			t.Fatalf("the kept attempt is not held: %+v", again.Attempts)
 		}
-		wantFault(t, w.st.update(func(tx runTx) error { return tx.raiseSchema("7") }), faultRefused, "a schema the kind does not know")
+		wantFault(t, w.st.update(func(tx runTx) error { return tx.raiseSchema("8") }), faultRefused, "a schema the kind does not know")
 	}},
 	{"a finished run keeps its counts and its error class", func(t *testing.T, k storeKindUnderTest) {
 		// The counts and the class are members of the run's record
