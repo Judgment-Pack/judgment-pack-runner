@@ -41,6 +41,11 @@ func (s *Service) automationTick(at time.Time) error {
 		if e != nil {
 			return e
 		}
+		// One paused since the list was read, by a request on this Runner
+		// or another of the store, makes nothing.
+		if t.Paused {
+			continue
+		}
 		switch t.Config.Kind {
 		case "schedule":
 			if e = s.scheduleTick(t, hash, at); e != nil {
@@ -54,6 +59,9 @@ func (s *Service) automationTick(at time.Time) error {
 	}
 	// Each iteration handles a bounded number of accepted occurrences; the
 	// evaluator has its own durable queue and cannot block the scheduler clock.
+	// One another Runner of the store holds is passed by (D18). A queue with
+	// no room ends the iteration: the first ready occurrence, the one the next
+	// read would hand back, waits for the next tick.
 	for range 10 {
 		o, e := s.store.readyOccurrence()
 		if absent(e) {
@@ -62,11 +70,28 @@ func (s *Service) automationTick(at time.Time) error {
 		if e != nil {
 			return e
 		}
-		if e = s.dispatchOccurrence(o, at); e != nil {
+		e = s.dispatchReady(o, at)
+		if errors.Is(e, errQueueHasNoRoom) {
+			break
+		}
+		if e != nil {
 			return e
 		}
 	}
 	return nil
+}
+
+// errQueueHasNoRoom is the answer of a dispatch whose run the queue had no
+// room for: the occurrence waits as it was read, its claim released. It is
+// no error, and stops the tick's dispatching.
+var errQueueHasNoRoom = errors.New("the queue has no room for the occurrence's run")
+
+// queueWaits is a dispatch's error, nil for one the queue had no room for.
+func queueWaits(err error) error {
+	if errors.Is(err, errQueueHasNoRoom) {
+		return nil
+	}
+	return err
 }
 func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {
@@ -130,12 +155,29 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 	if !next.IsZero() {
 		t.NextAt = next.Format(time.RFC3339Nano)
 	}
-	return s.store.update(func(tx runTx) error {
-		if _, err := s.admitOccurrence(tx, t, o, identity, digest(encode(t.Config))); err != nil {
+	return tickLost(s.store.update(func(tx runTx) error {
+		// The trigger first, at the version this tick read it (D17): a
+		// write of it since, another Runner's tick of the same due time
+		// among them, admits nothing here. An identity held while the
+		// trigger is as read is no race, and fails as before.
+		if err := tx.putTrigger(t, hash, false); err != nil {
 			return err
 		}
-		return tx.putTrigger(t, hash, false)
-	})
+		_, err := s.admitOccurrence(tx, t, o, identity, digest(encode(t.Config)))
+		return err
+	}))
+}
+
+// tickLost is a tick's write that met a write of its trigger made since the
+// tick read it, by a request or by another Runner's tick on the same store
+// (D17), taken for no failure: the tick made nothing, and the next reads the
+// trigger again. Any other error, another conflict of the tick's transaction
+// among them, is the tick's.
+func tickLost(err error) error {
+	if faultOf(err) == faultConflict && errors.Is(err, errTriggerWritten) {
+		return nil
+	}
+	return err
 }
 func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {
@@ -145,7 +187,7 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	if e != nil {
 		if t.Problem != e.Error() {
 			t.Problem = e.Error()
-			return s.writeTrigger(t, hash, false)
+			return tickLost(s.writeTrigger(t, hash, false))
 		}
 		return nil
 	}
@@ -155,7 +197,7 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 			t.pending = ""
 			t.pendingAt = ""
 			t.Problem = ""
-			return s.writeTrigger(t, hash, false)
+			return tickLost(s.writeTrigger(t, hash, false))
 		}
 		return nil
 	}
@@ -163,7 +205,7 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 		t.pending = changed
 		t.pendingAt = at.UTC().Format(time.RFC3339Nano)
 		t.Problem = ""
-		return s.writeTrigger(t, hash, false)
+		return tickLost(s.writeTrigger(t, hash, false))
 	}
 	since, e := time.Parse(time.RFC3339Nano, t.pendingAt)
 	if e != nil {
@@ -188,7 +230,7 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	if e != nil || digest(check) != changed {
 		t.pending = ""
 		t.pendingAt = ""
-		return s.writeTrigger(t, hash, false)
+		return tickLost(s.writeTrigger(t, hash, false))
 	}
 	if prepError != nil {
 		o.State = "failed"
@@ -203,17 +245,44 @@ func (s *Service) fileTick(t Trigger, hash string, at time.Time) error {
 	t.pending = ""
 	t.pendingAt = ""
 	t.Problem = ""
-	return s.store.update(func(tx runTx) error {
-		if _, err := s.admitOccurrence(tx, t, o, identity, changed); err != nil {
+	return tickLost(s.store.update(func(tx runTx) error {
+		// The trigger first, as in scheduleTick (D17).
+		if err := tx.putTrigger(t, hash, false); err != nil {
 			return err
 		}
-		return tx.putTrigger(t, hash, false)
-	})
+		_, err := s.admitOccurrence(tx, t, o, identity, changed)
+		return err
+	}))
 }
 func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
+	return queueWaits(s.dispatchReady(o, at))
+}
+
+// dispatchReady is dispatchOccurrence, answering errQueueHasNoRoom for an
+// occurrence whose run the queue had no room for.
+func (s *Service) dispatchReady(o Occurrence, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {
 		return manualUnsupported()
 	}
+	// The occurrence is claimed first (D18): one another Runner of the store
+	// holds, or that is no longer accepted, is passed by. It is dispatched as
+	// it was read, as before: a ready occurrence is not written in place, its
+	// state unchanged, but by a holder that releases it as it read it. Each
+	// write below is fenced by the claim and releases it, and one refused,
+	// the claim having been lost, writes nothing: the Runner goes on
+	// (settleOccurrence).
+	held, e := s.claimOccurrence(o.ID, "accepted")
+	if e != nil {
+		return occurrenceLost(e)
+	}
+	o.claim = held.claim
+	return s.dispatchClaimed(o, at)
+}
+
+// dispatchClaimed is dispatchReady once the occurrence is claimed. A second
+// Runner that claims it after this one's lease ran out finds the run this
+// one made by its request key, and submits no other.
+func (s *Service) dispatchClaimed(o Occurrence, at time.Time) error {
 	// Reconcile admission first: a crash after run creation must not become a
 	// second evaluation or an expiry, even if source receipts have since aged.
 	// The run's id alone is read, as before the contract: a run whose record
@@ -224,7 +293,7 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 		o.RunID = held.id
 		o.State = "submitted"
 		o.Input = nil
-		return s.saveOccurrence(o)
+		return s.settleOccurrence(o)
 	}
 	if !absent(e) {
 		return e
@@ -241,7 +310,7 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 		o.State = "expired"
 		o.Reason = "queue-expired"
 		o.Input = nil
-		return s.saveOccurrence(o)
+		return s.settleOccurrence(o)
 	}
 	if o.Input == nil {
 		return errors.New("accepted occurrence has no input")
@@ -255,7 +324,7 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 		o.Reason = "The job release changed before admission."
 		o.ErrorClass = classConfiguration
 		o.Input = nil
-		return s.saveOccurrence(o)
+		return s.settleOccurrence(o)
 	}
 	origin := &TriggerOrigin{OccurrenceID: o.ID, TriggerID: o.TriggerID, TriggerRevision: o.TriggerRevision, Kind: o.Kind, ScheduledAt: o.ScheduledAt, EventID: o.EventID, InputDigest: o.InputDigest, ExpiresAt: expires}
 	run, _, e := s.submitInternal(o.JobID, o.ID, *o.Input, origin)
@@ -263,18 +332,25 @@ func (s *Service) dispatchOccurrence(o Occurrence, at time.Time) error {
 		var api *apiError
 		if errors.As(e, &api) {
 			if api.Status == 429 {
-				return nil
+				// The occurrence waits for room in the queue as it was
+				// read, its claim released on a kind that leases one.
+				if leases(s.store) {
+					if e = s.settleOccurrence(o); e != nil {
+						return e
+					}
+				}
+				return errQueueHasNoRoom
 			}
 			o.State = "failed"
 			o.Reason = api.Message
 			o.ErrorClass = submissionClass(api)
 			o.Input = nil
-			return s.saveOccurrence(o)
+			return s.settleOccurrence(o)
 		}
 		return e
 	}
 	o.RunID = run.ID
 	o.State = "submitted"
 	o.Input = nil
-	return s.saveOccurrence(o)
+	return s.settleOccurrence(o)
 }

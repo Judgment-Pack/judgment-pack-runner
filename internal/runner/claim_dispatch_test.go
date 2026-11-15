@@ -5,6 +5,47 @@ import (
 	"testing"
 )
 
+// takenFirst is a store in which another dispatcher claims the queued run
+// each dispatch reads, between the read and the claim, as a second Runner on
+// the same store does.
+type takenFirst struct{ runStore }
+
+func (q takenFirst) oldestQueued() (Run, error) {
+	r, err := q.runStore.oldestQueued()
+	if err != nil {
+		return r, err
+	}
+	other := r
+	other.State, other.StartedAt, other.Attempt = "running", now(), r.Attempt+1
+	if err = changeQueuedRun(q.runStore, other); err != nil {
+		return r, err
+	}
+	return r, nil
+}
+
+// A dispatcher that loses the run it read to another dispatcher says so, so
+// that its worker reads the queue again at once rather than waiting up to a
+// tick for its next read (#245); an empty queue still waits.
+func TestADispatcherThatLosesARunReadsTheQueueAgainAtOnce(t *testing.T) {
+	cfg := journalConfig(t)
+	s := openJournal(t, cfg)
+	t.Cleanup(func() { s.Close() })
+	j, err := s.createJobBy(requester{}, "Raced", journalRelease(t, s, completingRuntime(t, cfg.Dir)).ID, "", nil)
+	must(t, err)
+	if _, _, err = s.submit(j.ID, "one", journalInput()); err != nil {
+		t.Fatal(err)
+	}
+	inner := s.store
+	s.store = takenFirst{inner}
+	if d, err := s.dispatch(context.Background()); d != dispatchedLost || err != nil {
+		t.Fatalf("a dispatcher that lost its run made %d, %v; want it lost, to read the queue again at once", d, err)
+	}
+	s.store = inner
+	if d, err := s.dispatch(context.Background()); d != dispatchedNone || err != nil {
+		t.Fatalf("an empty queue made %d, %v; want none, to wait", d, err)
+	}
+}
+
 // The dispatcher claims each run under a claim of its own, for the attempt it
 // makes, and finishes it under that claim (D3): on a kind that fences claims,
 // the run is held under the claim the dispatcher made, a new one for each

@@ -70,6 +70,7 @@ var triggerStoreCases = []storeCase{
 			t.Fatalf("a new trigger reads %+v, key %q", held, hash)
 		}
 		issued := 2
+		tr.version = held.version
 		tr.Revision, tr.Paused, tr.keyRevision = 2, false, &issued
 		tr.observed, tr.pending, tr.pendingAt = "sha256:seen", "sha256:next", "2026-11-01T10:05:00Z"
 		must(t, w.st.update(func(tx runTx) error { return tx.putTrigger(tr, "sha256:key", true) }))
@@ -78,6 +79,7 @@ var triggerStoreCases = []storeCase{
 		if hash != "sha256:key" || !held.HasKey || held.Paused || held.Revision != 2 || held.observed != "sha256:seen" || held.pending != "sha256:next" || held.pendingAt != "2026-11-01T10:05:00Z" || held.keyRevision == nil || *held.keyRevision != 2 {
 			t.Fatalf("a written trigger reads %+v, key %q", held, hash)
 		}
+		tr.version = held.version
 		tr.Problem = "again"
 		wantFault(t, w.st.update(func(tx runTx) error { return tx.putTrigger(tr, "sha256:key", true) }), faultTaken, "a revision's snapshot kept twice")
 		must(t, w.st.update(func(tx runTx) error { return tx.putTrigger(tr, "", false) }))
@@ -89,6 +91,44 @@ var triggerStoreCases = []storeCase{
 		wantFault(t, err, faultAbsent, "a trigger not held")
 		if n, err := w.st.triggerCount(); err != nil || n != 1 {
 			t.Fatalf("%d triggers counted, %v", n, err)
+		}
+	}},
+	{"a trigger written since it was read is not written over", func(t *testing.T, k storeKindUnderTest) {
+		// D17: a writer expects the version it read the trigger at, so that a
+		// tick or a request that read it before another Runner wrote it does
+		// not write the older trigger back.
+		if !k.fencesClaims {
+			t.Skip("the kind's lock is the fence")
+		}
+		w := newStoreWorld(t, k)
+		w.keep(t, []Trigger{w.worldTrigger("trg_1")})
+		first, _, err := w.st.trigger("trg_1")
+		must(t, err)
+		late := first
+		first.Problem = "first"
+		must(t, w.st.update(func(tx runTx) error { return tx.putTrigger(first, "", false) }))
+		late.Problem = "late"
+		err = w.st.update(func(tx runTx) error { return tx.putTrigger(late, "", false) })
+		wantFault(t, err, faultConflict, "a trigger written over a write made since it was read")
+		// The cause names the trigger's own conflict, the one a tick takes for
+		// a lost race (tickLost).
+		if !errors.Is(err, errTriggerWritten) {
+			t.Fatalf("a trigger written over a write made since it was read: %v, not errTriggerWritten", err)
+		}
+		held, _, err := w.st.trigger("trg_1")
+		must(t, err)
+		if held.Problem != "first" || held.version == first.version {
+			t.Fatalf("after a late write the trigger reads %q at version %d (read at %d)", held.Problem, held.version, first.version)
+		}
+		// A revision moves the version on as well, so that a write that read
+		// the trigger before it is refused too.
+		revised := held
+		revised.Revision++
+		must(t, w.st.update(func(tx runTx) error { return tx.reviseTrigger(revised) }))
+		held.Problem = "before the revision"
+		wantFault(t, w.st.update(func(tx runTx) error { return tx.putTrigger(held, "", false) }), faultConflict, "a trigger written over a revision made since it was read")
+		if again, _, err := w.st.trigger("trg_1"); err != nil || again.Revision != revised.Revision || again.Problem != "first" {
+			t.Fatalf("after the revision the trigger reads revision %d, %q, %v", again.Revision, again.Problem, err)
 		}
 	}},
 	{"a cloud binding is held by one cloud trigger", func(t *testing.T, k storeKindUnderTest) {
@@ -162,7 +202,10 @@ var triggerStoreCases = []storeCase{
 		w.keep(t, nil, o)
 		o.State, o.Reason = "failed", "stopped"
 		var from string
-		err := w.st.update(func(tx runTx) (err error) { from, err = tx.putOccurrence(o, "accepted"); return err })
+		err := w.st.update(func(tx runTx) (err error) {
+			from, err = tx.putOccurrence(o, occurrenceExpected{state: "accepted"})
+			return err
+		})
 		wantFault(t, err, faultConflict, "a change from a state not held")
 		if from != "preparing" {
 			t.Fatalf("a refused change read %q", from)
@@ -170,19 +213,22 @@ var triggerStoreCases = []storeCase{
 		if held, _ := w.st.occurrence(o.ID); held.State != "preparing" || held.Reason != "" {
 			t.Fatalf("a refused change wrote %+v", held)
 		}
-		must(t, w.st.update(func(tx runTx) (err error) { from, err = tx.putOccurrence(o, "preparing"); return err }))
+		must(t, w.st.update(func(tx runTx) (err error) {
+			from, err = tx.putOccurrence(o, occurrenceExpected{state: "preparing"})
+			return err
+		}))
 		if held, _ := w.st.occurrence(o.ID); from != "preparing" || held.State != "failed" || held.Reason != "stopped" {
 			t.Fatalf("a change from preparing read %q and wrote %+v", from, held)
 		}
 		o.State = "skipped"
-		must(t, w.st.update(func(tx runTx) (err error) { from, err = tx.putOccurrence(o, anyState); return err }))
+		must(t, w.st.update(func(tx runTx) (err error) { from, err = tx.putOccurrence(o, occurrenceExpected{}); return err }))
 		if held, _ := w.st.occurrence(o.ID); from != "failed" || held.State != "skipped" {
 			t.Fatalf("a change from any state read %q and wrote %+v", from, held)
 		}
 		_, err = w.st.occurrence("occ_none")
 		wantFault(t, err, faultAbsent, "an occurrence not held")
 		wantFault(t, w.st.update(func(tx runTx) error {
-			_, err := tx.putOccurrence(w.worldOccurrence("occ_none", "trg_1", "failed"), anyState)
+			_, err := tx.putOccurrence(w.worldOccurrence("occ_none", "trg_1", "failed"), occurrenceExpected{})
 			return err
 		}), faultAbsent, "a change of an occurrence not held")
 	}},
@@ -256,7 +302,7 @@ var triggerStoreCases = []storeCase{
 		must(t, w.st.update(func(tx runTx) error {
 			o := held[3]
 			o.State = "submitted"
-			_, err := tx.putOccurrence(o, "accepted")
+			_, err := tx.putOccurrence(o, occurrenceExpected{state: "accepted"})
 			return err
 		}))
 		_, err := w.st.readyOccurrence()
@@ -325,8 +371,11 @@ var triggerStoreCases = []storeCase{
 			_, err := w.st.keyedOccurrence(c.id, c.trigger, c.hash)
 			wantFault(t, err, faultAbsent, c.what)
 		}
+		held, _, err := w.st.trigger(tr.ID)
+		must(t, err)
+		tr.version = held.version
 		must(t, w.st.update(func(tx runTx) error { return tx.putTrigger(tr, "sha256:rotated", false) }))
-		_, err := w.st.keyedOccurrence("occ_1", tr.ID, "sha256:key")
+		_, err = w.st.keyedOccurrence("occ_1", tr.ID, "sha256:key")
 		wantFault(t, err, faultAbsent, "a key rotated away")
 	}},
 	{"a restart fails what was left preparing, from when its preparation began", func(t *testing.T, k storeKindUnderTest) {

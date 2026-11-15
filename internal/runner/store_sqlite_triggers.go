@@ -224,19 +224,37 @@ func (t *sqliteTx) createOccurrence(o Occurrence, identity, payload string) erro
 	return sqliteFault("occurrence", err, true)
 }
 
-func (t *sqliteTx) putOccurrence(o Occurrence, expected string) (string, error) {
+// putOccurrence takes the claim and ignores it: the kind's lock keeps every
+// other Runner out, and is the fence (D18).
+func (t *sqliteTx) putOccurrence(o Occurrence, expected occurrenceExpected) (string, error) {
 	var from string
 	if err := t.tx.QueryRow("SELECT state FROM occurrences WHERE id=?", o.ID).Scan(&from); err != nil {
 		return "", sqliteFault("occurrence", err, false)
 	}
-	if expected != anyState && from != expected {
-		return from, storeFailure(faultConflict, "occurrence", fmt.Errorf("the occurrence %s is %s, not %s", o.ID, from, expected))
+	if expected.state != anyState && from != expected.state {
+		return from, storeFailure(faultConflict, "occurrence", fmt.Errorf("the occurrence %s is %s, not %s", o.ID, from, expected.state))
 	}
 	if _, err := t.tx.Exec("UPDATE occurrences SET state=?,record=? WHERE id=?", o.State, string(encode(o)), o.ID); err != nil {
 		return from, sqliteFault("occurrence", err, true)
 	}
 	return from, nil
 }
+
+// claimOccurrence checks the state and holds no claim: the kind's lock is
+// the fence (D18).
+func (t *sqliteTx) claimOccurrence(id, state string, claim occurrenceClaim) (Occurrence, error) {
+	o, err := t.occurrence(id)
+	if err != nil {
+		return o, err
+	}
+	if o.State != state {
+		return o, storeFailure(faultConflict, "occurrence", fmt.Errorf("the occurrence %s is %s, not %s", id, o.State, state))
+	}
+	o.claim = claim
+	return o, nil
+}
+
+func (t *sqliteTx) renewOccurrenceClaim(string, occurrenceClaim) error { return nil }
 
 func (t *sqliteTx) createOccurrenceKey(occurrence, hash string) error {
 	_, err := t.tx.Exec("INSERT INTO occurrence_keys(occurrence_id,key_hash) VALUES(?,?)", occurrence, hash)

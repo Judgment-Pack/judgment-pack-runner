@@ -99,3 +99,12 @@ to their scope, takes D9's cloud binding answer and D16 (a refused creation is r
 the none scope), and adds `0003_held_routes.sql`, one policy and no grant. Diagnostics,
 verification, briefs, the execution binding, `GET /v1/background-connections` and the input
 preparation routes are still refused.
+
+2026-11-15: #245's first step (the note's section 12) makes several Runners on one store of the
+kind safe for the routes it serves, with no lock and no row per Runner, and takes D17 (a
+trigger's row version, which every write expects), D18 (an occurrence's claim with a lease, in
+D3's shape, fencing every write of it), D19 (what each host keeps stays on it; a retry on a host
+without the attempt's directory is still refused) and D20 (a bound of 1 second between the
+Runners' clocks, leases staying on the database's clock), each the note's recommendation. It
+adds `0004_several_runners.sql`, columns only, which the start requires. Left: the profile rows'
+versions, so profiles are registered through one Runner; shared storage; the refused routes.

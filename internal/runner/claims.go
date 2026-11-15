@@ -69,6 +69,13 @@ var errClaimLost = errors.New("the dispatcher's claim of its run was not renewed
 // any other kind it returns ctx and a release that renews and returns
 // nothing.
 func (s *Service) holdClaim(ctx context.Context, run string, claim runClaim, claimed time.Time) (context.Context, func() (time.Time, error)) {
+	return s.holdLease(ctx, claimed, func(tx runTx) error { return tx.renewClaim(run, claim) })
+}
+
+// holdLease is holdClaim for any claim the store leases, renew being the
+// renewal's write: a run's (renewClaim), or an occurrence's while its legacy
+// preparation acquires its sources (renewOccurrenceClaim, D18).
+func (s *Service) holdLease(ctx context.Context, claimed time.Time, renew func(runTx) error) (context.Context, func() (time.Time, error)) {
 	if !leases(s.store) {
 		return ctx, func() (time.Time, error) { return time.Time{}, nil }
 	}
@@ -101,7 +108,7 @@ func (s *Service) holdClaim(ctx context.Context, run string, claim runClaim, cla
 				began = time.Now()
 				renewing = make(chan error, 1)
 				go func(result chan<- error) {
-					result <- updateWithin(s.store, claimTimes.renewal, func(tx runTx) error { return tx.renewClaim(run, claim) })
+					result <- updateWithin(s.store, claimTimes.renewal, renew)
 				}(renewing)
 			case err := <-renewing:
 				renewing = nil
@@ -128,15 +135,19 @@ func (s *Service) holdClaim(ctx context.Context, run string, claim runClaim, cla
 
 // interruptLapsed is the dispatcher's tick on a kind that leases claims: each
 // run held running whose lease ran out, which no live claim holds, is
-// interrupted, as the restart interrupts it (D3). A run whose lease is live
-// is its holder's and is left as it is. A tick that waited out the store's
-// lock bound interrupted nothing, and is no failure: the next tick tries
-// again.
+// interrupted, as the restart interrupts it (D3), and each legacy preparation
+// held preparing under no live claim is failed, as the restart fails it
+// (D18). A run or a preparation whose lease is live is its holder's and is
+// left as it is. Neither is repeated. A tick that waited out the store's lock
+// bound interrupted nothing, and is no failure: the next tick tries again.
 func (s *Service) interruptLapsed() error {
 	err := s.store.update(func(tx runTx) error {
-		return interruptRunning(tx, now(), func(r Run) EventDetail {
+		if err := interruptRunning(tx, now(), func(r Run) EventDetail {
 			return EventDetail{Interruption: &EventInterruption{LastKnownRunning: r.StartedAt}}
-		})
+		}); err != nil {
+			return err
+		}
+		return restartOccurrences(tx, 0)
 	})
 	if lockWaited(err) {
 		return nil

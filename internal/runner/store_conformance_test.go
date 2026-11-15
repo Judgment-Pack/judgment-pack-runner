@@ -44,10 +44,11 @@ type storeKindUnderTest struct {
 	// and writes that scope's records alone. The sqlite kind holds none, its
 	// one process holding every scope.
 	holdsScopes bool
-	// fencesClaims says the kind fences a claimant's writes by its claim and
-	// the claim's lease (D3), and passTime moves its clock, not the
-	// process's. The sqlite kind takes a claim and ignores it, its lock
-	// being the fence.
+	// fencesClaims says the kind fences a writer by what it read: a run's
+	// or an occurrence's claim and the claim's lease (D3, D18), and a
+	// trigger's row version (D17); and passTime moves its clock, not the
+	// process's. The sqlite kind takes a claim and a version and ignores
+	// both, its lock being the fence.
 	fencesClaims bool
 	passTime     func(st runStore, d time.Duration)
 	// migratedSchema is a kind whose migration writes the latest schema the
@@ -161,7 +162,7 @@ func memoryOf(st runStore) *memoryStore { return underlying(st).(*memoryStore) }
 func TestStoreKindsConform(t *testing.T) {
 	for _, k := range storeKindsUnderTest() {
 		t.Run(k.name, func(t *testing.T) {
-			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, readsStoreCases, claimStoreCases, k.own) {
+			for _, c := range slices.Concat(storeCases, widenedStoreCases, triggerStoreCases, jobStoreCases, listStoreCases, scopeStoreCases, readsStoreCases, claimStoreCases, occurrenceClaimStoreCases, k.own) {
 				t.Run(c.name, func(t *testing.T) { c.run(t, k) })
 			}
 		})

@@ -13,8 +13,8 @@ starts, keep the sqlite kind exactly as before.
 triggers, event and record deliveries, occurrences, a run's retry, the installation's input and
 selected profiles, the journal and the run chain, and refuses every other route with
 `501 store_route_unsupported`
-(below). Run one Runner per store:
-several Runners on one store is issue #245.
+(below). Several Runners may share one store, each on a host of its own or side by side, within
+the limits [below](#several-runners-on-one-store).
 
 ## What it needs
 
@@ -173,7 +173,23 @@ not at the next start.
 
 Runners on one store may read the same queued run. The one whose write comes second, a claim or
 the end of a run that expired in the queue or names a profile set aside, finds the run no longer
-queued: it works nothing, stays healthy and goes on to the next run.
+queued: it works nothing, stays healthy and reads the queue again at once.
+
+A trigger's occurrence is held the same way. A Runner claims an occurrence, with a token and a
+lease of 60 seconds by the database's clock, before it dispatches it into a run and before each
+step of its preparation, and every write it makes of the occurrence is refused once the claim is
+gone: taken by another Runner after the lease ran out, or cleared by a cancellation or a
+reconciliation, which always win. A Runner whose write is refused writes nothing and goes on. An
+occurrence held `preparing` while its sources are acquired has its lease renewed every 15 seconds,
+and a Runner whose renewal fails stops that acquisition and its preparation worker, and
+`GET /v1/health` reports it unhealthy, as for a run. An occurrence
+left by a Runner that stopped is handed to another one lease later: a preparation in progress is
+failed, `Source acquisition was interrupted`, and not repeated; one waiting to be dispatched, or
+for its next step, is taken up, and a run already submitted for it is found again by its request
+key, not made twice.
+
+A Runner's start interrupts only the runs, and fails only the preparations, whose lease has run
+out: work another Runner holds is left to it.
 
 ## Time bounds
 
@@ -259,6 +275,55 @@ removing one scope's rows is not built.
   be started with the same Runtime the held jobs' releases name.
 - **A preview's scratch directory** (`releases/<id>/`), which nothing reads after the preview.
 
+## Several Runners on one store
+
+Several Runners may share one store, on one host or on several. Give each a state directory of its
+own, and the same `store` member, workspace, owner and input root: the store's identity is
+checked at every start. Any of them may serve a request. One due time of a schedule trigger makes
+one occurrence whichever Runners tick it, and each queued run and each occurrence is worked by one
+Runner at a time ([Claims and leases](#claims-and-leases)). A request that changes a trigger while
+another Runner's tick writes it answers `409 trigger_changed`: read the trigger again and send the
+request again, at the same revision.
+
+The Runners must hold to these:
+
+- **One release.** Every Runner of one store runs the same `jpack-runner` release. To upgrade,
+  stop every Runner of the store, run the new release's `store migrate`, then start the new
+  release's Runners. A migration does not stop a Runner that is running, and a Runner of an
+  earlier release keeps no claim on an occurrence and no version on a trigger.
+- **Clocks within 1 second of each other.** Leases use the database's clock. These use the wall
+  clock of the Runner that decides: a schedule's due time and whether it was missed, a watched
+  file's stability, an occurrence's or a run's expiry in the queue, a preparation's deadline and
+  its checks, and the time of an acquisition's next attempt. Keep the hosts' clocks within 1
+  second of each other with a time service: each of these is then off by at most that second. The
+  times of the journal's entries come from several clocks, and need not follow the journal's
+  order.
+- **The same project and Runtime on every host.** Each Runner reads the project's files, and pins
+  its Runtime, on its own host: give every Runner of the store the same image.
+- **Profiles registered through one Runner.** A Runner reads the installation's input and selected
+  profiles at its start, and a registration writes them from its own copy. Register profiles
+  through one Runner, and start the others again after it: another Runner does not see the new
+  profile until it starts again, and a registration on a Runner started before another Runner's
+  registration writes that registration out of the store.
+
+What several Runners do not change, or do not do:
+
+- **A missed schedule.** A due time is missed, and the trigger's `missed` rule applies (`skip`, or
+  `latest`), only when no Runner of the store ticked it within 30 seconds of it: every Runner
+  stopped, unhealthy, or refused by the store. One Runner stopping misses no due time while
+  another runs.
+- **Attempt directories stay on their host.** A retry of an interrupted run is refused,
+  `409 run_not_retryable`, on a host that does not hold every attempt directory of the run: a run
+  interrupted on one host can be retried only there, if its directories are still there; otherwise
+  its caller submits a new run. A run's diagnostics, refused on this kind for now, are read only
+  from the serving host's directories.
+- **File triggers.** A file trigger reads its watched path on whichever Runner ticks. On several
+  hosts the path must be on storage they share, with `stableSeconds` of 2 or more; a file that
+  differs between hosts reads as a change each time the tick moves from one to another.
+- **No shared storage.** Nothing on a host's disk is shared by the Runners or copied to the
+  database.
+- **The sqlite kind** keeps one Runner per state directory, under its lock.
+
 ## Backups
 
 The database holds the queue, the jobs, the runs, the releases, the journal and the run chain.
@@ -278,5 +343,7 @@ Runtime is made again at start from the configured `runtime`.
 ## Upgrades
 
 Each release ships its migration set and its digests. Before starting a newer `jpack-runner` on a
-store, run its `store migrate`; a Runner refuses a store whose set is not its own, an older set
-and a newer one alike. A migration only adds: no table is dropped or truncated.
+store, stop every Runner of the store and run the newer release's `store migrate`; a Runner
+refuses a store whose set is not its own, an older set and a newer one alike, but only at its
+start. A migration only adds: no table is dropped or truncated. A store of an earlier release is
+refused until `0004_several_runners.sql` is applied.

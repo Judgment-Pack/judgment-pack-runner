@@ -272,14 +272,15 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		s.automationMu.Unlock()
 		return nil
 	}
-	o, e := s.store.occurrence(occurrenceID)
-	if absent(e) || e == nil && o.State != "accepted" {
-		s.automationMu.Unlock()
-		return nil
-	}
+	// The occurrence is claimed, and prepared as the store holds it (D18):
+	// one another Runner of the store holds, or that is no longer accepted,
+	// is passed by. claimed, by the monotonic clock, is before the claim's
+	// transaction began, as a run's (holdClaim).
+	claimed := time.Now()
+	o, e := s.claimOccurrence(occurrenceID, "accepted")
 	if e != nil {
 		s.automationMu.Unlock()
-		return e
+		return occurrenceLost(e)
 	}
 	expiry, e := time.Parse(time.RFC3339Nano, o.ExpiresAt)
 	if e != nil {
@@ -291,13 +292,16 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		o.Reason = "queue-expired"
 		o.PendingInput = nil
 		o.NextAttemptAt = ""
-		e = s.saveOccurrence(o)
+		e = s.settleOccurrence(o)
 		s.automationMu.Unlock()
 		return e
 	}
 	// An occurrence waiting for its next attempt is not attempted before
-	// its time (retries.go).
+	// its time (retries.go), and its claim is released.
 	waiting, e := waitingForAttempt(o, s.instant())
+	if e == nil && waiting && leases(s.store) {
+		e = s.settleOccurrence(o)
+	}
 	if e != nil || waiting {
 		s.automationMu.Unlock()
 		return e
@@ -316,15 +320,27 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	if policy != nil {
 		openAttempt(&o, s.instant())
 	}
-	e = s.saveOccurrence(o)
+	// The claim is kept while the sources are acquired, and renewed on a
+	// kind that leases it: the acquisition is stopped, and nothing more of
+	// the occurrence written, when a renewal does not succeed, as a run's
+	// attempt is (claims.go). The occurrence is then failed one lease later
+	// by the dispatcher's tick of a Runner of the store (interruptLapsed).
+	e = s.keepOccurrence(o, anyState)
 	s.automationMu.Unlock()
+	if errors.Is(e, errPreparationStopped) {
+		return nil
+	}
 	if e != nil {
 		return e
 	}
-	bounded, stop := context.WithDeadline(ctx, expiry)
+	held, releaseClaim := s.holdLease(ctx, claimed, func(tx runTx) error { return tx.renewOccurrenceClaim(o.ID, o.claim) })
+	bounded, stop := context.WithDeadline(held, expiry)
 	input, acquisitionError := s.automaticInputContext(bounded, o.PendingInput, release, nil)
 	cut := bounded.Err() != nil
 	stop()
+	if _, e = releaseClaim(); e != nil {
+		return e
+	}
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	at := s.instant()
@@ -335,7 +351,7 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 			// Another attempt is scheduled: the occurrence waits for it
 			// with its pending input.
 			o.State = "accepted"
-			return s.saveOccurrence(o)
+			return s.settleOccurrence(o)
 		}
 	}
 	o.PendingInput = nil
@@ -355,7 +371,7 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		o.Input = &input
 		o.InputDigest = digest(encode(input))
 	}
-	return s.saveOccurrence(o)
+	return s.settleOccurrence(o)
 }
 
 func (s *Service) durableGatewayProfiles() []string {

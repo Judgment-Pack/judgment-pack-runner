@@ -5,6 +5,7 @@ package runner
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"sync"
 	"testing"
@@ -49,53 +50,80 @@ func (q *queueRace) release(id string) (Release, error) {
 	return r, err
 }
 
-// pgTwoRunners are two Runners, each with a state directory of its own, on
-// one store, and the function that queues a run of a job of theirs whose
-// Runtime completes.
-func pgTwoRunners(t *testing.T) ([2]*Service, func(key string) string) {
+// pgStoreRunners is a store, its suite's pool, and the Runners of the store a
+// test opens on it, each with a state directory of its own, as on a host of
+// its own: open opens the next, whose start is a Runner's start (restart);
+// job is a job of theirs, in scope team-a, whose release's Runtime
+// completes; submit queues a run of it.
+type pgStoreRunners struct {
+	t      *testing.T
+	suite  *sql.DB
+	conn   PostgreSQLConnections
+	opened []*Service
+	job    Job
+	// runtime is the Runtime the first Runner pinned, which every other
+	// pins too.
+	runtime string
+}
+
+func pgRunners(t *testing.T) *pgStoreRunners {
 	t.Helper()
 	s := pgServer(t)
 	db := s.database(t)
-	connections := s.connections(db)
-	var runners [2]*Service
-	var runtime string
-	for i := range runners {
-		cfg := journalConfig(t)
-		cfg.PostgreSQL = &connections
-		runners[i] = openJournal(t, cfg)
-		t.Cleanup(runners[i].Close)
-		pinned := completingRuntime(t, cfg.Dir)
-		if runtime != "" && pinned != runtime {
-			t.Fatal("the two Runners pinned different Runtimes")
-		}
-		runtime = pinned
+	return &pgStoreRunners{t: t, suite: s.pool(t, pgRoleSuite, db), conn: s.connections(db)}
+}
+
+func (p *pgStoreRunners) open() *Service {
+	t := p.t
+	t.Helper()
+	cfg := journalConfig(t)
+	cfg.PostgreSQL = &p.conn
+	sv := openJournal(t, cfg)
+	t.Cleanup(sv.Close)
+	pinned := completingRuntime(t, cfg.Dir)
+	if p.runtime != "" && pinned != p.runtime {
+		t.Fatal("the Runners pinned different Runtimes")
 	}
-	first := runners[0]
-	release := journalRelease(t, first, runtime)
-	got := serve(t, first, "POST", "/v1/jobs", `{"name":"Raced","releaseId":"`+release.ID+`","reviewed":true,"scope":"team-a"}`, nil)
-	if got.Code != 201 {
-		t.Fatal(got.Code, got.Body.String())
-	}
-	var j Job
-	must(t, json.Unmarshal(got.Body.Bytes(), &j))
-	return runners, func(key string) string {
-		t.Helper()
-		got := serve(t, first, "POST", "/v1/jobs/"+j.ID+"/runs?scope=team-a", string(encode(journalInput())), map[string]string{"Idempotency-Key": key})
-		if got.Code != 202 {
+	p.runtime = pinned
+	p.opened = append(p.opened, sv)
+	if p.job.ID == "" {
+		release := journalRelease(t, sv, p.runtime)
+		got := serve(t, sv, "POST", "/v1/jobs", `{"name":"Raced","releaseId":"`+release.ID+`","reviewed":true,"scope":"team-a"}`, nil)
+		if got.Code != 201 {
 			t.Fatal(got.Code, got.Body.String())
 		}
-		var queued struct {
-			ID string `json:"id"`
-		}
-		must(t, json.Unmarshal(got.Body.Bytes(), &queued))
-		return queued.ID
+		must(t, json.Unmarshal(got.Body.Bytes(), &p.job))
 	}
+	return sv
+}
+
+func (p *pgStoreRunners) submit(key string) string {
+	t := p.t
+	t.Helper()
+	got := serve(t, p.opened[0], "POST", "/v1/jobs/"+p.job.ID+"/runs?scope=team-a", string(encode(journalInput())), map[string]string{"Idempotency-Key": key})
+	if got.Code != 202 {
+		t.Fatal(got.Code, got.Body.String())
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	must(t, json.Unmarshal(got.Body.Bytes(), &queued))
+	return queued.ID
+}
+
+// pgTwoRunners are two Runners opened on one store, and the function that
+// queues a run of a job of theirs whose Runtime completes.
+func pgTwoRunners(t *testing.T) ([2]*Service, func(key string) string) {
+	t.Helper()
+	p := pgRunners(t)
+	return [2]*Service{p.open(), p.open()}, p.submit
 }
 
 // raceForTheQueue holds each Runner's store as a queueRace and dispatches on
 // both at once. Both must return no error, so that each dispatcher goes on,
-// and exactly one must have worked the run: it returns the index of the
-// other.
+// and exactly one must have worked the run, the other having lost it, so
+// that its worker reads the queue again at once (#245): it returns the index
+// of the other.
 func raceForTheQueue(t *testing.T, runners [2]*Service, queued func(Run) Run, released func(Release) Release) int {
 	t.Helper()
 	var read sync.WaitGroup
@@ -104,29 +132,29 @@ func raceForTheQueue(t *testing.T, runners [2]*Service, queued func(Run) Run, re
 		sv.store = &queueRace{runStore: sv.store, read: &read, queued: queued, released: released}
 	}
 	var results [2]struct {
-		worked bool
-		err    error
+		made dispatched
+		err  error
 	}
-	var dispatched sync.WaitGroup
+	var wg sync.WaitGroup
 	for i, sv := range runners {
-		dispatched.Add(1)
+		wg.Add(1)
 		go func() {
-			defer dispatched.Done()
-			results[i].worked, results[i].err = sv.dispatchNext(context.Background())
+			defer wg.Done()
+			results[i].made, results[i].err = sv.dispatch(context.Background())
 		}()
 	}
-	dispatched.Wait()
+	wg.Wait()
 	loser := -1
 	for i, r := range results {
 		if r.err != nil {
 			t.Fatalf("the dispatcher of Runner %d met an error, which stops it: %v", i, r.err)
 		}
-		if !r.worked {
+		if r.made == dispatchedLost {
 			loser = i
 		}
 	}
-	if loser < 0 || !results[1-loser].worked {
-		t.Fatalf("not exactly one dispatcher worked the run: %+v", results)
+	if loser < 0 || results[1-loser].made != dispatchedWorked {
+		t.Fatalf("not exactly one dispatcher worked the run, the other losing it: %+v", results)
 	}
 	return loser
 }

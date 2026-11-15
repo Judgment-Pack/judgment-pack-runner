@@ -140,6 +140,12 @@ func absent(err error) bool {
 // as it returns every error of the function's, and the caller expects it.
 var errKeepNothing = errors.New("store: the transaction keeps nothing")
 
+// errTriggerWritten is the cause of putTrigger's faultConflict on a kind
+// that versions its triggers (D17): the trigger was written since its writer
+// read it. A tick takes this conflict, and no other, for a lost race
+// (tickLost).
+var errTriggerWritten = errors.New("the trigger was written since it was read")
+
 // anyState is putRun's expected state when a writer changes a run whatever
 // state the store holds it in.
 const anyState = ""
@@ -183,6 +189,37 @@ type runExpected struct {
 	// whose lease is live to its holder. It means nothing without state
 	// "running" and with a claim.
 	lapsed bool
+}
+
+// occurrenceClaim is a Runner's claim of an occurrence it prepares or
+// dispatches (docs/design/store-postgresql.md, D18), in the shape of a run's
+// claim (D3): a token new for each claim. A kind that keeps no lock against
+// other Runners holds it for claimLease by its own clock, renewed by
+// renewOccurrenceClaim, and fences every write of the occurrence by it. The
+// zero value is no claim.
+type occurrenceClaim struct{ token string }
+
+// newOccurrenceClaim is a claim with a new token of 16 random bytes.
+func newOccurrenceClaim() (occurrenceClaim, error) {
+	c, err := newRunClaim(0)
+	return occurrenceClaim{token: c.token}, err
+}
+
+// occurrenceExpected is what putOccurrence must find held before it writes,
+// beside the claim o.claim names: the occurrence's state, or anyState; keep,
+// for a holder that writes and goes on, the claim held after the write; and
+// overrule, for a request's write.
+type occurrenceExpected struct {
+	state string
+	// keep holds the occurrence under o.claim after the write, its lease
+	// kept: the holder's write before it goes on, as its intent before a
+	// network call. Without it the write releases the claim.
+	keep bool
+	// overrule is the write of a request, a cancellation or a
+	// reconciliation, which is not a holder's: it expects no claim, and
+	// clears the one held, live or not, so that the holder's next write is
+	// refused (a cancellation wins). Only a request sets it.
+	overrule bool
 }
 
 // heldRequest is a run as the queue holds it under its request key: its id,
@@ -403,12 +440,14 @@ type runStore interface {
 	// order they were made.
 	enabledTriggers() ([]string, error)
 	// readyOccurrence is the accepted occurrence admitted first that has no
-	// input left to prepare, or faultAbsent.
+	// input left to prepare, or faultAbsent. On a kind that leases claims it
+	// is one no live claim holds (D18): another Runner's is passed by.
 	readyOccurrence() (Occurrence, error)
 	// preparableOccurrences gives each, in the order they were admitted,
 	// the occurrences accepted with input left to prepare and those waiting,
 	// until each returns true or an error, which it returns. each must not
-	// call the store.
+	// call the store. On a kind that leases claims they are those no live
+	// claim holds, as for readyOccurrence.
 	preparableOccurrences(each func(Occurrence) (bool, error)) error
 	// cloudBoundTrigger is the id of a trigger whose cloud binding names
 	// connection and job, or faultAbsent.
@@ -551,18 +590,53 @@ type runTx interface {
 	// binding, is held already, and faultAbsent when no trigger is held
 	// under t.ID. On either its caller abandons the transaction: the
 	// trigger's columns may be written in it already.
+	//
+	// On a kind that versions its triggers, the trigger must be held at
+	// t.version, the row version it was read at (0 for one made in the
+	// transaction), or nothing is written and the fault is faultConflict,
+	// its cause errTriggerWritten: another writer, a Runner's tick or a request on another Runner of
+	// the same store, wrote it since (docs/design/store-postgresql.md,
+	// D17). The write moves the version on. The sqlite kind holds no
+	// version and reads 0: its lock and automationMu keep every other
+	// writer out.
 	putTrigger(t Trigger, hash string, history bool) error
 	// createOccurrence keeps o, admitted under identity with the payload
 	// whose digest is payload: faultTaken when its id, or the identity for
 	// its trigger, is held.
 	createOccurrence(o Occurrence, identity, payload string) error
 	// putOccurrence writes o's state and record over the occurrence held
-	// under o.ID, and returns the state it held before. With expected other
-	// than anyState, the occurrence must be held in that state, or nothing
-	// is written and the fault is faultConflict: a final state is not
-	// overwritten by a preparation still in flight. faultAbsent when no
+	// under o.ID, and returns the state it held before. With expected.state
+	// other than anyState, the occurrence must be held in that state, or
+	// nothing is written and the fault is faultConflict: a final state is
+	// not overwritten by a preparation still in flight. faultAbsent when no
 	// occurrence is held under o.ID.
-	putOccurrence(o Occurrence, expected string) (string, error)
+	//
+	// The claim is fenced as a run's is (D18): with o.claim, the occurrence
+	// must be held under that claim, its lease not run out by the store's
+	// clock, or nothing is written and the fault is faultConflict, a
+	// holder's late write after its claim was lost; with none, it must be
+	// held under no live claim, or the fault is faultConflict, a writer that
+	// holds no claim, the restart's included, leaving a live claim's
+	// occurrence to its holder; with expected.overrule, a request's write,
+	// any claim is passed. After the write the occurrence is held under
+	// o.claim with expected.keep, its lease kept, and under none otherwise.
+	// The sqlite kind takes the claim and ignores it, its lock being the
+	// fence.
+	putOccurrence(o Occurrence, expected occurrenceExpected) (string, error)
+	// claimOccurrence holds the occurrence under id under claim, for
+	// claimLease from now by the store's clock, if it is held in state
+	// under no live claim, and returns it as it is held, its claim set to
+	// claim; otherwise it writes nothing and the fault is faultConflict:
+	// another Runner holds it, or it moved on. faultAbsent when no
+	// occurrence is held under id. It writes the claim and not the record,
+	// so that a claimant works the record as it is held, not as it read it
+	// earlier (D18). The sqlite kind checks the state and holds no claim.
+	claimOccurrence(id, state string, claim occurrenceClaim) (Occurrence, error)
+	// renewOccurrenceClaim holds the occurrence's claim for another
+	// claimLease from now, by the store's clock, if it is held under claim
+	// and its lease has not run out; otherwise it writes nothing and the
+	// fault is faultConflict. The sqlite kind ignores it.
+	renewOccurrenceClaim(id string, claim occurrenceClaim) error
 	// createOccurrenceKey binds an occurrence to the delivery key that
 	// created it, by the key's digest: faultTaken when it is bound.
 	createOccurrenceKey(occurrence, hash string) error
@@ -600,7 +674,9 @@ type runTx interface {
 	// key and file cursor left as they are, and keeps the snapshot of t's
 	// revision: faultAbsent when no trigger is held under t.ID, faultTaken
 	// when the snapshot is held; its caller then abandons the transaction,
-	// in which the record may be written already.
+	// in which the record may be written already. It moves the trigger's
+	// version on, as putTrigger does, so that a writer that read the
+	// trigger before the revision does not write over it.
 	reviseTrigger(t Trigger) error
 	// appendJournal appends a change's entry to the journal of job activity,
 	// and returns its sequence; entries are only ever appended.

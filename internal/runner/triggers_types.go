@@ -43,6 +43,13 @@ type Trigger struct {
 	// was issued: the key's identity in the journal, never the key or its
 	// digest. Nil for a key issued before the journal began, or no key.
 	keyRevision *int
+	// version is the row version the store held the trigger at when it was
+	// read, 0 for one made in the writer's transaction: putTrigger expects
+	// it, so that a writer that read the trigger before another wrote it
+	// does not write over that write (docs/design/store-postgresql.md,
+	// D17). It changes with every write, a tick's included, where the
+	// revision does not. The sqlite kind holds none and reads 0.
+	version int64
 }
 type TriggerOrigin struct {
 	OccurrenceID    string `json:"occurrenceId"`
@@ -91,6 +98,12 @@ type Occurrence struct {
 	// ended failed or expired (run_results.go), beside its reason. Any other
 	// occurrence, and one that ended before Runner kept it, has none.
 	ErrorClass string `json:"errorClass,omitempty"`
+	// claim is the claim its writer holds it under, set by claimOccurrence
+	// and never read back from the store (docs/design/store-postgresql.md,
+	// D18): putOccurrence fences the write by it. An occurrence read
+	// from the store holds none, so that its write is refused while another
+	// Runner holds it.
+	claim occurrenceClaim
 }
 type EventDelivery struct {
 	ID         string `json:"id"`

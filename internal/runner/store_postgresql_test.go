@@ -278,9 +278,11 @@ func pgKindsUnderTest() []storeKindUnderTest {
 		migratedSchema: true,
 		passTime: func(st runStore, d time.Duration) {
 			// The lease is the database's: a lease d nearer its end is d
-			// later by its clock.
-			if _, err := pgOf(st).p.worker.ExecContext(pgContext, "UPDATE runs SET lease_until=lease_until-make_interval(secs => $1) WHERE lease_until IS NOT NULL", d.Seconds()); err != nil {
-				panic(err)
+			// later by its clock. A run's and an occurrence's (D18).
+			for _, table := range []string{"runs", "occurrences"} {
+				if _, err := pgOf(st).p.worker.ExecContext(pgContext, "UPDATE "+table+" SET lease_until=lease_until-make_interval(secs => $1) WHERE lease_until IS NOT NULL", d.Seconds()); err != nil {
+					panic(err)
+				}
 			}
 		},
 		seedJob: func(t *testing.T, st runStore, j Job) {

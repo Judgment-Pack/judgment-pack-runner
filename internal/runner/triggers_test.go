@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -593,5 +594,136 @@ func TestEventTokenReadsOnlyItsOwnOccurrence(t *testing.T) {
 		if code, body = read(c[0], c[1], c[2]); code != 401 || body != invalid || !strings.Contains(body, `"invalid_trigger_token"`) {
 			t.Fatal(name, code, body)
 		}
+	}
+}
+
+// pauseAfterList pauses the trigger held under id, as a request would, once
+// the tick has read the list of triggers not paused, and before it reads the
+// trigger.
+type pauseAfterList struct {
+	runStore
+	id string
+}
+
+func (q *pauseAfterList) enabledTriggers() ([]string, error) {
+	ids, err := q.runStore.enabledTriggers()
+	if err != nil || q.id == "" {
+		return ids, err
+	}
+	tr, hash, err := q.runStore.trigger(q.id)
+	if err != nil {
+		return nil, err
+	}
+	q.id = ""
+	tr.Paused = true
+	return ids, q.runStore.update(func(tx runTx) error { return tx.putTrigger(tr, hash, false) })
+}
+
+// A trigger paused after the tick listed the triggers not paused, and
+// before it read the trigger, makes no occurrence: a schedule due, or a
+// file change stable, waits until the trigger is resumed.
+func TestATriggerPausedAfterTheListMakesNoOccurrence(t *testing.T) {
+	for _, kind := range []string{"schedule", "file"} {
+		t.Run(kind, func(t *testing.T) {
+			s, cfg, j, _ := automaticFixture(t)
+			at := time.Now().UTC().Truncate(time.Second)
+			c := constantTrigger(at)
+			file := filepath.Join(cfg.InputRoot, "input.json")
+			if kind == "file" {
+				os.WriteFile(file, encode(sample()), 0600)
+				c = TriggerConfig{Name: "File intake", Kind: "file", WatchPath: "input.json", StableSeconds: 2, Input: &AutomaticInput{Kind: "input-file", Path: "input.json"}, Missed: "skip", Overlap: "queue", QueueSeconds: 3600}
+			}
+			tr, e := s.configureTrigger(j.ID, "", 0, c)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if tr, _, e = s.setTriggerState(tr.ID, tr.Revision, false, true); e != nil {
+				t.Fatal(e)
+			}
+			due := at
+			if kind == "schedule" {
+				held, hash := storedTrigger(t, s, tr.ID)
+				held.NextAt = at.Add(-time.Second).Format(time.RFC3339)
+				must(t, s.writeTrigger(held, hash, false))
+			} else {
+				// The baseline, then a change seen, which is stable from
+				// due on.
+				must(t, s.automationTick(at))
+				changed := sample()
+				changed.Evidence = nil
+				os.WriteFile(file, encode(changed), 0600)
+				must(t, s.automationTick(at.Add(time.Second)))
+				due = at.Add(4 * time.Second)
+			}
+			inner := s.store
+			s.store = &pauseAfterList{runStore: inner, id: tr.ID}
+			e = s.automationTick(due)
+			s.store = inner
+			if e != nil {
+				t.Fatal(e)
+			}
+			if n := countRows(t, s, "occurrences"); n != 0 {
+				t.Fatalf("the paused %s trigger made %d occurrences", kind, n)
+			}
+			if held, _ := storedTrigger(t, s, tr.ID); !held.Paused {
+				t.Fatal("the tick wrote over the pause")
+			}
+		})
+	}
+}
+
+// readyReads counts the tick's reads of the next ready occurrence.
+type readyReads struct {
+	runStore
+	n int
+}
+
+func (q *readyReads) readyOccurrence() (Occurrence, error) {
+	q.n++
+	return q.runStore.readyOccurrence()
+}
+
+// A ready occurrence whose run the queue has no room for waits as it was
+// read, and ends the tick's dispatching: the tick does not read it, claim it
+// and submit it again until the next tick.
+func TestAFullQueueEndsTheTicksDispatching(t *testing.T) {
+	// The queue's runs stay queued: no dispatcher takes them.
+	cfg := testConfig(t)
+	cfg.disableAutomation, cfg.disableDispatcher = true, true
+	s, e := Open(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(s.Close)
+	j, e := s.createJob("Automation", testRelease(t, s).ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	tr, e := s.configureTrigger(j.ID, "", 0, constantTrigger(time.Now()))
+	if e != nil {
+		t.Fatal(e)
+	}
+	o := newOccurrence(tr, j, time.Now())
+	input := sample()
+	o.Input, o.InputDigest = &input, digest(encode(input))
+	admit(t, s, tr, &o, "full")
+	for i := range queueLimit {
+		if _, _, e = s.submit(j.ID, "fill-"+strconv.Itoa(i), sample()); e != nil {
+			t.Fatal(e)
+		}
+	}
+	inner := s.store
+	reads := &readyReads{runStore: inner}
+	s.store = reads
+	e = s.automationTick(time.Now())
+	s.store = inner
+	if e != nil {
+		t.Fatal(e)
+	}
+	if reads.n != 1 {
+		t.Fatalf("the tick read the ready occurrence %d times with no room in the queue", reads.n)
+	}
+	if held := storedOccurrence(t, s, o.ID); held.State != "accepted" || held.RunID != "" {
+		t.Fatalf("the occurrence did not wait for room in the queue: %+v", held)
 	}
 }

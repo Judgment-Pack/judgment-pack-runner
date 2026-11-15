@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -109,6 +110,11 @@ func (s *Service) configureTriggerBy(st runStore, by requester, jobID, triggerID
 	if c.Cloud != nil && takenKey(e) == keyCloudBinding {
 		// Another scope's trigger holds the binding (D9).
 		return t, errCloudBindingUsed()
+	}
+	if faultOf(e) == faultConflict {
+		// Written since it was read, by a tick or by a request on another
+		// Runner of the same store (D17).
+		return t, &apiError{409, "trigger_changed", "The trigger changed. Reload before saving."}
 	}
 	return t, e
 }
@@ -220,9 +226,12 @@ func (s *Service) writeTriggerChange(t Trigger, hash string, c change) error {
 	return writeTriggerChangeIn(s.store, t, hash, c)
 }
 
-// writeTriggerChangeIn is writeTriggerChange, in st.
+// writeTriggerChangeIn is writeTriggerChange, in st. A trigger written since
+// its writer read it, by a tick or by a request on another Runner of the
+// same store, is not written over (D17): the request is answered as for
+// another revision.
 func writeTriggerChangeIn(st runStore, t Trigger, hash string, c change) error {
-	return st.update(func(tx runTx) (err error) {
+	err := st.update(func(tx runTx) (err error) {
 		entry := c
 		if entry.from, err = triggerBefore(tx, t.ID, t.Revision-1); err != nil {
 			return err
@@ -233,6 +242,10 @@ func writeTriggerChangeIn(st runStore, t Trigger, hash string, c change) error {
 		_, err = tx.appendJournal(entry)
 		return err
 	})
+	if faultOf(err) == faultConflict {
+		return &apiError{409, "trigger_changed", "The trigger changed. Reload before updating it."}
+	}
+	return err
 }
 func (s *Service) rotateTriggerKey(triggerID string, revision int) (Trigger, string, error) {
 	return s.rotateTriggerKeyBy(s.store, requester{}, triggerID, revision)
@@ -541,7 +554,53 @@ func (s *Service) admitOccurrenceAs(tx runTx, t Trigger, o Occurrence, identity,
 }
 
 // saveOccurrence records an occurrence, and the entry of its change of state,
-// if any, in one transaction. Runner made the change.
+// if any, in one transaction. Runner made the change. The write is fenced by
+// the claim o is held under, and releases it (D18).
 func (s *Service) saveOccurrence(o Occurrence) error {
 	return s.changeOccurrence(o, "", runnerActor)
+}
+
+// keepOccurrence is saveOccurrence for a holder that goes on with the
+// occurrence: the claim is held after the write, its lease kept (D18).
+func (s *Service) keepOccurrence(o Occurrence, guard string) error {
+	return changeOccurrenceAs(s.store, o, occurrenceExpected{state: guard, keep: true}, runnerActor)
+}
+
+// settleOccurrence is saveOccurrence for the holder of o's claim: a write
+// refused, the claim having been lost to another Runner, wrote nothing, and is
+// no error: the occurrence is that Runner's (D18).
+func (s *Service) settleOccurrence(o Occurrence) error {
+	if e := s.saveOccurrence(o); !errors.Is(e, errPreparationStopped) {
+		return e
+	}
+	return nil
+}
+
+// claimOccurrence claims the occurrence held under id in state, for this
+// Runner to prepare or dispatch it, and returns it as the store holds it,
+// under the claim (D18). faultConflict when another Runner holds it, or it
+// moved on from state; occurrenceLost says which errors those are.
+func (s *Service) claimOccurrence(id, state string) (Occurrence, error) {
+	claim, err := newOccurrenceClaim()
+	if err != nil {
+		return Occurrence{}, err
+	}
+	var o Occurrence
+	err = s.store.update(func(tx runTx) error {
+		var e error
+		o, e = tx.claimOccurrence(id, state, claim)
+		return e
+	})
+	return o, err
+}
+
+// occurrenceLost is nil for a claim's error that says the occurrence is not
+// this Runner's to work: another Runner holds it, or it moved on or is gone
+// since it was read. The Runner wrote nothing of it, and goes on to the next
+// (#245). Any other error is err.
+func occurrenceLost(err error) error {
+	if faultOf(err) == faultConflict || absent(err) {
+		return nil
+	}
+	return err
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"time"
 )
 
 type memoryTrigger struct {
@@ -18,12 +19,25 @@ type memoryTrigger struct {
 	hash, observed, pending, pendingAt string
 	// keyRevision is never changed in place, so a copy shares it.
 	keyRevision *int
+	// version is the trigger's row version, moved on by every write of it
+	// (D17): the second kind's triggers.version.
+	version int64
 }
 
 type memoryOccurrence struct {
 	seq                                        int64
 	id, job, trigger, identity, payload, state string
 	record                                     []byte
+	// claim and leaseUntil are the claim the occurrence is held under and
+	// its lease, by the store's clock (D18): the second kind's
+	// occurrences.claim_id and lease_until.
+	claim      occurrenceClaim
+	leaseUntil time.Time
+}
+
+// claimedAt says whether h is held under a live claim at now.
+func (h memoryOccurrence) claimedAt(now time.Time) bool {
+	return h.claim != (occurrenceClaim{}) && now.Before(h.leaseUntil)
 }
 
 // memorySnapshot is a trigger's revision, the key of its snapshot.
@@ -67,7 +81,7 @@ func (h memoryTrigger) decode() (Trigger, error) {
 		return t, storeFailure(faultUnreadable, "trigger", err)
 	}
 	t.HasKey = h.hash != ""
-	t.observed, t.pending, t.pendingAt = h.observed, h.pending, h.pendingAt
+	t.observed, t.pending, t.pendingAt, t.version = h.observed, h.pending, h.pendingAt, h.version
 	if h.keyRevision != nil {
 		v := *h.keyRevision
 		t.keyRevision = &v
@@ -238,8 +252,9 @@ func pendingInput(record []byte) (bool, error) {
 func (m *memoryStore) readyOccurrence() (Occurrence, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	now := m.storeNow()
 	for _, h := range m.state.automation.occurrences {
-		if h.state != "accepted" || !m.reads().sees(h.record) {
+		if h.state != "accepted" || !m.reads().sees(h.record) || h.claimedAt(now) {
 			continue
 		}
 		if pending, err := pendingInput(h.record); err != nil || pending {
@@ -256,8 +271,9 @@ func (m *memoryStore) readyOccurrence() (Occurrence, error) {
 func (m *memoryStore) preparableOccurrences(each func(Occurrence) (bool, error)) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	now := m.storeNow()
 	for _, h := range m.state.automation.occurrences {
-		if !m.reads().sees(h.record) {
+		if !m.reads().sees(h.record) || h.claimedAt(now) {
 			continue
 		}
 		keep := h.state == "waiting"
@@ -395,6 +411,10 @@ func (t *memoryTx) putTrigger(tr Trigger, hash string, history bool) error {
 	if i < 0 {
 		return storeFailure(faultAbsent, "trigger", errNotHeld)
 	}
+	// The trigger is written only over the version its writer read (D17).
+	if a.triggers[i].version != tr.version {
+		return storeFailure(faultConflict, "trigger", errTriggerWritten)
+	}
 	if err := t.admits("trigger", encode(tr)); err != nil {
 		return err
 	}
@@ -415,6 +435,7 @@ func (t *memoryTx) putTrigger(tr Trigger, hash string, history bool) error {
 	}
 	h := &a.triggers[i]
 	h.record, h.hash, h.observed, h.pending, h.pendingAt, h.keyRevision = encode(tr), hash, tr.observed, tr.pending, tr.pendingAt, keyRevision
+	h.version++
 	if history {
 		a.snapshots[snapshot] = encode(tr)
 	}
@@ -436,7 +457,10 @@ func (t *memoryTx) createOccurrence(o Occurrence, identity, payload string) erro
 	return nil
 }
 
-func (t *memoryTx) putOccurrence(o Occurrence, expected string) (string, error) {
+// putOccurrence fences the write by the claim as the second kind's statement
+// does (D18): claim_id equal and lease_until > now() for a holder's write,
+// no live claim for any other's, and nothing for a request's.
+func (t *memoryTx) putOccurrence(o Occurrence, expected occurrenceExpected) (string, error) {
 	a := &t.s.automation
 	for i := range a.occurrences {
 		h := &a.occurrences[i]
@@ -447,13 +471,62 @@ func (t *memoryTx) putOccurrence(o Occurrence, expected string) (string, error) 
 			return h.state, err
 		}
 		from := h.state
-		if expected != anyState && from != expected {
+		if expected.state != anyState && from != expected.state {
 			return from, storeFailure(faultConflict, "occurrence", errors.New("the occurrence is held in another state"))
+		}
+		switch {
+		case expected.overrule:
+		case o.claim == (occurrenceClaim{}):
+			if h.claimedAt(t.now) {
+				return from, storeFailure(faultConflict, "occurrence", errors.New("the occurrence is held under a live claim"))
+			}
+		case h.claim != o.claim || !h.claimedAt(t.now):
+			return from, storeFailure(faultConflict, "occurrence", errors.New("the occurrence is held under another claim, or its claim ran out"))
+		}
+		if !expected.keep || o.claim == (occurrenceClaim{}) {
+			h.claim, h.leaseUntil = occurrenceClaim{}, time.Time{}
 		}
 		h.state, h.record = o.State, encode(o)
 		return from, nil
 	}
 	return "", storeFailure(faultAbsent, "occurrence", errNotHeld)
+}
+
+func (t *memoryTx) claimOccurrence(id, state string, claim occurrenceClaim) (Occurrence, error) {
+	a := &t.s.automation
+	for i := range a.occurrences {
+		h := &a.occurrences[i]
+		if h.id != id || !t.sees(h.record) {
+			continue
+		}
+		if claim == (occurrenceClaim{}) || h.state != state || h.claimedAt(t.now) {
+			return Occurrence{}, storeFailure(faultConflict, "occurrence", errors.New("the occurrence is held in another state, or under a live claim"))
+		}
+		o, err := h.decode()
+		if err != nil {
+			return o, err
+		}
+		h.claim, h.leaseUntil = claim, t.now.Add(claimLease)
+		o.claim = claim
+		return o, nil
+	}
+	return Occurrence{}, storeFailure(faultAbsent, "occurrence", errNotHeld)
+}
+
+func (t *memoryTx) renewOccurrenceClaim(id string, claim occurrenceClaim) error {
+	a := &t.s.automation
+	for i := range a.occurrences {
+		h := &a.occurrences[i]
+		if h.id != id || !t.sees(h.record) {
+			continue
+		}
+		if claim == (occurrenceClaim{}) || h.claim != claim || !h.claimedAt(t.now) {
+			return storeFailure(faultConflict, "occurrence", errors.New("the occurrence is not held under the claim, or its lease ran out"))
+		}
+		h.leaseUntil = t.now.Add(claimLease)
+		return nil
+	}
+	return storeFailure(faultConflict, "occurrence", errNotHeld)
 }
 
 // createOccurrenceKey binds an occurrence its transaction's scope reaches: a
