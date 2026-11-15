@@ -59,7 +59,43 @@ func (s *Service) SetAside() []SetAsideProfile {
 // refuseSetAsideIDs refuses the first of ids that names a set-aside profile,
 // or a selected one (selected_profiles.go): every ordinary binding resolves
 // through here, so none binds a selected profile.
+//
+// Every binding resolves through here first, so it is here too that a
+// Runner whose copy of the installation's profiles lacks one that ids name
+// reads the store's profile rows once more (#282), on a kind that leases,
+// where several Runners share a store: the profile may have been
+// registered through another Runner since this one read them. A refusal of
+// a set-aside profile is given without that read, which cannot change it:
+// the profiles set aside are fixed from the start (currentProfiles). The
+// ids are checked again against the copy read, which may hold one of them
+// as a selected profile.
 func (s *Service) refuseSetAsideIDs(ids []string) error {
+	if e := s.refuseHeldAside(ids); e != nil {
+		return e
+	}
+	if s.lacksProfile(ids) && s.refreshProfiles() {
+		return s.refuseHeldAside(ids)
+	}
+	return nil
+}
+
+// lacksProfile reports whether, on a kind that leases, one of ids names a
+// profile this Runner's copy neither holds, configured or registered, nor
+// sets aside, nor holds as a selected one.
+func (s *Service) lacksProfile(ids []string) bool {
+	if !leases(s.store) {
+		return false
+	}
+	for _, id := range ids {
+		if !s.ordinaryProfileID(id) && !s.selectedProfileID(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// refuseHeldAside is refuseSetAsideIDs against this Runner's copy as it is.
+func (s *Service) refuseHeldAside(ids []string) error {
 	for _, id := range ids {
 		for _, p := range s.setAside {
 			if p.ID == id {

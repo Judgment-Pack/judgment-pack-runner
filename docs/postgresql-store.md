@@ -300,13 +300,21 @@ The Runners must hold to these:
   order.
 - **The same project and Runtime on every host.** Each Runner reads the project's files, and pins
   its Runtime, on its own host: give every Runner of the store the same image.
-- **Profiles registered through one Runner.** A Runner reads the installation's input and selected
-  profiles at its start, and a registration writes them from its own copy. Register profiles
-  through one Runner, and start the others again after it: another Runner does not see the new
-  profile until it starts again, and a registration on a Runner started before another Runner's
-  registration writes that registration out of the store.
 
 What several Runners do not change, or do not do:
+
+- **Profiles registered through any Runner.** A registration of an input profile or a selected
+  profile, through any Runner of the store, keeps every profile the store holds, those registered
+  through another Runner included, and is refused `409` for an id another Runner registered with
+  another definition or in the other namespace. A Runner reads the profiles at its start, at each
+  registration through it, and whenever a request, a trigger's occurrence or a queued run names a
+  profile it does not hold: a release, a job or its upgrade, a trigger's configuration or
+  preview, a planning or preparation request, a run's submission and its start. A profile
+  registered through any Runner is therefore bound on every Runner of the store from its
+  registration on. The listings of the profiles (`GET /v1/input-profiles` and the selected
+  profiles' report) are each Runner's own copy, and show a profile registered through another
+  Runner once this one has read the profiles again. A profile is immutable once registered, and
+  the store's profiles only grow: a Runner never binds another definition.
 
 - **A missed schedule.** A due time is missed, and the trigger's `missed` rule applies (`skip`, or
   `latest`), only when no Runner of the store ticked it within 30 seconds of it: every Runner
