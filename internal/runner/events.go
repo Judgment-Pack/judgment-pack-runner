@@ -407,10 +407,19 @@ func changeQueuedRun(st runStore, r Run) error {
 // recordOccurrence writes an occurrence's record inside tx, and the entry of
 // its change of state, if its state changed. With guard, the stored state must
 // be guard, or nothing is written and errPreparationStopped is returned: a
-// final state is not overwritten by a preparation still in flight.
+// final state is not overwritten by a preparation still in flight. The write
+// releases the claim o is held under (D18).
 func recordOccurrence(tx runTx, o Occurrence, guard string, by EventActor, interruption *EventInterruption) error {
+	return recordOccurrenceAs(tx, o, occurrenceExpected{state: guard}, by, interruption)
+}
+
+// recordOccurrenceAs is recordOccurrence, expecting what expected says
+// (putOccurrence). A write its claim does not hold, as a holder's after its
+// claim was lost, or the write of one that holds none while another Runner
+// holds the occurrence, is errPreparationStopped too: nothing is written.
+func recordOccurrenceAs(tx runTx, o Occurrence, expected occurrenceExpected, by EventActor, interruption *EventInterruption) error {
 	o = withOccurrenceClass(o)
-	from, err := tx.putOccurrence(o, guard)
+	from, err := tx.putOccurrence(o, expected)
 	if faultOf(err) == faultConflict {
 		return errPreparationStopped
 	}
@@ -434,8 +443,13 @@ func (s *Service) changeOccurrence(o Occurrence, guard string, by EventActor) er
 
 // changeOccurrenceIn is changeOccurrence, in st.
 func changeOccurrenceIn(st runStore, o Occurrence, guard string, by EventActor) error {
+	return changeOccurrenceAs(st, o, occurrenceExpected{state: guard}, by)
+}
+
+// changeOccurrenceAs is changeOccurrenceIn, expecting what expected says.
+func changeOccurrenceAs(st runStore, o Occurrence, expected occurrenceExpected, by EventActor) error {
 	return st.update(func(tx runTx) error {
-		return recordOccurrence(tx, o, guard, by, nil)
+		return recordOccurrenceAs(tx, o, expected, by, nil)
 	})
 }
 
@@ -486,7 +500,10 @@ func interruptRunning(tx runTx, at string, detail func(Run) EventDetail) error {
 }
 
 // restartOccurrences marks, inside tx, each legacy preparation the last
-// process left preparing failed, with the window its stop lies in.
+// process left preparing failed, with the window its stop lies in: at a
+// restart, the restart's entry, started; at the dispatcher's tick, none
+// (interruptLapsed). Only a preparation no live claim holds is failed (D18):
+// one whose lease is live is another Runner's, and is left to it.
 func restartOccurrences(tx runTx, started int64) (err error) {
 	occurrences, err := tx.preparingOccurrences()
 	if err != nil {
@@ -506,7 +523,14 @@ func restartOccurrences(tx runTx, started int64) (err error) {
 		if n := len(o.Attempts); n > 0 && o.Attempts[n-1].Outcome == "" {
 			o.Attempts[n-1].Outcome = "interrupted"
 		}
-		if err = recordOccurrence(tx, o, "", runnerActor, &EventInterruption{LastKnownRunning: since, Restart: started}); err != nil {
+		// o was read from the store and holds no claim: its write is
+		// refused while another Runner's lease on it is live, and the
+		// occurrence is that Runner's.
+		err = recordOccurrence(tx, o, "", runnerActor, &EventInterruption{LastKnownRunning: since, Restart: started})
+		if errors.Is(err, errPreparationStopped) {
+			continue
+		}
+		if err != nil {
 			return err
 		}
 	}

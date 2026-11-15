@@ -212,6 +212,7 @@ func (t *memoryTx) reviseTrigger(tr Trigger) error {
 		return storeFailure(faultTaken, "trigger", errTaken)
 	}
 	a.triggers[i].record = encode(tr)
+	a.triggers[i].version++
 	a.snapshots[snapshot] = encode(tr)
 	return nil
 }

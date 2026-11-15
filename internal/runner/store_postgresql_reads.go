@@ -165,7 +165,8 @@ func (r pgReads) trigger(id string) (Trigger, string, error) {
 	var raw []byte
 	var hash, observed, pending, pendingAt string
 	var keyRevision sql.NullInt64
-	if err := r.one("trigger", "SELECT record,key_hash,observed,pending,pending_at,key_revision FROM triggers WHERE id=$1", []any{id}, &raw, &hash, &observed, &pending, &pendingAt, &keyRevision); err != nil {
+	var version int64
+	if err := r.one("trigger", "SELECT record,key_hash,observed,pending,pending_at,key_revision,version FROM triggers WHERE id=$1", []any{id}, &raw, &hash, &observed, &pending, &pendingAt, &keyRevision, &version); err != nil {
 		return t, "", err
 	}
 	t, err := pgRecordOf[Trigger]("trigger", raw, nil)
@@ -173,7 +174,7 @@ func (r pgReads) trigger(id string) (Trigger, string, error) {
 		return t, hash, err
 	}
 	t.HasKey = hash != ""
-	t.observed, t.pending, t.pendingAt = observed, pending, pendingAt
+	t.observed, t.pending, t.pendingAt, t.version = observed, pending, pendingAt, version
 	if keyRevision.Valid {
 		v := int(keyRevision.Int64)
 		t.keyRevision = &v
@@ -370,8 +371,12 @@ func (k *pgStore) enabledTriggers() ([]string, error) {
 	return ids, err
 }
 
+// pgUnclaimed is an occurrence no live claim holds (D18): another Runner's
+// is passed by until its lease runs out.
+const pgUnclaimed = "(claim_id IS NULL OR lease_until<=now())"
+
 func (k *pgStore) readyOccurrence() (Occurrence, error) {
-	b, err := k.record("occurrence", "SELECT record FROM occurrences WHERE state='accepted' AND "+pgJSON("record", "pendingInput")+" IS NULL ORDER BY seq LIMIT 1")
+	b, err := k.record("occurrence", "SELECT record FROM occurrences WHERE state='accepted' AND "+pgJSON("record", "pendingInput")+" IS NULL AND "+pgUnclaimed+" ORDER BY seq LIMIT 1")
 	return pgRecordOf[Occurrence]("occurrence", b, err)
 }
 
@@ -379,7 +384,7 @@ func (k *pgStore) readyOccurrence() (Occurrence, error) {
 // each may use the store while it is given one.
 func (k *pgStore) preparableOccurrences(each func(Occurrence) (bool, error)) error {
 	var held []Occurrence
-	if err := k.each("occurrence", "SELECT record FROM occurrences WHERE (state='accepted' AND "+pgJSON("record", "pendingInput")+" IS NOT NULL) OR state='waiting' ORDER BY seq", nil, func(b []byte) error {
+	if err := k.each("occurrence", "SELECT record FROM occurrences WHERE ((state='accepted' AND "+pgJSON("record", "pendingInput")+" IS NOT NULL) OR state='waiting') AND "+pgUnclaimed+" ORDER BY seq", nil, func(b []byte) error {
 		var o Occurrence
 		err := json.Unmarshal(b, &o)
 		held = append(held, o)

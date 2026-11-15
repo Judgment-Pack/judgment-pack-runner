@@ -123,14 +123,14 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 		return s.prepareLegacyOccurrence(ctx, o.ID)
 	}
 	s.automationMu.Lock()
-	o, e = s.occurrence(o.ID)
+	// The occurrence is claimed in the state it was listed in, and prepared
+	// as the store holds it (D18): one another Runner of the store holds, or
+	// that moved on since, is passed by. Each write of this step is fenced by
+	// the claim; the step's last releases it.
+	o, e = s.claimOccurrence(o.ID, o.State)
 	if e != nil {
 		s.automationMu.Unlock()
-		return e
-	}
-	if o.State != "accepted" && o.State != "waiting" {
-		s.automationMu.Unlock()
-		return nil
+		return occurrenceLost(e)
 	}
 	if o.Preparation == nil {
 		expires, err := time.Parse(time.RFC3339Nano, o.ExpiresAt)
@@ -142,7 +142,7 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 			o.State = "expired"
 			o.Reason = "queue-expired"
 			o.PendingInput = nil
-			e = s.saveOccurrence(o)
+			e = s.settleOccurrence(o)
 			s.automationMu.Unlock()
 			return e
 		}
@@ -152,7 +152,7 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 			o.Reason = err.Error()
 			o.ErrorClass = acquisitionClass(err)
 			o.PendingInput = nil
-			e = s.saveOccurrence(o)
+			e = s.settleOccurrence(o)
 			s.automationMu.Unlock()
 			return e
 		}
@@ -164,8 +164,13 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 		o.State = "waiting"
 	}
 	o.Preparation.NextCheck = time.Now().Add(3 * time.Second).UTC().Format(time.RFC3339Nano)
-	e = s.saveOccurrence(o)
+	// The claim is kept for the step's network call, bounded well within
+	// its lease (operationCall).
+	e = s.keepOccurrence(o, anyState)
 	s.automationMu.Unlock()
+	if errors.Is(e, errPreparationStopped) {
+		return nil
+	}
 	if e != nil {
 		return e
 	}
@@ -178,11 +183,21 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 
 // savePreparation records a waiting occurrence's progress, and the entry of
 // its change of state, if any, in one transaction that first reads the stored
-// state: a cancellation or other final state wins.
+// state: a cancellation or other final state wins. It is fenced by the claim
+// the step holds, and releases it (D18): a claim lost, or cleared by a
+// cancellation, is errPreparationStopped.
 func (s *Service) savePreparation(o Occurrence) error {
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
 	return s.changeOccurrence(o, "waiting", runnerActor)
+}
+
+// keepPreparation is savePreparation for the step's intent, written before
+// its network call: the claim is held after it.
+func (s *Service) keepPreparation(o Occurrence) error {
+	s.automationMu.Lock()
+	defer s.automationMu.Unlock()
+	return s.keepOccurrence(o, "waiting")
 }
 func (s *Service) stopPreparation(o Occurrence, state, reason string) error {
 	o.State = state
@@ -254,7 +269,7 @@ func (s *Service) advancePreparation(ctx context.Context, o Occurrence) error {
 		operation := id("")
 		p.Tasks = append(p.Tasks, SourceTask{Name: next.Name, ID: operation, State: "waiting", StartedAt: now(), Gateway: gateway, OperationsURL: operationsURL, Profile: next.Profile, Request: encode(sourceRequest{ID: operation, Gateway: gateway, Source: next.Source, Arguments: next.Arguments, Deadline: p.Deadline, ConversionContract: next.ConversionContract, ConversionLimits: next.ConversionLimits, RetainedColumn: next.RetainedColumn})})
 		task = &p.Tasks[len(p.Tasks)-1]
-		if e = s.savePreparation(o); e != nil {
+		if e = s.keepPreparation(o); e != nil {
 			return e
 		} // commit intent BEFORE network
 	}
@@ -407,6 +422,7 @@ func (s *Service) cancelOccurrence(ctx context.Context, id string) (Occurrence, 
 		if o.State != "waiting" && o.State != "needs-attention" {
 			e = &apiError{409, "occurrence_not_waiting", "Only source preparation can be cancelled here."}
 		} else {
+			held := o.State
 			o.State = "cancelled"
 			if o.Preparation != nil {
 				for i := range o.Preparation.Tasks {
@@ -417,7 +433,14 @@ func (s *Service) cancelOccurrence(ctx context.Context, id string) (Occurrence, 
 			}
 			o.Reason = "Cancelled locally. Provider cancellation is best effort; late results will not be evaluated."
 			o.PendingInput = nil
-			e = changeOccurrenceIn(st, o, "", s.actor(requesterFrom(ctx)))
+			// A cancellation wins over the claim of a Runner preparing the
+			// occurrence, whose next write is refused (D18); it does not
+			// write over a state another Runner moved it to since it was
+			// read.
+			e = changeOccurrenceAs(st, o, occurrenceExpected{state: held, overrule: true}, s.actor(requesterFrom(ctx)))
+			if errors.Is(e, errPreparationStopped) {
+				e = &apiError{409, "occurrence_not_waiting", "Only source preparation can be cancelled here."}
+			}
 		}
 	}
 	s.automationMu.Unlock()
@@ -456,5 +479,11 @@ func (s *Service) reconcileOccurrenceBy(st runStore, by requester, id string) (O
 	o.State = "waiting"
 	o.Reason = ""
 	o.Preparation.NextCheck = ""
-	return o, changeOccurrenceIn(st, o, "", s.actor(by))
+	// As a cancellation, a reconciliation passes any claim and does not
+	// write over a state another Runner moved the occurrence to (D18).
+	e = changeOccurrenceAs(st, o, occurrenceExpected{state: "needs-attention", overrule: true}, s.actor(by))
+	if errors.Is(e, errPreparationStopped) {
+		e = &apiError{409, "not_reconcilable", "Only an interrupted source preparation can be checked again."}
+	}
+	return o, e
 }

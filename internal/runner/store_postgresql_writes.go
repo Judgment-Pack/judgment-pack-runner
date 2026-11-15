@@ -272,17 +272,30 @@ func (t *pgTx) createTrigger(tr Trigger) error {
 	return nil
 }
 
+// putTrigger writes the trigger over the one held at the version it was read
+// at, and moves the version on (D17): a writer that read it before another
+// wrote it meets faultConflict and writes nothing.
 func (t *pgTx) putTrigger(tr Trigger, hash string, history bool) error {
 	var keyRevision any
 	if tr.keyRevision != nil {
 		keyRevision = *tr.keyRevision
 	}
-	n, err := t.exec("trigger", "UPDATE triggers SET record=$1,key_hash=$2,observed=$3,pending=$4,pending_at=$5,key_revision=$6 WHERE id=$7", string(encode(tr)), hash, tr.observed, tr.pending, tr.pendingAt, keyRevision, tr.ID)
+	var held int64
+	if err := t.tx.QueryRowContext(t.ctx(), "SELECT version FROM triggers WHERE id=$1 FOR UPDATE", tr.ID).Scan(&held); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return storeFailure(faultAbsent, "trigger", errNoTrigger)
+		}
+		return pgFault("trigger", err, false)
+	}
+	if held != tr.version {
+		return storeFailure(faultConflict, "trigger", fmt.Errorf("the trigger %s was written since it was read", tr.ID))
+	}
+	n, err := t.exec("trigger", "UPDATE triggers SET record=$1,key_hash=$2,observed=$3,pending=$4,pending_at=$5,key_revision=$6,version=version+1 WHERE id=$7 AND version=$8", string(encode(tr)), hash, tr.observed, tr.pending, tr.pendingAt, keyRevision, tr.ID, tr.version)
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return storeFailure(faultAbsent, "trigger", errNoTrigger)
+		return storeFailure(faultConflict, "trigger", fmt.Errorf("the trigger %s was written since it was read", tr.ID))
 	}
 	if history {
 		_, err = t.exec("trigger", "INSERT INTO trigger_revisions(trigger_id,revision,record) VALUES ($1,$2,$3)", tr.ID, tr.Revision, string(encode(tr)))
@@ -290,8 +303,9 @@ func (t *pgTx) putTrigger(tr Trigger, hash string, history bool) error {
 	return err
 }
 
+// reviseTrigger moves the trigger's version on, as putTrigger does (D17).
 func (t *pgTx) reviseTrigger(tr Trigger) error {
-	n, err := t.exec("trigger", "UPDATE triggers SET record=$1 WHERE id=$2", string(encode(tr)), tr.ID)
+	n, err := t.exec("trigger", "UPDATE triggers SET record=$1,version=version+1 WHERE id=$2", string(encode(tr)), tr.ID)
 	if err != nil {
 		return err
 	}
@@ -319,18 +333,78 @@ func (t *pgTx) createOccurrence(o Occurrence, identity, payload string) error {
 	return t.move("pending-occurrences", pgPendingStates, "", o.State)
 }
 
-func (t *pgTx) putOccurrence(o Occurrence, expected string) (string, error) {
+// putOccurrence fences the write by the occurrence's claim as putRun does a
+// run's (D18): a holder's by its claim and a lease live at the statement's
+// start, after any wait for the lock; any other's by no live claim at all.
+func (t *pgTx) putOccurrence(o Occurrence, want occurrenceExpected) (string, error) {
 	var from string
 	if err := t.tx.QueryRowContext(t.ctx(), "SELECT state FROM occurrences WHERE id=$1 FOR UPDATE", o.ID).Scan(&from); err != nil {
 		return "", pgFault("occurrence", err, false)
 	}
-	if expected != anyState && from != expected {
-		return from, storeFailure(faultConflict, "occurrence", fmt.Errorf("the occurrence %s is %s, not %s", o.ID, from, expected))
+	if want.state != anyState && from != want.state {
+		return from, storeFailure(faultConflict, "occurrence", fmt.Errorf("the occurrence %s is %s, not %s", o.ID, from, want.state))
 	}
-	if _, err := t.exec("occurrence", "UPDATE occurrences SET state=$1,record=$2 WHERE id=$3", o.State, string(encode(o)), o.ID); err != nil {
+	var a pgArgs
+	id := a.add(o.ID)
+	set := "state=" + a.add(o.State) + ",record=" + a.add(string(encode(o)))
+	if !want.keep || o.claim == (occurrenceClaim{}) {
+		set += ",claim_id=NULL,lease_until=NULL"
+	}
+	where := "id=" + id
+	switch {
+	case want.overrule:
+	case o.claim == (occurrenceClaim{}):
+		where += " AND " + pgUnclaimed
+	default:
+		where += " AND claim_id=" + a.add(o.claim.token) + " AND lease_until>statement_timestamp()"
+	}
+	n, err := t.exec("occurrence", "UPDATE occurrences SET "+set+" WHERE "+where, a...)
+	if err != nil {
 		return from, err
 	}
+	if n == 0 {
+		return from, storeFailure(faultConflict, "occurrence", errors.New("the occurrence is held under a claim the writer does not hold, or its claim's lease ran out"))
+	}
 	return from, t.move("pending-occurrences", pgPendingStates, from, o.State)
+}
+
+// claimOccurrence takes the claim where the occurrence is held in state
+// under none live, by the transaction's now() as the lapse test is (D3), and
+// returns the record as held.
+func (t *pgTx) claimOccurrence(id, state string, claim occurrenceClaim) (Occurrence, error) {
+	if claim == (occurrenceClaim{}) {
+		return Occurrence{}, storeFailure(faultConflict, "occurrence", errors.New("no claim to hold the occurrence under"))
+	}
+	var from string
+	var free bool
+	if err := t.tx.QueryRowContext(t.ctx(), "SELECT state,"+pgUnclaimed+" FROM occurrences WHERE id=$1 FOR UPDATE", id).Scan(&from, &free); err != nil {
+		return Occurrence{}, pgFault("occurrence", err, false)
+	}
+	if from != state || !free {
+		return Occurrence{}, storeFailure(faultConflict, "occurrence", fmt.Errorf("the occurrence %s is %s, or held under a live claim", id, from))
+	}
+	var record []byte
+	err := t.tx.QueryRowContext(t.ctx(), "UPDATE occurrences SET claim_id=$1,lease_until="+pgLeaseUntil+" WHERE id=$2 RETURNING record", claim.token, id).Scan(&record)
+	o, err := pgRecordOf[Occurrence]("occurrence", record, pgFault("occurrence", err, true))
+	o.claim = claim
+	return o, err
+}
+
+// renewOccurrenceClaim holds the claim's lease for claimLease from the
+// database's clock, while the occurrence is held under the claim and its
+// lease is live when the statement starts.
+func (t *pgTx) renewOccurrenceClaim(id string, claim occurrenceClaim) error {
+	if claim == (occurrenceClaim{}) {
+		return storeFailure(faultConflict, "occurrence", errors.New("the occurrence is not held under a claim"))
+	}
+	n, err := t.exec("occurrence", "UPDATE occurrences SET lease_until="+pgLeaseUntil+" WHERE id=$1 AND claim_id=$2 AND lease_until>statement_timestamp()", id, claim.token)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return storeFailure(faultConflict, "occurrence", errors.New("the occurrence is not held under the claim, or its lease ran out"))
+	}
+	return nil
 }
 
 // createOccurrenceKey keeps the key with its occurrence's scope, read from
