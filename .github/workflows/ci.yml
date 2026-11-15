@@ -13,11 +13,21 @@ name: CI
 
 on:
   pull_request:
+  # The merge queue's group: the pull request on top of main and of the groups ahead of it, checked
+  # before main moves (docs/releasing.md, "Merging").
+  merge_group:
   push:
     branches: [main]
   # Kept; the release no longer calls this workflow. A refusal at the tag is answered by re-running
   # main's run at the commit (docs/releasing.md), which keeps the evidence a push-to-main run's.
   workflow_call:
+
+# A new push to a pull request cancels that pull request's run in progress. A push to main and a
+# merge group each have a group of their own commit, so no run of main, which a release takes as
+# its evidence, is ever cancelled or dropped as a pending duplicate.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -49,17 +59,21 @@ jobs:
       # The pinned Runtimes, the ownership-era Runner and the Gateway are checked out and built by
       # the build-pinned step (scripts/checks/build-pinned.sh).
       # A pull request runs the steps jpdev.json maps its changed paths to, and the whole list when
-      # a path is unmapped or the mapping, dev.json or the runner changed. A push to main runs the
+      # a path is unmapped or the mapping, dev.json or the runner changed; a merge group runs the
+      # steps its changes since the group's base map to, the same way. A push to main runs the
       # whole list, and only that run is what a release is held to. The release steps are skipped
       # here either way: `Release contents` runs them. The summary is kept for the evidence.
       - name: Checks
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -o pipefail
           if [ "$EVENT" = pull_request ]; then
             scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
+          elif [ "$EVENT" = merge_group ]; then
+            scripts/dev/check.sh --all --changed "$GROUP_BASE" --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
           else
             scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
           fi
