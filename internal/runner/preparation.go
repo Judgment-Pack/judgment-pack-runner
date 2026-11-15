@@ -413,35 +413,40 @@ func (s *Service) cancelSource(ctx context.Context, o Occurrence) {
 }
 
 // cancelOccurrence cancels a source preparation, the occurrence read and
-// written in the store ctx's request is held to (storeFor).
+// written in the store ctx's request is held to (storeFor), in one
+// transaction: the cancellation is made from the occurrence as the store
+// holds it when it is written, so that a task another Runner's step committed
+// since any earlier read is kept in it and cancelled at its provider.
 func (s *Service) cancelOccurrence(ctx context.Context, id string) (Occurrence, error) {
 	st := s.storeFor(ctx)
+	by := s.actor(requesterFrom(ctx))
 	s.automationMu.Lock()
-	o, e := st.occurrence(id)
-	if e == nil {
+	var o Occurrence
+	e := st.update(func(tx runTx) error {
+		var err error
+		if o, err = tx.occurrence(id); err != nil {
+			return err
+		}
 		if o.State != "waiting" && o.State != "needs-attention" {
-			e = &apiError{409, "occurrence_not_waiting", "Only source preparation can be cancelled here."}
-		} else {
-			held := o.State
-			o.State = "cancelled"
-			if o.Preparation != nil {
-				for i := range o.Preparation.Tasks {
-					if o.Preparation.Tasks[i].State != "completed" {
-						o.Preparation.Tasks[i].State = "cancel-requested"
-					}
+			return &apiError{409, "occurrence_not_waiting", "Only source preparation can be cancelled here."}
+		}
+		held := o.State
+		o.State = "cancelled"
+		if o.Preparation != nil {
+			for i := range o.Preparation.Tasks {
+				if o.Preparation.Tasks[i].State != "completed" {
+					o.Preparation.Tasks[i].State = "cancel-requested"
 				}
 			}
-			o.Reason = "Cancelled locally. Provider cancellation is best effort; late results will not be evaluated."
-			o.PendingInput = nil
-			// A cancellation wins over the claim of a Runner preparing the
-			// occurrence, whose next write is refused (D18); it does not
-			// write over a state another Runner moved it to since it was
-			// read.
-			e = changeOccurrenceAs(st, o, occurrenceExpected{state: held, overrule: true}, s.actor(requesterFrom(ctx)))
-			if errors.Is(e, errPreparationStopped) {
-				e = &apiError{409, "occurrence_not_waiting", "Only source preparation can be cancelled here."}
-			}
 		}
+		o.Reason = "Cancelled locally. Provider cancellation is best effort; late results will not be evaluated."
+		o.PendingInput = nil
+		// A cancellation wins over the claim of a Runner preparing the
+		// occurrence, whose next write is refused (D18).
+		return recordOccurrenceAs(tx, o, occurrenceExpected{state: held, overrule: true}, by, nil)
+	})
+	if errors.Is(e, errPreparationStopped) {
+		e = &apiError{409, "occurrence_not_waiting", "Only source preparation can be cancelled here."}
 	}
 	s.automationMu.Unlock()
 	if e == nil {
@@ -458,30 +463,33 @@ func (s *Service) reconcileOccurrence(id string) (Occurrence, error) {
 
 // reconcileOccurrenceBy is reconcileOccurrence, requested by by, the
 // occurrence read and written in st, the store the request is held to
-// (storeFor).
+// (storeFor), in one transaction, as a cancellation is.
 func (s *Service) reconcileOccurrenceBy(st runStore, by requester, id string) (Occurrence, error) {
+	actor := s.actor(by)
 	s.automationMu.Lock()
 	defer s.automationMu.Unlock()
-	o, e := st.occurrence(id)
-	if e != nil {
-		return o, e
-	}
-	if o.State != "needs-attention" || o.Preparation == nil || o.Preparation.Input == nil {
-		return o, &apiError{409, "not_reconcilable", "Only an interrupted source preparation can be checked again."}
-	}
-	deadline, e := time.Parse(time.RFC3339Nano, o.Preparation.Deadline)
-	if e != nil {
-		return o, e
-	}
-	if !time.Now().Before(deadline) {
-		return o, &apiError{409, "preparation_expired", "The original source deadline has elapsed."}
-	}
-	o.State = "waiting"
-	o.Reason = ""
-	o.Preparation.NextCheck = ""
-	// As a cancellation, a reconciliation passes any claim and does not
-	// write over a state another Runner moved the occurrence to (D18).
-	e = changeOccurrenceAs(st, o, occurrenceExpected{state: "needs-attention", overrule: true}, s.actor(by))
+	var o Occurrence
+	e := st.update(func(tx runTx) error {
+		var err error
+		if o, err = tx.occurrence(id); err != nil {
+			return err
+		}
+		if o.State != "needs-attention" || o.Preparation == nil || o.Preparation.Input == nil {
+			return &apiError{409, "not_reconcilable", "Only an interrupted source preparation can be checked again."}
+		}
+		deadline, err := time.Parse(time.RFC3339Nano, o.Preparation.Deadline)
+		if err != nil {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return &apiError{409, "preparation_expired", "The original source deadline has elapsed."}
+		}
+		o.State = "waiting"
+		o.Reason = ""
+		o.Preparation.NextCheck = ""
+		// As a cancellation, a reconciliation passes any claim (D18).
+		return recordOccurrenceAs(tx, o, occurrenceExpected{state: "needs-attention", overrule: true}, actor, nil)
+	})
 	if errors.Is(e, errPreparationStopped) {
 		e = &apiError{409, "not_reconcilable", "Only an interrupted source preparation can be checked again."}
 	}

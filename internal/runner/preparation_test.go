@@ -369,3 +369,83 @@ func TestUncertainPreparationBlocksSkipOverlap(t *testing.T) {
 		t.Fatal("uncertain provider work did not block overlap", next)
 	}
 }
+
+// commitBefore commits a change, once set, as another Runner's write, just
+// before the next transaction it is given begins: between a request's
+// earlier read and its write.
+type commitBefore struct {
+	runStore
+	change func(runStore) error
+}
+
+func (q *commitBefore) leasesClaims() bool { return leases(q.runStore) }
+
+func (q *commitBefore) updateWithin(d time.Duration, fn func(runTx) error) error {
+	return updateWithin(q.runStore, d, fn)
+}
+
+func (q *commitBefore) update(fn func(runTx) error) error {
+	if change := q.change; change != nil {
+		q.change = nil
+		if err := change(q.runStore); err != nil {
+			return err
+		}
+	}
+	return q.runStore.update(fn)
+}
+
+// lateTask is the change of a Runner preparing o: a second task, committed
+// as the intent of its step before its network call (keepPreparation).
+func lateTask(id string) func(runStore) error {
+	return func(st runStore) error {
+		o, err := st.occurrence(id)
+		if err != nil {
+			return err
+		}
+		late := o.Preparation.Tasks[0]
+		late.Name, late.ID, late.State, late.Checks = "detail", "op-late", "waiting", 0
+		o.Preparation.Tasks = append(o.Preparation.Tasks, late)
+		return changeOccurrenceAs(st, o, occurrenceExpected{state: "waiting", keep: true}, runnerActor)
+	}
+}
+
+// A task another Runner's step commits after a cancellation's request could
+// have read the occurrence, and before its write, is kept in the cancelled
+// record and cancelled at its provider: the cancellation is made from the
+// occurrence as the store holds it when it is written.
+func TestDurablePreparationCancellationKeepsATaskCommittedBeforeItsWrite(t *testing.T) {
+	s, _, o, f := preparationFixture(t)
+	o = stepPreparation(t, s, o.ID)
+	if o.State != "waiting" || len(o.Preparation.Tasks) != 1 {
+		t.Fatal(o)
+	}
+	inner := s.store
+	s.store = &commitBefore{runStore: inner, change: lateTask(o.ID)}
+	got, e := s.cancelOccurrence(context.Background(), o.ID)
+	s.store = inner
+	if e != nil {
+		t.Fatal(e)
+	}
+	held, e := s.occurrence(o.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, c := range []struct {
+		name string
+		o    Occurrence
+	}{{"stored", held}, {"answered", got}} {
+		if c.o.State != "cancelled" || len(c.o.Preparation.Tasks) != 2 {
+			t.Fatalf("the %s cancellation lost the task committed before its write: %+v", c.name, c.o.Preparation)
+		}
+		for _, task := range c.o.Preparation.Tasks {
+			if task.State != "cancel-requested" {
+				t.Fatalf("the %s cancellation left task %s %s", c.name, task.ID, task.State)
+			}
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.cancelled != 2 {
+		t.Fatal("the provider was asked to cancel", f.cancelled, "of the two tasks")
+	}
+}

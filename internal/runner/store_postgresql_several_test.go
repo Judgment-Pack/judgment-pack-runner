@@ -11,6 +11,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -391,4 +392,38 @@ func TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile(t *testing.T) {
 		t.Fatal("the migration did not apply the several Runners file alone:", applied, err)
 	}
 	must(t, k.checkMigrations())
+}
+
+// D18. A Runner preparing an occurrence commits a new task, its step's
+// intent before its network call, after another Runner's cancellation
+// request could have read the occurrence and before its write: the
+// cancellation keeps the task and asks it cancelled, and the preparing
+// Runner's next write is refused.
+func TestPostgreSQLACancellationKeepsATaskAnotherRunnerCommittedBeforeItsWrite(t *testing.T) {
+	p := pgRunners(t)
+	canceller, preparer := p.open(), p.open()
+	o, _ := p.admitted(canceller)
+	prep, err := preparer.claimOccurrence(o.ID, "accepted")
+	must(t, err)
+	prep.State = "waiting"
+	prep.Preparation = &SourcePreparation{StartedAt: now(), Deadline: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), Tasks: []SourceTask{}}
+	must(t, preparer.keepOccurrence(prep, "accepted"))
+	canceller.store = &commitBefore{runStore: canceller.store, change: func(runStore) error {
+		prep.Preparation.Tasks = append(prep.Preparation.Tasks, SourceTask{Name: "detail", ID: "op-late", State: "waiting", StartedAt: now()})
+		return preparer.keepPreparation(prep)
+	}}
+	got, err := canceller.cancelOccurrence(context.Background(), o.ID)
+	must(t, err)
+	held := storedOccurrence(t, preparer, o.ID)
+	for _, c := range []struct {
+		name string
+		o    Occurrence
+	}{{"stored", held}, {"answered", got}} {
+		if c.o.State != "cancelled" || c.o.Preparation == nil || len(c.o.Preparation.Tasks) != 1 || c.o.Preparation.Tasks[0].State != "cancel-requested" {
+			t.Fatalf("the %s cancellation did not keep the task committed before its write: %+v", c.name, c.o.Preparation)
+		}
+	}
+	if err := preparer.savePreparation(prep); !errors.Is(err, errPreparationStopped) {
+		t.Fatal("the preparing Runner's write after the cancellation was not refused:", err)
+	}
 }
