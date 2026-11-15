@@ -64,14 +64,14 @@ It is held to the service configuration's file rules: an absolute path, no symbo
 one regular file owned by Runner's user that neither its group nor others may read or write, at
 most 128 KiB. The command connects as the migration login, takes the owner's role for each file's
 transaction, applies each file not yet recorded in `jpack_runner.schema_migrations`, and prints
-the versions it applied, `{"applied":["0001","0002","0003"]}` the first time and `{"applied":[]}`
+the versions it applied, `{"applied":["0001","0002","0003","0004","0005","0006"]}` the first time and `{"applied":[]}`
 on a second run, which changes nothing.
 
 **Before starting a new release, run its `jpack-runner store migrate`.** A release may ship
 migration files the store does not hold yet, and the Runner refuses to open a store whose applied
 migrations are not exactly its own set (below). The command applies the files after the ones
 recorded, and nothing else: on a store the previous release migrated, it prints the new versions,
-`{"applied":["0003"]}` from a store at `0002`. Name the same logins as the first time.
+`{"applied":["0003","0004","0005","0006"]}` from a store at `0002`, as v0.32.0 left it. Name the same logins as the first time.
 
 It refuses, and applies nothing more:
 
