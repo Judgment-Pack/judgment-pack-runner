@@ -703,9 +703,10 @@ func TestOrdinaryCore050RealRuntimeSideBySide(t *testing.T) {
 
 // A pack that declares Core 0.5.0 is refused, with the bytes the check's
 // refusal has and no release saved, by each pinned Runtime that does not say
-// it evaluates 0.5.0: the ordinary Runtime, whose version answer lists no
+// it evaluates 0.5.0: the earlier Runtime, whose version answer lists no
 // evaluator capabilities, and the retained-column companion, which lists
-// Core 0.3.0 at most. Asked to validate the pack, each says it is not valid:
+// Core 0.3.0 at most. (The tested Runtime evaluates 0.5.0 since its pin moved
+// to v0.46.0, so it is no longer one of them.) Asked to validate the pack, each says it is not valid:
 // without the question its refusal would have been reported as the pack's.
 func TestCore050RefusedByARealRuntimeThatDoesNotSayItEvaluatesIt(t *testing.T) {
 	testConfig(t)
@@ -713,7 +714,7 @@ func TestCore050RefusedByARealRuntimeThatDoesNotSayItEvaluatesIt(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, name := range []string{"JPACK_TEST_BIN", "JPACK_RETAINED_TEST_BIN"} {
+	for _, name := range []string{"JPACK_EARLIER_TEST_BIN", "JPACK_RETAINED_TEST_BIN"} {
 		t.Run(name, func(t *testing.T) {
 			bin := os.Getenv(name)
 			if bin == "" {
