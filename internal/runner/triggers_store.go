@@ -604,3 +604,46 @@ func occurrenceLost(err error) error {
 	}
 	return err
 }
+
+// failHeld fails o, held under this Runner's claim, whose own record cannot
+// be dispatched, with reason, journaled as any occurrence's failure is, and
+// releases the claim: the next Runner to read the store finds nothing of it
+// to dispatch. An error here would stop this Runner's automation, and the
+// claim it kept would hand the occurrence to the next Runner one lease
+// later, to stop that one's too (#282).
+func (s *Service) failHeld(o Occurrence, reason string) error {
+	o.State = "failed"
+	o.Reason = reason
+	o.ErrorClass = classInternal
+	o.Input = nil
+	return s.settleOccurrence(o)
+}
+
+// heldRecordOrReleased is err, met while holding o's claim: an error that
+// the occurrence's own job or release record does not read as one
+// (faultUnreadable) fails the occurrence, naming the record (failHeld),
+// since every Runner's read of it meets the same error; any other, the
+// store not answering, a conflict, a timeout, is returned with the claim
+// released (releasedWith).
+func (s *Service) heldRecordOrReleased(o Occurrence, err error) error {
+	var held *storeError
+	if errors.As(err, &held) && held.fault == faultUnreadable && (held.op == "job" || held.op == "release") {
+		return s.failHeld(o, "The occurrence's "+held.op+" record cannot be read.")
+	}
+	return s.releasedWith(o, err)
+}
+
+// releasedWith is err, an error of the store's or of this Runner's met while
+// holding o's claim, returned once the claim is released on a kind that
+// leases one, o written as it was read, as a dispatch the queue had no room
+// for releases it: the occurrence is claimed again at once, by a Runner that
+// can work it, not one lease later (#282). An error of the release is joined
+// to err.
+func (s *Service) releasedWith(o Occurrence, err error) error {
+	if leases(s.store) {
+		if e := s.settleOccurrence(o); e != nil {
+			return errors.Join(err, e)
+		}
+	}
+	return err
+}

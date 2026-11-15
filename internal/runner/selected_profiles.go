@@ -151,7 +151,20 @@ func (s *Service) refuseSelectedIDs(ids []string) error {
 // set aside: kept byte for byte, its id taken, counted, listed with its
 // reason, and never bound.
 func (s *Service) loadSelectedProfiles() error {
-	raw, err := s.store.profileRow(selectedProfilesKey)
+	var rows profileRows
+	if err := s.readSelectedRow(s.store, &rows, s.ordinaryProfileID); err != nil {
+		return err
+	}
+	s.selectedStored, s.selectedSetAside = rows.selectedStored, rows.selectedSetAside
+	s.selectedProfiles.Store(&rows.selected)
+	return nil
+}
+
+// readSelectedRow reads the selected namespace's row through r into rows, as
+// loadSelectedProfiles says, ordinary saying which ids the ordinary profiles
+// hold, or refuses it.
+func (s *Service) readSelectedRow(r storeReads, rows *profileRows, ordinary func(string) bool) error {
+	raw, err := r.profileRow(selectedProfilesKey)
 	if absent(err) {
 		return nil
 	}
@@ -177,19 +190,19 @@ func (s *Service) loadSelectedProfiles() error {
 	}
 	ids := map[string]bool{}
 	admitted := []InputProfile{}
+	var setAside []SetAsideProfile
 	for i, p := range profiles {
-		if ids[p.ID] || s.ordinaryProfileID(p.ID) {
+		if ids[p.ID] || ordinary(p.ID) {
 			return fmt.Errorf("selected input profiles are invalid: the id %q is stored twice or is an ordinary profile's", p.ID)
 		}
 		ids[p.ID] = true
 		if e := selectedProfileForm(p); e != nil {
-			s.selectedSetAside = append(s.selectedSetAside, SetAsideProfile{ID: p.ID, Reason: e.Error(), digest: profileHash(p), stored: stored[i]})
+			setAside = append(setAside, SetAsideProfile{ID: p.ID, Reason: e.Error(), digest: profileHash(p), stored: stored[i]})
 			continue
 		}
 		admitted = append(admitted, p)
 	}
-	s.selectedStored = stored
-	s.selectedProfiles.Store(&admitted)
+	rows.selectedStored, rows.selectedSetAside, rows.selected = stored, setAside, admitted
 	return nil
 }
 
@@ -210,36 +223,50 @@ func (s *Service) admitSelectedProfile(p InputProfile) (bool, error) {
 	// never admit one id together.
 	s.profilesMu.Lock()
 	defer s.profilesMu.Unlock()
-	for _, held := range s.selectedInputProfiles() {
-		if held.ID != frozen.ID {
-			continue
-		}
-		if profileHash(held) != profileHash(frozen) {
-			return false, &apiError{409, codeSelectedConflict, "A selected profile is immutable. Use a new profile ID."}
-		}
-		return false, nil
-	}
-	for _, held := range s.selectedSetAside {
-		if held.ID == frozen.ID {
-			return false, &apiError{409, codeSelectedConflict, "A selected profile is immutable, and this ID names one that was set aside when Runner opened its store. Use a new profile ID."}
-		}
-	}
-	if s.ordinaryProfileID(frozen.ID) {
-		return false, &apiError{409, codeSelectedOrdinary, "This ID names an ordinary installation profile, which is never selected. Use a new profile ID."}
-	}
-	stored := append(append([]json.RawMessage(nil), s.selectedStored...), encode(frozen))
-	if e := selectedRowBound(stored); e != nil {
-		return false, e
-	}
 	// One synchronous write precedes making the profile visible, as an
-	// ordinary registration's does, held to the none scope as its row is.
-	if err := s.store.heldTo(scopeHeld("")).update(func(tx runTx) error { return tx.putProfileRow(selectedProfilesKey, storedRow(stored)) }); err != nil {
+	// ordinary registration's does, held to the none scope as its row is,
+	// and applied, as it is, to the rows as the transaction reads them
+	// (currentProfiles, #282).
+	var rows profileRows
+	created := false
+	err := s.store.heldTo(scopeHeld("")).update(func(tx runTx) error {
+		var err error
+		created = false
+		if rows, err = s.currentProfiles(tx); err != nil {
+			return err
+		}
+		for _, held := range rows.selected {
+			if held.ID != frozen.ID {
+				continue
+			}
+			if profileHash(held) != profileHash(frozen) {
+				return &apiError{409, codeSelectedConflict, "A selected profile is immutable. Use a new profile ID."}
+			}
+			return nil
+		}
+		for _, held := range rows.selectedSetAside {
+			if held.ID == frozen.ID {
+				return &apiError{409, codeSelectedConflict, "A selected profile is immutable, and this ID names one that was set aside when Runner opened its store. Use a new profile ID."}
+			}
+		}
+		if s.ordinaryID(rows, frozen.ID) {
+			return &apiError{409, codeSelectedOrdinary, "This ID names an ordinary installation profile, which is never selected. Use a new profile ID."}
+		}
+		stored := append(append([]json.RawMessage(nil), rows.selectedStored...), encode(frozen))
+		if e := selectedRowBound(stored); e != nil {
+			return e
+		}
+		if err := tx.putProfileRow(selectedProfilesKey, storedRow(stored)); err != nil {
+			return err
+		}
+		rows.selectedStored, rows.selected, created = stored, append(append([]InputProfile(nil), rows.selected...), frozen), true
+		return nil
+	})
+	if err != nil {
 		return false, err
 	}
-	admitted := append(s.selectedInputProfiles(), frozen)
-	s.selectedStored = stored
-	s.selectedProfiles.Store(&admitted)
-	return true, nil
+	s.holdProfiles(rows)
+	return created, nil
 }
 
 // inputProfileIDs is each profile id an input names: in its mapping, and in
@@ -258,22 +285,38 @@ func inputProfileIDs(i Input) []string {
 // selectedNextInput is next-input planning under the selected profiles alone.
 // It prepares and checks the supplied input, persists nothing and acquires
 // nothing. An input that names an ordinary profile is refused by that name,
-// and one that names a selected profile set aside by its own.
+// and one that names a selected profile set aside by its own. A profile this
+// Runner's copy lacks is read as an ordinary binding's is (refuseSetAsideIDs,
+// #282), and the ids checked again against the copy read.
 func (s *Service) selectedNextInput(i Input, at time.Time) (InputPlan, error) {
 	if s.cfg.ExecutorAdmission != nil {
 		return InputPlan{}, manualUnsupported()
 	}
-	for _, id := range inputProfileIDs(i) {
+	ids := inputProfileIDs(i)
+	e := s.refuseUnselected(ids)
+	if e == nil && s.lacksProfile(ids) && s.refreshProfiles() {
+		e = s.refuseUnselected(ids)
+	}
+	if e != nil {
+		return InputPlan{}, e
+	}
+	return nextInput(i, s.selectedInputProfiles(), at)
+}
+
+// refuseUnselected refuses the first of ids that names an ordinary profile,
+// or a selected profile set aside.
+func (s *Service) refuseUnselected(ids []string) error {
+	for _, id := range ids {
 		if s.ordinaryProfileID(id) {
-			return InputPlan{}, bad(codeSelectedOrdinary, fmt.Sprintf("The input profile %s is an ordinary installation profile. Selected preparation binds selected profiles only.", id))
+			return bad(codeSelectedOrdinary, fmt.Sprintf("The input profile %s is an ordinary installation profile. Selected preparation binds selected profiles only.", id))
 		}
 		for _, p := range s.selectedSetAside {
 			if p.ID == id {
-				return InputPlan{}, p.refusal()
+				return p.refusal()
 			}
 		}
 	}
-	return nextInput(i, s.selectedInputProfiles(), at)
+	return nil
 }
 
 // selectedUnselected is the refusal of a selected-profile route reached
