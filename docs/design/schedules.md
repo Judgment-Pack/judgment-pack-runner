@@ -262,6 +262,19 @@ only the counts. Each trigger due costs one transaction, so the cost grows
 with the triggers due at the tick; the triggers read but not due cost a read
 each. The postgresql kind was not measured.
 
+**One call holds the automation lock for its whole fan-out.** The tick takes
+the lock the Runner's own automation takes, and keeps it until every trigger
+due has been ticked: the Runner's own clock, the trigger routes and another
+tick call wait for it. The hold is bounded by the triggers due, at most the
+installation's 128, each one transaction and, for a `constant` or `file`
+input, the read and check of that input under the input root (a
+`mapped-sources` input is not read at the tick: its occurrence is recorded
+pending preparation). At the figure above, 128 due triggers hold it for about
+1.2 s; a slow disk under the input root, or the postgresql kind's round trips,
+lengthens it, and no time limit cuts it short. A hold longer than the
+30-second grace of the Runner's own clock would make that clock find its own
+schedules' due times missed when it resumes.
+
 ## 9. Limits, and not in this change
 
 - **The installation's limits hold.** An installation holds at most 128
