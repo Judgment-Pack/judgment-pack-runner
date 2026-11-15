@@ -93,3 +93,95 @@ func TestPostgreSQLTwoRunnersCalledForOneSharedTickMakeOneOccurrence(t *testing.
 func TestPostgreSQLRefusesAStoreWithoutTheSchedulesFile(t *testing.T) {
 	pgRefusesAStoreWithout(t, "0005_")
 }
+
+// Section 9 and D9: a Runner on the kind holds its configured limits, not
+// the defaults. counts.triggers, the installation's count, is raised past
+// 128 up to the configured limit and no further: the Runner's own read
+// refuses the trigger past it, 422 trigger_limit stating the configured
+// number, and the row itself refuses a trigger written past it. A tick that
+// finds more triggers due than the configured queue has room for records
+// the rest skipped, reason queue-full.
+func TestPostgreSQLHoldsTheConfiguredLimits(t *testing.T) {
+	p := pgRunners(t)
+	p.limits = LimitSettings{Triggers: 130, PendingOccurrences: 2}
+	sv := p.open()
+	sv.cfg.Schedules = ScheduleSettings{SharedIntervals: []string{"15m"}}
+	held := func() int {
+		t.Helper()
+		var n int
+		must(t, p.suite.QueryRowContext(pgContext, "SELECT value FROM counts WHERE name='triggers'").Scan(&n))
+		return n
+	}
+	configure := func(want int) []byte {
+		t.Helper()
+		got := serve(t, sv, "POST", "/v1/jobs/"+p.job.ID+"/triggers?scope=team-a", string(encode(map[string]any{"config": sharedSchedule("15m", "")})), nil)
+		if got.Code != want {
+			t.Fatalf("a trigger at the installation's count %d: %d %s, want %d", held(), got.Code, got.Body.String(), want)
+		}
+		return got.Body.Bytes()
+	}
+	// The count stands as if 126 triggers were held: the third configured
+	// from here is the installation's 129th, past the default.
+	_, err := p.suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='triggers'", defaultTriggerLimit-2)
+	must(t, err)
+	var made []Trigger
+	for range 4 {
+		var tr Trigger
+		must(t, json.Unmarshal(configure(200), &tr))
+		made = append(made, tr)
+	}
+	if n := held(); n != 130 {
+		t.Fatal("the installation's trigger count is", n, "want 130")
+	}
+	if got := string(configure(422)); !strings.Contains(got, `"code":"trigger_limit"`) || !strings.Contains(got, "This local runner supports up to 130 triggers.") {
+		t.Fatal("the trigger past the configured limit:", got)
+	}
+	// The row itself, past the Runner's own read, written as a request in
+	// the job's scope writes it.
+	err = sv.store.heldTo(scopeHeld(p.job.Scope)).update(func(tx runTx) error {
+		return tx.createTrigger(Trigger{ID: id("trg_"), JobID: p.job.ID, Revision: 1, Authority: "local", Config: sharedSchedule("15m", ""), Paused: true, CreatedAt: now(), UpdatedAt: now(), Scope: p.job.Scope})
+	})
+	if faultOf(err) != faultRefused || !strings.Contains(err.Error(), "the installation holds its limit of triggers") || held() != 130 {
+		t.Fatalf("a trigger written past the configured limit: %v, the count %d", err, held())
+	}
+
+	// The queue: three triggers due at one tick, and room for two.
+	tick := time.Now().UTC().Truncate(15 * time.Minute)
+	sv.clock = func() time.Time { return tick }
+	for _, tr := range made[:3] {
+		if got := serve(t, sv, "POST", "/v1/triggers/"+tr.ID+"/state?scope=team-a", string(encode(map[string]any{"revision": tr.Revision, "paused": false, "reviewed": true})), nil); got.Code != 200 {
+			t.Fatal(got.Code, got.Body.String())
+		}
+		enabled, hash := storedTrigger(t, sv, tr.ID)
+		enabled.NextAt = tick.Format(time.RFC3339Nano)
+		must(t, sv.writeTrigger(enabled, hash, false))
+	}
+	r, err := sv.sharedTick(TickRequest{Interval: "15m", At: ticked(tick)}, requester{})
+	must(t, err)
+	var accepted, full int
+	must(t, p.suite.QueryRowContext(pgContext, "SELECT count(*) FILTER (WHERE state='accepted'), count(*) FILTER (WHERE record::json->>'reason'='queue-full') FROM occurrences").Scan(&accepted, &full))
+	if r.Occurrences != 3 || accepted != 2 || full != 1 {
+		t.Fatalf("the tick recorded %d: %d accepted and %d skipped queue-full, at a queue of 2", r.Occurrences, accepted, full)
+	}
+}
+
+// Section 8: one tick at the configured limits on the kind, every trigger's
+// occurrence accepted, none skipped queue-full, counts.triggers raised past
+// the default as each trigger is written. It runs at 200, not at the
+// maximums, whose cost section 8 states.
+func TestPostgreSQLASharedTickAtTheConfiguredLimitsEnqueuesEveryDueTrigger(t *testing.T) {
+	const jobs = 200
+	p := pgRunners(t)
+	p.limits = LimitSettings{Triggers: jobs, PendingOccurrences: jobs}
+	sv := p.open()
+	sv.cfg.Schedules = ScheduleSettings{SharedIntervals: []string{"15m"}}
+	first, repeated := tickAtTheLimits(t, sv, jobs, func(i int) Job {
+		j, e := sv.createJobWith(requester{}, "Ticked", journalRelease(t, sv, p.runtime).ID, []string{"team-a", "team-b"}[i%2], nil, nil)
+		must(t, e)
+		return j
+	}, func() (accepted, full int) {
+		must(t, p.suite.QueryRowContext(pgContext, "SELECT count(*) FILTER (WHERE state='accepted'), count(*) FILTER (WHERE record::json->>'reason'='queue-full') FROM occurrences").Scan(&accepted, &full))
+		return accepted, full
+	})
+	t.Logf("one tick of %d due triggers on the postgresql kind: %s (%s each); the same tick again: %s (this machine's figure, not a bound)", jobs, first.Round(time.Millisecond), (first / jobs).Round(time.Microsecond), repeated.Round(time.Millisecond))
+}

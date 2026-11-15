@@ -64,6 +64,8 @@ type pgStoreRunners struct {
 	// runtime is the Runtime the first Runner pinned, which every other
 	// pins too.
 	runtime string
+	// limits are the limits each Runner open opens is configured with.
+	limits LimitSettings
 }
 
 func pgRunners(t *testing.T) *pgStoreRunners {
@@ -78,6 +80,7 @@ func (p *pgStoreRunners) open() *Service {
 	t.Helper()
 	cfg := journalConfig(t)
 	cfg.PostgreSQL = &p.conn
+	cfg.Limits = p.limits
 	sv := openJournal(t, cfg)
 	t.Cleanup(sv.Close)
 	pinned := completingRuntime(t, cfg.Dir)

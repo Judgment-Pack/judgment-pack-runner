@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -70,8 +71,8 @@ func (s *Service) configureTriggerBy(st runStore, by requester, jobID, triggerID
 		if e != nil {
 			return t, e
 		}
-		if count >= 128 {
-			return t, bad("trigger_limit", "This local runner supports up to 128 triggers.")
+		if limit := s.cfg.Limits.triggers(); count >= limit {
+			return t, errTriggerLimit(limit)
 		}
 		t = Trigger{ID: id("trg_"), JobID: jobID, Revision: 1, Authority: "local", CreatedAt: now(), Scope: job.Scope}
 	}
@@ -446,10 +447,11 @@ func (s *Service) admitBoundEvent(st runStore, t Trigger, hash string, event Eve
 		// occurredAt is in the window above. A schedule, a file change or a cloud
 		// signal has no sender to refuse, and is still recorded skipped.
 		if a.State == "skipped" && a.Reason == "queue-full" {
+			full := fmt.Sprintf("The local queue is full, at its limit of %d pending occurrences.", s.cfg.Limits.pendingOccurrences())
 			if expectedRelease != "" {
-				return &apiError{429, "queue_full", "The local queue is full. Deliver the same record again after queued occurrences are submitted."}
+				return &apiError{429, "queue_full", full + " Deliver the same record again after queued occurrences are submitted."}
 			}
-			return &apiError{429, "queue_full", "The local queue is full. Deliver the same event again after queued occurrences are submitted, while its occurredAt is within the last five minutes."}
+			return &apiError{429, "queue_full", full + " Deliver the same event again after queued occurrences are submitted, while its occurredAt is within the last five minutes."}
 		}
 		// The occurrence is bound to the credential that created it, for that
 		// credential's read of its result.
@@ -536,7 +538,7 @@ func (s *Service) admitOccurrenceAs(tx runTx, t Trigger, o Occurrence, identity,
 		if e != nil {
 			return Occurrence{}, e
 		}
-		if pending >= queueLimit {
+		if pending >= s.cfg.Limits.pendingOccurrences() {
 			o.State = "skipped"
 			o.Reason = "queue-full"
 		} else if active > 0 && t.Config.Overlap == "skip" {

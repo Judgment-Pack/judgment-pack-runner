@@ -3769,6 +3769,27 @@
               "maximumSeconds"
             ],
             "additionalProperties": false
+          },
+          "limits": {
+            "type": "object",
+            "description": "The installation's limits in force: the most triggers it holds, and the most occurrences pending (accepted, preparing or waiting) at once, the defaults (128 and 100) included. A service configuration may set either; a companion has the defaults.",
+            "properties": {
+              "triggers": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "pendingOccurrences": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2000
+              }
+            },
+            "required": [
+              "triggers",
+              "pendingOccurrences"
+            ],
+            "additionalProperties": false
           }
         }
       },

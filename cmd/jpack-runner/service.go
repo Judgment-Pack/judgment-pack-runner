@@ -38,7 +38,7 @@ import (
 
 // serviceMembers are the members a service configuration holds beside the
 // boot line's.
-var serviceMembers = []string{"listen", "identity", "acceptOtherHostsOverPlainHTTP", "store", "schedules"}
+var serviceMembers = []string{"listen", "identity", "acceptOtherHostsOverPlainHTTP", "store", "schedules", "limits"}
 
 // companionMembers are boot members a service configuration does not take:
 // both bind Runner to the host that starts it (docs/design/
@@ -81,8 +81,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) error {
 // line's members, read by the boot line's rules, but for executorOwnership
 // and executorAdmission, which it refuses; token, the owner bearer, which a
 // configuration with identity does not take and one without needs; listen;
-// acceptOtherHostsOverPlainHTTP, true or false; and schedules, the shared
-// intervals and the cron bounds.
+// acceptOtherHostsOverPlainHTTP, true or false; schedules, the shared
+// intervals and the cron bounds; and limits, the installation's trigger and
+// pending-occurrence limits.
 func readServiceConfig(path string) (serviceConfig, error) {
 	raw, err := runner.ReadServiceConfig(path)
 	if err != nil {
@@ -166,6 +167,13 @@ func readServiceConfig(path string) (serviceConfig, error) {
 	// and holds cron expressions to its defaults.
 	if v, present := members["schedules"]; present {
 		if c.runner.Schedules, err = runner.ParseScheduleSettings(v); err != nil {
+			return serviceConfig{}, err
+		}
+	}
+	// The installation's limits (docs/design/schedules.md, section 9).
+	// Without the member the Runner holds the defaults, as a companion does.
+	if v, present := members["limits"]; present {
+		if c.runner.Limits, err = runner.ParseLimitSettings(v); err != nil {
 			return serviceConfig{}, err
 		}
 	}

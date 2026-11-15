@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	eventQueueFull = `{"error":{"code":"queue_full","message":"The local queue is full. Deliver the same event again after queued occurrences are submitted, while its occurredAt is within the last five minutes.","retryable":true}}` + "\n"
+	eventQueueFull = `{"error":{"code":"queue_full","message":"The local queue is full, at its limit of 100 pending occurrences. Deliver the same event again after queued occurrences are submitted, while its occurredAt is within the last five minutes.","retryable":true}}` + "\n"
 	eventExpired   = `{"error":{"code":"event_expired","message":"Supply an event timestamp from the last five minutes.","retryable":false}}` + "\n"
 	eventConflict  = `{"error":{"code":"event_conflict","message":"This event ID was already received with a different payload.","retryable":false}}` + "\n"
 )
@@ -42,12 +42,12 @@ func (s sender) held(event string) int {
 }
 
 // fullQueue configures an enabled event trigger that queues and fills the
-// store's queue to queueLimit-room pending occurrences.
+// store's queue to defaultPendingOccurrences-room pending occurrences.
 func fullQueue(t *testing.T, room int) (sender, []Occurrence) {
 	w := newCoverWorld(t)
 	tr, key := w.eventTrigger("queue")
 	var queued []Occurrence
-	for range queueLimit - room {
+	for range defaultPendingOccurrences - room {
 		queued = append(queued, w.admitted(tr, nil))
 	}
 	return sender{w, tr, key}, queued
@@ -85,7 +85,7 @@ func TestAnEventAtAFullQueueIsRefusedAndItsIDStaysUnused(t *testing.T) {
 			t.Fatalf("delivery %d to a full queue answered %d %q %v", i, got.Code, got.Body.String(), got.Header())
 		}
 	}
-	if code := s.held(event); code != 404 || countRows(t, s.w.s, "occurrences") != queueLimit {
+	if code := s.held(event); code != 404 || countRows(t, s.w.s, "occurrences") != defaultPendingOccurrences {
 		t.Fatal("a refused event was held", code, countRows(t, s.w.s, "occurrences"))
 	}
 	added := s.w.entries()[before:]
@@ -100,7 +100,7 @@ func TestAnEventAtAFullQueueIsRefusedAndItsIDStaysUnused(t *testing.T) {
 		t.Fatal("the same bytes once the queue had room", code, got.Body.String())
 	}
 	admitted := a.Occurrence.ID
-	if n := pendingOccurrences(t, s.w.s); n != queueLimit {
+	if n := pendingOccurrences(t, s.w.s); n != defaultPendingOccurrences {
 		t.Fatal("pending after the admission", n)
 	}
 	// The queue is full again: the admitted event still replays.
@@ -113,7 +113,7 @@ func TestAnEventAtAFullQueueIsRefusedAndItsIDStaysUnused(t *testing.T) {
 	if got = s.post(string(encode(other))); got.Code != 409 || got.Body.String() != eventConflict {
 		t.Fatal("another payload under the admitted ID", got.Code, got.Body.String())
 	}
-	if code := s.held(event); code != 200 || countRows(t, s.w.s, "occurrences") != queueLimit+1 {
+	if code := s.held(event); code != 200 || countRows(t, s.w.s, "occurrences") != defaultPendingOccurrences+1 {
 		t.Fatal("after the replay and the conflict", code, countRows(t, s.w.s, "occurrences"))
 	}
 }
@@ -138,7 +138,7 @@ func TestAnEventRefusedAtAFullQueueIsRefusedForItsAgeOnceItsWindowCloses(t *test
 	if got := s.post(body); got.Code != 422 || got.Body.String() != eventExpired {
 		t.Fatalf("the window closed and the queue has room: %d %q", got.Code, got.Body.String())
 	}
-	if code := s.held(event); code != 404 || pendingOccurrences(t, s.w.s) != queueLimit-1 {
+	if code := s.held(event); code != 404 || pendingOccurrences(t, s.w.s) != defaultPendingOccurrences-1 {
 		t.Fatal("an event refused for its window was held", code, pendingOccurrences(t, s.w.s))
 	}
 }
@@ -211,7 +211,7 @@ func TestConcurrentSendersAtAFullQueueNeverPassTheLimitNorLoseAnID(t *testing.T)
 			admittedOnce(id, pair)
 		}
 	}
-	if len(refused) != events-room || pendingOccurrences(t, s.w.s) != queueLimit {
+	if len(refused) != events-room || pendingOccurrences(t, s.w.s) != defaultPendingOccurrences {
 		t.Fatal("senders at once admitted", events-len(refused), "with room for", room, "pending", pendingOccurrences(t, s.w.s))
 	}
 	makeRoom(t, s.w.s, queued)
@@ -233,7 +233,7 @@ func TestSchedulesFilesAndCloudSignalsAtAFullQueueAreStillSkipped(t *testing.T) 
 	schedule := w.scheduleTrigger("")
 	file := w.fileTrigger(`{"facts":{"version":1}}`)
 	cloud, conn := w.cloudTrigger("skip")
-	for range queueLimit {
+	for range defaultPendingOccurrences {
 		w.admitted(schedule, nil)
 	}
 	skipped := func(name, trigger string) {
@@ -255,7 +255,7 @@ func TestSchedulesFilesAndCloudSignalsAtAFullQueueAreStillSkipped(t *testing.T) 
 		t.Fatal("a cloud signal at a full queue", ack, e)
 	}
 	skipped("a cloud signal", cloud.ID)
-	if n := pendingOccurrences(t, w.s); n != queueLimit {
+	if n := pendingOccurrences(t, w.s); n != defaultPendingOccurrences {
 		t.Fatal("pending", n)
 	}
 }
