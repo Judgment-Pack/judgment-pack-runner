@@ -303,6 +303,9 @@ func (s *Service) sharedTick(req TickRequest, by requester) (TickResult, error) 
 		if made {
 			result.Occurrences++
 		}
+		if s.betweenSharedTicks != nil {
+			s.betweenSharedTicks()
+		}
 	}
 	return result, nil
 }

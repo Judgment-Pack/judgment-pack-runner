@@ -78,6 +78,9 @@ type Service struct {
 	cloudProblems      map[string]string
 	cloudFactory       func(context.Context, CloudConnection) (cloudTransport, error)
 	preparing          map[string]bool
+	// betweenSharedTicks, when a test sets it, runs between two triggers of
+	// a shared tick's fan-out, the automation lock not held (sharedTick).
+	betweenSharedTicks func()
 	// clock is the time retries and shared ticks are decided by
 	// (Service.instant): nil is
 	// time.Now. Tests move it rather than sleep.

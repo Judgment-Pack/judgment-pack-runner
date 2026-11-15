@@ -176,65 +176,51 @@ func TestASharedTickAtTheConfiguredLimitsEnqueuesEveryDueTrigger(t *testing.T) {
 	t.Logf("one tick of %d due triggers on the sqlite kind: %s (%s each); the same tick again: %s (this machine's figure, not a bound)", jobs, first.Round(time.Millisecond), (first / jobs).Round(time.Microsecond), repeated.Round(time.Millisecond))
 }
 
-// betweenTriggers is a store whose first write runs during once it is
-// made: the first trigger's transaction of a tick's fan-out, made under the
-// automation lock.
-type betweenTriggers struct {
-	runStore
-	once   sync.Once
-	during func()
-}
-
-func (b *betweenTriggers) update(fn func(runTx) error) error {
-	err := b.runStore.update(fn)
-	b.once.Do(b.during)
-	return err
-}
-
 // Section 8: a tick's fan-out holds the automation lock for one trigger at a
-// time. A request that waits for the lock while the fan-out ticks its first
-// trigger, here the pause of its last, is served before the fan-out reaches
-// that trigger, which it reads again and passes by; with the lock held for
-// the whole fan-out the request would wait for its end, and the paused
-// trigger would have been ticked.
+// time. A request made after the fan-out's first trigger, here the pause of
+// its last, is served before the fan-out reaches that trigger, which it
+// reads again and passes by; with the lock held for the whole fan-out the
+// request would wait for its end, and the paused trigger would have been
+// ticked. The test waits on the request's answer, not on a time.
 func TestASharedTickLetsARequestInBetweenItsTriggers(t *testing.T) {
 	w := newTickWorld(t, ScheduleSettings{SharedIntervals: []string{"15m"}})
 	tick := w.at(time.Now()).UTC().Truncate(15 * time.Minute)
+	const n = 8
 	var due []Trigger
-	for range 4 {
+	for range n {
 		due = append(due, w.trigger("", sharedSchedule("15m", ""), true, tick))
 	}
-	last, _ := storedTrigger(t, w.s, due[3].ID)
+	last, _ := storedTrigger(t, w.s, due[n-1].ID)
 	paused := make(chan error, 1)
-	inner := w.s.store
-	w.s.store = &betweenTriggers{runStore: inner, during: func() {
-		waiting := make(chan struct{})
-		go func() {
-			close(waiting)
-			_, _, e := w.s.setTriggerStateBy(inner, requester{}, last.ID, last.Revision, true, false)
-			paused <- e
-		}()
-		<-waiting
-		// Long enough for the request to wait on the lock past the mutex's
-		// starvation threshold (1 ms), so that it is handed the lock at the
-		// fan-out's next release at the latest.
-		time.Sleep(50 * time.Millisecond)
-	}}
-	r, e := w.s.sharedTick(TickRequest{Interval: "15m", At: ticked(tick)}, requester{})
-	w.s.store = inner
-	must(t, e)
-	select {
-	case e = <-paused:
-		must(t, e)
-	case <-time.After(10 * time.Second):
-		t.Fatal("the pause was not served")
+	var once sync.Once
+	served := false
+	w.s.betweenSharedTicks = func() {
+		once.Do(func() {
+			go func() {
+				_, _, e := w.s.setTriggerStateBy(w.s.store, requester{}, last.ID, last.Revision, true, false)
+				paused <- e
+			}()
+			select {
+			case e := <-paused:
+				must(t, e)
+				served = true
+			case <-time.After(10 * time.Second):
+			}
+		})
 	}
-	if r.Occurrences != 3 {
-		t.Fatalf("the tick recorded %d occurrences, want 3: the paused trigger ticked", r.Occurrences)
+	r, e := w.s.sharedTick(TickRequest{Interval: "15m", At: ticked(tick)}, requester{})
+	w.s.betweenSharedTicks = nil
+	must(t, e)
+	if !served {
+		<-paused
+		t.Fatal("the pause waited for the fan-out's end")
+	}
+	if r.Occurrences != n-1 {
+		t.Fatalf("the tick recorded %d occurrences, want %d: the paused trigger ticked", r.Occurrences, n-1)
 	}
 	for i, tr := range due {
-		if n := len(w.occurrencesOf(tr.ID)); n != map[bool]int{true: 0, false: 1}[i == 3] {
-			t.Fatalf("trigger %d admitted %d occurrences", i, n)
+		if got := len(w.occurrencesOf(tr.ID)); got != map[bool]int{true: 0, false: 1}[i == n-1] {
+			t.Fatalf("trigger %d admitted %d occurrences", i, got)
 		}
 	}
 }
