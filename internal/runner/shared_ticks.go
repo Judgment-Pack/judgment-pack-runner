@@ -286,10 +286,8 @@ func (s *Service) sharedTick(req TickRequest, by requester) (TickResult, error) 
 		tick = at
 	}
 	tick = tick.UTC()
-	s.automationMu.Lock()
-	defer s.automationMu.Unlock()
 	if s.unhealthy.Load() {
-		return TickResult{}, &apiError{503, "runner_unavailable", "The runner requires a restart before it ticks."}
+		return TickResult{}, errTickUnhealthy()
 	}
 	ids, e := s.store.enabledTriggers()
 	if e != nil {
@@ -298,17 +296,7 @@ func (s *Service) sharedTick(req TickRequest, by requester) (TickResult, error) 
 	result := TickResult{Interval: req.Interval, At: tick.Format(time.RFC3339)}
 	caller := s.actor(by)
 	for _, id := range ids {
-		t, hash, e := s.trigger(id)
-		if absent(e) {
-			continue
-		}
-		if e != nil {
-			return result, e
-		}
-		if t.Paused || !sharedTicked(t, req.Interval) {
-			continue
-		}
-		made, e := s.scheduleDue(t, hash, tick, now, 0, &caller)
+		made, e := s.sharedTickOne(id, req.Interval, tick, now, &caller)
 		if e != nil {
 			return result, e
 		}
@@ -317,6 +305,39 @@ func (s *Service) sharedTick(req TickRequest, by requester) (TickResult, error) 
 		}
 	}
 	return result, nil
+}
+
+// sharedTickOne ticks the trigger id, if it is enabled and bound to the
+// shared interval, at the tick, under the lock the Runner's own automation
+// takes, which it holds for this one trigger and no longer
+// (docs/design/schedules.md, section 8): the trigger is read again under the
+// lock, and its transaction expects the version read (D17), so a request or
+// a tick that wrote it between two triggers of the fan-out is met as it is
+// met by a tick of one trigger. The Runner's own clock, the trigger routes and
+// another call wait at most one trigger's tick, not the whole fan-out.
+func (s *Service) sharedTickOne(id, interval string, tick, now time.Time, caller *EventActor) (bool, error) {
+	s.automationMu.Lock()
+	defer s.automationMu.Unlock()
+	if s.unhealthy.Load() {
+		return false, errTickUnhealthy()
+	}
+	t, hash, e := s.trigger(id)
+	if absent(e) {
+		return false, nil
+	}
+	if e != nil {
+		return false, e
+	}
+	if t.Paused || !sharedTicked(t, interval) {
+		return false, nil
+	}
+	return s.scheduleDue(t, hash, tick, now, 0, caller)
+}
+
+// errTickUnhealthy is the refusal of a tick on a Runner that needs a
+// restart.
+func errTickUnhealthy() error {
+	return &apiError{503, "runner_unavailable", "The runner requires a restart before it ticks."}
 }
 
 // sharedTickRoutes serves POST /v1/ticks. It is the installation's: it
