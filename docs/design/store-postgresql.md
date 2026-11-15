@@ -740,6 +740,7 @@ unchanged; the Runner legs skip the step.
 | `TestPostgreSQLASlowHolderLosesItsOccurrenceAndItsLateWriteIsRefused` (D18) | Built: a Runner holding a ready occurrence is slow past its lease; the other claims and dispatches it, and the slow holder's late write writes nothing; neither fails. |
 | `TestPostgreSQLARunnerStoppedMidAttemptHasItsRunInterruptedAfterTheLease` (D3, D11, D19) | Built: a Runner stopped while its run's attempt is under way has the run interrupted by the other's tick once the lease runs out by the database's clock, and not before; the run is not worked again by the other's dispatcher or a later start; its retry on a host without the attempt's directory is refused, `409 run_not_retryable`; the stopped Runner's late finish writes nothing. |
 | `TestPostgreSQLASecondRunnersStartLeavesTheFirstsWorkToIt` (D3, D18) | Built: a Runner's start leaves another Runner's run under a live claim running, and its preparation under a live claim preparing, and the holder finishes both. |
+| `TestPostgreSQLARunnerStartedEarlierKeepsAnotherRunnersProfiles` (section 12, #282) | Built: a Runner opened before another registered keeps the other's profiles in the store when it registers, and holds both after; the other holds them once it reads the rows again; so for selected profiles; an id taken in one namespace through one Runner is refused to the other through the other, and another definition under a taken id is `409 input_profile_conflict`; registrations through both at once all land. |
 | `TestPostgreSQLAnOccurrenceWithNoInputIsFailedOnceAndTheOtherRunnerGoesOn` (D18, #282) | Built: an accepted occurrence that holds no input is failed once by the Runner that claims it, journaled once, its claim released, and the other Runner's tick finds nothing to do and stays healthy. |
 | `TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile` (section 5, #245) | Built: a store migrated to `0003` is refused at the start until migrated, and the migration then applies `0004_several_runners.sql` alone. |
 | The conformance cases of D17 and D18 | Built, on every kind: a write that read a trigger before another wrote it is `conflict`; an occurrence is claimed in the state read, by one claimant at a time; a holder's write is fenced by its claim and lease and keeps the claim only when asked; a request's write overrules the claim and the holder's next write is refused; the restart and the tick fail only the preparations no live claim holds. `TestADispatcherThatLosesARunReadsTheQueueAgainAtOnce` holds the worker's lost race. |
@@ -818,7 +819,7 @@ directory, and it holds no claim or version.
 | The restart fails every occurrence held `preparing` | D18: the restart, and the dispatcher's tick, fail only those no live claim holds. |
 | The restart interrupts every run held running | D3, built in #244: only those no live claim holds. |
 | A dispatcher that lost a queued run waited a second | It reads the queue again at once (section 2, D3). |
-| The profile rows, written whole from the process's copies | Not changed: below. |
+| The profile rows, written whole from the process's copies | Each registration applied to the rows as its transaction reads them (#282): below. |
 | The cloud bindings' problems, the profiles set aside, the unhealthy flag | Each Runner's own, as before; each reports its own health. |
 
 **D17. A trigger's write against another's.** Every trigger write read the trigger under
@@ -944,14 +945,25 @@ seconds, each being stopped, unhealthy, or refused its write by the store. A Run
 makes no due time missed while another goes on. Under D20's bound a due time some Runner ticked
 within 29 seconds of it is not missed.
 
-**The installation's profiles.** Not changed by this step, and not fenced. A Runner reads the
-registered and the selected profiles at its start, and a registration writes the row whole from
-the Runner's copy (`profile_registry.go`, `selected_profiles.go`): a registration on one Runner is
-not seen by another until that one starts again, and a registration on a Runner whose copy is
-older than the row writes the newer profiles out of it. Until the rows are versioned, profiles are
-registered through one Runner, and the others are started again after it. (#245 asks to version
-them; this step kept to the rule of doing so when a test of two Runners showed the loss, and none
-has been run.)
+**The installation's profiles (#282).** A Runner reads the registered and the selected profiles
+at its start, and a registration wrote the row whole from the Runner's copy, so that one on a
+Runner whose copy was older than the row wrote the newer profiles out of it. (a) The merge: a
+registration, which adds one profile to one row, reads both rows in its transaction
+(`currentProfiles`) and is applied to them, the immutability of an id, the two namespaces' ids
+and the bounds checked against them, and the Runner's copy is then the rows as written. (b) An
+expected value, the row's bytes as the Runner last read them, a stale write answered `409`: it
+refuses a registration that the rows as read admit, and the caller sends it again unchanged. (a)
+is chosen: rows only grow and a profile is immutable, so applying a registration to the current
+rows is what the caller asked for, and no schema change is needed. Two registrations at once are
+serialized by the transaction (section 2), the second reading the first's row. Both kinds behave
+alike for one Runner: its rows are its copy. A profile stored since the Runner opened the store
+that it would set aside, which only a Runner of another release stores (D19), refuses the
+registration, since the profiles set aside are fixed from the start. A Runner's copy is read again
+at each registration through it and, on this kind, when a trigger's run being dispatched names a
+profile the copy lacks (`refreshProfiles`); otherwise a request naming a profile registered
+through another Runner since is refused on this one as naming a profile it does not hold, never
+bound to another definition. `TestPostgreSQLARunnerStartedEarlierKeepsAnotherRunnersProfiles`
+and `TestARegistrationKeepsAProfileWrittenSinceTheRunnerReadTheRow` hold it.
 
 **As built.** `0004_several_runners.sql` adds `triggers.version` and `occurrences.claim_id` and
 `lease_until`, each with a default, and no policy and no grant: `0002_grants.sql`'s table
@@ -964,8 +976,8 @@ in the transaction that interrupts lapsed runs. The tests are section 10's.
 ## 13. Not in this issue
 
 Beyond #245's first step (section 12): several Runners on the sqlite kind; shared storage for the
-attempt directories and the project (D19 (b) and (c)); the profile rows' versions (section 12);
-the routes the kind refuses; which scopes a caller may name; the removal issue's retention rules;
+attempt directories and the project (D19 (b) and (c)); a refresh of a Runner's profiles before
+every request that names one (section 12); the routes the kind refuses; which scopes a caller may name; the removal issue's retention rules;
 a third kind.
 
 ## 14. Decisions for a maintainer

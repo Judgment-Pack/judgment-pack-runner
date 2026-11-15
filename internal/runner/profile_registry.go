@@ -81,7 +81,31 @@ func (s *Service) inputProfiles() []InputProfile {
 // set-aside one counted; an id stored twice; and a stored profile, admitted or
 // set aside, whose id a configured profile of another definition has.
 func (s *Service) loadRegisteredProfiles() error {
-	raw, err := s.store.profileRow(registeredProfilesKey)
+	var rows profileRows
+	if err := s.readRegisteredRow(s.store, &rows); err != nil {
+		return err
+	}
+	s.storedProfiles, s.setAside = rows.stored, rows.setAside
+	s.registeredProfiles.Store(&rows.admitted)
+	return nil
+}
+
+// profileRows is the installation's registered and selected profiles as the
+// store's two rows hold them: each row's elements as stored, and of them
+// those this Runner admits and those it sets aside.
+type profileRows struct {
+	stored           []json.RawMessage
+	setAside         []SetAsideProfile
+	admitted         []InputProfile
+	selectedStored   []json.RawMessage
+	selectedSetAside []SetAsideProfile
+	selected         []InputProfile
+}
+
+// readRegisteredRow reads the registered profiles' row through r into rows,
+// as loadRegisteredProfiles says, or refuses it.
+func (s *Service) readRegisteredRow(r storeReads, rows *profileRows) error {
+	raw, err := r.profileRow(registeredProfilesKey)
 	if absent(err) {
 		return nil
 	}
@@ -133,9 +157,106 @@ func (s *Service) loadRegisteredProfiles() error {
 	if _, err = combinedProfiles(s.cfg.InputProfiles, admitted, len(setAside)); err != nil {
 		return err
 	}
-	s.storedProfiles, s.setAside = stored, setAside
-	s.registeredProfiles.Store(&admitted)
+	rows.stored, rows.setAside, rows.admitted = stored, setAside, admitted
 	return nil
+}
+
+// ordinaryID reports whether id names an ordinary profile as rows hold them
+// beside the configured ones, as ordinaryProfileID does for this Runner's
+// copy.
+func (s *Service) ordinaryID(rows profileRows, id string) bool {
+	for _, p := range s.cfg.InputProfiles {
+		if p.ID == id {
+			return true
+		}
+	}
+	for _, p := range rows.admitted {
+		if p.ID == id {
+			return true
+		}
+	}
+	for _, p := range rows.setAside {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// selectedID reports whether id names a selected profile as rows hold them,
+// admitted or set aside.
+func (rows profileRows) selectedID(id string) bool {
+	for _, p := range rows.selected {
+		if p.ID == id {
+			return true
+		}
+	}
+	for _, p := range rows.selectedSetAside {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// currentProfiles is the store's profile rows as r reads them now, another
+// Runner's registrations since this one read them included (#282): a
+// registration is applied to them, not to this Runner's copy. Each profile
+// this Runner set aside when it opened the store is set aside again, the
+// rows only growing; one stored since that this Runner would set aside,
+// which only a Runner of another release stores (D19 of the store's
+// design), refuses the read: this Runner holds its set-aside profiles fixed
+// from its start.
+func (s *Service) currentProfiles(r storeReads) (profileRows, error) {
+	var rows profileRows
+	if err := s.readRegisteredRow(r, &rows); err != nil {
+		return rows, err
+	}
+	if err := s.readSelectedRow(r, &rows, func(id string) bool { return s.ordinaryID(rows, id) }); err != nil {
+		return rows, err
+	}
+	if !sameSetAside(rows.setAside, s.setAside) || !sameSetAside(rows.selectedSetAside, s.selectedSetAside) {
+		return rows, errors.New("the store holds an input profile this Runner sets aside, stored since it opened the store: start this Runner again")
+	}
+	return rows, nil
+}
+
+// sameSetAside reports whether a and b set aside the same profiles, in order.
+func sameSetAside(a, b []SetAsideProfile) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].digest != b[i].digest {
+			return false
+		}
+	}
+	return true
+}
+
+// holdProfiles makes rows this Runner's copy of the store's profiles. The
+// caller holds profilesMu.
+func (s *Service) holdProfiles(rows profileRows) {
+	s.storedProfiles = rows.stored
+	s.registeredProfiles.Store(&rows.admitted)
+	s.selectedStored = rows.selectedStored
+	s.selectedProfiles.Store(&rows.selected)
+}
+
+// refreshProfiles reads the store's profile rows into this Runner's copy,
+// outside any transaction, and reports whether the copy gained a profile:
+// one registered through another Runner of the store since this one read
+// them (#282). A read the store or currentProfiles refuses leaves the copy
+// as it was.
+func (s *Service) refreshProfiles() bool {
+	s.profilesMu.Lock()
+	defer s.profilesMu.Unlock()
+	rows, err := s.currentProfiles(s.store)
+	if err != nil || len(rows.stored) == len(s.storedProfiles) && len(rows.selectedStored) == len(s.selectedStored) {
+		return false
+	}
+	s.holdProfiles(rows)
+	return true
 }
 
 // requiredProfileMembers are the members a profile is registered with, each
@@ -193,48 +314,64 @@ func (s *Service) registerInputProfile(p InputProfile) (bool, error) {
 	}
 	s.profilesMu.Lock()
 	defer s.profilesMu.Unlock()
-	for _, held := range s.registeredInputProfiles() {
-		if held.ID != frozen.ID {
-			continue
-		}
-		if profileHash(held) != profileHash(frozen) {
-			return false, &apiError{409, "input_profile_conflict", "A registered profile is immutable. Use a new profile ID and review a new binding."}
-		}
-		return false, nil
-	}
-	// A set-aside profile's id stays taken: it is stored, and bindings and
-	// releases made before name it.
-	for _, held := range s.setAside {
-		if held.ID == frozen.ID {
-			return false, &apiError{409, "input_profile_conflict", "A registered profile is immutable, and this ID names one that was set aside when Runner opened its store. Use a new profile ID and review a new binding."}
-		}
-	}
-	// A selected profile's id is the selected namespace's alone.
-	if s.selectedProfileID(frozen.ID) {
-		return false, &apiError{409, codeInputProfileSelected, "This ID names a selected profile, which is never an ordinary profile. Use a new profile ID."}
-	}
-	proposed := append(append([]InputProfile(nil), s.registeredInputProfiles()...), frozen)
-	if _, err := combinedProfiles(s.cfg.InputProfiles, proposed, len(s.setAside)); err != nil {
-		return false, err
-	}
-	// The row is rewritten with every profile it stores as stored, a set-aside
-	// one's bytes unchanged, and the new profile after them.
-	stored := append(append([]json.RawMessage(nil), s.storedProfiles...), encode(frozen))
-	row := storedRow(stored)
-	if len(row) > registeredProfilesBound {
-		return false, bad("input_profile_limit", "The registered input profiles would exceed their storage bound. Existing profiles were retained.")
-	}
 	// One atomic, synchronous write precedes making the profile visible.
 	// A retry after an uncertain response can only observe this same definition.
 	// The row is the installation's, held to the none scope on any kind
 	// (docs/design/store-postgresql.md, section 7): on the postgresql kind the
-	// request login writes it, as no other login may.
-	if err := s.store.heldTo(scopeHeld("")).update(func(tx runTx) error { return tx.putProfileRow(registeredProfilesKey, row) }); err != nil {
+	// request login writes it, as no other login may. The registration is
+	// applied to the rows as the transaction reads them (currentProfiles), so
+	// that a registration through another Runner of the store since this one
+	// read them is kept, and held here from then on (#282).
+	var rows profileRows
+	created := false
+	err := s.store.heldTo(scopeHeld("")).update(func(tx runTx) error {
+		var err error
+		created = false
+		if rows, err = s.currentProfiles(tx); err != nil {
+			return err
+		}
+		for _, held := range rows.admitted {
+			if held.ID != frozen.ID {
+				continue
+			}
+			if profileHash(held) != profileHash(frozen) {
+				return &apiError{409, "input_profile_conflict", "A registered profile is immutable. Use a new profile ID and review a new binding."}
+			}
+			return nil
+		}
+		// A set-aside profile's id stays taken: it is stored, and bindings and
+		// releases made before name it.
+		for _, held := range rows.setAside {
+			if held.ID == frozen.ID {
+				return &apiError{409, "input_profile_conflict", "A registered profile is immutable, and this ID names one that was set aside when Runner opened its store. Use a new profile ID and review a new binding."}
+			}
+		}
+		// A selected profile's id is the selected namespace's alone.
+		if rows.selectedID(frozen.ID) {
+			return &apiError{409, codeInputProfileSelected, "This ID names a selected profile, which is never an ordinary profile. Use a new profile ID."}
+		}
+		proposed := append(append([]InputProfile(nil), rows.admitted...), frozen)
+		if _, err := combinedProfiles(s.cfg.InputProfiles, proposed, len(rows.setAside)); err != nil {
+			return err
+		}
+		// The row is rewritten with every profile it stores as stored, a
+		// set-aside one's bytes unchanged, and the new profile after them.
+		stored := append(append([]json.RawMessage(nil), rows.stored...), encode(frozen))
+		row := storedRow(stored)
+		if len(row) > registeredProfilesBound {
+			return bad("input_profile_limit", "The registered input profiles would exceed their storage bound. Existing profiles were retained.")
+		}
+		if err := tx.putProfileRow(registeredProfilesKey, row); err != nil {
+			return err
+		}
+		rows.stored, rows.admitted, created = stored, proposed, true
+		return nil
+	})
+	if err != nil {
 		return false, err
 	}
-	s.storedProfiles = stored
-	s.registeredProfiles.Store(&proposed)
-	return true, nil
+	s.holdProfiles(rows)
+	return created, nil
 }
 
 // storedRow is the row that stores profiles: their bytes as given, in order,

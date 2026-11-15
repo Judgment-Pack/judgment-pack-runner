@@ -300,13 +300,20 @@ The Runners must hold to these:
   order.
 - **The same project and Runtime on every host.** Each Runner reads the project's files, and pins
   its Runtime, on its own host: give every Runner of the store the same image.
-- **Profiles registered through one Runner.** A Runner reads the installation's input and selected
-  profiles at its start, and a registration writes them from its own copy. Register profiles
-  through one Runner, and start the others again after it: another Runner does not see the new
-  profile until it starts again, and a registration on a Runner started before another Runner's
-  registration writes that registration out of the store.
 
 What several Runners do not change, or do not do:
+
+- **Profiles registered through any Runner.** A registration of an input profile or a selected
+  profile, through any Runner of the store, keeps every profile the store holds, those registered
+  through another Runner included, and is refused `409` for an id another Runner registered with
+  another definition or in the other namespace. A Runner reads the profiles at its start, and
+  again at each registration through it. A run of a trigger dispatched on a Runner whose copy lacks
+  a profile its release names reads the profiles again before it fails. Until it reads them again,
+  a Runner refuses any other request that names a profile registered through another Runner
+  since, as one naming a profile the installation does not hold. A refusal never binds another
+  definition: a profile is immutable once registered, and the store's profiles only grow. Send
+  the requests that name a new profile through the Runner it was registered through, or start
+  the Runner that refused them again.
 
 - **A missed schedule.** A due time is missed, and the trigger's `missed` rule applies (`skip`, or
   `latest`), only when no Runner of the store ticked it within 30 seconds of it: every Runner

@@ -104,14 +104,16 @@ type Service struct {
 	// storedProfiles is each profile the store's row holds, as it holds it,
 	// admitted or set aside; setAside is each set aside when the store opened
 	// (profile_set_aside.go), fixed from then on. storedProfiles changes only
-	// under profilesMu, with a registration.
+	// under profilesMu, with a registration or a refresh from the store
+	// (refreshProfiles).
 	storedProfiles []json.RawMessage
 	setAside       []SetAsideProfile
 	// selectedProfiles is the selected-profile namespace's admitted profiles
 	// (selected_profiles.go), published as registeredProfiles is;
 	// selectedStored is each profile its row holds, as it holds it, and
 	// selectedSetAside each set aside when the store opened. They change
-	// only under profilesMu, with an admission.
+	// only under profilesMu, with an admission, a registration or a refresh
+	// from the store; selectedSetAside is fixed from the store's opening.
 	selectedProfiles atomic.Pointer[[]InputProfile]
 	selectedStored   []json.RawMessage
 	selectedSetAside []SetAsideProfile
@@ -827,6 +829,12 @@ func (s *Service) dispatch(ctx context.Context) (dispatched, error) {
 		// while retaining the exact input snapshot frozen at admission.
 		class = classConfiguration
 		err = s.checkReleaseProfiles(release)
+		// A profile the release froze that this Runner's copy lacks may have
+		// been registered through another Runner of the store since this one
+		// read the store's profiles (#282): they are read once more.
+		if err != nil && leases(s.store) && s.refreshProfiles() {
+			err = s.checkReleaseProfiles(release)
+		}
 		if err == nil {
 			class = classPreparation
 			_, err = s.normalizeInput(r.Input)
