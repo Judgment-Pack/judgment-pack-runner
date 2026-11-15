@@ -7,7 +7,11 @@ import (
 )
 
 // Calendar schedules choose the first occurrence of a repeated local time and
-// skip nonexistent times. Intervals advance by elapsed UTC seconds.
+// skip nonexistent times. Intervals advance by elapsed UTC seconds. A cron
+// schedule matches its expression on the zone's wall clock by the calendar
+// rule (cron.go); a shared-interval schedule is ticked only by its
+// interval's calls, at every tick or, with a cron expression, at the first
+// tick at or after each match (docs/design/schedules.md).
 type Schedule struct {
 	Kind         string `json:"kind"`
 	EverySeconds int    `json:"everySeconds,omitempty"`
@@ -16,9 +20,19 @@ type Schedule struct {
 	Weekday      *int   `json:"weekday,omitempty"`
 	StartAt      string `json:"startAt"`
 	EndAt        string `json:"endAt,omitempty"`
+	// Cron is a five-field cron expression: a cron schedule's, or a
+	// shared-interval schedule's, which then runs only at the ticks after
+	// its matches.
+	Cron string `json:"cron,omitempty"`
+	// Tick names the shared interval that ticks a shared-interval
+	// schedule (shared_ticks.go).
+	Tick string `json:"tick,omitempty"`
 }
 
 func (c Schedule) validate() error {
+	if c.Kind != "cron" && c.Kind != "tick" && (c.Cron != "" || c.Tick != "") {
+		return bad("invalid_schedule", "Only cron and shared-interval schedules take a cron expression or a shared interval.")
+	}
 	start, e := time.Parse(time.RFC3339, c.StartAt)
 	if e != nil || start.Year() < 2000 || start.Year() > 2200 {
 		return bad("invalid_schedule", "Choose a valid start timestamp with a UTC offset.")
@@ -47,6 +61,22 @@ func (c Schedule) validate() error {
 	case "once":
 		if c.EverySeconds != 0 || c.Time != "" || c.Weekday != nil {
 			return bad("invalid_schedule", "One-time schedules use the start timestamp only.")
+		}
+	case "cron":
+		if c.Cron == "" || c.Tick != "" || c.EverySeconds != 0 || c.Time != "" || c.Weekday != nil {
+			return bad("invalid_schedule", "A cron schedule takes its expression and no other timing.")
+		}
+		if _, e = parseCron(c.Cron); e != nil {
+			return e
+		}
+	case "tick":
+		if _, ok := sharedIntervalSpan(c.Tick); !ok || c.EverySeconds != 0 || c.Time != "" || c.Weekday != nil {
+			return bad("invalid_schedule", "A shared-interval schedule names its interval, as 15m, 1h or 1d, and may take a cron expression, but no other timing.")
+		}
+		if c.Cron != "" {
+			if _, e = parseCron(c.Cron); e != nil {
+				return e
+			}
 		}
 	default:
 		return bad("invalid_schedule", "Unsupported schedule type.")
@@ -107,6 +137,27 @@ func (c Schedule) next(after time.Time) time.Time {
 				break
 			}
 		}
+	case "cron", "tick":
+		// The first match at or after the start, or after after.
+		from := after
+		if start.After(from) {
+			from = start.Add(-time.Nanosecond)
+		}
+		span, shared := sharedIntervalSpan(c.Tick)
+		switch {
+		case c.Kind == "tick" && !shared:
+		case c.Kind == "tick" && c.Cron == "":
+			next = from.Truncate(span).Add(span)
+		default:
+			expr, e := parseCron(c.Cron)
+			if e != nil {
+				break
+			}
+			next = expr.next(from, loc)
+			if c.Kind == "tick" && !next.IsZero() {
+				next = tickAtOrAfter(next, span)
+			}
+		}
 	}
 	if c.EndAt != "" && !next.IsZero() {
 		end, _ := time.Parse(time.RFC3339, c.EndAt)
@@ -134,6 +185,9 @@ func (c Schedule) latest(at time.Time) time.Time {
 		span := time.Duration(c.EverySeconds) * time.Second
 		return start.Add(at.Sub(start) / span * span)
 	}
+	if c.Kind == "cron" || c.Kind == "tick" {
+		return c.latestMatch(at, start)
+	}
 	// At most sixteen local days include a previous weekly occurrence even when
 	// an entire local date is skipped by a time-zone transition.
 	loc, _ := time.LoadLocation(c.Timezone)
@@ -153,6 +207,48 @@ func (c Schedule) latest(at time.Time) time.Time {
 	}
 	return time.Time{}
 }
+
+// latestMatch is latest for a cron or a shared-interval schedule: the last
+// match at or before at, or the last tick at or before at that was due.
+func (c Schedule) latestMatch(at, start time.Time) time.Time {
+	span, shared := sharedIntervalSpan(c.Tick)
+	if c.Kind == "tick" {
+		if !shared {
+			return time.Time{}
+		}
+		at = at.Truncate(span)
+		if c.Cron == "" {
+			if at.Before(start) {
+				return time.Time{}
+			}
+			return at
+		}
+	}
+	expr, e := parseCron(c.Cron)
+	if e != nil {
+		return time.Time{}
+	}
+	loc, _ := time.LoadLocation(c.Timezone)
+	v := expr.latest(at, loc)
+	if v.IsZero() || v.Before(start) {
+		return time.Time{}
+	}
+	if c.Kind == "tick" {
+		return tickAtOrAfter(v, span)
+	}
+	return v.UTC()
+}
+
+// tickAtOrAfter is the first tick of an interval span at or after at: ticks
+// fall on the multiples of span since midnight UTC.
+func tickAtOrAfter(at time.Time, span time.Duration) time.Time {
+	tick := at.Truncate(span)
+	if tick.Before(at) {
+		tick = tick.Add(span)
+	}
+	return tick.UTC()
+}
+
 func (c Schedule) preview(at time.Time) []string {
 	out := []string{}
 	loc, _ := time.LoadLocation(c.Timezone)

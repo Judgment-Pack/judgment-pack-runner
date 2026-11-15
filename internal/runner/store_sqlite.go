@@ -231,11 +231,12 @@ func (k *sqliteStore) migrate() error {
 		return err
 	}
 	switch schema {
-	case storeSchema, scopedStoreSchema, retryStoreSchema:
+	case storeSchema, scopedStoreSchema, retryStoreSchema, scheduleStoreSchema:
 		// A store that holds a job under a scope identifier was raised from
-		// storeSchema by the job's creation (scope.go), and one that holds a
-		// retry policy or a retried run by its first (retries.go); neither
-		// needs anything.
+		// storeSchema by the job's creation (scope.go), one that holds a
+		// retry policy or a retried run by its first (retries.go), and one
+		// that holds a cron or a shared-interval schedule by its first
+		// (shared_ticks.go); none needs anything.
 		return nil
 	case "", "1", "2":
 	default:
@@ -486,6 +487,11 @@ func (t *sqliteTx) raiseSchema(schema string) error {
 	case retryStoreSchema:
 		// From storeSchema or scopedStoreSchema (retries.go).
 		_, err := t.tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value IN (?,?)", retryStoreSchema, storeSchema, scopedStoreSchema)
+		return sqliteFault("schema", err, true)
+	case scheduleStoreSchema:
+		// From storeSchema, scopedStoreSchema or retryStoreSchema
+		// (shared_ticks.go).
+		_, err := t.tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value IN (?,?,?)", scheduleStoreSchema, storeSchema, scopedStoreSchema, retryStoreSchema)
 		return sqliteFault("schema", err, true)
 	}
 	return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))

@@ -203,12 +203,12 @@ func (t *pgTx) appendJournal(c change) (int64, error) {
 }
 
 // pgSchemaOrder orders the schemas a Runner of this kind knows.
-var pgSchemaOrder = map[string]int{storeSchema: 1, scopedStoreSchema: 2, retryStoreSchema: 3}
+var pgSchemaOrder = map[string]int{storeSchema: 1, scopedStoreSchema: 2, retryStoreSchema: 3, scheduleStoreSchema: 4}
 
 // raiseSchema writes nothing: the migration wrote the schema row (D15). A
 // schema the migration has not reached is refused.
 func (t *pgTx) raiseSchema(schema string) error {
-	if schema != scopedStoreSchema && schema != retryStoreSchema {
+	if schema != scopedStoreSchema && schema != retryStoreSchema && schema != scheduleStoreSchema {
 		return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))
 	}
 	var held string

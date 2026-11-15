@@ -147,6 +147,14 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 				return &apiError{409, "job_triggers_active", "Pause all triggers before upgrading this job. They remain paused after the upgrade."}
 			}
 			c := t.Config
+			// The operator's bounds refuse a cron or a shared-interval
+			// schedule by their own code, 422, as on configuring and enabling
+			// (docs/design/schedules.md, section 4): the release is not why.
+			if c.Kind == "schedule" && c.Schedule != nil {
+				if err = s.cfg.Schedules.checkSchedule(c.Schedule); err != nil {
+					return err
+				}
+			}
 			if err = s.checkTrigger(&c, next, time.Now(), gateway); err != nil {
 				return &apiError{409, "trigger_upgrade_incompatible", "An existing trigger is incompatible with this release. Keep this job unchanged and create a new reviewed job for the new configuration."}
 			}

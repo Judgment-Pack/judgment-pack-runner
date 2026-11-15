@@ -93,36 +93,67 @@ func queueWaits(err error) error {
 	}
 	return err
 }
+
+// scheduleTick is the Runner's own clock's tick of a schedule trigger at at.
+// A shared-interval schedule is not its: only its interval's calls tick it
+// (sharedTick).
 func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 	if s.cfg.ExecutorAdmission != nil {
 		return manualUnsupported()
 	}
-	if t.NextAt == "" {
+	if sharedTicked(t, "") {
 		return nil
+	}
+	_, e := s.scheduleDue(t, hash, at, at, ownClockGrace, nil)
+	return e
+}
+
+// ownClockGrace is how late the Runner's own clock may tick a due time
+// before the time counts as missed. A shared tick has none: the tick a call
+// names is the clock, and a due time before it is one whose tick no call
+// named.
+const ownClockGrace = 30 * time.Second
+
+// scheduleDue ticks the schedule trigger t, read at row version hash, at the
+// time tick, the Runner's clock being now: a due time at or before the tick
+// admits its occurrence, by the trigger's missed rule when the tick is more
+// than grace after it, and moves the trigger's next time on past the tick,
+// in one transaction that expects the version read (D17). made says
+// whether this call recorded an occurrence; a due time after the tick, or
+// a trigger written since it was read (by a request, a repeated tick, or
+// another Runner's tick of the same due time), makes none. The occurrence's
+// entry names caller, a shared tick's requester, or with none the trigger
+// at its revision, as the Runner's own clock's tick does.
+func (s *Service) scheduleDue(t Trigger, hash string, tick, now time.Time, grace time.Duration, caller *EventActor) (made bool, err error) {
+	if s.cfg.ExecutorAdmission != nil {
+		return false, manualUnsupported()
+	}
+	if t.NextAt == "" {
+		return false, nil
 	}
 	due, e := time.Parse(time.RFC3339, t.NextAt)
 	if e != nil {
-		return e
+		return false, e
 	}
-	if due.After(at) {
-		return nil
+	if due.After(tick) {
+		return false, nil
 	}
 	job, e := s.job(t.JobID)
 	if e != nil {
-		return e
+		return false, e
 	}
 	release, e := s.release(job.ReleaseID)
 	if e != nil {
-		return e
+		return false, e
 	}
-	latest := t.Config.Schedule.latest(at)
+	latest := t.Config.Schedule.latest(tick)
 	if latest.Before(due) {
 		latest = due
 	}
-	o := newOccurrence(t, job, at)
+	o := newOccurrence(t, job, now)
 	o.ScheduledAt = due.Format(time.RFC3339Nano)
 	identity := fmt.Sprintf("schedule:%d:%s", t.Revision, o.ScheduledAt)
-	missed := at.Sub(due) > 30*time.Second
+	missed := tick.Sub(due) > grace
 	if missed {
 		o.MissedFrom = due.Format(time.RFC3339Nano)
 	}
@@ -150,12 +181,12 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 			}
 		}
 	}
-	next := t.Config.Schedule.next(at)
+	next := t.Config.Schedule.next(tick)
 	t.NextAt = ""
 	if !next.IsZero() {
 		t.NextAt = next.Format(time.RFC3339Nano)
 	}
-	return tickLost(s.store.update(func(tx runTx) error {
+	err = s.store.update(func(tx runTx) error {
 		// The trigger first, at the version this tick read it (D17): a
 		// write of it since, another Runner's tick of the same due time
 		// among them, admits nothing here. An identity held while the
@@ -163,9 +194,10 @@ func (s *Service) scheduleTick(t Trigger, hash string, at time.Time) error {
 		if err := tx.putTrigger(t, hash, false); err != nil {
 			return err
 		}
-		_, err := s.admitOccurrence(tx, t, o, identity, digest(encode(t.Config)))
+		_, err := s.admitOccurrenceAs(tx, t, o, identity, digest(encode(t.Config)), caller)
 		return err
-	}))
+	})
+	return err == nil, tickLost(err)
 }
 
 // tickLost is a tick's write that met a write of its trigger made since the

@@ -144,6 +144,11 @@ of the job whose record it changes, and needs none named. A workflow's
 evaluation names no job and so no scope. A request that starts such work (an
 event or a record delivery, a cancel, a reconcile) names the scope as every
 request does.
+A shared tick, `POST /v1/ticks` ([schedules](schedules.md), section 5), is
+the one request that starts such work for every scope: it is the
+installation's, takes no scope (naming one is `400` `invalid_scope`), and
+ticks each scope's triggers as the Runner's clock does, each occurrence
+carrying its job's scope.
 
 ## 4. What carries it
 
