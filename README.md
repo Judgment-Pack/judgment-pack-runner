@@ -952,6 +952,8 @@ The installation's Runner remains the sole scheduling authority.
 | --- | --- |
 | Interval | Elapsed time, from 1 minute to 30 days, anchored to `startAt`. |
 | Daily / weekly | Local wall-clock time in an IANA zone. Missing DST times are skipped; repeated times run once, at the first occurrence. |
+| Cron | A five-field cron expression (minute, hour, day of month, month, day of week; numbers, ranges, lists and steps) in an IANA zone, by the same DST rule. Its matches must be no closer than the operator's minimum (default 1 minute) and no further apart than its maximum (default 366 days). |
+| Shared interval | Ticked only when an external scheduler calls `POST /v1/ticks` for an interval the operator names (`15m`, `1h`, `1d`), at every tick or, with a cron expression, at the first tick after each match. |
 | One time | One future RFC3339 timestamp. |
 | File changes | A project-relative JSON file; changed content must remain stable for 1–3600 seconds. Enabling uses existing content as the baseline. A missing file may arrive later. |
 | Authenticated event | A caller supplies a unique event ID, timestamp, and complete fresh input. |
@@ -960,8 +962,15 @@ Schedules have an optional exclusive end timestamp. Enabling begins with future
 occurrences; paused time is not backfilled. If an active schedule is over 30 seconds
 late (including restart or host sleep), **Skip missed runs** records one skipped
 range, while **Run latest once** admits only its latest occurrence. Neither option
-creates an unbounded catch-up burst. This is a best-effort local scheduler, not a
+creates an unbounded catch-up burst. A shared-interval schedule has no grace: a tick
+no call named is missed, and the next call applies the same rule. This is a best-effort local scheduler, not a
 real-time timer. The computer must be awake and Desk running.
+
+In service mode, one external scheduler job per shared interval can tick every scope's
+shared-interval triggers through `POST /v1/ticks`, with the control API's credential and
+no scope identifier; a repeated or late call, on this Runner or another of the store,
+records nothing twice. The evaluation, bounds, refusal codes and measured cost are in
+[schedules](docs/design/schedules.md).
 
 Overlap defaults to **Skip this occurrence**; **Queue this occurrence** uses a
 bounded queue. Up to 100 occurrences can await admission, alongside the existing

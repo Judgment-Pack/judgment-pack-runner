@@ -104,6 +104,13 @@ func (s *Service) configureTriggerBy(st runStore, by requester, jobID, triggerID
 		if err = tx.putTrigger(t, hash, true); err != nil {
 			return err
 		}
+		// A store's first cron or shared-interval schedule raises its
+		// schema in the same transaction (shared_ticks.go).
+		if c.needsScheduleSchema() {
+			if err = tx.raiseSchema(scheduleStoreSchema); err != nil {
+				return err
+			}
+		}
 		_, err = tx.appendJournal(change{kind: "trigger.configured", by: s.actor(by), concerns: EventConcerns{Job: job.ID, Release: job.ReleaseID, Trigger: t.ID}, revision: t.Revision, states: true, from: from, to: "paused", detail: EventDetail{Scope: job.Scope, PreviousRevision: revisionValue(previous), TriggerKind: c.Kind}})
 		return err
 	})
@@ -163,7 +170,15 @@ func (s *Service) setTriggerStateBy(st runStore, by requester, triggerID string,
 					return t, "", e
 				}
 			}
-			next := t.Config.Schedule.next(time.Now())
+			// A shared-interval schedule is next due after the Runner's
+			// clock plus the lead a call may name a tick within: a tick a
+			// call already made before the trigger was paused is never due
+			// again at the trigger's new revision (shared_ticks.go).
+			from := s.instant()
+			if t.Config.Schedule.Kind == "tick" {
+				from = from.Add(sharedTickLead)
+			}
+			next := t.Config.Schedule.next(from)
 			if next.IsZero() {
 				return t, "", bad("schedule_finished", "This schedule has no future occurrence.")
 			}

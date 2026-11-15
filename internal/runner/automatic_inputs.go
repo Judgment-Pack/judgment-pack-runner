@@ -292,6 +292,12 @@ func (s *Service) checkTrigger(c *TriggerConfig, r Release, at time.Time, gatewa
 		if e := c.Schedule.validate(); e != nil {
 			return e
 		}
+		// A cron or a shared-interval schedule is held to the operator's
+		// settings as they are now, at each check: on configuring, enabling
+		// and upgrading.
+		if e := s.cfg.Schedules.checkSchedule(c.Schedule); e != nil {
+			return e
+		}
 		return validateAutomatic(c.Input, r, s.cfg.InputRoot != "")
 	case "file":
 		if c.Schedule != nil || !inputPath(c.WatchPath) || c.StableSeconds < 1 || c.StableSeconds > 3600 {

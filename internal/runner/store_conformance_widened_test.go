@@ -251,30 +251,41 @@ var widenedStoreCases = []storeCase{
 		}
 		if k.migratedSchema {
 			// The migration wrote the latest schema: a raise finds it raised.
-			if got := k.schema(t, st); got != retryStoreSchema {
+			if got := k.schema(t, st); got != scheduleStoreSchema {
 				t.Fatalf("a migrated store is at %s", got)
 			}
-			raise(scopedStoreSchema, retryStoreSchema)
+			raise(scopedStoreSchema, scheduleStoreSchema)
+			raise(retryStoreSchema, scheduleStoreSchema)
 		} else {
 			if got := k.schema(t, st); got != storeSchema {
 				t.Fatalf("a new store is at %s", got)
 			}
 			raise(scopedStoreSchema, scopedStoreSchema)
 			raise(scopedStoreSchema, scopedStoreSchema)
+			raise(retryStoreSchema, retryStoreSchema)
+			raise(scopedStoreSchema, retryStoreSchema)
 		}
-		raise(retryStoreSchema, retryStoreSchema)
-		raise(scopedStoreSchema, retryStoreSchema)
-		for _, schema := range []string{storeSchema, manualStoreSchema, "7", ""} {
+		raise(scheduleStoreSchema, scheduleStoreSchema)
+		raise(retryStoreSchema, scheduleStoreSchema)
+		raise(scopedStoreSchema, scheduleStoreSchema)
+		for _, schema := range []string{storeSchema, manualStoreSchema, "8", ""} {
 			err := st.update(func(tx runTx) error { return tx.raiseSchema(schema) })
 			wantFault(t, err, faultRefused, "raising "+schema)
 		}
-		if got := k.schema(t, st); got != retryStoreSchema {
+		if got := k.schema(t, st); got != scheduleStoreSchema {
 			t.Fatalf("a refused raise left the store at %s", got)
 		}
-		other := k.open(t)
-		must(t, other.update(func(tx runTx) error { return tx.raiseSchema(retryStoreSchema) }))
-		if got := k.schema(t, other); got != retryStoreSchema {
-			t.Fatalf("the retry schema raised from a new store leaves it at %s", got)
+		// Each schema raised from a new store, as the migration left it.
+		for _, schema := range []string{retryStoreSchema, scheduleStoreSchema} {
+			other := k.open(t)
+			want := schema
+			if k.migratedSchema {
+				want = scheduleStoreSchema
+			}
+			must(t, other.update(func(tx runTx) error { return tx.raiseSchema(schema) }))
+			if got := k.schema(t, other); got != want {
+				t.Fatalf("the schema %s raised from a new store leaves it at %s, want %s", schema, got, want)
+			}
 		}
 	}},
 }

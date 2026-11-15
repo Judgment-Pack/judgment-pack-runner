@@ -369,29 +369,44 @@ func TestPostgreSQLASecondRunnersStartLeavesTheFirstsWorkToIt(t *testing.T) {
 
 // D17, D18 and section 5: a store migrated to the file before
 // 0004_several_runners.sql, as an earlier release left it, is refused at the
-// start until it is migrated, and the migration then applies that file alone.
+// start until it is migrated, and the migration then applies that file and
+// the ones after it.
 func TestPostgreSQLRefusesAStoreWithoutTheSeveralRunnersFile(t *testing.T) {
+	pgRefusesAStoreWithout(t, "0004_")
+}
+
+// pgRefusesAStoreWithout makes a store migrated to the file before the one
+// named prefix, as an earlier release left it, and holds the start to refuse
+// it until the migration applies that file and the ones after it. It answers
+// the store's migration login and database.
+func pgRefusesAStoreWithout(t *testing.T, prefix string) (*pgTestServer, string) {
+	t.Helper()
 	s := pgServer(t)
 	set, err := postgresqlMigrations()
 	must(t, err)
-	last := set[len(set)-1]
-	if !strings.HasPrefix(last.name, "0004_") {
-		t.Fatal("the set's last file is not the several Runners file:", last.name)
+	at := slices.IndexFunc(set, func(m pgMigration) bool { return strings.HasPrefix(m.name, prefix) })
+	if at < 1 {
+		t.Fatal("the set holds no file", prefix, "after another")
 	}
 	db := pgFreshDatabase(t, s)
 	migration := PostgreSQLMigration{Connection: s.url(pgRoleMigration, db), Owner: s.role(pgRoleOwner), Request: s.role(pgRoleRequest), Worker: s.role(pgRoleWorker)}
-	if applied, err := migratePostgreSQL(migration, set[:len(set)-1]); err != nil || len(applied) != len(set)-1 {
+	if applied, err := migratePostgreSQL(migration, set[:at]); err != nil || len(applied) != at {
 		t.Fatal("the earlier store was not made:", applied, err)
 	}
 	k := newPostgreSQLStore(s.pool(t, pgRoleRequest, db), s.pool(t, pgRoleWorker, db))
 	if err := k.checkMigrations(); err == nil || !strings.Contains(err.Error(), "run jpack-runner store migrate") {
-		t.Fatal("a store without the several Runners file was not refused at the start:", err)
+		t.Fatal("a store without", set[at].name, "was not refused at the start:", err)
+	}
+	var later []string
+	for _, m := range set[at:] {
+		later = append(later, m.version)
 	}
 	applied, err := MigratePostgreSQL(migration)
-	if err != nil || !slices.Equal(applied, []string{last.version}) {
-		t.Fatal("the migration did not apply the several Runners file alone:", applied, err)
+	if err != nil || !slices.Equal(applied, later) {
+		t.Fatal("the migration did not apply", later, "alone:", applied, err)
 	}
 	must(t, k.checkMigrations())
+	return s, db
 }
 
 // D18. A Runner preparing an occurrence commits a new task, its step's

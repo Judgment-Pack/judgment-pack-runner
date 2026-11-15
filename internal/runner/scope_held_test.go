@@ -187,4 +187,18 @@ func TestAKindThatHoldsScopesServesItsRoutesOnlyThroughTheirHeldView(t *testing.
 			t.Errorf("%s: %v %+v, want 501 store_route_unsupported", route, every, got)
 		}
 	}
+	// A shared tick is the installation's (docs/design/schedules.md,
+	// section 4): naming no scope it reads the store for every scope, as the
+	// Runner's own clock does; naming one it is refused before it reads
+	// anything.
+	w.s.cfg.Schedules = ScheduleSettings{SharedIntervals: []string{"15m"}}
+	if got, every := throughHeld(t, w, "POST", "/v1/ticks", `{"interval":"15m"}`, nil); !every {
+		t.Errorf("POST /v1/ticks naming no scope was held to one: %+v", got)
+	}
+	for _, scope := range []string{"other", ""} {
+		got, every := throughHeld(t, w, "POST", "/v1/ticks?scope="+scope, `{"interval":"15m"}`, nil)
+		if every || got.code != 400 || !strings.Contains(got.body, "invalid_scope") {
+			t.Errorf("POST /v1/ticks naming the scope %q: %v %+v, want 400 invalid_scope", scope, every, got)
+		}
+	}
 }

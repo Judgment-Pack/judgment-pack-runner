@@ -41,7 +41,7 @@
             }
           }
         },
-        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. scope-identifiers means a job may be created under a scope identifier, which its records carry, the store-wide listings filter by, and every request that names one of them names (ScopeIdentifier). retries means a job may be created with a retry policy (RetryPolicy), and an interrupted run may be retried (retryRun). run-results means a finished run carries counts (RunCounts) and, when it ended without a decision, an errorClass (ErrorClass), as an occurrence that ended without a run carries its errorClass; a run's end is journaled with them; and the runs listings take outcome and errorClass, and the journal routes outcome, errorClass and kind, as filters. A Runner without it ignores those parameters and answers every record. With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
+        "description": "Runner's identity, health and capabilities. A capability names a feature a client can test for before using it; journal-backward means the journal routes accept tail and before. selected-profile-preparation means the selected-profile namespace and its routes under /retained-column/1/ (listSelectedProfiles, admitSelectedProfile, selectedPlanNextInputSource) are served. scope-identifiers means a job may be created under a scope identifier, which its records carry, the store-wide listings filter by, and every request that names one of them names (ScopeIdentifier). retries means a job may be created with a retry policy (RetryPolicy), and an interrupted run may be retried (retryRun). run-results means a finished run carries counts (RunCounts) and, when it ended without a decision, an errorClass (ErrorClass), as an occurrence that ended without a run carries its errorClass; a run's end is journaled with them; and the runs listings take outcome and errorClass, and the journal routes outcome, errorClass and kind, as filters. A Runner without it ignores those parameters and answers every record. cron-schedules means a schedule trigger may be of kind cron, a five-field expression held to the operator's bounds (schedules); shared-interval-ticks means one of kind tick, bound to a shared interval the operator names, which POST /ticks ticks (sharedTick). With an input root bound, inputRootReplacementCharacter says whether the binding contains U+FFFD, which may be a literal character or may have replaced a byte lost before the path reached Runner (Runner cannot tell which), and inputRootExists whether the bound root exists as a directory, or inputRootUnreadable, in its place, that the bound root's status could not be read for a reason other than its absence; without one, all are absent. The boot line's and a relocation's path members (README, Paths are UTF-8) and every stored binding are valid UTF-8 with no NUL; a request or store outside that domain is refused before Runner serves (README, Paths are UTF-8)."
       }
     },
     "/health": {
@@ -1554,6 +1554,57 @@
         ]
       }
     },
+    "/ticks": {
+      "post": {
+        "operationId": "sharedTick",
+        "description": "A shared tick, for an external scheduler to call once per tick of a shared interval the operator names. It is the installation's: the control API's credential alone admits it, it takes no scope identifier (a request naming one is refused, 400 invalid_scope), and it ticks the enabled shared-interval triggers of every scope bound to the interval. A trigger due at or before the tick admits its due time's occurrence, by its missed rule when an earlier tick of it was never called, and moves its nextAt to its next tick, each in one transaction that expects the trigger as it was read: a repeated or late call for a tick, on this Runner or another of the store, records nothing twice. at names the tick, a multiple of the interval since midnight UTC, no more than 30 seconds ahead of the Runner's clock and no more than one interval behind it (422 invalid_tick: a scheduler that replays the ticks it missed makes no catch-up burst, the tick it may still name finding the earlier due times missed); without it, the last tick at or before the Runner's clock plus 30 seconds. An interval the operator does not name is refused, 422 unknown_shared_interval.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "interval": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "interval"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The tick, and the occurrences it recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TickResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Request rejected; inspect code and retryable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/triggers/{trigger}/state": {
       "parameters": [
         {
@@ -2141,6 +2192,16 @@
           },
           "409": {
             "description": "Stale review, active automation, pending work, failed tests or invalid artifact version; on an installation booted with requireComparableFacts, a release not checked with it (release_comparable_facts_required); on one booted with requireSuppliedReviewedSet, a release not checked against a supplied reviewed-set lock (release_reviewed_set_required)."
+          },
+          "422": {
+            "description": "Among others, a trigger of the job whose cron or shared-interval schedule the operator's bounds in force refuse, by the bound's own code (cron_interval_too_short, cron_interval_too_long, cron_never_matches, unknown_shared_interval), as on configuring and enabling it; a trigger the new release cannot serve stays 409 trigger_upgrade_incompatible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -3681,6 +3742,33 @@
               true
             ],
             "description": "Present, and true, when an input root is bound and its status could not be read for a reason other than its absence, such as a permission refused on a directory above it: whether it exists is not known, and inputRootExists is absent."
+          },
+          "schedules": {
+            "type": "object",
+            "description": "The operator's schedule settings in force: the shared intervals POST /ticks takes, and the shortest and the longest gap between two matches a cron expression may have, the defaults (60 and 31622400) included.",
+            "properties": {
+              "sharedIntervals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16
+              },
+              "minimumSeconds": {
+                "type": "integer",
+                "minimum": 60
+              },
+              "maximumSeconds": {
+                "type": "integer",
+                "minimum": 60
+              }
+            },
+            "required": [
+              "sharedIntervals",
+              "minimumSeconds",
+              "maximumSeconds"
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -5849,7 +5937,9 @@
               "interval",
               "daily",
               "weekly",
-              "once"
+              "once",
+              "cron",
+              "tick"
             ]
           },
           "timezone": {
@@ -5876,6 +5966,17 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 6
+          },
+          "cron": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "A cron schedule's expression, or a shared-interval schedule's, which then runs at the first tick at or after each match: five fields (minute, hour, day of the month, month, day of the week, Sunday 0) separated by single spaces, each a comma-separated list of *, a number, a range a-b, */step or a-b/step, numbers only. When both day fields are restricted, a day either matches matches. Read on the wall clock of timezone by the calendar rule. Held to the operator's bounds (GET /status, schedules): invalid_cron, cron_never_matches, cron_interval_too_short, cron_interval_too_long, each 422."
+          },
+          "tick": {
+            "type": "string",
+            "pattern": "^([1-9][0-9]{0,3}[mh]|1d)$",
+            "description": "A shared-interval schedule's interval, one the operator names (GET /status, schedules), or 422 unknown_shared_interval: a number of minutes or hours, or 1d, that divides a day. Only POST /ticks naming it ticks the trigger, at the multiples of the interval since midnight UTC; the Runner's own clock never does."
           }
         },
         "required": [
@@ -5884,7 +5985,30 @@
           "startAt"
         ],
         "additionalProperties": false,
-        "description": "Intervals use elapsed time. Calendar schedules skip nonexistent local times and choose the first repeated time. End is exclusive. Kind-specific fields are mutually exclusive."
+        "description": "Intervals use elapsed time. Calendar and cron schedules skip nonexistent local times and choose the first repeated time. End is exclusive. Kind-specific fields are mutually exclusive. A cron schedule (cron) is ticked by the Runner's own clock, about once a second, at each match of its expression; a shared-interval schedule (tick, with an optional cron) by POST /ticks alone. A trigger's nextAt is its next run time."
+      },
+      "TickResult": {
+        "type": "object",
+        "description": "A shared tick's answer: the interval, the tick it ticked, and the occurrences the call recorded, accepted or skipped; a repeated call for a tick records none.",
+        "properties": {
+          "interval": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "occurrences": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "interval",
+          "at",
+          "occurrences"
+        ],
+        "additionalProperties": false
       },
       "AutomaticInput": {
         "type": "object",

@@ -89,7 +89,7 @@ func RelocateWorkspace(request RelocateRequest) (RelocateResult, error) {
 		}
 	}
 	schema, err := tx.value("schema")
-	if err != nil || schema != "1" && schema != "2" && schema != storeSchema && schema != scopedStoreSchema && schema != retryStoreSchema {
+	if err != nil || schema != "1" && schema != "2" && schema != storeSchema && schema != scopedStoreSchema && schema != retryStoreSchema && schema != scheduleStoreSchema {
 		return result, errors.New("unsupported workspace schema")
 	}
 	historyKey := "inputRootRelocation:" + request.ID
