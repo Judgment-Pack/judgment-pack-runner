@@ -987,7 +987,10 @@ it is fixed or paused. Every Runner on one store must name the same shared inter
 bounds: at each start, Runner reports every enabled trigger bound to an interval its
 configuration does not name, or whose cron expression is outside its bounds, one
 `trigger.outside-settings` journal entry each and, in `GET /v1/status`, under
-`triggersOutsideSettings`, the counts and trigger ids; it changes none of them. The
+`triggersOutsideSettings`, the counts and trigger ids; it changes none of them. Both
+`POST /v1/ticks` and `triggersOutsideSettings` span every scope: a gateway or proxy in front
+that binds a caller to one scope must not forward the tick route to it, nor the status with
+that member ([security](SECURITY.md#security-boundary)). The
 evaluation, bounds, refusal codes and measured cost are in
 [schedules](docs/design/schedules.md).
 

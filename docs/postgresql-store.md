@@ -161,6 +161,13 @@ sqlite kind. A request held to one scope can learn that some scope holds a relea
 or a cloud binding, never which. Journal sequences are shared across scopes: a page shows gaps where other
 scopes' entries are.
 
+Row security holds a request to the scope it names; it does not choose that scope for the
+caller. The installation's routes take none and span every scope: `POST /v1/ticks` ticks every
+scope's shared-interval triggers through the store for every scope, and `GET /v1/status` lists
+under `triggersOutsideSettings` the trigger ids of every scope. A gateway or proxy in front that
+binds a caller to one scope must not forward either to that caller, or must remove the member
+first (SECURITY.md, "Security boundary").
+
 ## Claims and leases
 
 There is no process-wide lock. A run is held by its claim: a token and a lease of 60 seconds,
