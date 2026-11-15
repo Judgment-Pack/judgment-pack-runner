@@ -165,6 +165,102 @@ func TestPostgreSQLHoldsTheConfiguredLimits(t *testing.T) {
 	}
 }
 
+// countRaced is a store whose reads of the trigger count, its own, its
+// views' and its transactions', are answered through after: a test moves
+// the installation's count, or answers it as it stood, between the
+// Runner's read and its write.
+type countRaced struct {
+	runStore
+	after func(int) int
+}
+
+func (c *countRaced) leasesClaims() bool { return leases(c.runStore) }
+
+func (c *countRaced) holdsScopes() bool { return holdsScopes(c.runStore) }
+
+func (c *countRaced) updateWithin(d time.Duration, fn func(runTx) error) error {
+	return updateWithin(c.runStore, d, fn)
+}
+
+func (c *countRaced) heldTo(sc storeScope) runStore {
+	return &countRaced{runStore: c.runStore.heldTo(sc), after: c.after}
+}
+
+func (c *countRaced) triggerCount() (int, error) {
+	n, err := c.runStore.triggerCount()
+	return c.after(n), err
+}
+
+func (c *countRaced) update(fn func(runTx) error) error {
+	return c.runStore.update(func(tx runTx) error { return fn(&countRacedTx{runTx: tx, after: c.after}) })
+}
+
+type countRacedTx struct {
+	runTx
+	after func(int) int
+}
+
+func (c *countRacedTx) triggerCount() (int, error) {
+	n, err := c.runTx.triggerCount()
+	return c.after(n), err
+}
+
+// Section 9 and D9: a trigger creation that read the installation's count
+// below the limit, before another Runner's creation at the limit committed,
+// meets the count's row, and is refused as its read would have refused it,
+// 422 trigger_limit stating the configured number, configured or made with
+// its job; nothing is written, and the count stays at the limit.
+func TestPostgreSQLATriggerCreationRacedToTheLimitIsRefusedAsTheLimit(t *testing.T) {
+	p := pgRunners(t)
+	p.limits = LimitSettings{Triggers: 130}
+	sv := p.open()
+	setCount := func(n int) {
+		t.Helper()
+		_, err := p.suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='triggers'", n)
+		must(t, err)
+	}
+	held := func(query string) int {
+		t.Helper()
+		var n int
+		must(t, p.suite.QueryRowContext(pgContext, query).Scan(&n))
+		return n
+	}
+	inner := sv.store
+	t.Cleanup(func() { sv.store = inner })
+
+	// Configured: the Runner reads 129, and another Runner's creation
+	// raises the count to 130 before this one's transaction.
+	setCount(129)
+	sv.store = &countRaced{runStore: inner, after: func(n int) int {
+		setCount(130)
+		return n
+	}}
+	got := serve(t, sv, "POST", "/v1/jobs/"+p.job.ID+"/triggers?scope=team-a", string(encode(map[string]any{"config": eventTriggerConfig()})), nil)
+	if code, a := answerOf(t, got.Code, got.Body.Bytes()); code != 422 || a.Error.Code != "trigger_limit" || a.Error.Message != "This local runner supports up to 130 triggers." {
+		t.Fatalf("a trigger configured past the limit another Runner reached: %d %s", got.Code, got.Body.String())
+	}
+
+	// Made with its job: the Runner's read in the transaction answers the
+	// count as it stood before the other Runner's creation committed.
+	sv.store = inner
+	release := journalRelease(t, sv, p.runtime)
+	sv.store = &countRaced{runStore: inner, after: func(n int) int { return n - 1 }}
+	c := eventTriggerConfig()
+	_, e := sv.createJobWith(requester{}, "Raced to the limit", release.ID, "team-b", &c, nil)
+	refusedTriggerLimit(t, e, "130")
+	sv.store = inner
+
+	if n := held("SELECT value FROM counts WHERE name='triggers'"); n != 130 {
+		t.Fatal("the installation's trigger count is", n, "want 130")
+	}
+	if n := held("SELECT count(*) FROM triggers"); n != 0 {
+		t.Fatal("the refused creations wrote", n, "triggers")
+	}
+	if n := held("SELECT count(*) FROM jobs"); n != 1 {
+		t.Fatal("the refused job creation wrote a job:", n, "jobs held")
+	}
+}
+
 // Section 8: one tick at the configured limits on the kind, every trigger's
 // occurrence accepted, none skipped queue-full, counts.triggers raised past
 // the default as each trigger is written. It runs at 200, not at the

@@ -125,3 +125,20 @@ func (c LimitSettings) status() map[string]any {
 func errTriggerLimit(limit int) error {
 	return bad("trigger_limit", fmt.Sprintf("This local runner supports up to %d triggers.", limit))
 }
+
+// errTriggerLimitHeld is the cause of the faultRefused a kind that holds the
+// trigger count in a row reports when the row refuses a trigger past the
+// limit (store_postgresql_writes.go): a creation that read the count below
+// the limit, before another Runner's creation at the limit committed.
+var errTriggerLimitHeld = errors.New("the installation holds its limit of triggers")
+
+// triggerLimitHeld answers err, a trigger creation's failure, as the
+// request is answered when its own read of the count finds the limit
+// reached: the row's refusal is errTriggerLimit, stating limit, and any
+// other failure is err itself.
+func triggerLimitHeld(err error, limit int) error {
+	if faultOf(err) == faultRefused && errors.Is(err, errTriggerLimitHeld) {
+		return errTriggerLimit(limit)
+	}
+	return err
+}

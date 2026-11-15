@@ -96,8 +96,11 @@ func (s *Service) configureTriggerBy(st runStore, by requester, jobID, triggerID
 	e = st.update(func(tx runTx) (err error) {
 		from := ""
 		if triggerID == "" {
+			// The count read above was below the limit; a creation on another
+			// Runner of the store may have reached it since, and the row
+			// refuses this one, answered as the read would have been.
 			if err = tx.createTrigger(t); err != nil {
-				return err
+				return triggerLimitHeld(err, s.cfg.Limits.triggers())
 			}
 		} else if from, err = triggerBefore(tx, t.ID, previous); err != nil {
 			return err

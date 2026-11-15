@@ -266,7 +266,7 @@ func (t *pgTx) createTrigger(tr Trigger) error {
 		return err
 	}
 	if n == 0 {
-		return storeFailure(faultRefused, "trigger", errors.New("the installation holds its limit of triggers"))
+		return storeFailure(faultRefused, "trigger", errTriggerLimitHeld)
 	}
 	return nil
 }

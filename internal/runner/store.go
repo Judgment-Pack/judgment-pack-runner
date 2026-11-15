@@ -438,7 +438,8 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 			if err != nil {
 				return err
 			}
-			if limit := s.cfg.Limits.triggers(); count >= limit {
+			limit := s.cfg.Limits.triggers()
+			if count >= limit {
 				return errTriggerLimit(limit)
 			}
 			t := Trigger{ID: id("trg_"), JobID: j.ID, Revision: 1, Authority: "local", Config: *c, Paused: true, CreatedAt: now(), UpdatedAt: now(), Scope: j.Scope}
@@ -447,7 +448,7 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 			}
 			j.InitialTriggerID = t.ID
 			if err = tx.createTrigger(t); err != nil {
-				return err
+				return triggerLimitHeld(err, limit)
 			}
 			if err = tx.putTrigger(t, "", true); err != nil {
 				return err
