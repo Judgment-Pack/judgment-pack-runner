@@ -437,8 +437,12 @@ type runStore interface {
 	// order of sequence, and the sequence of the last (after when none).
 	chainPage(after int64, limit int) ([][]byte, int64, error)
 	// enabledTriggers are the ids of the triggers held not paused, in the
-	// order they were made.
-	enabledTriggers() ([]string, error)
+	// order they were made. With ownClock, they are only those the Runner's
+	// own clock ticks: a schedule bound to a shared interval, which only its
+	// interval's calls tick (sharedTicked), is left out by the read itself,
+	// so that the clock's pass neither reads nor holds the lock for one
+	// (docs/design/schedules.md, section 8).
+	enabledTriggers(ownClock bool) ([]string, error)
 	// readyOccurrence is the accepted occurrence admitted first that has no
 	// input left to prepare, or faultAbsent. On a kind that leases claims it
 	// is one no live claim holds (D18): another Runner's is passed by.

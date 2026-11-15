@@ -605,8 +605,8 @@ type pauseAfterList struct {
 	id string
 }
 
-func (q *pauseAfterList) enabledTriggers() ([]string, error) {
-	ids, err := q.runStore.enabledTriggers()
+func (q *pauseAfterList) enabledTriggers(ownClock bool) ([]string, error) {
+	ids, err := q.runStore.enabledTriggers(ownClock)
 	if err != nil || q.id == "" {
 		return ids, err
 	}

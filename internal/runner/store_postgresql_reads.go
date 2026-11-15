@@ -362,9 +362,18 @@ func (k *pgStore) chainPage(after int64, limit int) ([][]byte, int64, error) {
 	return lines, last, nil
 }
 
-func (k *pgStore) enabledTriggers() ([]string, error) {
+// pgOwnClock leaves out a schedule bound to a shared interval, as
+// sharedTicked reads one: IS NOT DISTINCT FROM compares a member absent,
+// NULL, as unequal.
+var pgOwnClock = " AND NOT (" + pgJSON("record", "config", "kind") + " IS NOT DISTINCT FROM 'schedule' AND " + pgJSON("record", "config", "schedule", "kind") + " IS NOT DISTINCT FROM 'tick')"
+
+func (k *pgStore) enabledTriggers(ownClock bool) ([]string, error) {
 	ids := []string{}
-	err := k.each("trigger", "SELECT id FROM triggers WHERE "+pgJSON("record", "paused")+"='false' ORDER BY seq", nil, func(b []byte) error {
+	query := "SELECT id FROM triggers WHERE " + pgJSON("record", "paused") + "='false'"
+	if ownClock {
+		query += pgOwnClock
+	}
+	err := k.each("trigger", query+" ORDER BY seq", nil, func(b []byte) error {
 		ids = append(ids, string(b))
 		return nil
 	})

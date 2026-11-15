@@ -222,7 +222,7 @@ func readEarlierStore(t *testing.T, st *sqliteStore) {
 	if err != nil || !tr.HasKey || tr.keyRevision == nil || *tr.keyRevision != 2 || hash != "sha256:7777777777777777777777777777777777777777777777777777777777777777" {
 		t.Fatal("trigger:", tr.ID, hash, err)
 	}
-	if ids, err := st.enabledTriggers(); err != nil || len(ids) != 1 || ids[0] != "trg_earlier" {
+	if ids, err := st.enabledTriggers(false); err != nil || len(ids) != 1 || ids[0] != "trg_earlier" {
 		t.Fatal("enabled triggers:", ids, err)
 	}
 	o, payload, err := st.identifiedOccurrence("trg_earlier", "event:first")

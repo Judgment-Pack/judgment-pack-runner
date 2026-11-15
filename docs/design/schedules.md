@@ -55,7 +55,8 @@ A `tick` schedule takes `tick`, the shared interval's name, `timezone`,
 due at every tick of the interval; with it, at the **first tick at or after
 each match**, so `{"tick":"15m","cron":"7 9 * * 1-5","timezone":"America/Toronto"}`
 runs at the 09:15 tick of each weekday in Toronto. The Runner's own clock
-never ticks it: only a call for its interval does (section 5).
+never ticks it, and does not read it (section 8): only a call for its
+interval ticks it (section 5).
 
 A schedule of another kind that names `cron` or `tick` is refused,
 `invalid_schedule`.
@@ -303,22 +304,54 @@ accepted, none skipped `queue-full`.
   40 ms on the sqlite kind (once 1.1 s, at 1000 on sqlite, a stall of the
   disk). Held for the whole fan-out, as before this change, the lock would
   have been held for the whole tick, 1.2 to 18 s.
-- **The Runner's own clock reads every enabled trigger once a second**, the
-  shared-interval ones included, under the lock ("one pass" above). With the
+- **The Runner's own clock read every enabled trigger once a second**, the
+  shared-interval ones included, under the lock ("one pass" above), until
+  #289 (below). With the
   clock running beside the tick, the tick took 7.6 s at 1000 and 16.3 s at
   2000 on sqlite, and 17.1 s at 1000 and 79 s at 2000 on postgresql, where
   the clock's passes held the lock for about 350 ms of every second at 1000
   and 710 ms at 2000; the clock waited at most 25 ms for the lock.
 
+**The own clock's read (#289).** The clock's read leaves out every schedule
+bound to a shared interval, in its statement on both kinds
+(`enabledTriggers(ownClock)`: not a `schedule` trigger whose schedule's kind
+is `tick`), so that a pass reads, and holds the lock for, only the triggers
+the clock may tick. A trigger changed to a shared interval after the list was
+read is still passed by when it is read (`scheduleTick`). Measured again on
+the postgresql kind, on the same machine: N enabled shared-interval triggers
+across four scopes, each due at one tick; one pass of the clock alone (the
+median of seven), then the tick with the clock running beside it as its loop
+runs it, a pass and then the next whole second. Before is the Runner of
+#288, after is this change.
+
+| N | One pass of the clock, before | After | The tick with the clock beside it, before | After |
+|---|---|---|---|---|
+| 1000 | 390 ms | 19 ms | 17.8 s | 12.0 s |
+| 2000 | 673 ms | 27 to 30 ms | 2 min 45 s | 22 to 36 s (two runs) |
+
+During the tick the clock's passes still took 160 to 220 ms on average:
+each dispatches up to ten of the occurrences the tick has admitted into runs
+(section 9), under the lock. The tick now shares the lock with that
+dispatch, not with the read.
+
 These are one machine's figures, not bounds: they vary with the disk, the
 network to the database, the store's size, and the load beside it. The tests
 report their own figure and hold only the counts.
 
-**The maximums.** `triggers` is at most 1000: at 2000 on the postgresql kind
-the Runner's own clock spends about three quarters of every second reading
-the triggers, and a tick with the clock running took longer than one minute,
-the shortest shared interval; at 1000 the tick took under 20 s on both kinds
-and the clock's pass about a third of a second. `pendingOccurrences` is at
+**The maximums.** `triggers` is at most 1000. Before #289, at 2000 on the
+postgresql kind the Runner's own clock spent about three quarters of every
+second reading the triggers, and a tick with the clock running took longer
+than one minute, the shortest shared interval; at 1000 the tick took under
+20 s on both kinds and the clock's pass about a third of a second. Since
+#289 the figures would allow 2000 triggers bound to shared intervals: the
+clock's pass about 30 ms, and a tick with the clock beside it under one
+minute. The maximum stays, because the limit counts every trigger and the
+clock still reads, once a second, each enabled trigger not bound to a
+shared interval (another schedule, a file, an event or a cloud trigger), at
+the cost the first table shows: 2000 of those on the postgresql kind would
+take about three quarters of every second again. A larger maximum waits for
+a read that costs only the triggers due, by their next time, or for a limit
+of its own for shared-interval triggers. `pendingOccurrences` is at
 most 2000: the tick's check of the queue is one count in each trigger's
 transaction (a row on the postgresql kind), and the ticks at 2000 cost no
 more per trigger than at 128. A larger queue is a longer wait for its last
@@ -357,11 +390,6 @@ triggers is safe:
   (section 5). No due time is admitted twice. The list of triggers is read
   once, at the start: a trigger enabled during the call is next due after the
   tick (section 5) and is not missed.
-
-**Not in this change.** The Runner's own clock reads every enabled trigger
-each second, the shared-interval ones included, which it never ticks; at the
-maximum that pass is the larger cost. Leaving them out of its pass is a
-change to the clock, not to the tick, and is left for its own change.
 
 ## 9. Limits, and not in this change
 

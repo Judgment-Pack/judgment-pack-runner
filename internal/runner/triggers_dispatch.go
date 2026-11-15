@@ -32,7 +32,10 @@ func (s *Service) automationTick(at time.Time) error {
 	if s.unhealthy.Load() {
 		return nil
 	}
-	ids, e := s.store.enabledTriggers()
+	// The clock's own triggers: one bound to a shared interval is not read
+	// (scheduleTick would pass it by), so that a pass costs the triggers the
+	// clock ticks, not every trigger (docs/design/schedules.md, section 8).
+	ids, e := s.store.enabledTriggers(true)
 	if e != nil {
 		return e
 	}
