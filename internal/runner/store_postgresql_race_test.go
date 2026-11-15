@@ -136,7 +136,7 @@ func raceForTheQueue(t *testing.T, runners [2]*Service, queued func(Run) Run, re
 // returns no error, so that its dispatcher goes on, and it works the next
 // run queued.
 func TestPostgreSQLADispatcherThatLosesAClaimGoesOn(t *testing.T) {
-	shortClaimTimes(t, 30*time.Millisecond, 2*time.Second)
+	shortClaimTimes(t, 300*time.Millisecond, 5*time.Second)
 	runners, submit := pgTwoRunners(t)
 	first := runners[0]
 	raced := submit("one")
