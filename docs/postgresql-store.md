@@ -85,7 +85,9 @@ The grants file (`0002_grants.sql`) gives the two run-time logins `USAGE` on the
 table privileges of the design's section 7, and no privilege on a sequence, and no `DELETE`,
 `TRUNCATE`, `REFERENCES` or `TRIGGER`: at run time the Runner deletes, truncates and drops nothing.
 A later file that names the logins (`0003_held_routes.sql`, the policies of the routes held in
-this release) is applied only with the logins the grants were made to, and records them too.
+this release; `0006_profile_rows_unscoped.sql`, which holds the request login's writes of the
+profile rows to the none scope) is applied only with the logins the grants were made to, and
+records them too.
 
 ## Configure
 
@@ -354,5 +356,5 @@ Each release ships its migration set and its digests. Before starting a newer `j
 store, stop every Runner of the store and run the newer release's `store migrate`; a Runner
 refuses a store whose set is not its own, an older set and a newer one alike, but only at its
 start. A migration only adds: no table is dropped or truncated. A store of an earlier release is
-refused until `0004_several_runners.sql` is applied, and one migrated before #246 until
-`0005_schedules.sql` is.
+refused until `0004_several_runners.sql` is applied, one migrated before #246 until
+`0005_schedules.sql` is, and one migrated before #279 until `0006_profile_rows_unscoped.sql` is.

@@ -164,3 +164,36 @@ func TestPostgreSQLAStoreErrorUnderAClaimLeavesTheOccurrenceToTheNextClaimant(t 
 		t.Fatalf("the next claimant did not submit the occurrence: %+v", done)
 	}
 }
+
+// Two Runners on the postgresql kind, the run queue full (#282, item 3):
+// the first's dispatch finds no room, and releases the claim with the
+// occurrence accepted as it was read, returning no error; once there is
+// room, the second claims it and submits its run.
+func TestPostgreSQLAFullQueueReleasesTheOccurrencesClaim(t *testing.T) {
+	p := pgRunners(t)
+	first, second := p.open(), p.open()
+	o, due := p.admitted(first)
+	var active int
+	must(t, p.suite.QueryRowContext(pgContext, "SELECT value FROM counts WHERE name='active-runs'").Scan(&active))
+	_, err := p.suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='active-runs'", defaultRunQueue)
+	must(t, err)
+	if err := first.dispatchOccurrence(o, due.Add(time.Second)); err != nil {
+		t.Fatal("the dispatch with the queue full returned an error:", err)
+	}
+	var claimed int
+	must(t, p.suite.QueryRowContext(pgContext, "SELECT count(*) FROM occurrences WHERE id=$1 AND claim_id IS NOT NULL", o.ID).Scan(&claimed))
+	if claimed != 0 {
+		t.Fatal("the occurrence's claim was kept with the queue full")
+	}
+	if left := storedOccurrence(t, second, o.ID); left.State != "accepted" || left.Input == nil || left.RunID != "" {
+		t.Fatalf("the occurrence was not left as it was read: %+v", left)
+	}
+	_, err = p.suite.ExecContext(pgContext, "UPDATE counts SET value=$1 WHERE name='active-runs'", active)
+	must(t, err)
+	if err := second.dispatchOccurrence(storedOccurrence(t, second, o.ID), due.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if done := storedOccurrence(t, second, o.ID); done.State != "submitted" || done.RunID == "" {
+		t.Fatalf("the next claimant did not submit the occurrence: %+v", done)
+	}
+}
