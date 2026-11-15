@@ -141,7 +141,10 @@ matches closer than one interval would fall on one tick.
 
 The bounds in force are checked wherever a trigger's configuration is: when a
 job is created with it, when it is configured or previewed, when it is
-enabled, and when a job upgrade carries it to a new revision. A trigger
+enabled, and when a job upgrade carries it to a new revision. A job upgrade
+refused by them answers the same `422` code, not `409`
+`trigger_upgrade_incompatible`, which stays the answer for a trigger the new
+release cannot serve. A trigger
 enabled before the operator narrowed them keeps its schedule until it is
 changed or enabled again (section 9).
 

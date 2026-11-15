@@ -2192,6 +2192,16 @@
           },
           "409": {
             "description": "Stale review, active automation, pending work, failed tests or invalid artifact version; on an installation booted with requireComparableFacts, a release not checked with it (release_comparable_facts_required); on one booted with requireSuppliedReviewedSet, a release not checked against a supplied reviewed-set lock (release_reviewed_set_required)."
+          },
+          "422": {
+            "description": "Among others, a trigger of the job whose cron or shared-interval schedule the operator's bounds in force refuse, by the bound's own code (cron_interval_too_short, cron_interval_too_long, cron_never_matches, unknown_shared_interval), as on configuring and enabling it; a trigger the new release cannot serve stays 409 trigger_upgrade_incompatible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }

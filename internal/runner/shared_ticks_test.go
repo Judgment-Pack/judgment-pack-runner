@@ -478,12 +478,31 @@ func TestACronScheduleIsHeldToTheOperatorsBounds(t *testing.T) {
 	// minimum refuses to enable a trigger configured under the earlier one.
 	got = configure(cronSchedule("*/5 * * * *", "UTC"), "", 0)
 	must(t, json.Unmarshal(got.Body.Bytes(), &tr))
+	upgraded := w.job("scope-a")
+	held, e := w.s.configureTrigger(upgraded.ID, "", 0, cronSchedule("*/5 * * * *", "UTC"))
+	must(t, e)
 	w.s.Close()
 	w.cfg.Schedules.MinimumSeconds = 600
 	w.s = openJournal(t, w.cfg)
 	got = serve(t, w.s, "POST", "/v1/triggers/"+tr.ID+"/state?scope=scope-a", fmt.Sprintf(`{"revision":%d,"paused":false,"reviewed":true}`, tr.Revision), nil)
 	if got.Code != 422 || !strings.Contains(got.Body.String(), "cron_interval_too_short") {
 		t.Fatalf("a trigger under a raised minimum was enabled: %d %s", got.Code, got.Body.String())
+	}
+	// A job upgrade carries every trigger to a new revision under the bounds
+	// in force: one they refuse is refused by their own code, 422, not as a
+	// trigger the release cannot serve, and the job is left as it was.
+	newer := journalRelease(t, w.s, w.runtime)
+	before, e := w.s.job(upgraded.ID)
+	must(t, e)
+	got = serve(t, w.s, "POST", "/v1/jobs/"+upgraded.ID+"/upgrade?scope=scope-a", string(encode(UpgradeJobRequest{ReleaseID: newer.ID, BaseReleaseID: upgraded.ReleaseID, BaseRevision: upgraded.Revision, Reviewed: true})), nil)
+	if got.Code != 422 || !strings.Contains(got.Body.String(), `"code":"cron_interval_too_short"`) {
+		t.Fatalf("an upgrade carrying a trigger under a raised minimum: %d %s", got.Code, got.Body.String())
+	}
+	if after, e := w.s.job(upgraded.ID); e != nil || after != before {
+		t.Fatalf("a refused upgrade changed the job: %+v %v", after, e)
+	}
+	if after, _ := storedTrigger(t, w.s, held.ID); after.Revision != held.Revision {
+		t.Fatalf("a refused upgrade revised the trigger to %d", after.Revision)
 	}
 	// The status states the settings in force.
 	status := serve(t, w.s, "GET", "/v1/status", "", nil).Body.String()
