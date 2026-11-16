@@ -392,6 +392,8 @@ func (s *Service) admitBoundEvent(st runStore, t Trigger, hash string, event Eve
 			return old, false, &apiError{409, "event_conflict", "This event ID was already received with a different payload."}
 		}
 		old.Input = nil
+		// The held pages are private, as on the occurrence routes (#308).
+		old.HeldPages = nil
 		return old, true, nil
 	}
 	if !absent(e) {

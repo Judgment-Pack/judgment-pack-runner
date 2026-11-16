@@ -271,6 +271,8 @@ names a next reference fails its occurrence and leaves the cursor.
   A throttled first page holds nothing: its session is sealed and the next
   attempt asks it afresh. Held pages never outlive the wait: an occurrence that
   expires or fails before its next attempt drops them and seals their session.
+  They are private, as a task's request and profile are: neither the
+  occurrence routes nor an event's replay answer serves `heldPages`.
 - **Pages written as received** (4.5): each page, once verified (its receipt is
   call i of the session, the pages are within the combined input limit, and
   the page reads), is written to the occurrence's `heldPages` before the next
