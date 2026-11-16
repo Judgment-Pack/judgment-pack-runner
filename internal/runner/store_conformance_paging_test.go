@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 )
 
@@ -66,13 +67,21 @@ var pagingStoreCases = []storeCase{
 		if value, by := cursor(); value != "b1" || by != first.ID {
 			t.Fatalf("the cursor is %q by %s, want b1 by %s", value, by, first.ID)
 		}
+		// The run that moved it says nothing was held.
+		if r, err := w.st.run(first.ID); err != nil || r.Trigger.Paging[0].Cursor.Held != "" || r.Trigger.Paging[0].Cursor.To != "b1" {
+			t.Fatalf("the run that moved the cursor: %+v, %v", r.Trigger, err)
+		}
+		if e := completedEntry(t, w.st, first.ID); e.EntryVersion == pagingEntryVersion || len(e.CursorHeld) != 0 {
+			t.Fatalf("the entry of the run that moved the cursor: %+v", e)
+		}
 		// Runs whose occurrences read an older cursor, or none, complete
-		// late: the cursor stays.
+		// late: the cursor stays, and neither is silent about it.
 		for _, late := range []Run{claimed("run_late", "", "b0"), claimed("run_stale", "a0", "b2")} {
 			must(t, finishRunIn(w.st, completed(late)))
 			if value, by := cursor(); value != "b1" || by != first.ID {
 				t.Fatalf("%s moved the cursor to %q", late.ID, value)
 			}
+			notAdvanced(t, w.st, late)
 		}
 		// A run that read a pages' end with no next value moves nothing.
 		none := claimed("run_none", "b1", "")
@@ -110,6 +119,7 @@ var pagingStoreCases = []storeCase{
 			if held, _ := w.st.pagingCursors(w.job.ID); held["feed"].RunID != continued.ID {
 				t.Fatalf("%s moved the unfinished window: %+v", late.ID, held["feed"])
 			}
+			notAdvanced(t, w.st, late)
 		}
 		finished := windowed("run_finished", at("p2"), nil, "e1")
 		must(t, finishRunIn(w.st, completed(finished)))
@@ -166,4 +176,36 @@ var pagingStoreCases = []storeCase{
 			t.Fatal("another job's activity:", n, err)
 		}
 	}},
+}
+
+// completedEntry is the run.completed entry of the run held under id.
+func completedEntry(t *testing.T, st runStore, id string) Event {
+	t.Helper()
+	items, _, err := st.journalPage(journalFilter{}, journalRange{limit: 1000})
+	must(t, err)
+	for _, e := range items {
+		if e.Kind == "run.completed" && e.Concerns.Run == id {
+			return e
+		}
+	}
+	t.Fatal("no run.completed entry for", id)
+	return Event{}
+}
+
+// notAdvanced holds a completed run whose advance the cursor no longer
+// admitted to saying so (advanceCursors): its record's read names neither
+// to nor unfinished and is held "moved", and its run.completed entry names
+// the source in cursorHeld, at entry version 6.
+func notAdvanced(t *testing.T, st runStore, late Run) {
+	t.Helper()
+	r, err := st.run(late.ID)
+	must(t, err)
+	got := r.Trigger.Paging[0].Cursor
+	sent := late.Trigger.Paging[0].Cursor
+	if got.Held != cursorMoved || got.To != "" || got.Unfinished != nil || got.Read != sent.Read || got.From != sent.From || string(encode(got.Continued)) != string(encode(sent.Continued)) {
+		t.Fatalf("%s's record says its cursor advanced: %+v", late.ID, got)
+	}
+	if e := completedEntry(t, st, late.ID); e.EntryVersion != pagingEntryVersion || !slices.Equal(e.CursorHeld, []string{"feed"}) {
+		t.Fatalf("%s's entry does not name its cursor held: %+v", late.ID, e)
+	}
 }

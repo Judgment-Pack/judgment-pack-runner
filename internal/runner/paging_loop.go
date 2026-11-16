@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -103,7 +104,10 @@ type PagedRead struct {
 // then filling the case), the value it filled into the case (From), the
 // value the pages say comes next (To, absent when they say none), and, when
 // the read ended at the bound and left pages unread, why the cursor is held
-// where it was (Held, "bound"). A window cursor's read also names the
+// where it was (Held, "bound"). In a run's record, a read whose advance the
+// run that completed did not write, the cursor having moved on from Read,
+// names neither To nor Unfinished, and Held "moved" (advanceCursors). A
+// window cursor's read also names the
 // unfinished window the store held, which it continued (Continued), and the
 // unfinished window it leaves for the next run when the bound ended it with
 // a position kept (Unfinished, docs/design/paging.md, section 7). The run
@@ -803,17 +807,30 @@ func (p *occurrencePaging) result() []PagedRead {
 	return out
 }
 
+// cursorMoved is a paged read's held when the run that completes finds its
+// job's cursor moved on from what its occurrence read: another run moved it
+// since, and this run's advance is not written.
+const cursorMoved = "moved"
+
 // advanceCursors writes, in the transaction that records r completed, the
 // advance of each cursor its occurrence read (docs/design/paging.md, section
 // 4.2), only while the row still holds what the occurrence read: a run that
 // started from an older cursor and completes late never moves it back. A run
 // that ended otherwise writes nothing, and one whose claim was lost writes
 // nothing at all (finishRunIn).
-func advanceCursors(tx runTx, r Run) error {
+//
+// An advance the row no longer admits is never dropped in silence: it
+// answers r as it is recorded, each such read's cursor naming neither to
+// nor unfinished and held "moved", and the sources, for the run.completed
+// entry's cursorHeld. r itself is left as it is: the record answered is a
+// copy, made again by every run of the transaction.
+func advanceCursors(tx runTx, r Run) (Run, []string, error) {
 	if r.State != "completed" || r.Trigger == nil {
-		return nil
+		return r, nil, nil
 	}
-	for _, read := range r.Trigger.Paging {
+	var moved []string
+	var paging []PagedRead
+	for i, read := range r.Trigger.Paging {
 		a := read.Cursor
 		if a == nil || a.To == "" && a.Unfinished == nil {
 			continue
@@ -824,11 +841,27 @@ func advanceCursors(tx runTx, r Run) error {
 		if a.Unfinished != nil {
 			c.Value = a.From
 		}
-		if _, err := tx.advancePagingCursor(c, a.Read, a.Continued); err != nil {
-			return err
+		wrote, err := tx.advancePagingCursor(c, a.Read, a.Continued)
+		if err != nil {
+			return r, nil, err
 		}
+		if wrote {
+			continue
+		}
+		if paging == nil {
+			paging = slices.Clone(r.Trigger.Paging)
+		}
+		held := *a
+		held.To, held.Unfinished, held.Held = "", nil, cursorMoved
+		paging[i].Cursor = &held
+		moved = append(moved, read.Source)
 	}
-	return nil
+	if paging != nil {
+		origin := *r.Trigger
+		origin.Paging = paging
+		r.Trigger = &origin
+	}
+	return r, moved, nil
 }
 
 // errPagingRule is the refusal of a paging member that is not a list of

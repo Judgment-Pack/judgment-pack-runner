@@ -7169,7 +7169,7 @@
               "5",
               "6"
             ],
-            "description": "6 for an occurrence.ready entry that holds fullReRead or cursorHeld, which an entry of an earlier version never holds; 5 for an entry that holds disposition, errorClass or counts, whatever its by, scope or attempt, which an entry of an earlier version never holds; 4 for any other entry that holds attempt, whatever its by or scope; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, a 4 holds an attempt, and a 5 a run's or an occurrence's end with its counts or class, whatever its by."
+            "description": "6 for an occurrence.ready entry that holds fullReRead or cursorHeld, or a run.completed entry that holds cursorHeld, which an entry of an earlier version never holds; 5 for an entry that holds disposition, errorClass or counts, whatever its by, scope or attempt, which an entry of an earlier version never holds; 4 for any other entry that holds attempt, whatever its by or scope; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, a 4 holds an attempt, and a 5 a run's or an occurrence's end with its counts or class, whatever its by."
           },
           "kind": {
             "enum": [
@@ -7413,7 +7413,7 @@
             "items": {
               "type": "string"
             },
-            "description": "On occurrence.ready: the paged sources whose read ended at the bound, leaving pages unread, so that the job's cursor is held where it was (CursorAdvance held). Entry version 6."
+            "description": "On occurrence.ready: the paged sources whose read ended at the bound, leaving pages unread, so that the job's cursor is held where it was (CursorAdvance held bound). On run.completed: the paged sources whose advance the run did not write, the job's cursor having moved on from what its occurrence read (CursorAdvance held moved). Entry version 6."
           }
         }
       },
@@ -8854,9 +8854,10 @@
           "held": {
             "type": "string",
             "enum": [
-              "bound"
+              "bound",
+              "moved"
             ],
-            "description": "Why the cursor is held where it was: bound, the read ended at the dialect's maxPages and left pages unread, and no position could be kept (a change cursor, a window whose rule names no position, or an empty window), so the next run reads from the same cursor. The occurrence.ready entry names the source in cursorHeld."
+            "description": "Why this read does not move the cursor: bound, the read ended at the dialect's maxPages and left pages unread, and no position could be kept (a change cursor, a window whose rule names no position, or an empty window), so the next run reads from the same cursor, and the occurrence.ready entry names the source in cursorHeld; moved, in a completed run's record only, the job's cursor had moved on from read when the run completed, so its advance was not written (to and unfinished are left out), and the run.completed entry names the source in cursorHeld."
           },
           "continued": {
             "$ref": "#/components/schemas/UnfinishedWindow",

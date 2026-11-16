@@ -168,8 +168,10 @@ type EventDetail struct {
 	FullReRead []string `json:"fullReRead,omitempty"`
 	// CursorHeld names the paged sources whose read ended at the bound,
 	// leaving pages unread, so that the job's cursor is held where it was
-	// (paging_loop.go), on the entry of the occurrence's acceptance. An
-	// entry that holds it has pagingEntryVersion.
+	// (paging_loop.go), on the entry of the occurrence's acceptance; and, on
+	// run.completed, those whose advance the run did not write, the job's
+	// cursor having moved on from what its occurrence read (cursorMoved).
+	// An entry that holds it has pagingEntryVersion.
 	CursorHeld []string `json:"cursorHeld,omitempty"`
 }
 

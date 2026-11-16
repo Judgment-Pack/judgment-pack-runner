@@ -145,6 +145,39 @@ func TestAPagedOccurrenceUnderQueueWaitsForItsJobsEarlierWork(t *testing.T) {
 	}
 }
 
+// A completed run whose advance the job's cursor no longer admits, the
+// cursor having moved on since its occurrence read it, says so: its record's
+// read names no advance and is held "moved", and its run.completed entry
+// names the source in cursorHeld, at entry version 6, each as openapi.json
+// says.
+func TestARunWhoseCursorMovedOnSaysSo(t *testing.T) {
+	w := newPagedWorld(t, nil, changeCursor, newPagedFeed(t, 3, nil))
+	o := w.prepare(t, "first")
+	onePagedRead(t, o, 3, "no-next")
+	must(t, w.s.store.update(func(tx runTx) error {
+		_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "elsewhere", RunID: "run_elsewhere", UpdatedAt: now(), Scope: w.job.Scope}, "", nil)
+		return err
+	}))
+	r := w.run(t, o)
+	if r.State != "completed" || r.Trigger == nil || len(r.Trigger.Paging) != 1 || r.Trigger.Paging[0].Cursor == nil || *r.Trigger.Paging[0].Cursor != (CursorAdvance{From: "start", Held: cursorMoved}) {
+		t.Fatalf("the run does not say its cursor moved on: %s %+v", r.State, r.Trigger)
+	}
+	if value, by := w.cursor(t); value != "elsewhere" || by != "run_elsewhere" {
+		t.Fatalf("the cursor is %q by %s, want elsewhere by run_elsewhere", value, by)
+	}
+	e := completedEntry(t, w.s.store, r.ID)
+	if e.EntryVersion != pagingEntryVersion || !slices.Equal(e.CursorHeld, []string{"changes"}) {
+		t.Fatalf("the run's entry does not name its cursor held: %+v", e)
+	}
+	doc := readOpenAPI(t)
+	if problems := doc.check("trigger", doc.schema("TriggerOrigin"), decodeNumbers(t, encode(r.Trigger))); len(problems) > 0 {
+		t.Fatal("the run's origin is not as openapi.json says:", problems)
+	}
+	if problems := doc.check("entry", doc.schema("JournalEntry"), decodeNumbers(t, encode(e))); len(problems) > 0 {
+		t.Fatal("the run's entry is not as openapi.json says:", problems)
+	}
+}
+
 // Section 7, "Overlap", across Runners of one store of the second kind: an
 // occurrence one Runner is asked to prepare while another Runner's run of
 // its job is queued is neither prepared nor claimed, and is prepared from the
