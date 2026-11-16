@@ -23,15 +23,45 @@ func fourRelease(r Release) bool {
 	return r.InputMapping != nil && fourFamily(r.InputMapping.FormatVersion)
 }
 
+// fourReleaseForm holds a release on a dialect of format 4.0.0 or 4.1.0 to
+// RFC 0020 section 1's open form (spec 0d5bdea): id a string, packDigest and
+// runtimeDigest digests, inputMapping an object, every other member admitted
+// as retained. It reads the release's own encoding, the bytes the digest is
+// taken of, so a member that is missing there or of another form is refused
+// input-malformed: such a release has no release digest.
+func fourReleaseForm(r Release) error {
+	members, err := exactMembers(encode(r))
+	if err != nil {
+		return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" must be an object.")
+	}
+	var id string
+	if raw, ok := members["id"]; !ok || json.Unmarshal(raw, &id) != nil {
+		return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" needs a string id.")
+	}
+	for _, name := range []string{"packDigest", "runtimeDigest"} {
+		var d string
+		if raw, ok := members[name]; !ok || json.Unmarshal(raw, &d) != nil || !validDigest(d) {
+			return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" needs a digest "+name+".")
+		}
+	}
+	if raw, ok := members["inputMapping"]; !ok || len(raw) == 0 || raw[0] != '{' {
+		return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" needs an inputMapping object.")
+	}
+	return nil
+}
+
 // releaseDigestOf is a release's digest (RFC 0020 section 1). A release on
 // a dialect of format 4.0.0 or 4.1.0 is digested over the canon bytes of the
 // whole release as Runner retains it, every member as retained, the case's
-// rule and a source's paging among them; one outside the canon domain has
-// none, an error here, and is refused when it is saved
-// (fourReleaseDigestible). Every other release keeps the pinned encoding,
-// byte for byte.
+// rule and a source's paging among them; one outside the canon domain, or
+// not of the open release form (fourReleaseForm), has none, an error here,
+// and is refused when it is saved (fourReleaseDigestible). Every other
+// release keeps the pinned encoding, byte for byte.
 func releaseDigestOf(r Release) (string, error) {
 	if fourRelease(r) {
+		if err := fourReleaseForm(r); err != nil {
+			return "", err
+		}
 		b, err := derivation.Canon(encode(r))
 		if err != nil {
 			return "", codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" is outside the canon domain and has no release digest: "+err.Error())
@@ -50,11 +80,15 @@ func releaseDigestIs(r Release, want string) bool {
 }
 
 // fourReleaseDigestible refuses a release on a dialect of format 4.0.0 or
-// 4.1.0 that is outside the canon domain, input-malformed: it has no release
-// digest (RFC 0020 section 1, as proposed for 0.6.0).
+// 4.1.0 that is outside the canon domain, or not of the open release form,
+// input-malformed: it has no release digest (RFC 0020 section 1, as staged
+// for 0.6.0).
 func fourReleaseDigestible(r Release) error {
 	if !fourRelease(r) {
 		return nil
+	}
+	if err := fourReleaseForm(r); err != nil {
+		return err
 	}
 	if _, err := derivation.Canon(encode(r)); err != nil {
 		return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" is digested over the canon bytes of the whole release, and this one is outside the canon domain: "+err.Error())

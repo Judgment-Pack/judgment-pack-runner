@@ -45,9 +45,13 @@ written in the form of the dialect-recording schema of version 2
 `derivation`, a paged source's `paging` outcome) and read back from the store
 in the same form; the release digest of a release on either format is RFC
 0020's, the SHA-256 of the canon bytes of the whole retained release, and every
-other release keeps the pinned encoding, byte for byte. A release on either
-format outside the canon domain has no digest and is refused `input-malformed`
-when it is saved; the reader that would digest one anyway (an export, a
+other release keeps the pinned encoding, byte for byte. The retained release is
+RFC 0020 section 1's open form (spec `0d5bdea`): `id` a string, `packDigest`
+and `runtimeDigest` digests, `inputMapping` an object, every other member as
+retained. A release on either format that lacks one of the four in its
+encoding, has one of another form (an empty `packDigest`, say), or is outside
+the canon domain has no digest and is refused `input-malformed` when it is
+saved; the reader that would digest one anyway (an export, a
 workflow's freeze) fails, and a comparison of digests never matches it. The
 canon domain admits integers alone, so a release whose Runner-added members
 (`validation`, `preview`, `testEvidence.report`) hold a fraction cannot be

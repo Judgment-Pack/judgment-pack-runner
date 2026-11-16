@@ -2,6 +2,8 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Judgment-Pack/judgment-pack-runner/internal/derivation"
@@ -96,7 +98,10 @@ func verificationExport(release Release, run Run, asked int) VerificationBundle 
 func TestAFormat4ReleaseOutsideTheCanonDomainHasNoDigest(t *testing.T) {
 	var m InputMapping
 	must(t, strictJSON([]byte(triageFour), &m))
-	r := Release{ID: "release_fraction", InputMapping: &m, Validation: json.RawMessage(`{"score":0.5}`)}
+	r := Release{ID: "release_fraction", PackDigest: digest([]byte("pack")), RuntimeDigest: digest([]byte("runtime")), InputMapping: &m, Validation: json.RawMessage(`{"score":0.5}`)}
+	if fourReleaseForm(r) != nil {
+		t.Fatal("the release is not of the open form: the test shows nothing of the canon domain")
+	}
 	if d, err := releaseDigestOf(r); err == nil || d != "" {
 		t.Fatalf("a release outside the canon domain has a digest: %q %v", d, err)
 	}
@@ -108,5 +113,49 @@ func TestAFormat4ReleaseOutsideTheCanonDomainHasNoDigest(t *testing.T) {
 	}
 	if fourReleaseDigestible(r) == nil {
 		t.Fatal("a release outside the canon domain can be saved")
+	}
+}
+
+// RFC 0020 section 1 (spec 0d5bdea): a release on a dialect of format 4.x is
+// open, with id, packDigest, runtimeDigest and inputMapping required. One
+// whose packDigest or runtimeDigest is missing from its encoding, empty or of
+// another form has no release digest, is never matched, and cannot be saved.
+// (id is always encoded, a string, and inputMapping is what makes the
+// release one of format 4.x.)
+func TestAFormat4ReleaseWithoutItsRequiredMembersHasNoDigest(t *testing.T) {
+	var m InputMapping
+	must(t, strictJSON([]byte(triageFour), &m))
+	whole := Release{ID: "release_whole", PackDigest: digest([]byte("pack")), RuntimeDigest: digest([]byte("runtime")), InputMapping: &m}
+	held, err := releaseDigestOf(whole)
+	if err != nil || fourReleaseDigestible(whole) != nil {
+		t.Fatal("a release of the open form has no digest:", err)
+	}
+	for name, broken := range map[string]func(*Release){
+		"packDigest missing":      func(r *Release) { r.PackDigest = "" },
+		"runtimeDigest missing":   func(r *Release) { r.RuntimeDigest = "" },
+		"packDigest not a digest": func(r *Release) { r.PackDigest = "sha256:" + strings.Repeat("A", 64) },
+		"runtimeDigest truncated": func(r *Release) { r.RuntimeDigest = r.RuntimeDigest[:20] },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := whole
+			broken(&r)
+			d, err := releaseDigestOf(r)
+			if err == nil || d != "" {
+				t.Fatalf("the release has a digest: %q", d)
+			}
+			var c verificationCoded
+			if !errors.As(err, &c) || c.verificationCode() != codeMalformed {
+				t.Fatalf("the refusal is not input-malformed: %v", err)
+			}
+			if releaseDigestIs(r, held) || releaseDigestIs(r, "") {
+				t.Fatal("a release with no digest matches one")
+			}
+			if fourReleaseDigestible(r) == nil {
+				t.Fatal("a release without its required members can be saved")
+			}
+			if _, err := verificationExportOf(r, Run{}, 2); err == nil {
+				t.Fatal("a release with no digest was exported")
+			}
+		})
 	}
 }
