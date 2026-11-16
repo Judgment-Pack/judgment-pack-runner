@@ -63,15 +63,19 @@ summary block, and anything you stopped on or chose not to do.
 ## This repository
 
 - The checks are `dev.json`, run by `scripts/dev/check.sh`; CI runs the same list in the
-  `Runner (ubuntu-latest)` and `Runner (macos-latest)` jobs, and the four release steps again in
-  `Release contents` with the exact Go toolchain `release.yml` names. Branch protection requires
-  those job names. The longer steps are scripts under `scripts/checks/`.
+  `Runner (ubuntu-latest)` and `Runner (macos-latest)` jobs, but for `unit-tests`, which runs in
+  four shards on each system (`Unit tests (<os>, i/4)`, `JPACK_UNIT_SHARD=i/4`; a Runner job
+  fails unless every shard succeeded), and the four release steps again in `Release contents`
+  with the exact Go toolchain `release.yml` names. Branch protection requires the Runner,
+  `Release contents` and `PostgreSQL store` job names. The longer steps are scripts under
+  `scripts/checks/`.
 - The real-Runtime tests need the binaries `scripts/checks/build-pinned.sh` builds into `.ci/bin`
   from pinned Runtime, Gateway and old-Runner commits (it needs network access to fetch them). A
   pin and the release name beside it are moved together. The two test steps fail if a named test
   does not run and pass, so a skip is a failure there.
-- A pull request's `Runner` jobs run `scripts/dev/check.sh --all --changed origin/<base>` (less
-  the four release steps): only the steps `jpdev.json` maps the changed paths to, and the whole
+- A pull request's `Runner` and `Unit tests` jobs run `scripts/dev/check.sh --all --changed
+  origin/<base>` (less the four release steps and `unit-tests` in the Runner jobs, and less all but
+  `build-pinned` and `unit-tests` in the shards): only the steps `jpdev.json` maps the changed paths to, and the whole
   list when a changed path matches no rule (the workflows, `.gitattributes`, `.gitignore`, a file
   in a new place) or when `jpdev.json`, `dev.json` or the runner changed. A push to `main` runs the
   whole list, and only that run is what a release is held to; `Release contents` always runs its

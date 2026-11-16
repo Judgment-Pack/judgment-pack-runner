@@ -50,6 +50,19 @@ The `darwin/amd64` archive is built, read and checksummed and is not run by anyt
 start a job: that needs Runtime and a boot line from Desk, which CI covers at the tagged
 commit from source.
 
+## Merging
+
+A pull request reaches main through the merge queue (squash). The queue makes a group of the
+pull request on top of main and of the groups ahead of it, and runs CI and `DCO` on that group
+(`merge_group`) before main moves, so a pull request is no longer brought up to date with main
+by hand or by a workflow. CI on a merge group runs the steps its changes map to, as on a pull
+request; the push to main that follows runs the whole list, and that run is the evidence a
+release takes. A new push to a pull request cancels that pull request's CI run in progress; a
+run of main or of a merge group is never cancelled.
+
+`DCO` is a workflow of this repository (`.github/workflows/dco.yml`): every commit of the pull
+request carries `Signed-off-by:` naming its own author; a commit an app made is exempt.
+
 ## Once, before the first release
 
 1. Create the `production` environment with a required reviewer. The workflow reads the
@@ -219,17 +232,24 @@ The release reuses that evidence only when all of this holds, and refuses otherw
   attempt; no newer failed, cancelled or running attempt of a `main` run at that commit, and
   none unfinished. Pull request runs, other branches' runs and runs from forks neither count
   nor block. The attempt started at most 48 hours before the release reads it.
-- **Every job.** `Runner (ubuntu-latest)`, `Runner (macos-latest)` and `Release contents`,
-  each `success` on a GitHub-hosted runner with its one label, from the selected attempt; no job
-  may be skipped and no other job may be there.
+- **Every job.** `Runner (ubuntu-latest)`, `Runner (macos-latest)`, `Release contents`,
+  `PostgreSQL store`, and the eight unit-test shards `Unit tests (ubuntu-latest, 1/4)` to
+  `Unit tests (macos-latest, 4/4)`, each `success` on a GitHub-hosted runner with its one label,
+  from the selected attempt; no job may be skipped and no other job may be there.
 - **Every check, passed.** The Runner legs: `local-paths`, `agent-docs`, `diff-check`,
-  `go-fmt`, `go-vet`, `build-pinned`, `manual-gate`, `unit-tests`, `chain-tests`, `openapi`,
-  `build`, `ci-evidence`. `Release contents`: `release-toolchain`, `third-party-notices`,
-  `release-archives`, `release-programs`. Each `PASS`; no skip is permitted.
+  `go-fmt`, `go-vet`, `build-pinned`, `manual-gate`, `chain-tests`, `openapi`, `build`,
+  `ci-evidence`. The Unit tests legs: `build-pinned`, `unit-tests`, each with
+  `JPACK_UNIT_SHARD=<i>/4`, which runs the test groups of row `i` of the shard table in
+  `scripts/checks/unit-tests.sh`; the script refuses a table that does not name every group and
+  the store conformance run exactly once, and `tools/test_ci_evidence.py` holds the shards
+  `ci.yml` names to running every group once between them, so the four shards' `PASS` on a
+  system is the whole step's. `Release contents`: `release-toolchain`, `third-party-notices`,
+  `release-archives`, `release-programs`. `PostgreSQL store`: `postgresql-store`. Each `PASS`;
+  no skip is permitted.
 - **The real companions ran.** `build-pinned` builds the Runtime, earlier Runtime, old Runner
   and Gateway at the commits `scripts/checks/build-pinned.sh` pins. `manual-gate`,
   `chain-tests` and `unit-tests` fail when one of the tests they name did not run and pass, so a
-  `PASS` of each, on both Runner legs, is the proof that those tests ran against the pinned
+  `PASS` of each, on both Runner legs (of `unit-tests`, in every shard on both systems), is the proof that those tests ran against the pinned
   builds and did not skip. Two of them, with two subtests, are required on Linux only, because
   they observe the Runtime through Linux `/proc`, and may skip on macOS by design:
   `TestManualGovernedActualRuntimeHasNoAuthorityFD` (`manual-gate`) and
@@ -240,9 +260,9 @@ The release reuses that evidence only when all of this holds, and refuses otherw
   `tools/release_archives.py`, `tools/test_release_archives.py`) and `.goreleaser.yml`, both
   workflows, `dev.json`, the configuration and the gate, and the release derives the same ids
   from its own checkout.
-- **The release toolchain.** All three jobs set up Go 1.26.5, the toolchain `package` links the
-  archives with. The two Linux jobs' image, OS release, Go, Python, git and bash must equal what
-  this job's runner resolves with the same Go set up; the macOS job must have run Go 1.26.5 on
+- **The release toolchain.** Every job sets up Go 1.26.5, the toolchain `package` links the
+  archives with. The Linux jobs' image, OS release, Go, Python, git and bash must equal what
+  this job's runner resolves with the same Go set up; the macOS jobs must have run Go 1.26.5 on
   macOS ARM64 with the image family `macos26` (`ImageOS`). A newer image of that family is
   accepted for the 48 hours the evidence lasts: its version is recorded in the decision record
   and not compared.

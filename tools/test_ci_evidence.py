@@ -80,17 +80,29 @@ def steps(block):
     return ['- ' + part for part in re.split(r'^      - ', block, flags=re.M)[1:]]
 
 
+MATRIX_AXES = ('os', 'shard')
+
+
 def legs(key, block):
-    """The display name, labels and matrix value of each leg of a job."""
+    """The display name, labels and matrix values of each leg of a job: one leg for each
+    combination of the values of its matrix axes (os, and shard for the unit-test shards)."""
     name = one(re.findall(r'^    name: (.+)$', block, re.M), key + ' name')
     runs_on = one(re.findall(r'^    runs-on: (.+)$', block, re.M), key + ' runs-on')
-    matrix = re.findall(r'^        os: \[(.*)\]$', block, re.M)
-    values = [value.strip() for value in one(matrix, key + ' matrix').split(',')] if matrix else [None]
+    combinations = [{}]
+    for axis in MATRIX_AXES:
+        matrix = re.findall(r'^        %s: \[(.*)\]$' % axis, block, re.M)
+        if matrix:
+            values = [value.strip() for value in one(matrix, key + ' matrix ' + axis).split(',')]
+            combinations = [dict(combination, **{axis: value})
+                            for combination in combinations for value in values]
     result = []
-    for value in values:
-        def expand(text, value=value):
-            return text if value is None else text.replace('${{ matrix.os }}', value)
-        result.append({'job_id': key, 'name': expand(name), 'labels': [expand(runs_on)], 'expand': expand})
+    for combination in combinations:
+        def expand(text, combination=combination):
+            for axis, value in combination.items():
+                text = text.replace('${{ matrix.%s }}' % axis, value)
+            return text
+        result.append({'job_id': key, 'name': expand(name), 'labels': [expand(runs_on)], 'expand': expand,
+                       'matrix': combination})
     return result
 
 
@@ -121,10 +133,11 @@ def go_versions(text):
 
 
 def unit_partition_trace(script, *, script_text=None, fail_call=None, fail_args=None, jobs=None,
-                         conformance='sqlite,memory,twice'):
+                         conformance='sqlite,memory,twice', shard=None):
     """Execute only shell wiring: the fake Go records selections, never builds.
 
-    jobs sets JPACK_UNIT_TEST_JOBS (None leaves the script's default). Call numbers
+    jobs sets JPACK_UNIT_TEST_JOBS (None leaves the script's default) and shard sets
+    JPACK_UNIT_SHARD (None runs every group, as a local run does). Call numbers
     follow the order in which Go starts, so fail_call is exact only with jobs='1';
     fail_args fails the call with exactly these arguments, whatever its number."""
     with tempfile.TemporaryDirectory(prefix='runner-unit-selection-') as temporary:
@@ -159,12 +172,35 @@ if '^TestStoreKindsConform$' in args:
                    UNIT_SELECTION_FAIL_ARGS=json.dumps(fail_args),
                    UNIT_SELECTION_CONFORMANCE=conformance)
         env.pop('JPACK_UNIT_TEST_JOBS', None)
+        env.pop('JPACK_UNIT_SHARD', None)
         if jobs is not None:
             env['JPACK_UNIT_TEST_JOBS'] = jobs
+        if shard is not None:
+            env['JPACK_UNIT_SHARD'] = shard
         process = subprocess.run(['bash', str(script)], cwd=ROOT, env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         calls = [json.loads(line) for line in trace.read_text().splitlines()] if trace.exists() else []
         return process, calls
+
+
+UNIT_SCRIPT = 'scripts/checks/unit-tests.sh'
+UNIT_TABLE = re.compile(r"^unit_shards=\(('[^']*'(?: '[^']*')*)\)$", re.M)
+
+
+def unit_shard_rows(script):
+    """The rows of unit-tests.sh's shard table, each the groups (and store) one shard runs."""
+    return re.findall(r"'([^']*)'", one(UNIT_TABLE.findall(script), 'shard table'))
+
+
+def with_unit_shard_rows(script, rows):
+    return UNIT_TABLE.sub("unit_shards=(%s)" % ' '.join("'%s'" % row for row in rows), script, count=1)
+
+
+def without_unit_group(script, group):
+    """The script with group (a number) left out of its shard table: what a script that has one
+    group fewer needs for its table to name every group once."""
+    rows = [' '.join(item for item in row.split() if item != str(group)) for row in unit_shard_rows(script)]
+    return with_unit_shard_rows(script, rows)
 
 
 class Jobs(unittest.TestCase):
@@ -246,13 +282,129 @@ class Checks(unittest.TestCase):
         # Named too: a script that lost its must-run assertions would drop out of the derivation.
         self.assertTrue({'build-pinned', 'manual-gate', 'unit-tests', 'chain-tests'} <= {name for name, _ in named},
                         named)
-        runner = [spec for spec in settings['workflows']['ci']['jobs'].values() if spec['job_id'] == 'check']
+        legs = settings['workflows']['ci']['jobs'].values()
+        runner = [spec for spec in legs if spec['job_id'] == 'check']
         self.assertEqual(len(runner), 2)
-        for name, script in named:
-            with self.subTest(check=name):
-                self.assertIn(script, settings['inputs'])
-                for spec in runner:
-                    self.assertIn(name, spec['checks'])
+        for spec in runner:
+            # unit-tests runs in the Unit tests shards of the Runner leg's system, not in the leg: each
+            # check is in the leg or in every shard of its system, and unit-tests in every shard.
+            # That the shards of a system run every group is test_the_unit_shards_of_ci_run_every_group_once.
+            shards = [shard for shard in legs if shard['job_id'] == 'unit' and shard['labels'] == spec['labels']]
+            self.assertTrue(shards, spec['name'])
+            in_every_shard = set.intersection(*(set(shard['checks']) for shard in shards))
+            self.assertIn('unit-tests', in_every_shard)
+            self.assertNotIn('unit-tests', spec['checks'])
+            for name, script in named:
+                with self.subTest(leg=spec['name'], check=name):
+                    self.assertIn(script, settings['inputs'])
+                    self.assertIn(name, set(spec['checks']) | in_every_shard)
+                    # The pinned binaries are built where the tests that run them run.
+                    if name != 'build-pinned' and name in in_every_shard:
+                        self.assertIn('build-pinned', in_every_shard)
+
+    def test_a_pull_request_or_merge_group_selects_only_checks_its_job_runs_on_a_push(self):
+        """A job's --changed calls leave out exactly what its push call leaves out, so that a pull
+        request never runs a check in a job that does not run it on main (a Unit tests shard running
+        go-vet, say), and never skips one that job owns."""
+        everything = manifest_checks()
+        found = 0
+        for key, block in jobs(read(config()['workflows']['ci']['path'])).items():
+            calls = re.findall(r'scripts/dev/check\.sh --all --changed \S+ (.*)$', block, re.M)
+            if not calls:
+                continue
+            with self.subTest(job=key):
+                self.assertEqual(len(calls), 2, 'one for a pull request and one for a merge group')
+                for call in calls:
+                    words = call.split()
+                    self.assertEqual(words[0], '--skip', call)
+                    left_out = words[1].split(',')
+                    self.assertEqual([name for name in everything if name not in left_out], push_selection(block))
+                found += 1
+        self.assertEqual(found, 2, 'the Runner and Unit tests jobs')
+
+    def test_a_runner_leg_fails_unless_every_unit_shard_succeeded(self):
+        """The Runner legs are the required names: one that a failed shard skipped would count as
+        passing, so they run after the shards whatever happened, and fail first unless all
+        succeeded."""
+        block = jobs(read(config()['workflows']['ci']['path']))['check']
+        self.assertIn('\n    needs: unit\n    if: ${{ always() }}\n', block)
+        gate = steps(block)[0]
+        self.assertIn('\n        env:\n          UNIT: ${{ needs.unit.result }}\n        run: |\n', gate)
+        lines = gate.split('run: |\n', 1)[1].split('\n')
+        ends = [index for index, line in enumerate(lines) if line and not line.startswith(' ' * 10)]
+        body = '\n'.join(line[10:] for line in lines[:ends[0] if ends else len(lines)])
+        self.assertIn('exit 1', body)
+        for result, status in (('success', 0), ('failure', 1), ('cancelled', 1), ('skipped', 1), ('', 1)):
+            with self.subTest(result=result):
+                process = subprocess.run(['bash', '-e', '-c', body], env=dict(os.environ, UNIT=result),
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                self.assertEqual(process.returncode, status, process.stdout)
+
+    def test_the_unit_shards_of_ci_run_every_group_once(self):
+        """On each system the shards ci.yml names, with the JPACK_UNIT_SHARD each sets, run every group
+        and the store conformance run exactly once between them: the evidence of the Unit tests legs
+        is the evidence of the whole unit-tests step."""
+        script = ROOT / UNIT_SCRIPT
+        block = jobs(read(config()['workflows']['ci']['path']))['unit']
+        setting = one(re.findall(r'^          JPACK_UNIT_SHARD: (.+)$', block, re.M), 'JPACK_UNIT_SHARD')
+        serial, everything = unit_partition_trace(script, jobs='1')
+        self.assertEqual(serial.returncode, 0, serial.stdout)
+        shards = {}
+        for leg in ci_legs().values():
+            if leg['job_id'] == 'unit':
+                self.assertNotIn('${{', leg['name'])
+                shards.setdefault(leg['labels'][0], []).append(leg['expand'](setting))
+        self.assertEqual(sorted(shards), ['macos-latest', 'ubuntu-latest'])
+        for system, selections in shards.items():
+            with self.subTest(system=system):
+                self.assertEqual(len(selections), len(set(selections)))
+                union = []
+                for selection in selections:
+                    process, calls = unit_partition_trace(script, jobs='1', shard=selection)
+                    self.assertEqual(process.returncode, 0, process.stdout)
+                    self.assertTrue(calls, selection + ' runs nothing')
+                    self.assertIn('unit-tests: shard %s: ' % selection, process.stdout)
+                    union += calls
+                self.assert_unit_partition_calls(union)
+                self.assertEqual(sorted(json.dumps(call['args']) for call in union),
+                                 sorted(json.dumps(call['args']) for call in everything))
+
+    def test_unit_script_refuses_a_shard_table_that_does_not_name_every_group_once(self):
+        script = read(UNIT_SCRIPT)
+        rows = unit_shard_rows(script)
+        longest = max(range(len(rows)), key=lambda index: len(rows[index].split()))
+        first = rows[longest].split()[0]
+        other = (longest + 1) % len(rows)
+
+        def changed(index, row):
+            return [row if number == index else value for number, value in enumerate(rows)]
+        mutants = [
+            (changed(longest, ' '.join(rows[longest].split()[1:])), 'the shard table names %s in no shard' % first),
+            ([' '.join(item for item in row.split() if item != 'store') for row in rows],
+             'the shard table names store in no shard'),
+            (changed(other, rows[other] + ' ' + first), 'the shard table names %s twice' % first),
+            (changed(other, rows[other] + ' 12'), 'the shard table names group 12 of 11'),
+            (changed(other, rows[other] + ' x'), "the shard table names 'x', which is not a group"),
+            (rows + [''], 'a shard of the table has no group'),
+        ]
+        for mutated, message in mutants:
+            for shard in (None, '1/%d' % len(mutated)):
+                with self.subTest(table=mutated, shard=shard):
+                    process, calls = unit_partition_trace(ROOT / UNIT_SCRIPT, shard=shard,
+                                                          script_text=with_unit_shard_rows(script, mutated))
+                    self.assertEqual(process.returncode, 2, process.stdout)
+                    self.assertEqual(calls, [])
+                    self.assertIn(message, process.stdout)
+
+    def test_unit_script_refuses_a_shard_that_is_not_one_of_its_table(self):
+        count = len(unit_shard_rows(read(UNIT_SCRIPT)))
+        for shard in ('0/%d' % count, '%d/%d' % (count + 1, count), '1/%d' % (count + 1), '1/%d' % (count - 1),
+                      '1', 'a/%d' % count, '01/%d' % count, ' 1/%d' % count, '1/%d ' % count, '1/%d/1' % count):
+            with self.subTest(shard=shard):
+                process, calls = unit_partition_trace(ROOT / UNIT_SCRIPT, shard=shard)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertEqual(calls, [])
+                self.assertIn('not i/%d with i from 1 to %d' % (count, count), process.stdout)
 
     def assert_unit_partition_calls(self, calls):
         main = [call for call in calls if '^TestStoreKindsConform$' not in call['args']]
@@ -358,8 +510,14 @@ class Checks(unittest.TestCase):
         for before, after, message in mutations:
             with self.subTest(safeguard=message):
                 self.assertEqual(script.count(before), 1, before)
+                mutated = script.replace(before, after)
+                if after.startswith(': # omitted'):
+                    # The script refuses a shard table that names a group it no longer has
+                    # (test_unit_script_refuses_a_shard_table_that_does_not_name_every_group_once);
+                    # the table leaves out the last group so that the partition check is what fails.
+                    mutated = without_unit_group(mutated, 11)
                 process, calls = unit_partition_trace(ROOT / 'scripts/checks/unit-tests.sh',
-                                                       script_text=script.replace(before, after))
+                                                       script_text=mutated)
                 self.assertEqual(process.returncode, 0, process.stdout)
                 with self.assertRaisesRegex(AssertionError, message):
                     self.assert_unit_partition_calls(calls)
