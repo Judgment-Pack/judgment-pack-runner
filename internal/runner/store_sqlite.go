@@ -572,8 +572,11 @@ func sqliteJournalCondition(f journalFilter) (string, []any) {
 			where += " OR kind IN ('journal.began','runner.started','runner.stopped')"
 		}
 	}
-	if f.scope != "" {
+	switch {
+	case f.scope != "":
 		where, args = "("+where+") AND json_extract(detail,'$.scope')=?", append(args, f.scope)
+	case f.noScope:
+		where = "(" + where + ") AND json_extract(detail,'$.scope') IS NULL"
 	}
 	if !f.results.empty() {
 		conditions, more := sqliteResultConditions(f.results, "detail", "kind", false)

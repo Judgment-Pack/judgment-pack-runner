@@ -149,7 +149,7 @@ directories, the pinned Runtime and a preview's scratch directory (below). It ho
 
 Row security is enabled and forced on every table, the owner included. Every transaction the
 request login makes sets `jpack.scope` for that transaction alone (`set_config(..., true)`), to
-the scope identifier the request names, or to none; the policy on each table with scoped rows
+the scope identifier the request is held to, or to none; the policy on each table with scoped rows
 admits only the rows of that scope. A transaction that sets no scope reaches no scoped row. The
 journal also shows a request the entries of no scope that name no job (the Runner's own entries
 and previews), as the sqlite kind does. A refused job creation names a release and its caller,
@@ -163,12 +163,18 @@ sqlite kind. A request held to one scope can learn that some scope holds a relea
 or a cloud binding, never which. Journal sequences are shared across scopes: a page shows gaps where other
 scopes' entries are.
 
-Row security holds a request to the scope it names; it does not choose that scope for the
-caller. The installation's routes take none and span every scope: `POST /v1/ticks` ticks every
-scope's shared-interval triggers through the store for every scope, and `GET /v1/status` lists
-under `triggersOutsideSettings` the trigger ids of every scope. A gateway or proxy in front that
-binds a caller to one scope must not forward either to that caller, or must remove the member
-first (SECURITY.md, "Security boundary").
+Row security holds a request to the scope Runner sets; with an `identity`, Runner sets the one
+the caller's identity allows, never the one the request names alone
+([caller scopes](adr/0002-caller-scopes.md)). A request naming a scope identifier its caller
+does not reach, or naming none when the caller does not reach the none scope, is held to a value
+no row carries, so it reads no scoped row and every write's policy check fails; a held caller's
+listing naming no scope is never given the store for every scope. The installation's routes take
+none and span every scope: `POST /v1/ticks` ticks every scope's shared-interval triggers through
+the store for every scope, and `GET /v1/status` lists under `triggersOutsideSettings` the trigger
+ids of every scope. Both are served only to the installation's caller: the owner bearer, or a
+claimless token of a subject whose `callerScopes` entry is `"installation"`. With
+`"callerScopes": "unchecked"`, or the owner bearer, a request is held to the scope it names, as
+before (SECURITY.md, "Security boundary").
 
 ## Claims and leases
 

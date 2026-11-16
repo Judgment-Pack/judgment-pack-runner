@@ -130,13 +130,18 @@ to read a request's headers, 40 to read the request, 245 to write the answer,
 
 ## 4. Caller identity
 
-`identity` is an object with exactly these members (`ParseIdentityConfig`,
+`identity` is an object with these members and no other (`ParseIdentityConfig`,
 `internal/runner/caller_identity.go`):
 
 - `issuer`: the token issuer, as its tokens name it in `iss`;
 - `audience`: the audience this Runner is named as in `aud`;
 - `subjects`: the subjects whose requests Runner takes, 1 to 256, each once;
-- `keys`: the absolute, clean path of the issuer's key set file.
+- `keys`: the absolute, clean path of the issuer's key set file;
+- `callerScopes`, optional: the scope identifiers each subject may be granted
+  ([caller scopes](../adr/0002-caller-scopes.md), `caller_scopes.go`): an
+  object whose names are listed subjects and whose values are each an array of
+  1 to 256 scope identifiers, each once, `"unscoped"` or `"installation"`; or
+  `"unchecked"`. Absent, every subject is `"unscoped"`.
 
 The issuer and the audience are 1 to 1,024 bytes, a subject 1 to 256, none
 with a control character. The issuer holds no `#`, which ends it in the name a
@@ -198,7 +203,13 @@ an encoded member that is not the canonical unpadded base64url of its bytes.
    that has not passed; and, when present, an integer `nbf` that has. Each
    time is held with 30 seconds' leeway, and to the integers a JSON number
    holds exactly;
-7. a `sub` the configuration lists.
+7. a `sub` the configuration lists;
+8. unless `callerScopes` is `"unchecked"`, a `scope_ids`, when present, of 1
+   to 256 scope identifiers, each once, every one of them granted by the
+   subject's entry (`"unscoped"` among them only when the entry grants the
+   records under none): a claim wider than the entry is refused, not narrowed;
+   and, when absent, an entry that grants the records under none or is
+   `"installation"` (`reachOf`).
 
 A request that fails any of them is answered `401` with
 `WWW-Authenticate: Bearer` and
@@ -219,9 +230,18 @@ and starting Runner again. Runner bounds no token's lifetime: an `exp` however
 far ahead is taken, so how long a token lasts is the issuer's choice. Nor does
 it read `typ`: a JWT of another kind that the issuer signs for this audience,
 with these claims, is taken as an identity token, so the audience is one the
-issuer uses for this Runner's control API alone. Every listed subject may do everything the control
-API offers, as the owner bearer may: there are no permissions that differ
-between callers. Runner keeps no token: no record, journal entry, answer or
+issuer uses for this Runner's control API alone. A caller reaches the scope
+identifiers its claim names, all of them granted by its subject's entry, and
+the records created under no scope identifier when the claim and the entry
+both name `"unscoped"`; with no claim, those records alone, for an entry that
+grants them (and `401` for one that does not), or, for an `"installation"`
+entry, every scope and the installation's routes, as the owner bearer does
+([caller scopes](../adr/0002-caller-scopes.md), C3). Within what it
+reaches, a caller may do everything the control API offers: there are no
+permissions that differ by route, or between reading and writing. With
+`"unchecked"` the claim is not read and every listed subject reaches every
+scope; the start says so on standard error, and `GET /v1/status` says
+`"callerScopes":"unchecked"` (`"checked"` otherwise). Runner keeps no token: no record, journal entry, answer or
 line on standard error holds one.
 
 ## 5. The owner bearer and the identity
@@ -327,6 +347,9 @@ notes say so.
   or white space at either end, and a key that carries a private member.
 - Off loopback, what answers without a token is `GET /v1/health`, and nothing
   else; it says only whether Runner is healthy.
+- Both read `scope_ids` and its marker `"unscoped"`; Runner also holds it to a
+  per-subject entry and has an `"installation"` entry and installation routes
+  ([caller scopes](../adr/0002-caller-scopes.md), "Where the Runner differs").
 - Runner's listener keeps the companion's timeouts (section 3).
 
 ## 10. Not in this change
@@ -334,7 +357,9 @@ notes say so.
 - Scope identifiers (#237, since built: [scope identifiers](scope-identifiers.md)),
   retries (#238), counts on run records (#239), any storage change, more than
   one Runner per store, and metrics.
-- Permissions that differ between subjects.
+- Permissions that differ between subjects within the scope identifiers each
+  reaches ([caller scopes](../adr/0002-caller-scopes.md) holds each to its
+  scopes).
 - Desk in front of a service with `identity`: Desk's proxy holds the owner
   bearer, and nothing in this change makes it carry an identity token.
 - A key set fetched from the issuer, or re-read while Runner runs.

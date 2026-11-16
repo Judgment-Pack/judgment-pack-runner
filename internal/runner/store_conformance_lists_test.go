@@ -82,6 +82,10 @@ var listStoreCases = []storeCase{
 			{recordFilter{Scope: "team-A"}, []string{"job_gamma"}},
 			{recordFilter{Scope: "team"}, []string{}},
 			{recordFilter{Scope: "team-a", Search: "gamma"}, []string{}},
+			// The none scope's: the jobs that carry no scope identifier
+			// (caller_scopes.go).
+			{recordFilter{NoScope: true}, []string{"job_rate", "job_eclair", "job_beta", w.job.ID}},
+			{recordFilter{NoScope: true, Search: "report"}, []string{"job_beta"}},
 		} {
 			items, err := w.st.listedJobs(math.MaxInt64, c.filter, 51)
 			if ids := recordIDs(t, items, err); !slices.Equal(ids, c.want) {
@@ -159,6 +163,8 @@ var listStoreCases = []storeCase{
 			{"", recordFilter{Results: resultFilter{Outcomes: []string{"approved", "rejected"}}, State: "completed", Review: true}, []string{"run_handoff"}},
 			{"", recordFilter{Results: resultFilter{Classes: []string{classSource, classInterrupted}}}, []string{"run_interrupted", "run_failed"}},
 			{"", recordFilter{Scope: "team-a"}, []string{"run_handoff", "run_rejected"}},
+			{"", recordFilter{NoScope: true}, []string{"run_running", "run_failed", "run_unresolved", "run_approved", "run_queued"}},
+			{"", recordFilter{NoScope: true, State: "completed"}, []string{"run_unresolved", "run_approved"}},
 			{"", recordFilter{Search: "OTHER"}, []string{"run_interrupted", "run_handoff", "run_rejected"}},
 			{"", recordFilter{Search: "run_fail"}, []string{"run_failed"}},
 			{"", recordFilter{Search: "ed conf"}, []string{"run_failed", "run_unresolved", "run_approved", "run_queued"}},

@@ -451,11 +451,29 @@ func TestAServiceWithAnIdentityHoldsEveryRequestToAToken(t *testing.T) {
 	}
 	token := id.token("ops-service")
 	code, _, body := get(t, url+"/v1/status", token)
-	if code != 200 || !strings.Contains(body, `"owner":"service-owner"`) || strings.Contains(body, token) {
+	if code != 200 || !strings.Contains(body, `"owner":"service-owner"`) || strings.Contains(body, token) || !strings.Contains(body, `"callerScopes":"checked"`) {
 		t.Fatalf("status: %d %q", code, body)
 	}
 	stderr, err := stop()
-	if err != nil || strings.Contains(stderr, token) {
+	if err != nil || strings.Contains(stderr, token) || strings.Contains(stderr, "caller scopes") {
+		t.Fatalf("%v %q", err, stderr)
+	}
+}
+
+// An identity whose callerScopes is "unchecked" holds no caller to its
+// scopes (docs/adr/0002-caller-scopes.md, C9): the start says so on standard
+// error, and the status says "unchecked".
+func TestAServiceWithUncheckedCallerScopesSaysSo(t *testing.T) {
+	f := newServiceFixture(t)
+	id := f.identity("ops-service")
+	id.member["callerScopes"] = "unchecked"
+	port := freeLoopbackPort(t)
+	url, stop := startService(t, f.config("service.json", f.members(fmt.Sprintf("127.0.0.1:%d", port), map[string]any{"token": nil, "identity": id.member})))
+	if code, _, body := get(t, url+"/v1/status", id.token("ops-service")); code != 200 || !strings.Contains(body, `"callerScopes":"unchecked"`) {
+		t.Fatalf("status: %d %q", code, body)
+	}
+	stderr, err := stop()
+	if err != nil || !strings.Contains(stderr, "runner: caller scopes are unchecked (identity.callerScopes)") {
 		t.Fatalf("%v %q", err, stderr)
 	}
 }

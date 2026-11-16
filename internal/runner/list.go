@@ -12,6 +12,10 @@ type recordFilter struct {
 	// Scope, when not empty, keeps the records that carry exactly this scope
 	// identifier (scope.go), compared byte for byte.
 	Scope string
+	// NoScope keeps only the records that carry no scope identifier: a
+	// listing held to the none scope (caller_scopes.go). It means nothing
+	// with Scope.
+	NoScope bool
 	// Results keeps the runs of the outcomes and error classes named
 	// (run_results.go).
 	Results resultFilter

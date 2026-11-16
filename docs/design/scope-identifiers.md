@@ -13,12 +13,15 @@ that names the job, or one of its records, under another scope than the job's
 is refused. A job created without one is the job it always was, and every
 record about it is written byte for byte as before.
 
-**A scope identifier is a label and a filter, not an authorization
-boundary.** Every request the control API admits holds the owner bearer, or
-in [service mode](service-mode.md) an identity token for a listed subject,
-and each may do everything the API offers: name any scope, or list every
-scope's records by naming none. Holding a caller to the scopes it may name is
-not part of this change.
+**The owner bearer names any scope; an identity's caller, only its own.**
+The owner bearer may do everything the API offers: name any scope, or list
+every scope's records by naming none. In [service mode](service-mode.md) with
+an identity, a caller is held to the scope identifiers its token's
+`scope_ids` and its subject's `callerScopes` entry both allow
+([caller scopes](../adr/0002-caller-scopes.md)): a request naming another is
+answered as one naming a record the store does not hold, and a listing keeps
+only what the caller reaches. With `"callerScopes": "unchecked"` every caller
+names any scope, as the owner bearer does.
 
 ## 1. The form
 
@@ -191,7 +194,12 @@ byte (SQLite's `BINARY` comparison of the member as stored: no prefix
 matches, no case is folded). They combine with each route's other filters:
 `q`, `state` and `review` on runs, `job` on the journal (whose answer then
 holds the job's entries that carry the scope, and not Runner's own, which carry
-none). Without `scope` each lists everything, as before.
+none). Without `scope` each lists everything to the owner bearer, as before.
+A caller held to scopes ([caller scopes](../adr/0002-caller-scopes.md), C6)
+gets, naming a scope it does not reach, the answer for a scope no record
+carries (an empty page), and naming none, the records that carry no scope
+identifier when it reaches the none scope (`recordFilter.NoScope`,
+`journalFilter.noScope`), or an empty page when it does not.
 
 A job's own routes (`/v1/jobs/{job}/runs`, `/events`, `/triggers`,
 `/occurrences`) name the job under its scope (section 3) and answer the job's
@@ -252,8 +260,9 @@ apart.
 
 ## 9. Not in this change
 
-- Holding a caller to the scopes it may name, or any permission that differs
-  between callers or scopes.
+- Any permission that differs between callers or scopes, beyond the scope
+  identifiers a caller reaches ([caller scopes](../adr/0002-caller-scopes.md),
+  #304, since built).
 - A scope on a release, a preview, a profile or a workflow.
 - A column or an index of its own for the scope.
 - Desk naming a scope: Desk names none, and a store whose jobs have none is

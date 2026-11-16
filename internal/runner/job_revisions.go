@@ -116,9 +116,10 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	// D2).
 	gateway := s.validateGatewayMapping(next)
 	var upgraded Job
-	// Held to the scope the request names (docs/design/store-postgresql.md,
-	// section 6); a release another scope's job holds is met at its key (D9).
-	err = s.store.heldTo(scopeHeld(scopeNamed(ctx))).update(func(tx runTx) error {
+	// Held to the scope the request is held to, which its caller's identity
+	// allows (scope.go, docs/design/store-postgresql.md, section 6); a
+	// release another scope's job holds is met at its key (D9).
+	err = s.store.heldTo(scopeHeld(scopeOf(ctx).id)).update(func(tx runTx) error {
 		// The revision is re-read in the same transaction that updates it.
 		current, err := tx.job(jobID)
 		if err != nil {

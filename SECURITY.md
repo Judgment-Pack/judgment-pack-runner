@@ -46,17 +46,28 @@ Everything below describes what the runner holds to and, more importantly, what 
 
 **There is one local owner.** The pilot has no delegated roles, no shared-user permissions and no
 access control beyond the owner bearer, or, in service mode with an identity, the identity token.
-Whoever holds that bearer can do everything the control API offers, and so can every subject an
-identity lists: there are no permissions that differ between callers.
+Whoever holds that bearer can do everything the control API offers. A caller of an identity may do
+everything within the scope identifiers it reaches (below): there are no permissions that differ
+by route, or between reading and writing.
 
-**A scope identifier is a label and a filter, not a boundary.** Every caller the control API
-admits may name any scope, or none, and the runner has no caller bound to one scope. A gateway
-or proxy in front that binds its callers to scopes must hold each to its own: name the caller's
-scope on every request it forwards, and forward none of the installation's routes and members,
-which span every scope. `POST /v1/ticks` refuses a scope and ticks the shared-interval triggers
-of every scope; `GET /v1/status` lists, under `triggersOutsideSettings`, the ids of triggers of
-every scope. Forward neither to a scope-bound caller, or remove `triggersOutsideSettings` from
-the status first.
+**With an identity, a caller is held to its scope identifiers.** Its token's `scope_ids` and its
+subject's entry in `identity.callerScopes` must both allow a scope identifier for the caller to
+reach it, and a token that claims more than the entry grants is refused rather than narrowed
+([design record](docs/adr/0002-caller-scopes.md)). A request about another scope's record is
+answered as one about a record the store does not hold; a listing keeps only what the caller
+reaches; a job is created only under a scope it reaches; `POST /v1/ticks`, which ticks every
+scope's shared-interval triggers, and `triggersOutsideSettings` in `GET /v1/status`, which lists
+every scope's trigger ids, are served only to the installation's caller (the owner bearer, or a
+claimless token of an `"installation"` subject). On the postgresql store kind the scope row
+security holds a request to is the one the identity allows. Without `callerScopes` the check
+holds, every subject unscoped. What the boundary does not cover: the owner bearer, and an
+installation configured `"callerScopes": "unchecked"` (which the start and the status say), reach
+every scope; a held caller shares the installation's releases, input and selected profiles and
+input root, reads the chain of runs (every scope's run ids and digests), and can infer that other
+scopes are active from journal sequence gaps and the installation-wide limits and keys
+([PostgreSQL store](docs/design/store-postgresql.md), D8 to D10). Parties that must not share
+those use separate installations. The issuer decides which scopes a token claims: an issuer that
+mints a token for any subject and claim is trusted with every scope its subjects' entries grant.
 
 **A companion's control API is local.** Started by its host, the runner binds an ephemeral IPv4
 loopback port and refuses direct browser origins. Its bearer arrives on stdin at start. It is not

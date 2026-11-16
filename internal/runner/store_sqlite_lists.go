@@ -81,11 +81,14 @@ func (k *sqliteStore) listed(kind, jobID string, before int64, filter recordFilt
 			where = append(where, `(t.state IN ('failed','interrupted') OR (t.state='completed' AND (json_extract(t.record,'$.result.disposition.kind')='unresolved' OR json_extract(t.record,'$.result.disposition.handoff.state')='requested')))`)
 		}
 	}
-	if filter.Scope != "" {
+	switch {
+	case filter.Scope != "":
 		// SQLite compares text by its bytes (the BINARY collation): no case
 		// is folded and no prefix matches.
 		where = append(where, "json_extract(t.record,'$.scope')=?")
 		args = append(args, filter.Scope)
+	case filter.NoScope:
+		where = append(where, "json_extract(t.record,'$.scope') IS NULL")
 	}
 	if filter.Search != "" {
 		where = append(where, "instr(lower("+search+"),lower(?))>0")
