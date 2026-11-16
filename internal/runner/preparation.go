@@ -88,6 +88,7 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 	if s.preparing == nil {
 		s.preparing = map[string]bool{}
 	}
+	var listed []Occurrence
 	e := s.store.preparableOccurrences(func(o Occurrence) (bool, error) {
 		if s.preparing[o.ID] {
 			return false, nil
@@ -104,9 +105,32 @@ func (s *Service) prepareOccurrence(ctx context.Context) error {
 				return false, err
 			}
 		}
-		chosen = &o
-		return true, nil
+		listed = append(listed, o)
+		return false, nil
 	})
+	// An accepted occurrence of a job that keeps cursors is passed by while
+	// its job has a run, or an occurrence admitted before it, that has not
+	// settled (heldForJob), so that the occurrences behind it are taken
+	// meanwhile; its claim checks again (claimPreparation). Every later
+	// occurrence of a job one is held for is held too, the one held being
+	// activity before it, but one whose queue time has run out, which is
+	// taken to be expired. The listing is read whole first: the check reads
+	// the store.
+	held := map[string]bool{}
+	at := s.instant()
+	for i := 0; e == nil && i < len(listed) && chosen == nil; i++ {
+		o := listed[i]
+		wait := false
+		if o.Preparation == nil && held[o.JobID] {
+			wait = withinQueueTime(o, at)
+		} else if o.Preparation == nil {
+			_, wait, e = heldForJob(s.store, o, at)
+			held[o.JobID] = wait
+		}
+		if e == nil && !wait {
+			chosen = &o
+		}
+	}
 	if e != nil || chosen == nil {
 		s.automationMu.Unlock()
 		return e

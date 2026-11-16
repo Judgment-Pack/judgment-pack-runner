@@ -293,6 +293,13 @@ type storeReads interface {
 	// pagingCursors are a job's cursor rows, by paged source
 	// (paging_loop.go): none when no run of it has advanced one.
 	pagingCursors(job string) (map[string]PagingCursor, error)
+	// jobActivityBefore counts a job's runs queued or running and its
+	// occurrences admitted before the occurrence held under id (in the
+	// order they were admitted) that are accepted, preparing, waiting or
+	// needing attention: the activity an occurrence of a job that keeps
+	// cursors waits behind before it reads them (paging_loop.go). An id
+	// held by no occurrence counts every one of the job's.
+	jobActivityBefore(job, id string) (int, error)
 	// identifiedOccurrence is the occurrence trigger admitted under identity
 	// (its event, schedule time, file change or signal), with the digest of
 	// the payload it was admitted with, or faultAbsent.

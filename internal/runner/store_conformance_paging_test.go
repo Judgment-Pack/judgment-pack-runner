@@ -1,6 +1,9 @@
 package runner
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // pagingStoreCases hold each kind to the jobs' cursors (paging_loop.go,
 // store_paging.go; docs/design/paging.md, section 4.2): a cursor is written
@@ -112,6 +115,55 @@ var pagingStoreCases = []storeCase{
 		must(t, finishRunIn(w.st, completed(finished)))
 		if held, _ := w.st.pagingCursors(w.job.ID); held["feed"].Value != "e1" || held["feed"].Unfinished != nil || held["feed"].RunID != finished.ID {
 			t.Fatalf("the finished window's row: %+v", held["feed"])
+		}
+	}},
+	{"an occurrence's job activity before it counts the job's open runs and the open occurrences admitted before it", func(t *testing.T, k storeKindUnderTest) {
+		w := newStoreWorld(t, k)
+		other := w.worldOccurrence("occ_other", "trg_1", "accepted")
+		other.JobID = "job_other"
+		held := []Occurrence{other}
+		for i, state := range []string{"submitted", "accepted", "failed", "preparing", "waiting", "needs-attention", "accepted", "accepted"} {
+			held = append(held, w.worldOccurrence(fmt.Sprintf("occ_%d", i), "trg_1", state))
+		}
+		w.keep(t, nil, held...)
+		// Before each occurrence: the open ones admitted before it, of its
+		// own job; an id no occurrence holds counts every open one.
+		want := map[string]int{"occ_0": 0, "occ_1": 0, "occ_3": 1, "occ_6": 4, "occ_7": 5, "occ_none": 6}
+		check := func(runs int) {
+			t.Helper()
+			for id, n := range want {
+				got, err := w.st.jobActivityBefore(w.job.ID, id)
+				must(t, err)
+				must(t, w.st.update(func(tx runTx) error {
+					in, err := tx.jobActivityBefore(w.job.ID, id)
+					if err == nil && in != got {
+						err = fmt.Errorf("the transaction counts %d, the store %d", in, got)
+					}
+					return err
+				}))
+				if got != n+runs {
+					t.Fatalf("before %s: %d, want %d", id, got, n+runs)
+				}
+			}
+		}
+		check(0)
+		// A queued run and a running one are activity before every
+		// occurrence of their job; one that ended is not.
+		_, err := w.enqueue("run_queued", "key_queued")
+		must(t, err)
+		check(1)
+		_, err = w.enqueue("run_claimed", "key_claimed")
+		must(t, err)
+		r, ok, err := claim(w.st)
+		if err != nil || !ok {
+			t.Fatal("no run was claimed:", ok, err)
+		}
+		check(2)
+		r.State, r.FinishedAt, r.Problem, r.ErrorClass = "failed", now(), "Failed.", classEvaluation
+		must(t, finishRunIn(w.st, r))
+		check(1)
+		if n, err := w.st.jobActivityBefore("job_other", "occ_other"); err != nil || n != 0 {
+			t.Fatal("another job's activity:", n, err)
 		}
 	}},
 }

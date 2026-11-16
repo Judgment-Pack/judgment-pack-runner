@@ -572,6 +572,33 @@ func (t *memoryTx) jobActivity(job string) (int, error) {
 	return count, nil
 }
 
+func (r memoryReads) jobActivityBefore(job, id string) (int, error) {
+	before := int64(-1)
+	for _, h := range r.s.automation.occurrences {
+		if h.id == id {
+			before = h.seq
+		}
+	}
+	count := 0
+	for _, run := range r.s.runs {
+		if run.job == job && (run.state == "queued" || run.state == "running") && r.sees(run.record) {
+			count++
+		}
+	}
+	for _, h := range r.s.automation.occurrences {
+		if h.job == job && (before < 0 || h.seq < before) && slices.Contains([]string{"accepted", "preparing", "waiting", "needs-attention"}, h.state) && r.sees(h.record) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *memoryStore) jobActivityBefore(job, id string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.reads().jobActivityBefore(job, id)
+}
+
 func (t *memoryTx) preparingOccurrences() ([]Occurrence, error) {
 	var occurrences []Occurrence
 	for _, h := range t.s.automation.occurrences {

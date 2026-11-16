@@ -178,6 +178,11 @@ var scopedReads = []scopedRead{
 			return n == 2
 		})
 	}},
+	{"jobActivityBefore", func(t *testing.T, w readsWorld, st runStore, scope string) bool {
+		n, err := st.jobActivityBefore(w.jobs[scope].ID, "occ_none_held")
+		must(t, err)
+		return n == 2
+	}},
 	{"trigger", func(t *testing.T, w readsWorld, st runStore, scope string) bool {
 		_, _, err := st.trigger("trg_" + scopeName(scope))
 		return heldRead(t, "trigger", err)
