@@ -914,7 +914,10 @@ func (s *Service) eventsHandler(w http.ResponseWriter, r *http.Request) {
 		// The job route's entries, and Runner's own.
 		f.job, f.runnerOwn = j.ID, true
 	}
-	f.scope = scopeNamed(r.Context())
+	// The entries of the scope the request is held to (scope.go); naming no
+	// job, held to the none scope, only those that carry none.
+	held := scopeOf(r.Context())
+	f.scope, f.noScope = held.id, req.job == "" && !held.every && held.id == ""
 	page, err := eventPageFor(st, req, f)
 	if err != nil {
 		failure(w, err)

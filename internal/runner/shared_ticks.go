@@ -346,8 +346,8 @@ func errTickUnhealthy() error {
 // sharedTickRoutes serves POST /v1/ticks. It is the installation's: it
 // takes no scope (scoped refuses one), and ticks the triggers of every
 // scope on the store for every scope, as the Runner's own clock does
-// (docs/design/store-postgresql.md, section 6). The control API's
-// credential alone admits it.
+// (docs/design/store-postgresql.md, section 6). Only the installation's
+// caller is served it (installationRoutes).
 func (s *Service) sharedTickRoutes(mux routeMux) {
 	mux.HandleFunc("POST /v1/ticks", func(w http.ResponseWriter, r *http.Request) {
 		var req TickRequest

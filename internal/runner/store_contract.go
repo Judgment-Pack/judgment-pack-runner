@@ -329,6 +329,10 @@ type journalFilter struct {
 	// scope keeps, of those, only the entries whose detail carries this
 	// scope identifier, compared byte for byte.
 	scope string
+	// noScope keeps, of those, only the entries whose detail carries no
+	// scope identifier: a journal read held to the none scope
+	// (caller_scopes.go). It means nothing with scope.
+	noScope bool
 	// results keeps, of those, the entries of the outcomes, error classes
 	// and kinds named (run_results.go).
 	results resultFilter

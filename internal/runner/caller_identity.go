@@ -116,12 +116,16 @@ const (
 
 // IdentityConfig is a service configuration's identity member, as written:
 // the token issuer, the audience this Runner is named as, the subjects whose
-// requests it takes, and the absolute path of the issuer's key set file.
+// requests it takes, the absolute path of the issuer's key set file, and the
+// scope identifiers each subject may be granted (callerScopes).
 type IdentityConfig struct {
 	Issuer   string
 	Audience string
 	Subjects []string
 	Keys     string
+	// scopes is callerScopes as read: checked, every subject unscoped, when
+	// the member is absent (docs/adr/0002-caller-scopes.md, C9).
+	scopes callerScopes
 }
 
 // Identity is the identity Runner holds each control request to: the
@@ -131,6 +135,10 @@ type Identity struct {
 	issuer, audience string
 	subjects         map[string]bool
 	keys             map[string]identityKey
+	// scopes holds each caller to the scope identifiers its token and its
+	// subject's entry both allow. The zero value is checked, every subject
+	// unscoped: an identity made without it holds callers to the least.
+	scopes callerScopes
 }
 
 // identityKey is one verification key of the key set, with the algorithm it
@@ -207,11 +215,14 @@ func subjectText(s string) bool {
 }
 
 // ParseIdentityConfig reads a service configuration's identity member: an
-// object with exactly issuer, audience, subjects and keys. The issuer and the
+// object with issuer, audience, subjects and keys, and callerScopes when the
+// installation sets it, and no other member. The issuer and the
 // audience are 1 to 1024 bytes, each subject 1 to 256, none with a control
 // character; the issuer holds no "#" (callerName), and a subject no format
 // character and no white space at either end (subjectText); subjects lists 1
-// to 256 of them, each once; keys is an absolute, clean path. A refusal names the member, never a value.
+// to 256 of them, each once; keys is an absolute, clean path; callerScopes,
+// optional, is "unchecked" or an entry per listed subject (readCallerScopes).
+// A refusal names the member, never a value.
 func ParseIdentityConfig(raw []byte) (IdentityConfig, error) {
 	obj, err := identityJSON(raw, "identity")
 	if err != nil {
@@ -219,9 +230,9 @@ func ParseIdentityConfig(raw []byte) (IdentityConfig, error) {
 	}
 	for name := range obj {
 		switch name {
-		case "issuer", "audience", "subjects", "keys":
+		case "issuer", "audience", "subjects", "keys", "callerScopes":
 		default:
-			return IdentityConfig{}, fmt.Errorf("identity has a member Runner does not read, %q: it takes issuer, audience, subjects and keys, each spelled so", name)
+			return IdentityConfig{}, fmt.Errorf("identity has a member Runner does not read, %q: it takes issuer, audience, subjects, keys and callerScopes, each spelled so", name)
 		}
 	}
 	var c IdentityConfig
@@ -247,6 +258,11 @@ func ParseIdentityConfig(raw []byte) (IdentityConfig, error) {
 	}
 	if c.Keys, _, err = stringMember(obj, "keys", "identity"); err != nil || !filepath.IsAbs(c.Keys) || filepath.Clean(c.Keys) != c.Keys {
 		return IdentityConfig{}, errors.New("identity.keys must be the absolute, clean path of the issuer's key set file")
+	}
+	if v, present := obj["callerScopes"]; present {
+		if c.scopes, err = readCallerScopes(v, c.Subjects); err != nil {
+			return IdentityConfig{}, err
+		}
 	}
 	return c, nil
 }
@@ -276,6 +292,12 @@ func LoadIdentity(c IdentityConfig, owner, stateDir string) (*Identity, error) {
 		}
 		id.subjects[subject] = true
 	}
+	for subject := range c.scopes.entries {
+		if !id.subjects[subject] {
+			return nil, errCallerScopesSubject
+		}
+	}
+	id.scopes = c.scopes
 	data, err := readKeySet(c.Keys, stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("identity.keys is refused: %w", err)
@@ -466,107 +488,129 @@ func tokenSegment(what, s string) ([]byte, error) {
 // leeway. Every refusal is one reason, and none of them repeats any part of
 // the token.
 func (id *Identity) check(authorization []string, now time.Time) (requester, error) {
+	by, _, err := id.admit(authorization, now)
+	return by, err
+}
+
+// admit is check, which also answers what the token reaches: the scope
+// identifiers its scope_ids claim and its subject's entry both allow
+// (reachOf), read only once every other check has passed.
+func (id *Identity) admit(authorization []string, now time.Time) (requester, callerReach, error) {
+	by, claims, err := id.verified(authorization, now)
+	if err != nil {
+		return requester{}, callerReach{}, err
+	}
+	reach, err := id.scopes.reachOf(by.subject, claims)
+	if err != nil {
+		return requester{}, callerReach{}, err
+	}
+	return by, reach, nil
+}
+
+// verified holds a request's Authorization headers to the identity, as check
+// says, and answers the requester and the token's claims.
+func (id *Identity) verified(authorization []string, now time.Time) (requester, map[string]any, error) {
 	if len(authorization) > 1 {
-		return requester{}, errors.New("the request carries more than one Authorization header")
+		return requester{}, nil, errors.New("the request carries more than one Authorization header")
 	}
 	token := ""
 	if len(authorization) == 1 {
 		token = bearerToken(authorization[0])
 	}
 	if token == "" {
-		return requester{}, errors.New("the request carries no bearer token")
+		return requester{}, nil, errors.New("the request carries no bearer token")
 	}
 	if len(token) > maxTokenBytes {
-		return requester{}, errors.New("the token is longer than 8192 bytes, longer than a token")
+		return requester{}, nil, errors.New("the token is longer than 8192 bytes, longer than a token")
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return requester{}, errors.New("the token is not three dot-separated parts")
+		return requester{}, nil, errors.New("the token is not three dot-separated parts")
 	}
 	headerBytes, err := tokenSegment("header", parts[0])
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	header, err := identityJSON(headerBytes, "the token's header")
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	if _, present := header["crit"]; present {
-		return requester{}, errors.New("the token's header names critical extensions Runner does not implement")
+		return requester{}, nil, errors.New("the token's header names critical extensions Runner does not implement")
 	}
 	alg, _, err := stringMember(header, "alg", "the token's header:")
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	kid, _, err := stringMember(header, "kid", "the token's header:")
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	if kid == "" {
-		return requester{}, errors.New("the token names no key id")
+		return requester{}, nil, errors.New("the token names no key id")
 	}
 	key, ok := id.keys[kid]
 	if !ok {
-		return requester{}, errors.New("the token is signed by a key that is not in the key set")
+		return requester{}, nil, errors.New("the token is signed by a key that is not in the key set")
 	}
 	// The algorithm is the key's, never the token's word: a token that says
 	// otherwise is refused, and "none" with it.
 	if alg != key.alg {
-		return requester{}, fmt.Errorf("the token's alg is not its key's, %s", key.alg)
+		return requester{}, nil, fmt.Errorf("the token's alg is not its key's, %s", key.alg)
 	}
 	signature, err := tokenSegment("signature", parts[2])
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	if !verifyTokenSignature(key, []byte(parts[0]+"."+parts[1]), signature) {
-		return requester{}, errors.New("the token's signature does not verify under its key")
+		return requester{}, nil, errors.New("the token's signature does not verify under its key")
 	}
 	payload, err := tokenSegment("payload", parts[1])
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	claims, err := identityJSON(payload, "the token's claims")
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	issuer, _, err := stringMember(claims, "iss", "the token's")
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	if issuer != id.issuer {
-		return requester{}, errors.New("the token is not from the configured issuer")
+		return requester{}, nil, errors.New("the token is not from the configured issuer")
 	}
 	if !namesAudience(claims["aud"], id.audience) {
-		return requester{}, errors.New("the token does not name this Runner's audience")
+		return requester{}, nil, errors.New("the token does not name this Runner's audience")
 	}
 	subject, _, err := stringMember(claims, "sub", "the token's")
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	if subject == "" {
-		return requester{}, errors.New("the token names no subject")
+		return requester{}, nil, errors.New("the token names no subject")
 	}
 	expires, present, err := integerMember(claims, "exp", "the token's")
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	if !present {
-		return requester{}, errors.New("the token has no expiry")
+		return requester{}, nil, errors.New("the token has no expiry")
 	}
 	if !now.Before(time.Unix(expires, 0).Add(tokenLeeway)) {
-		return requester{}, errors.New("the token has expired")
+		return requester{}, nil, errors.New("the token has expired")
 	}
 	notBefore, present, err := integerMember(claims, "nbf", "the token's")
 	if err != nil {
-		return requester{}, err
+		return requester{}, nil, err
 	}
 	if present && now.Add(tokenLeeway).Before(time.Unix(notBefore, 0)) {
-		return requester{}, errors.New("the token is not yet valid")
+		return requester{}, nil, errors.New("the token is not yet valid")
 	}
 	if !id.subjects[subject] {
-		return requester{}, errors.New("the token's subject is not one the configuration lists")
+		return requester{}, nil, errors.New("the token's subject is not one the configuration lists")
 	}
-	return requester{issuer: issuer, subject: subject}, nil
+	return requester{issuer: issuer, subject: subject}, claims, nil
 }
 
 // namesAudience says whether a token's aud, a string or an array of strings,

@@ -248,9 +248,15 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		status := map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "dialect-format-4.0.0", "dialect-format-4.1.0", "job-paging", "immutable-input-profile-registration", "selected-profile-preparation", "scope-identifiers", "retries", "run-results", "cron-schedules", "shared-interval-ticks"}, "schedules": s.cfg.Schedules.status(), "limits": s.cfg.Limits.status()}
 		// The triggers the start found outside the schedule settings
-		// (held_schedules.go), as counts and trigger ids.
-		if s.heldSchedules != nil {
+		// (held_schedules.go), as counts and trigger ids. They are every
+		// scope's: a caller held to scopes is not given them
+		// (caller_scopes.go).
+		if s.heldSchedules != nil && callerReachFrom(r.Context()).installation {
 			status["triggersOutsideSettings"] = s.heldSchedules.status()
+		}
+		// Whether an identity's callers are held to their scopes.
+		if identity != nil {
+			status["callerScopes"] = identity.scopes.mode()
 		}
 		// A bound input root reports whether it holds U+FFFD and whether it
 		// exists (path_domain.go), or, when its status could not be read,
@@ -327,6 +333,14 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 		if err != nil {
 			s.refusedJobBy(by, req.ReleaseID, err)
 			failure(w, err)
+			return
+		}
+		// The job's scope, or none, must be one the caller's identity allows
+		// (caller_scopes.go): checked before anything is read from the store,
+		// so that the creation's transaction is held only to such a scope.
+		// Not journaled, as no 403 is (refused).
+		if !callerReachFrom(r.Context()).reaches(scope) {
+			failure(w, errScopeNotAllowed)
 			return
 		}
 		retry, err := jobRetry(raw, req.Retry)
@@ -448,20 +462,25 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			s.health(w, r)
 			return
 		}
+		// The owner bearer is the installation's caller; an identity's
+		// caller reaches what its token and its subject's entry allow
+		// (caller_scopes.go).
+		reach := installationReach
 		switch {
 		case identity != nil:
 			// The owner bearer is not taken: the caller is the token's.
-			by, err := identity.check(r.Header.Values("Authorization"), time.Now())
+			by, held, err := identity.admit(r.Header.Values("Authorization"), time.Now())
 			if err != nil {
 				w.Header().Set("WWW-Authenticate", "Bearer")
 				write(w, 401, map[string]string{"message": "Runner authentication required: " + err.Error() + "."})
 				return
 			}
-			r = r.WithContext(withRequester(r.Context(), by))
+			r, reach = r.WithContext(withRequester(r.Context(), by)), held
 		case token == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")), []byte(token)) != 1:
 			write(w, 401, map[string]string{"message": "Runner authentication required."})
 			return
 		}
+		r = r.WithContext(withCallerReach(r.Context(), reach))
 		// Browser requests go through Desk's same-origin/session guard. This private
 		// control listener does not expose cookies, CORS or browser authority.
 		if r.Header.Get("Origin") != "" {
@@ -505,10 +524,10 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, kind, job string)
 		return
 	}
 	filter := recordFilter{Search: strings.TrimSpace(r.URL.Query().Get("q")), State: r.URL.Query().Get("state"), Review: r.URL.Query().Get("review") == "true"}
-	// A store-wide listing keeps the records of the scope named, if any; a
-	// job's runs are its own, named under its scope (scope.go).
+	// A store-wide listing keeps the records of the scope the request is
+	// held to (scope.go); a job's runs are its own, named under its scope.
 	if job == "" {
-		filter.Scope = scopeNamed(r.Context())
+		scopeOf(r.Context()).listing(&filter)
 	}
 	if len(filter.Search) > 200 || (filter.State != "" && !validRunState(filter.State)) || (r.URL.Query().Get("review") != "" && r.URL.Query().Get("review") != "true" && r.URL.Query().Get("review") != "false") || (kind == "jobs" && (filter.State != "" || filter.Review)) {
 		failure(w, &apiError{400, "invalid_filter", "Use a search up to 200 bytes and supported run filters."})

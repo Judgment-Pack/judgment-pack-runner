@@ -5,9 +5,13 @@ package runner
 // Its triggers, occurrences, runs and journal entries carry it; the store-wide
 // listings can be filtered by it; and a request that names a job, a run, a
 // trigger or an occurrence must name the scope that record carries, or none
-// when it carries none. It is a label and a filter, not an authorization
-// boundary: every request the control API admits may name any scope, or
-// list every scope's records by naming none.
+// when it carries none. In service mode with an identity, a caller is held to
+// the scope identifiers its verified identity allows (caller_scopes.go,
+// docs/adr/0002-caller-scopes.md): a request naming another is answered as one
+// naming a record the store does not hold, and a store-wide listing keeps only
+// what its caller reaches. The owner bearer, and a caller of an "unchecked"
+// configuration, may name any scope, or list every scope's records by naming
+// none.
 //
 // Its form is the gateway's for its own scope identifier (its SPEC.md §1.2a,
 // go/scope.go), written again here with the standard library: the two rules
@@ -119,14 +123,30 @@ func scopeParameter(raw string) (string, bool, error) {
 	return values[0], true, nil
 }
 
-// scopeContext is the key of the scope a request named, in its context.
+// scopeContext is the key of the scope a request is held to, in its context.
 type scopeContext struct{}
 
-// scopeNamed is the scope identifier a request named, "" for none: what the
-// store-wide listings filter by.
-func scopeNamed(ctx context.Context) string {
-	scope, _ := ctx.Value(scopeContext{}).(string)
-	return scope
+// requestScope is the scope a request is held to (Service.scoped): the scope
+// identifier it named, "" for none, or unheldScope in place of one its caller
+// does not reach; and whether a store-wide listing keeps every scope's
+// records, which only the installation's caller naming none does. The zero
+// value is the none scope, a listing keeping only its records: a request the
+// middleware did not hold reaches no other scope.
+type requestScope struct {
+	id    string
+	every bool
+}
+
+// scopeOf is the scope ctx's request is held to.
+func scopeOf(ctx context.Context) requestScope {
+	held, _ := ctx.Value(scopeContext{}).(requestScope)
+	return held
+}
+
+// listing is the filter of a store-wide listing held to rs: every record, the
+// records of rs's scope, or, for the none scope, those that carry none.
+func (rs requestScope) listing(f *recordFilter) {
+	f.Scope, f.NoScope = rs.id, !rs.every && rs.id == ""
 }
 
 // routeMux is where the control API's routes are registered.
@@ -153,15 +173,24 @@ var scopeListings = map[string]bool{"GET /v1/jobs": true, "GET /v1/runs": true, 
 // hexadecimal digits after a prefix, and this is shorter.
 const unheldRecord = "unheld"
 
-// scoped reads the scope a request names before its route answers it. On a
-// route that names a job, a run, a trigger or an occurrence (in its path, or
-// /v1/events in its job parameter) the record must carry the scope named, or
-// none when none is named. A request that names a record under another scope
-// is handed to its route naming unheldRecord in that record's place, so that
-// the route answers it as it answers a request for a record the store does not
+// scoped reads the scope a request names, and the scope identifiers its
+// caller reaches (caller_scopes.go), before its route answers it. An
+// installation's route is refused to a caller held to scopes before anything
+// else is read. The request is held to the scope named, "" for none, when its
+// caller reaches it, and otherwise to unheldScope, which no record carries:
+// the scope a request reaches is the one its caller's checked identity
+// allows, never the one the request names alone. On a route that names a
+// job, a run, a trigger or an occurrence (in its path, or /v1/events in its
+// job parameter) the record must carry the scope named, or none when none is
+// named, and that scope must be one the caller reaches. A request that names
+// a record under another scope, or under one its caller does not reach, is
+// handed to its route naming unheldRecord in that record's place, so that the
+// route answers it as it answers a request for a record the store does not
 // hold, in its own order and byte for byte, and changes and journals nothing,
-// as it does for that request. On a store-wide listing the scope is the filter
-// the route applies. Any other route refuses a scope.
+// as it does for that request; for a scope the caller does not reach, the
+// record's own scope is not read. On a store-wide listing the scope held is
+// the filter the route applies: every scope only for the installation's
+// caller naming none. Any other route refuses a scope.
 func (s *Service) scoped(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		holding := holdsScopes(s.store)
@@ -169,38 +198,56 @@ func (s *Service) scoped(handler http.HandlerFunc) http.HandlerFunc {
 			failure(w, errRouteNotHeld)
 			return
 		}
+		reach := callerReachFrom(r.Context())
+		if installationRoutes[r.Pattern] && !reach.installation {
+			// The route acts for every scope identifier: a caller held to
+			// scopes is refused it before its scope or body is read.
+			failure(w, errInstallationCallerRequired)
+			return
+		}
 		scope, named, err := scopeParameter(r.URL.RawQuery)
 		if err != nil {
 			failure(w, err)
 			return
 		}
+		held := scope
+		if !reach.reaches(scope) {
+			held = unheldScope
+		}
 		name, table, id := addressedRecord(r)
+		// Every scope's records: the installation's caller on a store-wide
+		// listing naming none and no record, and on an installation route,
+		// which names none.
+		every := reach.installation && !named && table == "" && (scopeListings[r.Pattern] || installationRoutes[r.Pattern])
 		if holding {
 			// On a kind that holds scopes, the route reaches rows only through
-			// the view of the store held to the scope named, "" for none; a
-			// store-wide listing naming none and no record, through the store
-			// for every scope, as it lists every scope's records, and an
-			// installation route, which names none, so too. The journal
-			// naming a job is that job's route (docs/design/store-postgresql.md,
-			// section 6): held to the scope named, none when it names none.
+			// the view of the store held to the scope held, and the store for
+			// every scope only as every says. The journal naming a job is that
+			// job's route (docs/design/store-postgresql.md, section 6): held
+			// to the scope held, none when it names none.
 			view := s.store
-			if named || !scopeListings[r.Pattern] && !installationRoutes[r.Pattern] || table != "" {
-				view = s.store.heldTo(scopeHeld(scope))
+			if !every {
+				view = s.store.heldTo(scopeHeld(held))
 			}
 			r = r.WithContext(context.WithValue(r.Context(), heldStoreContext{}, view))
 		}
 		switch {
+		case table != "" && held != scope:
+			// A scope the caller does not reach: the record's own is not
+			// read, and the route answers as for a record the store does not
+			// hold.
+			r = unheld(r, name)
 		case table != "":
 			// The scope check's own read is the request's: on a kind that
 			// holds scopes, a record of another scope reads absent, and the
 			// route answers it as one the store does not hold.
-			held, found, err := s.heldScope(s.storeFor(r.Context()), table, id)
+			carried, found, err := s.heldScope(s.storeFor(r.Context()), table, id)
 			if err != nil {
 				// A scope that cannot be read is not taken to match.
 				failure(w, err)
 				return
 			}
-			if found && held != scope {
+			if found && carried != scope {
 				r = unheld(r, name)
 			}
 		case scopeListings[r.Pattern]:
@@ -208,9 +255,7 @@ func (s *Service) scoped(handler http.HandlerFunc) http.HandlerFunc {
 			failure(w, errScopeNotTaken)
 			return
 		}
-		if named {
-			r = r.WithContext(context.WithValue(r.Context(), scopeContext{}, scope))
-		}
+		r = r.WithContext(context.WithValue(r.Context(), scopeContext{}, requestScope{id: held, every: every}))
 		handler(w, r)
 	}
 }
@@ -358,7 +403,10 @@ var heldRoutes = map[string]bool{
 // refuses a scope, and on a kind that holds scopes reaches rows through the
 // store for every scope, as the Runner's own clock does, never through a
 // view a request could hold to one scope (docs/design/schedules.md,
-// section 4). The control API's credential alone admits them.
+// section 4). Only the installation's caller is served them: the owner
+// bearer, or an identity's caller whose subject's entry is "installation"
+// and whose token claims no scope (caller_scopes.go); every other caller is
+// refused, errInstallationCallerRequired.
 var installationRoutes = map[string]bool{"POST /v1/ticks": true}
 
 // errRouteNotHeld is the refusal of a route a Runner on a kind that holds

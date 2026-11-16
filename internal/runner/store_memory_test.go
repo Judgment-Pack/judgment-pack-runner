@@ -778,8 +778,13 @@ func memoryKeeps(f journalFilter, row journalRow, releases map[string]bool) bool
 		}
 	}
 	detail := []byte(row.detail)
-	if f.scope != "" {
+	switch {
+	case f.scope != "":
 		if scope, held, err := memberText(detail, "scope"); err != nil || !held || scope != f.scope {
+			return false
+		}
+	case f.noScope:
+		if _, held, err := memberText(detail, "scope"); err != nil || held {
 			return false
 		}
 	}

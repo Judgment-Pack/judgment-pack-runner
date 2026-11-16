@@ -257,8 +257,11 @@ func pgJournalCondition(f journalFilter, a *pgArgs) string {
 			where += " OR kind IN ('journal.began','runner.started','runner.stopped')"
 		}
 	}
-	if f.scope != "" {
+	switch {
+	case f.scope != "":
 		where = "(" + where + ") AND " + pgJSON("detail", "scope") + "=" + a.add(f.scope)
+	case f.noScope:
+		where = "(" + where + ") AND " + pgJSON("detail", "scope") + " IS NULL"
 	}
 	if !f.results.empty() {
 		where = "(" + where + ") AND " + strings.Join(pgResultConditions(f.results, "detail", "kind", false, a), " AND ")
@@ -516,8 +519,11 @@ func (k *pgStore) listed(kind, jobID string, before int64, filter recordFilter, 
 			where = append(where, "(t.state IN ('failed','interrupted') OR (t.state='completed' AND ("+pgJSON("t.record", "result", "disposition", "kind")+"='unresolved' OR "+pgJSON("t.record", "result", "disposition", "handoff", "state")+"='requested')))")
 		}
 	}
-	if filter.Scope != "" {
+	switch {
+	case filter.Scope != "":
 		where = append(where, pgJSON("t.record", "scope")+"="+a.add(filter.Scope))
+	case filter.NoScope:
+		where = append(where, pgJSON("t.record", "scope")+" IS NULL")
 	}
 	if filter.Search != "" {
 		where = append(where, "strpos("+pgFold(search)+","+pgFold(a.add(filter.Search)+"::text")+")>0")

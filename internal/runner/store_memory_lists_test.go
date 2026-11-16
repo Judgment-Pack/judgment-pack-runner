@@ -52,13 +52,17 @@ func listingSearched(text string, held bool, search string) bool {
 	return search == "" || held && strings.Contains(asciiLower(text), asciiLower(search))
 }
 
-// listingScoped says whether record carries scope, or scope is "".
-func listingScoped(record []byte, scope string) (bool, error) {
-	if scope == "" {
+// listingScoped says whether record carries f's scope, or none when f keeps
+// only the records that carry none, or whether f names no scope.
+func listingScoped(record []byte, f recordFilter) (bool, error) {
+	if f.Scope == "" && !f.NoScope {
 		return true, nil
 	}
 	held, ok, err := memberAt(record, "scope")
-	return ok && held == scope, err
+	if f.Scope == "" {
+		return !ok, err
+	}
+	return ok && held == f.Scope, err
 }
 
 // memoryJobOrder is each job's order, by the order its first revision was
@@ -88,7 +92,7 @@ func (m *memoryStore) listedJobs(before int64, f recordFilter, limit int) ([]lis
 		if seq >= before || !held || !released || !m.reads().sees(record) {
 			continue
 		}
-		if keep, err := listingScoped(record, f.Scope); err != nil || !keep {
+		if keep, err := listingScoped(record, f); err != nil || !keep {
 			if err != nil {
 				return nil, err
 			}
@@ -149,7 +153,7 @@ func (m *memoryStore) listedRuns(job string, before int64, f recordFilter, limit
 
 // memoryRunKept says whether f's scope, results and review keep r.
 func memoryRunKept(r memoryRun, f recordFilter) (bool, error) {
-	if keep, err := listingScoped(r.record, f.Scope); err != nil || !keep {
+	if keep, err := listingScoped(r.record, f); err != nil || !keep {
 		return false, err
 	}
 	if len(f.Results.Outcomes) > 0 {

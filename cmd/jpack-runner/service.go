@@ -346,6 +346,10 @@ func serveConfigured(ctx context.Context, path string, stdout, stderr io.Writer)
 		if identity, err = runner.LoadIdentity(*c.identity, c.runner.Owner, c.runner.Dir); err != nil {
 			return err
 		}
+		// An identity whose callers are not held to their scopes says so.
+		if note := identity.CallerScopesNote(); note != "" {
+			fmt.Fprintln(stderr, "runner:", note)
+		}
 	}
 	service, err := runner.Open(c.runner)
 	if err != nil {
