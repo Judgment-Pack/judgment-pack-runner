@@ -9138,6 +9138,13 @@
               "type": "object"
             },
             "maxItems": 64
+          },
+          "derived": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "The rule's derived values (duration, distance, speed), each named once, read before its clauses."
           }
         },
         "required": [

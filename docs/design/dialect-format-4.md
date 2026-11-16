@@ -139,8 +139,11 @@ case while several batches share one dialect, run once under `-race`.
   dialect of at most 262144 bytes, as the Spec's reader does
   (`admit_envelope`); a larger one is `input-over-bound` whatever it
   declares. §11's text does not give that size; the Spec's reader does.
-- **Records.** The workflow and recording schemas do not admit the format
-  (spec issue #324); hence §2.
+- **Records.** The Spec stages both formats in a workflow stage and in a
+  recording for `0.6.0` (spec `0d5bdea`, issue #326); hence §2. A workflow
+  stage of either format is run and frozen with RFC 0020 section 1's release
+  digest ([draft-workflow.md](draft-workflow.md), #300); the offline workflow
+  reader refuses it `version-unread` until the format is accepted.
 - **A copy's basis in format `3.0.0`.** §6.2 gives a copy's `basis` as "every
   entry's `Q` … distinct, ordered by code point". Runner's copy of format
   `3.0.0` keeps a pointer once per entry, in code point order, and is left

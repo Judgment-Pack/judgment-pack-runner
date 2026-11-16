@@ -20,6 +20,13 @@ func (s *Service) workflowDriver(store *workflowStore) workflowDriver {
 			if request.Next.Kind != "operation" {
 				return SourceValue{}, errWorkflowAcquisitionUnavailable
 			}
+			if request.Next.paged != nil {
+				// A paged source of format 4.1.0 is read in its loop, every
+				// page in one session (paging_loop.go). A stage keeps no
+				// cursor and holds no page for a retry: a read that does not
+				// finish is sealed, and its attempt is not repeated.
+				return s.acquirePages(ctx, request.Next, &occurrencePaging{}, combinedLimit(request.Input)-len(encode(request.Input)))
+			}
 			return s.acquirePlannedOperation(ctx, request.Next)
 		},
 		Evaluate: func(ctx context.Context, release Release, input Input, key string) (workflowEvaluation, error) {

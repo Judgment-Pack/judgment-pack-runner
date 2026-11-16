@@ -246,7 +246,12 @@ func readWorkflow(raw []byte) (workflowDocument, []byte, error) {
 		if stage, ok := rawStage.(map[string]any); ok {
 			if pin, ok := stage["dialect"].(map[string]any); ok {
 				if format, named := pin["formatVersion"]; named {
-					if format != "2.0.0" && format != "3.0.0" {
+					// Formats 4.0.0 and 4.1.0 are staged for specVersion
+					// 0.6.0 (RFC 0020, the amendment proposal of
+					// 2026-11-15), and a stage of either is read as Runner
+					// reads its dialect (docs/design/dialect-format-4.md,
+					// section 2), its release digest RFC 0020 section 1's.
+					if text, isText := format.(string); !isText || text != "2.0.0" && text != "3.0.0" && !fourFamily(text) {
 						return d, nil, errWorkflowVersion
 					}
 				} else if version, exists := pin["version"]; exists && version != json.Number("2") && version != json.Number("3") {
