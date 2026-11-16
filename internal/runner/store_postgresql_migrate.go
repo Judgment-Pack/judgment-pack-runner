@@ -90,13 +90,13 @@ type PostgreSQLMigration struct {
 // presence beyond its claims, so a Runner holding none is not counted.
 func pgLiveClaims(db *sql.DB, owner string, occurrences bool) (runs, occs int, err error) {
 	err = pgAsOwner(db, owner, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(pgContext, "SELECT count(*) FROM jpack_runner.runs WHERE claim_id IS NOT NULL AND lease_until>now()").Scan(&runs); err != nil {
+		if err := tx.QueryRowContext(pgContext, "SELECT count(*) FROM jpack_runner.runs WHERE claim_id IS NOT NULL AND lease_until>clock_timestamp()").Scan(&runs); err != nil {
 			return err
 		}
 		if !occurrences {
 			return nil
 		}
-		return tx.QueryRowContext(pgContext, "SELECT count(*) FROM jpack_runner.occurrences WHERE claim_id IS NOT NULL AND lease_until>now()").Scan(&occs)
+		return tx.QueryRowContext(pgContext, "SELECT count(*) FROM jpack_runner.occurrences WHERE claim_id IS NOT NULL AND lease_until>clock_timestamp()").Scan(&occs)
 	})
 	return runs, occs, err
 }
