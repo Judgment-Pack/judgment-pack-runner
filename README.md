@@ -208,13 +208,24 @@ caller reaches (an empty page for one it does not); `POST /v1/jobs` under a scop
 the caller does not reach is `403 scope_not_allowed`; `POST /v1/ticks` is
 `403 installation_caller_required` to every caller but the installation's, and
 `GET /v1/status` leaves out `triggersOutsideSettings` for them. **Without
-`callerScopes` the check holds**, every subject unscoped, and `POST /v1/ticks`
-answers `403 installation_caller_required` for every subject until one has an
-`"installation"` entry, so an external scheduler's shared ticks stop: write the
-entries before upgrading an installation with `identity` (an `"installation"`
-entry for the scheduler's subject), or `"callerScopes": "unchecked"`, which
-keeps the behavior before caller scopes and which the start (on standard error)
-and `GET /v1/status` (`"callerScopes":"unchecked"`) say
+`callerScopes` the check holds**, every subject unscoped, which the start says
+on standard error. An installation with `identity` that upgrades without the
+member sees three changes:
+
+- a token whose claims carry `scope_ids` is refused `401` on every route, since
+  no entry grants its subject a scope identifier;
+- every record under a scope identifier reads as absent, so an event delivery
+  to a trigger under one gets the unknown-trigger answer, and a sender may
+  drop it;
+- `POST /v1/ticks` answers `403 installation_caller_required` for every
+  subject until one has an `"installation"` entry, so an external scheduler's
+  shared ticks stop.
+
+Write the entries before upgrading (an `"installation"` entry for the
+scheduler's subject, and entries for the scoped callers and senders), or set
+`"callerScopes": "unchecked"`, which keeps the behavior before caller scopes and
+which the start (on standard error) and `GET /v1/status`
+(`"callerScopes":"unchecked"`) say
 ([design record](docs/adr/0002-caller-scopes.md)).
 
 **Who is recorded.** A caller's run has `<issuer>#<subject>` as `requestedBy`,

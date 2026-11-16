@@ -455,7 +455,9 @@ func TestAServiceWithAnIdentityHoldsEveryRequestToAToken(t *testing.T) {
 		t.Fatalf("status: %d %q", code, body)
 	}
 	stderr, err := stop()
-	if err != nil || strings.Contains(stderr, token) || strings.Contains(stderr, "caller scopes") {
+	// Without callerScopes the check holds, every subject unscoped: the
+	// start says so (#308).
+	if err != nil || strings.Contains(stderr, token) || !strings.Contains(stderr, "runner: caller scopes are checked (identity.callerScopes is absent): every subject has no entry and is unscoped") {
 		t.Fatalf("%v %q", err, stderr)
 	}
 }

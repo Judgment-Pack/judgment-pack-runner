@@ -201,7 +201,10 @@ an external scheduler's shared ticks stop: the release notes say to write the en
 `"installation"` entry for the scheduler's subject), or `"unchecked"`, before upgrading. With `"unchecked"` the claim is not read at all, every caller
 reaches what the installation reaches, the start writes on standard error that caller scopes are
 unchecked, and `GET /v1/status` says `"callerScopes":"unchecked"` (`"checked"` otherwise; the member
-is absent without `identity`).
+is absent without `identity`). Without the member the start writes on standard error that caller scopes are
+checked and every subject, having no entry, is unscoped: a token carrying `scope_ids` is then
+refused `401`, records under a scope identifier read as absent (an event delivery to a trigger
+under one gets the unknown-trigger answer), and `POST /v1/ticks` is refused `403` (#308).
 
 ## The store
 
