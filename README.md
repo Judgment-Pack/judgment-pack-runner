@@ -221,8 +221,10 @@ member sees three changes:
   subject until one has an `"installation"` entry, so an external scheduler's
   shared ticks stop.
 
-Write the entries before upgrading (an `"installation"` entry for the
-scheduler's subject, and entries for the scoped callers and senders), or set
+Write the entries with the new release's binary as it is installed (an
+`"installation"` entry for the scheduler's subject, and entries for the scoped
+callers and senders; an earlier Runner refuses the member, so going back removes
+it), or set
 `"callerScopes": "unchecked"`, which keeps the behavior before caller scopes and
 which the start (on standard error) and `GET /v1/status`
 (`"callerScopes":"unchecked"`) say
