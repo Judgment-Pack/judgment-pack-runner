@@ -90,13 +90,21 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 		return nil
 	}
 	checkpoint := func() error {
-		return save(checkpointWorkflowAttempt(w, instanceID, encode(verificationExport(release, run, 3)), d.Profiles))
+		bundle, err := verificationExportOf(release, run, 3)
+		if err != nil {
+			return err
+		}
+		return save(checkpointWorkflowAttempt(w, instanceID, encode(bundle), d.Profiles))
 	}
 	finish := func(state, failure string, coreError []byte) (workflowInventory, error) {
 		run.State = state
 		run.FinishedAt = d.now().Format("2006-01-02T15:04:05Z")
-		result := workflowAttemptResult{Run: encode(verificationExport(release, run, 3)), State: state, Failure: failure, EvaluationError: coreError, Signatures: run.AuditSignatures}
-		err := save(finishWorkflowAttempt(w, instanceID, result, d.Profiles))
+		bundle, err := verificationExportOf(release, run, 3)
+		if err != nil {
+			return w, err
+		}
+		result := workflowAttemptResult{Run: encode(bundle), State: state, Failure: failure, EvaluationError: coreError, Signatures: run.AuditSignatures}
+		err = save(finishWorkflowAttempt(w, instanceID, result, d.Profiles))
 		return w, err
 	}
 	if err = checkpoint(); err != nil {

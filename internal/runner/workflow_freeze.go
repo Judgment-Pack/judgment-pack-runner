@@ -175,8 +175,12 @@ func freezeWorkflowStage(stage workflowStage, in workflowFreezeInput, profiles [
 	if err != nil {
 		return out, err
 	}
+	releaseDigest, err := releaseDigestOf(r)
+	if err != nil {
+		return out, err
+	}
 	out = workflowStageSnapshot{
-		Frozen:    workflowFrozenStage{stage.ID, stage.Dialect.Digest, bindingDigest, mappingV2Hash(bound), stage.Pack.Digest, releaseDigest(r), runtimeDigest},
+		Frozen:    workflowFrozenStage{stage.ID, stage.Dialect.Digest, bindingDigest, mappingV2Hash(bound), stage.Pack.Digest, releaseDigest, runtimeDigest},
 		Published: bytes.Clone(in.Published), Binding: bytes.Clone(in.Binding), Bound: boundBytes, Pack: []byte(r.Pack), Release: releaseBytes,
 	}
 	return out, nil

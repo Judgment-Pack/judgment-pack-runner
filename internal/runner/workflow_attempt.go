@@ -186,7 +186,7 @@ func finishWorkflowAttempt(w workflowInventory, id string, result workflowAttemp
 		if len(result.Run) > MaxExportSize {
 			return w, errWorkflowBound
 		}
-		if strictJSON(result.Run, &bundle) != nil || !sameJSON(result.Run, encode(bundle)) || exportWithinLimits(result.Run, bundle) != nil || (bundle.Version != 2 && bundle.Version != 3) || bundle.ReleaseDigest != frozen.ReleaseDigest || releaseDigest(bundle.Release) != frozen.ReleaseDigest || bundle.Run.ReleaseID != bundle.Release.ID || bundle.Run.Input.Source == nil || !mappingMatchesRelease(bundle.Release, bundle.Run.Input) {
+		if strictJSON(result.Run, &bundle) != nil || !sameJSON(result.Run, encode(bundle)) || exportWithinLimits(result.Run, bundle) != nil || (bundle.Version != 2 && bundle.Version != 3) || bundle.ReleaseDigest != frozen.ReleaseDigest || !releaseDigestIs(bundle.Release, frozen.ReleaseDigest) || bundle.Run.ReleaseID != bundle.Release.ID || bundle.Run.Input.Source == nil || !mappingMatchesRelease(bundle.Release, bundle.Run.Input) {
 			return w, errWorkflowTransition
 		}
 		if !workflowCheckpointIdentity(w, id, bundle) {

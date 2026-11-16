@@ -69,3 +69,44 @@ func TestARunOnAFormat4DialectRecordsWhatVerifyPreparationReads(t *testing.T) {
 		t.Fatal("the run's export does not verify against the release digest:", err)
 	}
 }
+
+// releaseDigest is releaseDigestOf for a release the test knows has a
+// digest.
+func releaseDigest(r Release) string {
+	d, err := releaseDigestOf(r)
+	if err != nil {
+		panic(err)
+	}
+	return d
+}
+
+// verificationExport is verificationExportOf for a release the test knows
+// has a digest.
+func verificationExport(release Release, run Run, asked int) VerificationBundle {
+	b, err := verificationExportOf(release, run, asked)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// A release on a dialect of format 4.0.0 outside the canon domain (a
+// fraction in what Runner adds to it) has no release digest: an error, never
+// a value that two such releases would share, and no export.
+func TestAFormat4ReleaseOutsideTheCanonDomainHasNoDigest(t *testing.T) {
+	var m InputMapping
+	must(t, strictJSON([]byte(triageFour), &m))
+	r := Release{ID: "release_fraction", InputMapping: &m, Validation: json.RawMessage(`{"score":0.5}`)}
+	if d, err := releaseDigestOf(r); err == nil || d != "" {
+		t.Fatalf("a release outside the canon domain has a digest: %q %v", d, err)
+	}
+	if releaseDigestIs(r, "") {
+		t.Fatal("a release with no digest matches the empty one")
+	}
+	if _, err := verificationExportOf(r, Run{}, 2); err == nil {
+		t.Fatal("a release with no digest was exported")
+	}
+	if fourReleaseDigestible(r) == nil {
+		t.Fatal("a release outside the canon domain can be saved")
+	}
+}

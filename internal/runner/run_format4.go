@@ -23,22 +23,30 @@ func fourRelease(r Release) bool {
 	return r.InputMapping != nil && fourFamily(r.InputMapping.FormatVersion)
 }
 
-// releaseDigest is a release's digest (RFC 0020 section 1). A release on a
-// dialect of format 4.0.0 or 4.1.0 is digested over the canon bytes of the
+// releaseDigestOf is a release's digest (RFC 0020 section 1). A release on
+// a dialect of format 4.0.0 or 4.1.0 is digested over the canon bytes of the
 // whole release as Runner retains it, every member as retained, the case's
 // rule and a source's paging among them; one outside the canon domain has
-// none, and is refused when it is saved (fourReleaseDigestible). Every other
-// release keeps the pinned encoding, byte for byte.
-func releaseDigest(r Release) string {
+// none, an error here, and is refused when it is saved
+// (fourReleaseDigestible). Every other release keeps the pinned encoding,
+// byte for byte.
+func releaseDigestOf(r Release) (string, error) {
 	if fourRelease(r) {
 		b, err := derivation.Canon(encode(r))
 		if err != nil {
-			return ""
+			return "", codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" is outside the canon domain and has no release digest: "+err.Error())
 		}
-		return digest(b)
+		return digest(b), nil
 	}
 	b, _ := canonical(encode(r))
-	return digest(b)
+	return digest(b), nil
+}
+
+// releaseDigestIs says whether r's digest is want: never for a release that
+// has none, whatever want is.
+func releaseDigestIs(r Release, want string) bool {
+	d, err := releaseDigestOf(r)
+	return err == nil && d == want
 }
 
 // fourReleaseDigestible refuses a release on a dialect of format 4.0.0 or

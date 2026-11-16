@@ -202,7 +202,11 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 		}
 		var bundle VerificationBundle
 		if version < 4 {
-			bundle = verificationExport(release, run, version)
+			var err error
+			if bundle, err = verificationExportOf(release, run, version); err != nil {
+				failure(w, err)
+				return
+			}
 		} else {
 			entry, err := s.runEntry(run.ID)
 			if err == nil {

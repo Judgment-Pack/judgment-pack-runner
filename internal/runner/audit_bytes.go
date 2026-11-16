@@ -158,7 +158,9 @@ func exportWithinLimits(raw []byte, b VerificationBundle) error {
 // parsed run.audit. A run that holds none, because it was recorded before
 // Runner kept them or has no audit record, is exported as version 2 whatever is
 // asked: nothing is made up in their place. Version 4 is chainedExport's.
-func verificationExport(release Release, run Run, asked int) VerificationBundle {
+//
+// A release that has no digest (releaseDigestOf) has no export.
+func verificationExportOf(release Release, run Run, asked int) (VerificationBundle, error) {
 	run.AuditSignatures = nil
 	version := 2
 	if asked == 3 && len(run.AuditBytes) > 0 {
@@ -166,7 +168,11 @@ func verificationExport(release Release, run Run, asked int) VerificationBundle 
 	} else {
 		run.AuditBytes = nil
 	}
-	return VerificationBundle{Version: version, ReleaseDigest: releaseDigest(release), Release: release, Run: run}
+	releaseDigest, err := releaseDigestOf(release)
+	if err != nil {
+		return VerificationBundle{}, err
+	}
+	return VerificationBundle{Version: version, ReleaseDigest: releaseDigest, Release: release, Run: run}, nil
 }
 
 // chainedExport is a run's version-4 export: version 3, with the run's entry in
@@ -179,7 +185,10 @@ func verificationExport(release Release, run Run, asked int) VerificationBundle 
 // verification holds it to the run, and a store whose entry does not read as
 // one is refused here rather than exported without it.
 func chainedExport(release Release, run Run, entry []byte) (VerificationBundle, error) {
-	b := verificationExport(release, run, 3)
+	b, err := verificationExportOf(release, run, 3)
+	if err != nil {
+		return VerificationBundle{}, err
+	}
 	if b.Version != 3 || len(entry) == 0 {
 		return b, nil
 	}

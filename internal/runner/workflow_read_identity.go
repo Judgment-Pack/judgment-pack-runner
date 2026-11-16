@@ -117,7 +117,7 @@ func (r *workflowReader) identities() error {
 			b := a.bundle
 			source := b.Run.Input.Source
 			sourceCase, sourceCaseErr := columnCaseBytes(source)
-			if sourceCaseErr != nil || b.ReleaseDigest != frozen.ReleaseDigest || releaseDigest(b.Release) != frozen.ReleaseDigest || b.Run.ReleaseID != held.releaseValue.ID || !mappingMatchesRelease(held.releaseValue, b.Run.Input) || source == nil || !sameWorkflowCanonical(encode(source.Mapping), held.bound) || !sameJSON(sourceCase, caseBytes) {
+			if sourceCaseErr != nil || b.ReleaseDigest != frozen.ReleaseDigest || !releaseDigestIs(b.Release, frozen.ReleaseDigest) || b.Run.ReleaseID != held.releaseValue.ID || !mappingMatchesRelease(held.releaseValue, b.Run.Input) || source == nil || !sameWorkflowCanonical(encode(source.Mapping), held.bound) || !sameJSON(sourceCase, caseBytes) {
 				return workflowFinding("stage-binding-mismatch")
 			}
 			if len(held.binding) > 0 {

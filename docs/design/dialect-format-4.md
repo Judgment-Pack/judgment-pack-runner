@@ -47,7 +47,12 @@ in the same form; the release digest of a release on either format is RFC
 0020's, the SHA-256 of the canon bytes of the whole retained release, and every
 other release keeps the pinned encoding, byte for byte. A release on either
 format outside the canon domain has no digest and is refused `input-malformed`
-when it is saved. A paged source's loop and the job's cursor are
+when it is saved; the reader that would digest one anyway (an export, a
+workflow's freeze) fails, and a comparison of digests never matches it. The
+canon domain admits integers alone, so a release whose Runner-added members
+(`validation`, `preview`, `testEvidence.report`) hold a fraction cannot be
+saved on either format: conformant to the Spec, and a limit to know when a
+pack's preview reports one. A paged source's loop and the job's cursor are
 [paging.md](paging.md)'s. `vectors/dialect-recording-2` holds the Spec's schema,
 pinned, and a run's recorded preparation is checked against it.
 
