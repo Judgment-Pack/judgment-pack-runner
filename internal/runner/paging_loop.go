@@ -100,13 +100,16 @@ type PagedRead struct {
 
 // CursorAdvance is a paged read's cursor: the value the occurrence read from
 // the store (Read, absent when no run had advanced it, the job's first value
-// then filling the case), the value it filled into the case (From), and the
-// value the pages say comes next (To, absent when they say none). The run
-// that completes writes To while the store still holds Read.
+// then filling the case), the value it filled into the case (From), the
+// value the pages say comes next (To, absent when they say none), and, when
+// the read ended at the bound and left pages unread, why the cursor is held
+// where it was (Held, "bound"). The run that completes writes To while the
+// store still holds Read.
 type CursorAdvance struct {
 	Read string `json:"read,omitempty"`
 	From string `json:"from"`
 	To   string `json:"to,omitempty"`
+	Held string `json:"held,omitempty"`
 }
 
 // JobPaging is a job's paging member: a cursor rule for each paged source
@@ -226,9 +229,9 @@ func validateCursorRules(paging *JobPaging, r Release) error {
 	return nil
 }
 
-// pagingEntryVersion is the shape of a journal entry that holds fullReRead,
-// whatever its by, scope, attempt and result, which an entry of "1" to "5"
-// never holds.
+// pagingEntryVersion is the shape of a journal entry that holds fullReRead
+// or cursorHeld, whatever its by, scope, attempt and result, which an entry
+// of "1" to "5" never holds.
 const pagingEntryVersion = "6"
 
 // maxPagedSources bounds a job's paging member.
@@ -435,12 +438,42 @@ func (s *Service) acquirePages(ctx context.Context, next PlannedSource, p *occur
 		seen[reference] = true
 		q = filled(q0, fills, reference)
 	}
+	// A change cursor's read that reached its last page names the next
+	// run's reference there: a last page without one fails the occurrence,
+	// so a misnamed reference never passes as a cursor that stays put.
+	if out.end == "no-next" {
+		for _, rule := range p.rules {
+			if rule.Source == next.Name && rule.Kind == "change" {
+				if _, err := changeReference(rule, out.last); err != nil {
+					seal()
+					return SourceValue{}, sourceFailure(next.Name, err)
+				}
+			}
+		}
+	}
 	seal()
 	if p.reads == nil {
 		p.reads = map[string]*pagedAcquired{}
 	}
 	p.reads[next.Name] = out
 	return SourceValue{Pages: pages[:len(out.cites)]}, nil
+}
+
+// changeReference is the next run's reference a change cursor reads in the
+// last page of a read that ended at no-next (docs/design/paging.md, section
+// 7): a string of 1 to maxReferenceBytes bytes at the rule's reference,
+// read-failed when the page names none there, over-bound when it is longer.
+func changeReference(rule CursorRule, last any) (string, error) {
+	tokens, _ := pointerTokens(rule.Reference, false)
+	v, ok := pointerRead(last, tokens)
+	text, isText := v.(string)
+	switch {
+	case !ok || !isText || text == "":
+		return "", withCode(codeReadFailed, fmt.Errorf("the last page names no change reference at %s, where the job's cursor reads the next run's", rule.Reference))
+	case len(text) > maxReferenceBytes:
+		return "", withCode(codeOverBound, fmt.Errorf("the last page's change reference at %s is over %d bytes", rule.Reference, maxReferenceBytes))
+	}
+	return text, nil
 }
 
 // gatewayFor is the URL of the gateway connection of a profile, or "".
@@ -529,16 +562,12 @@ func (p *occurrencePaging) result() []PagedRead {
 			c := *adv
 			rule := byName[name]
 			if rule.Kind == "change" {
-				c.To = ""
-				tokens, _ := pointerTokens(rule.Reference, false)
-				if v, ok := pointerRead(a.last, tokens); ok {
-					if text, ok := v.(string); ok && text != "" && len(text) <= maxReferenceBytes {
-						c.To = text
-					}
-				}
+				c.To, _ = changeReference(rule, a.last)
 			}
 			if a.end != "no-next" {
-				c.To = ""
+				// The bound left pages unread: the cursor is held
+				// where it was, and the read says so.
+				c.To, c.Held = "", "bound"
 			}
 			// A window advances only when its end is strictly after
 			// its start: an empty window moves nothing, and an inverted

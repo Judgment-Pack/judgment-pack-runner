@@ -7028,7 +7028,7 @@
               "5",
               "6"
             ],
-            "description": "6 for an occurrence.ready entry that holds fullReRead, which an entry of an earlier version never holds; 5 for an entry that holds disposition, errorClass or counts, whatever its by, scope or attempt, which an entry of an earlier version never holds; 4 for any other entry that holds attempt, whatever its by or scope; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, a 4 holds an attempt, and a 5 a run's or an occurrence's end with its counts or class, whatever its by."
+            "description": "6 for an occurrence.ready entry that holds fullReRead or cursorHeld, which an entry of an earlier version never holds; 5 for an entry that holds disposition, errorClass or counts, whatever its by, scope or attempt, which an entry of an earlier version never holds; 4 for any other entry that holds attempt, whatever its by or scope; 3 for any other entry about a job created under a scope identifier, whatever its by, which holds the member scope an entry of version 1 or 2 never holds; 2 for any other entry whose by is a caller, whose members issuer and subject an entry of version 1 never holds; 1 for every other entry. A reader that knows version 1 alone can tell by its version, before it reads by, an entry that holds a member it does not know: a 2 is a caller's, a 3 a scoped job's, a 4 holds an attempt, and a 5 a run's or an occurrence's end with its counts or class, whatever its by."
           },
           "kind": {
             "enum": [
@@ -7266,6 +7266,13 @@
               "type": "string"
             },
             "description": "The paged sources the occurrence read again in full from their cursor's first value after the gateway said a reference had expired (410 source_reference_expired). Entry version 6."
+          },
+          "cursorHeld": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "On occurrence.ready: the paged sources whose read ended at the bound, leaving pages unread, so that the job's cursor is held where it was (CursorAdvance held). Entry version 6."
           }
         }
       },
@@ -8683,7 +8690,7 @@
       },
       "CursorAdvance": {
         "type": "object",
-        "description": "A paged read's cursor: the value read from the store (absent when no run had moved it), the value filled into the case, and the value the pages say comes next (absent when none, or when the read ended at the bound). The run that completes writes to while the store still holds read.",
+        "description": "A paged read's cursor: the value read from the store (absent when no run had moved it), the value filled into the case, the value the pages say comes next (absent when the read ended at the bound, or for an empty window), and, for a read the bound ended, held. The run that completes writes to while the store still holds read. A change read that ends at no-next without a reference at the rule's reference fails its occurrence (read-failed) and leaves the cursor.",
         "properties": {
           "read": {
             "type": "string"
@@ -8693,6 +8700,13 @@
           },
           "to": {
             "type": "string"
+          },
+          "held": {
+            "type": "string",
+            "enum": [
+              "bound"
+            ],
+            "description": "Why the cursor is held where it was: bound, the read ended at the dialect's maxPages and left pages unread, so the next run reads from the same cursor. The occurrence.ready entry names the source in cursorHeld."
           }
         },
         "required": [

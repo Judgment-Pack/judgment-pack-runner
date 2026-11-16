@@ -166,6 +166,11 @@ type EventDetail struct {
 	// (paging_loop.go), on the entry of its acceptance. An entry that holds
 	// it has pagingEntryVersion.
 	FullReRead []string `json:"fullReRead,omitempty"`
+	// CursorHeld names the paged sources whose read ended at the bound,
+	// leaving pages unread, so that the job's cursor is held where it was
+	// (paging_loop.go), on the entry of the occurrence's acceptance. An
+	// entry that holds it has pagingEntryVersion.
+	CursorHeld []string `json:"cursorHeld,omitempty"`
 }
 
 // EventInterruption is an interruption's own time: the moment Runner saw the
@@ -283,7 +288,7 @@ func journalRowOf(c change) journalRow {
 	if c.detail.Disposition != nil || c.detail.ErrorClass != "" || c.detail.Counts != nil {
 		version = resultEntryVersion
 	}
-	if len(c.detail.FullReRead) > 0 {
+	if len(c.detail.FullReRead) > 0 || len(c.detail.CursorHeld) > 0 {
 		version = pagingEntryVersion
 	}
 	return journalRow{version: version, kind: c.kind, at: c.at, by: string(encode(c.by)), concerns: string(encode(c.concerns)), revision: revision, from: from, to: to,
@@ -367,6 +372,9 @@ func occurrenceChange(o Occurrence, from string, by EventActor) change {
 		for _, read := range o.Paging {
 			if read.FullReRead {
 				c.detail.FullReRead = append(c.detail.FullReRead, read.Source)
+			}
+			if read.Cursor != nil && read.Cursor.Held != "" {
+				c.detail.CursorHeld = append(c.detail.CursorHeld, read.Source)
 			}
 		}
 	}

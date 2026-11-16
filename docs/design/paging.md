@@ -207,7 +207,22 @@ names a next reference fails its occurrence and leaves the cursor.
   is written only while the row holds `read`, so a run that read no row writes
   one only when none was written since. A read the bound ended, which left pages
   unread, carries no `to` and moves nothing; a window wider than the bound's
-  pages never moves until its end is reached in one run.
+  pages never moves until its end is reached in one run. Such a cursor is held
+  in the open: the advance names `held: "bound"`, in the occurrence's and the
+  run's paged read, and the occurrence's `occurrence.ready` entry names the
+  source in `cursorHeld` (entry version `"6"`).
+- **A change read without a reference.** A change cursor's read that ends at
+  `no-next` reads the next run's reference at `reference` in the last page: a
+  string of 1 to 8192 bytes. A last page that names none there (absent, `null`,
+  another type or `""`) fails the occurrence `read-failed`, and one over 8192
+  bytes `input-over-bound`, as a page that cannot be read does (class
+  `preparation`); the session is sealed and the cursor left. Journaling it and completing the run
+  instead was not taken: the run would decide the same records again, and so
+  would every run after it, with nothing but a journal entry to show it.
+  RFC 0033 makes the same choice for a misnamed `next` wherever it can (a
+  misspelling is `read-failed`, not a short read), and leaves the continuity
+  between runs to the operator (its section 9), so a cursor Runner cannot read
+  is refused rather than kept silently.
 - **A window** ends at the instant the occurrence is prepared, which fills the
   end parameter and is the next `from`. A window is never asked inverted: when
   the cursor's value is after that instant (a `first` in the future, or a

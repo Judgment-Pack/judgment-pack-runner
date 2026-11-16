@@ -556,6 +556,50 @@ func TestAThrottledWindowResumesTheSameWindow(t *testing.T) {
 	}
 }
 
+// Section 7: a cursor never stops moving without a signal. A change read
+// whose last page names no reference where the job's cursor reads it fails
+// the occurrence, seals its session and leaves the cursor; a read the bound
+// ended says in its paged read, the run's and the occurrence.ready entry
+// (version 6) that the cursor is held there.
+func TestACursorThatCannotMoveSaysSo(t *testing.T) {
+	misnamed := &JobPaging{Sources: []CursorRule{{Source: "changes", Kind: "change", Parameter: "since", Reference: "/latset", First: "start"}}}
+	w := newPagedWorld(t, nil, misnamed, newPagedFeed(t, 2, nil))
+	if o := w.prepare(t, "first"); o.State != "failed" || o.ErrorClass != classPreparation || !strings.Contains(o.Reason, "/latset") || len(o.Paging) != 0 {
+		t.Fatalf("a last page without the cursor's reference: %s %s %q %+v", o.State, o.ErrorClass, o.Reason, o.Paging)
+	}
+	if calls := w.feed.taken(); len(calls) != 2 || !w.feed.isSealed(calls[0].session) {
+		t.Fatalf("the read's session: %+v", calls)
+	}
+	if value, _ := w.cursor(t); value != "" {
+		t.Fatal("a read without a reference moved the cursor:", value)
+	}
+
+	bounded := newPagedWorld(t, nil, changeCursor, newPagedFeed(t, 10, nil))
+	o := bounded.prepare(t, "first")
+	if read := onePagedRead(t, o, 8, "bound"); *read.Cursor != (CursorAdvance{From: "start", Held: "bound"}) {
+		t.Fatalf("a bound read's cursor: %+v", read.Cursor)
+	}
+	found := false
+	for _, e := range occurrenceEntries(t, bounded.s, o.ID) {
+		if len(e.CursorHeld) > 0 {
+			found = true
+			if e.EntryVersion != pagingEntryVersion || !slices.Equal(e.CursorHeld, []string{"changes"}) || e.Kind != "occurrence.ready" {
+				t.Fatalf("the held cursor's entry: %+v", e)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no entry says the cursor is held at the bound")
+	}
+	r := bounded.run(t, o)
+	if r.State != "completed" || r.Trigger == nil || len(r.Trigger.Paging) != 1 || r.Trigger.Paging[0].Cursor == nil || r.Trigger.Paging[0].Cursor.Held != "bound" {
+		t.Fatalf("the run does not say its cursor is held: %s %+v", r.State, r.Trigger)
+	}
+	if value, _ := bounded.cursor(t); value != "" {
+		t.Fatal("a bound read moved the cursor:", value)
+	}
+}
+
 // Section 4.1: a job's paging names paged sources of its release's dialect,
 // each once, with a case parameter of the type its kind fills, in its form;
 // each refusal is coded, and POST /v1/jobs reads the member in its own case
