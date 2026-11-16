@@ -200,8 +200,14 @@ names a next reference fails its occurrence and leaves the cursor.
   each `{source, kind, parameter, end?, reference?, first}`: `reference` (a
   change cursor's pointer into the last page) and `end` (a window's end
   parameter) are each named only by their kind. `paging: null`, or the member
-  named in another case, is `invalid_paging_rule`. A release whose dialect is
-  not of format `4.1.0` has no paged source: `paging_source_unknown`.
+  named in another case, is `invalid_paging_rule`, and so is any member inside
+  it named in another case or `null`. A release whose dialect is not of format
+  `4.1.0` has no paged source: `paging_source_unknown`. A cursor's parameter,
+  and a window's end, are case parameters the paged source's request carries
+  (`$param`): one it does not is `paging_parameter_unknown`. A release whose
+  sources are acquired over durable Gateway connections is never paged
+  (section 6): a job's paging on it is `paging_durable_unsupported`, at
+  creation and at an upgrade.
 - **The cursor's advance** names `read` (the row's value, absent when none),
   `from` (the value filled into the case: the row's, or `first`) and `to`. It
   is written only while the row holds `read`, so a run that read no row writes

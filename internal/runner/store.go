@@ -398,7 +398,7 @@ func (s *Service) createJobPaged(by requester, name, releaseID, scope string, c 
 	if !releaseReady(r) {
 		return Job{}, &apiError{409, "release_not_ready", "Saved tests failed or could not complete. Correct the pack or cases and check a new release before creating a job."}
 	}
-	if err = validateCursorRules(paging, r); err != nil {
+	if err = s.validateJobPaging(paging, r); err != nil {
 		return Job{}, err
 	}
 	initialDigest := ""

@@ -147,11 +147,26 @@ type PagingCursor struct {
 
 var timestampForm = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$`)
 
+// validateJobPaging is validateCursorRules, and refuses a job's paging on a
+// release whose mapping is acquired over durable Gateway connections
+// (paging_durable_unsupported): that path neither seeds a cursor nor pages
+// (docs/design/paging.md, section 6), so the job could never advance.
+func (s *Service) validateJobPaging(paging *JobPaging, r Release) error {
+	if err := validateCursorRules(paging, r); err != nil {
+		return err
+	}
+	if paging != nil && s.durableMapping(r) {
+		return bad("paging_durable_unsupported", "A job's paging keeps a cursor for a paged source, and this release's sources are acquired over durable Gateway connections, which are never paged.")
+	}
+	return nil
+}
+
 // validateCursorRules holds a job's paging member to its release's mapping
 // (docs/design/paging.md, section 4.1): each rule names a paged operation
 // source of the mapping once, paging_source_unknown otherwise; a case
-// parameter of the type its kind fills, paging_parameter_unknown otherwise;
-// and is of its form, invalid_paging_rule otherwise.
+// parameter of the type its kind fills, which the source's request names
+// ($param), paging_parameter_unknown otherwise; and is of its form,
+// invalid_paging_rule otherwise.
 func validateCursorRules(paging *JobPaging, r Release) error {
 	if paging == nil {
 		return nil
@@ -182,6 +197,10 @@ func validateCursorRules(paging *JobPaging, r Release) error {
 			return invalid("the source %s is named twice", rule.Source)
 		}
 		seen[rule.Source] = true
+		committed := map[string]bool{}
+		if request, err := readInputJSON(source.Arguments); err == nil {
+			requestParameters(request, committed, map[string]bool{})
+		}
 		param := func(name, typ string) error {
 			if m.Case == nil {
 				return bad("paging_parameter_unknown", "A job's paging names the case parameter "+name+", and the dialect's case has none.")
@@ -189,6 +208,9 @@ func validateCursorRules(paging *JobPaging, r Release) error {
 			p, ok := m.Case.Parameters[name]
 			if !ok || p.Type != typ {
 				return bad("paging_parameter_unknown", "A job's paging names "+name+", which is no case parameter of type "+typ+".")
+			}
+			if !committed[name] {
+				return bad("paging_parameter_unknown", "A job's paging names "+name+", which the request of "+rule.Source+" does not carry ($param), so the cursor would never reach the source.")
 			}
 			return nil
 		}
@@ -641,7 +663,8 @@ var errPagingRule = bad("invalid_paging_rule", "A job's paging names its sources
 
 // jobPaging reads POST /v1/jobs's paging member: absent, none; named, a
 // member sources, a list of rules, each of exactly its members (decodeRaw),
-// named in its own case and not null.
+// every member at every level named in its own case and not null, so that
+// a member the decoder would take for another by its case never is.
 func jobPaging(raw []byte, rules *JobPaging) (*JobPaging, error) {
 	var members map[string]json.RawMessage
 	if json.Unmarshal(raw, &members) != nil {
@@ -659,7 +682,35 @@ func jobPaging(raw []byte, rules *JobPaging) (*JobPaging, error) {
 	if rules == nil || bytes.Equal(bytes.TrimSpace(held), []byte("null")) {
 		return nil, errPagingRule
 	}
+	var paging map[string]json.RawMessage
+	if json.Unmarshal(held, &paging) != nil || !exactNames(paging, "sources") {
+		return nil, errPagingRule
+	}
+	var sources []map[string]json.RawMessage
+	if json.Unmarshal(paging["sources"], &sources) != nil {
+		return nil, errPagingRule
+	}
+	for _, rule := range sources {
+		if !exactNames(rule, "source", "kind", "parameter", "end", "reference", "first") {
+			return nil, errPagingRule
+		}
+	}
 	return rules, nil
+}
+
+// exactNames says whether every member of an object is one of names,
+// spelled exactly so, and none is null.
+func exactNames(object map[string]json.RawMessage, names ...string) bool {
+	for name, value := range object {
+		known := false
+		for _, n := range names {
+			known = known || name == n
+		}
+		if !known || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return false
+		}
+	}
+	return true
 }
 
 // occurrencePagingOf is the paged sources' state of an occurrence's attempt:

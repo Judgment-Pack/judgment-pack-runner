@@ -82,7 +82,7 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 		return Job{}, err
 	}
 	// The job's cursors are kept, and held to the new release's dialect.
-	if err = validateCursorRules(j.Paging, next); err != nil {
+	if err = s.validateJobPaging(j.Paging, next); err != nil {
 		return Job{}, err
 	}
 	if old.PackID != next.PackID {

@@ -133,10 +133,10 @@ func (f *pagedFeed) isSealed(session string) bool {
 // pagedFeedDialect is a dialect of format 4.1.0 whose one source, changes,
 // is the feed's, paged by its next reference into the request's cursor: its
 // case names a change reference, since, and a window, from and until, each
-// passed to the source.
+// passed to the source, and a label the source is not passed.
 func pagedFeedDialect(p InputProfile) string {
 	return `{"formatVersion":"4.1.0","id":"urn:judgmentpack:dialect:paged-feed","version":"0.1.0",
- "case":{"parameters":{"since":{"pointer":"/since","type":"string"},"from":{"pointer":"/from","type":"timestamp"},"until":{"pointer":"/until","type":"timestamp"}},"facts":[],"evidence":[]},
+ "case":{"parameters":{"since":{"pointer":"/since","type":"string"},"from":{"pointer":"/from","type":"timestamp"},"until":{"pointer":"/until","type":"timestamp"},"label":{"pointer":"/label","type":"string"}},"facts":[],"evidence":[]},
  "sources":[{"name":"changes","kind":"operation","profile":"` + p.ID + `","profileDigest":"` + profileHash(p) + `","maxAge":300,
   "arguments":{"tool":"lookup","arguments":{"since":{"$param":"since"},"from":{"$param":"from"},"until":{"$param":"until"}}},
   "paging":{"next":"/next","noNext":"absent","fills":"/arguments/cursor","items":"/items","maxPages":8},
@@ -193,7 +193,7 @@ func newPagedWorld(t *testing.T, policy *RetryPolicy, paging *JobPaging, feed *p
 	j, e := s.createJobPaged(requester{}, "Paging", r.ID, "", nil, policy, paging)
 	must(t, e)
 	c := constantTrigger(time.Now())
-	c.Input = &AutomaticInput{Kind: "mapped-sources", Case: json.RawMessage(`{"since":"seed","from":"2026-01-01T00:00:00Z","until":"2026-01-01T00:00:00Z"}`)}
+	c.Input = &AutomaticInput{Kind: "mapped-sources", Case: json.RawMessage(`{"since":"seed","from":"2026-01-01T00:00:00Z","until":"2026-01-01T00:00:00Z","label":"feed"}`)}
 	tr, e := s.configureTrigger(j.ID, "", 0, c)
 	must(t, e)
 	return &pagedWorld{s: s, feed: feed, job: j, tr: tr, clock: &clock, input: c.Input}
@@ -727,6 +727,8 @@ func TestAJobsPagingIsHeldToItsReleasesDialect(t *testing.T) {
 			rule(func(r *CursorRule) {
 				r.Kind, r.Reference, r.Parameter, r.End, r.First = "window", "", "since", "until", "2026-11-01T00:00:00Z"
 			}),
+			// A case parameter the paged source's request does not carry.
+			rule(func(r *CursorRule) { r.Parameter = "label" }),
 		},
 		"invalid_paging_rule": {
 			{},
@@ -751,7 +753,13 @@ func TestAJobsPagingIsHeldToItsReleasesDialect(t *testing.T) {
 			}
 		}
 	}
-	for _, body := range []string{`{"paging":null}`, `{"Paging":{"sources":[]}}`} {
+	for _, body := range []string{`{"paging":null}`, `{"Paging":{"sources":[]}}`,
+		// Inside paging, every member is held to its own case too.
+		`{"paging":{"Sources":[{"source":"changes","kind":"change","parameter":"since","reference":"/latest","first":"start"}]}}`,
+		`{"paging":{"sources":[{"source":"changes","SOURCE":"other","kind":"change","parameter":"since","reference":"/latest","first":"start"}]}}`,
+		`{"paging":{"sources":[{"source":"changes","Kind":"change","parameter":"since","reference":"/latest","first":"start"}]}}`,
+		`{"paging":{"sources":[{"source":"changes","kind":"change","parameter":"since","reference":"/latest","first":"start","end":null}]}}`,
+	} {
 		var req struct {
 			Paging *JobPaging `json:"paging"`
 		}
@@ -759,6 +767,24 @@ func TestAJobsPagingIsHeldToItsReleasesDialect(t *testing.T) {
 		if _, err := jobPaging([]byte(body), req.Paging); err != errPagingRule {
 			t.Errorf("%s: %v", body, err)
 		}
+	}
+	// An exact request is admitted as written.
+	exact := `{"paging":{"sources":[{"source":"changes","kind":"change","parameter":"since","reference":"/latest","first":"start"}]}}`
+	var req struct {
+		Paging *JobPaging `json:"paging"`
+	}
+	must(t, json.Unmarshal([]byte(exact), &req))
+	if got, err := jobPaging([]byte(exact), req.Paging); err != nil || got == nil || !slices.Equal(got.Sources, changeCursor.Sources) {
+		t.Fatalf("an exact paging member: %+v %v", got, err)
+	}
+	// A release whose sources are acquired over durable connections never
+	// pages: a job's paging on it is refused.
+	held := w.s.cfg.GatewayConnections
+	w.s.cfg.GatewayConnections = []GatewayConnection{{Profile: feed.p.ID, URL: feed.url, Durable: true}}
+	_, err := w.s.createJobPaged(requester{}, "Refused", w.job.ReleaseID, "", nil, nil, changeCursor)
+	w.s.cfg.GatewayConnections = held
+	if refusal, ok := err.(*apiError); !ok || refusal.Code != "paging_durable_unsupported" {
+		t.Fatal("a paging job on a durable mapping:", err)
 	}
 	// A release of an earlier format names no paged source.
 	plain := journalRelease(t, w.s, completingRuntime(t, w.s.cfg.Dir))

@@ -8666,7 +8666,7 @@
       },
       "JobPaging": {
         "type": "object",
-        "description": "A job's paging member: a cursor rule for each paged source it keeps a cursor for. Each refusal is 422: invalid_paging_rule (form, bounds, null, or the member named in another case), paging_source_unknown, paging_parameter_unknown. A job that names it raises the store's schema to 8.",
+        "description": "A job's paging member: a cursor rule for each paged source it keeps a cursor for. Each refusal is 422: invalid_paging_rule (form, bounds, null, or a member at any level named in another case or null), paging_source_unknown, paging_parameter_unknown (also a parameter or end the paged source's request does not carry as $param), paging_durable_unsupported (a release whose sources are acquired over durable Gateway connections, which are never paged; at creation and at an upgrade). A job that names it raises the store's schema to 8.",
         "properties": {
           "sources": {
             "type": "array",
