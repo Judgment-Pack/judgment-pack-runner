@@ -259,7 +259,10 @@ change of its own, after #479 fixes the gateway's rule; nothing here builds it.
   kinds through the conformance suite and the engine tests.
 - Mutants: the intersection dropped (the claim alone trusted); the view held to the scope the
   request names instead of the one the identity allows; a held caller let through to
-  `POST /v1/ticks`.
+  `POST /v1/ticks`. As built, four more: the creation's reach check dropped;
+  `triggersOutsideSettings` shown to a held caller; the sqlite kind's none-scope filter dropped;
+  an absent `callerScopes` read as unchecked. Each of the seven fails the tests. No store
+  transaction was added, so the run-twice suite is not part of it.
 
 ## Consequences
 
@@ -276,6 +279,37 @@ change of its own, after #479 fixes the gateway's rule; nothing here builds it.
 - Neutral: a held caller still learns what the store note's D8 to D10 accept (the chain of runs,
   journal sequence gaps, the installation-wide counts and keys), and shares the installation's
   releases, profiles and input root; parties that must not, use separate installations.
+
+## As built
+
+The build follows C1 to C9 as recommended (option a each time). Where each lives:
+
+- The claim, the entry and the reach: `internal/runner/caller_scopes.go` (`readCallerScopes`,
+  `reachOf`, `callerReach`); read in `(*Identity).admit` (`caller_identity.go`) after every other
+  check of the token; the owner bearer's reach is set in `Service.handler` (`http.go`).
+- The routes: `Service.scoped` (`scope.go`) refuses an installation route to every caller but the
+  installation's before the scope parameter is read, holds the request to `unheldScope` in place
+  of a scope its caller does not reach, substitutes the record id without reading the record's
+  scope, and hands the listings `requestScope`; `POST /v1/jobs` and `GET /v1/status` in
+  `http.go`; the journal listing in `eventsHandler`; the upgrade's transaction in
+  `job_revisions.go`.
+- The engine filters: `recordFilter.NoScope` and `journalFilter.noScope`, in the sqlite and
+  postgresql kinds' queries and the in-memory kind, held by the conformance suite.
+- The start's note: `cmd/jpack-runner/service.go`, from `(*Identity).CallerScopesNote`.
+
+Two details the sections above leave open, as built:
+
+- **The routes that name no record**, on the postgresql kind, for a caller that does not reach
+  the none scope, run on a view held to `unheldScope`, as every other route of that caller does.
+  They read no scoped row, and the installation's shared writes they make (a release's save, a
+  profile's registration, a refusal's entry) are held to the none scope by their own
+  transactions, as before; a test serves the chain of runs, the input profiles and the status so.
+- **A refused creation** answered before the reach is checked (a body or scope out of form) or
+  after it, for a scope the caller reaches (`review_required`, `release_already_used`, …), is
+  journaled under the none scope as before, for every caller, naming the release and the caller.
+  So a held caller can still add such an entry to the none scope's journal, as every caller
+  could; it reads none of them unless it reaches the none scope. Journaling fewer refusals would
+  weaken the record of admissions, so it stays.
 
 ## Not in this change
 

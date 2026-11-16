@@ -186,7 +186,7 @@
             "description": "Serve only the records that carry exactly this scope identifier, compared byte for byte (no prefix matches, no case folded). Without it every record is served."
           }
         ],
-        "description": "Paginated jobs include packTitle, packVersion and up to five recentRuns with id, state and createdAt."
+        "description": "Paginated jobs include packTitle, packVersion and up to five recentRuns with id, state and createdAt. A caller held to scope identifiers (docs/adr/0002-caller-scopes.md) is answered, naming a scope it does not reach, as for a scope no record carries (an empty page), and naming none, only the records under no scope identifier when it reaches those, or an empty page."
       },
       "post": {
         "operationId": "createJob",
@@ -197,6 +197,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "scope_not_allowed: the job's scope identifier, or none when the creation names none, is not one its caller's identity allows (docs/adr/0002-caller-scopes.md). It depends on no stored record, names neither scope and is not journaled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -1163,7 +1173,7 @@
       ],
       "get": {
         "operationId": "listEvents",
-        "description": "Every entry of the journal of job activity, including those that concern no job: Runner's own, a release never made into a job, a refusal that names nothing else. Entries are oldest first, at most 50 after the cursor, in the order their changes committed. A reader that has caught up asks again with next. The operator's own log: not chained, not signed, and binding nothing against the operator. With tail=true or before=<sequence> the page is read from the end: the entries stay in the journal's order within the page, more says older entries exist before the page, before is the cursor for them, and next still follows the journal forward from the page's last entry. Capability journal-backward in GET /v1/status.",
+        "description": "Every entry of the journal of job activity, including those that concern no job: Runner's own, a release never made into a job, a refusal that names nothing else. Entries are oldest first, at most 50 after the cursor, in the order their changes committed. A reader that has caught up asks again with next. The operator's own log: not chained, not signed, and binding nothing against the operator. With tail=true or before=<sequence> the page is read from the end: the entries stay in the journal's order within the page, more says older entries exist before the page, before is the cursor for them, and next still follows the journal forward from the page's last entry. Capability journal-backward in GET /v1/status. A caller held to scope identifiers (docs/adr/0002-caller-scopes.md) is answered, naming a scope it does not reach, as for a scope no record carries (an empty page), and naming none, only the records under no scope identifier when it reaches those, or an empty page.",
         "responses": {
           "200": {
             "description": "A page of the journal",
@@ -1417,7 +1427,7 @@
           }
         ],
         "summary": "List runs across all jobs",
-        "description": "Paginated run summaries include jobName, disposition and handoff, but omit input snapshots and audit bodies."
+        "description": "Paginated run summaries include jobName, disposition and handoff, but omit input snapshots and audit bodies. A caller held to scope identifiers (docs/adr/0002-caller-scopes.md) is answered, naming a scope it does not reach, as for a scope no record carries (an empty page), and naming none, only the records under no scope identifier when it reaches those, or an empty page."
       }
     },
     "/jobs/{job}/triggers": {
@@ -1616,7 +1626,7 @@
     "/ticks": {
       "post": {
         "operationId": "sharedTick",
-        "description": "A shared tick, for an external scheduler to call once per tick of a shared interval the operator names. It is the installation's: the control API's credential alone admits it, it takes no scope identifier (a request naming one is refused, 400 invalid_scope), and it ticks the enabled shared-interval triggers of every scope bound to the interval. A trigger due at or before the tick admits its due time's occurrence, by its missed rule when an earlier tick of it was never called, and moves its nextAt to its next tick, each in one transaction that expects the trigger as it was read: a repeated or late call for a tick, on this Runner or another of the store, records nothing twice. at names the tick, a multiple of the interval since midnight UTC, no more than 30 seconds ahead of the Runner's clock and no more than one interval behind it (422 invalid_tick: a scheduler that replays the ticks it missed makes no catch-up burst, the tick it may still name finding the earlier due times missed); without it, the last tick at or before the Runner's clock plus 30 seconds. An interval the operator does not name is refused, 422 unknown_shared_interval. The triggers are ticked one at a time, in the order they were made, and the call stops at the first whose tick fails, a store error or an unreadable record among them: it answers that error (500 store_error, or 503 runner_unavailable), the triggers before it ticked and the rest not, without a count. Name at on every call, and call again with the same at, within one interval of it: the triggers already ticked record nothing twice and the rest are ticked, on time, although a 500 says retryable false. A trigger whose tick keeps failing holds back the triggers made after it on every call until it is fixed or paused.",
+        "description": "A shared tick, for an external scheduler to call once per tick of a shared interval the operator names. It is the installation's: only the installation's caller is served it (the owner bearer, or a token with no scope_ids of a subject whose callerScopes entry is \"installation\"; any other caller is answered 403 installation_caller_required before its scope or body is read), it takes no scope identifier (a request naming one is refused, 400 invalid_scope), and it ticks the enabled shared-interval triggers of every scope bound to the interval. A trigger due at or before the tick admits its due time's occurrence, by its missed rule when an earlier tick of it was never called, and moves its nextAt to its next tick, each in one transaction that expects the trigger as it was read: a repeated or late call for a tick, on this Runner or another of the store, records nothing twice. at names the tick, a multiple of the interval since midnight UTC, no more than 30 seconds ahead of the Runner's clock and no more than one interval behind it (422 invalid_tick: a scheduler that replays the ticks it missed makes no catch-up burst, the tick it may still name finding the earlier due times missed); without it, the last tick at or before the Runner's clock plus 30 seconds. An interval the operator does not name is refused, 422 unknown_shared_interval. The triggers are ticked one at a time, in the order they were made, and the call stops at the first whose tick fails, a store error or an unreadable record among them: it answers that error (500 store_error, or 503 runner_unavailable), the triggers before it ticked and the rest not, without a count. Name at on every call, and call again with the same at, within one interval of it: the triggers already ticked record nothing twice and the rest are ticked, on time, although a 500 says retryable false. A trigger whose tick keeps failing holds back the triggers made after it on every call until it is fixed or paused.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1647,6 +1657,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TickResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "installation_caller_required: a caller held to scope identifiers (docs/adr/0002-caller-scopes.md); the route acts for every scope. Not journaled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -3177,7 +3197,7 @@
       "bearer": {
         "type": "http",
         "scheme": "bearer",
-        "description": "The owner bearer: a companion's boot line's token, or a service configuration's. In service mode with an identity, an identity token in its place: a JWT in compact form, at most 8192 bytes, from the configured issuer (iss), naming the configured audience (aud), for a subject the configuration lists (sub), signed with RS256, ES256 or EdDSA by a key of the configured key set, named by kid, with an expiry (exp) and, when present, a start (nbf), each held with 30 seconds' leeway. The owner bearer is not taken then. A refused token is answered 401 with WWW-Authenticate: Bearer and a message naming one reason, which never repeats the token. A token is a bearer credential: Runner keeps no record of the tokens it has taken, so one can be presented again until it expires."
+        "description": "The owner bearer: a companion's boot line's token, or a service configuration's. In service mode with an identity, an identity token in its place: a JWT in compact form, at most 8192 bytes, from the configured issuer (iss), naming the configured audience (aud), for a subject the configuration lists (sub), signed with RS256, ES256 or EdDSA by a key of the configured key set, named by kid, with an expiry (exp) and, when present, a start (nbf), each held with 30 seconds' leeway. The owner bearer is not taken then. A refused token is answered 401 with WWW-Authenticate: Bearer and a message naming one reason, which never repeats the token. A token is a bearer credential: Runner keeps no record of the tokens it has taken, so one can be presented again until it expires. With an identity, a caller is held to the scope identifiers its token's scope_ids claim (an array of 1 to 256 scope identifiers, each once) and its subject's identity.callerScopes entry both allow (docs/adr/0002-caller-scopes.md): a claim naming one the entry does not grant is refused, 401, not narrowed; a token with no claim reaches the records under no scope identifier, or, for a subject whose entry is \"installation\", every scope and the installation's routes, as the owner bearer does. A request naming a job, run, trigger or occurrence under a scope its caller does not reach is answered as one naming a record the store does not hold, and a listing keeps only what the caller reaches. With callerScopes \"unchecked\", the claim is not read and every caller reaches every scope."
       }
     },
     "schemas": {
@@ -3312,7 +3332,7 @@
       "ScopeIdentifier": {
         "type": "string",
         "minLength": 1,
-        "description": "A scope identifier (docs/design/scope-identifiers.md): an opaque label of at least one code point and at most 128 bytes of UTF-8, not 128 characters (the gateway's bound, in bytes; maxLength counts characters, so none is stated), with no code point of General_Category Cc (tab and line feed among them), Co or Cn, Bidi_Control, Default_Ignorable_Code_Point or Noncharacter_Code_Point, as Unicode 15.0.0 assigns them; the gateway's rule for its own scope identifier, meant to stay the same. Compared as written, byte for byte: nothing is folded, trimmed or normalized. A label and a filter, not an authorization boundary: every request the API admits may name any scope, or none to list every scope's records."
+        "description": "A scope identifier (docs/design/scope-identifiers.md): an opaque label of at least one code point and at most 128 bytes of UTF-8, not 128 characters (the gateway's bound, in bytes; maxLength counts characters, so none is stated), with no code point of General_Category Cc (tab and line feed among them), Co or Cn, Bidi_Control, Default_Ignorable_Code_Point or Noncharacter_Code_Point, as Unicode 15.0.0 assigns them; the gateway's rule for its own scope identifier, meant to stay the same. Compared as written, byte for byte: nothing is folded, trimmed or normalized. The owner bearer may name any scope, or none to list every scope's records; with an identity, a caller names only the scope identifiers its identity allows (docs/adr/0002-caller-scopes.md)."
       },
       "RetryPolicy": {
         "type": "object",
@@ -3865,7 +3885,7 @@
           },
           "triggersOutsideSettings": {
             "type": "object",
-            "description": "What the start found, absent under manual admission: the enabled triggers, of every scope, whose schedule the schedule settings in force refuse, each journaled once at the start as trigger.outside-settings and none changed. unknownSharedInterval is those bound to a shared interval the settings do not name, which this Runner does not tick; outsideBounds is those whose cron expression is outside the bounds, ticked on their schedule until changed or enabled again. Each lists the trigger ids in the order the triggers were made. A trigger changed since the start stays listed until the next start. Every Runner on one store must name the same shared intervals and bounds.",
+            "description": "What the start found, absent under manual admission: the enabled triggers, of every scope, whose schedule the schedule settings in force refuse, each journaled once at the start as trigger.outside-settings and none changed. unknownSharedInterval is those bound to a shared interval the settings do not name, which this Runner does not tick; outsideBounds is those whose cron expression is outside the bounds, ticked on their schedule until changed or enabled again. Each lists the trigger ids in the order the triggers were made. A trigger changed since the start stays listed until the next start. Every Runner on one store must name the same shared intervals and bounds. Absent, too, for every caller but the installation's (the owner bearer, or a token with no scope_ids of a subject whose callerScopes entry is \"installation\"): it lists the trigger ids of every scope.",
             "properties": {
               "checkedAt": {
                 "type": "string",
@@ -3884,6 +3904,14 @@
               "outsideBounds"
             ],
             "additionalProperties": false
+          },
+          "callerScopes": {
+            "type": "string",
+            "enum": [
+              "checked",
+              "unchecked"
+            ],
+            "description": "Present in service mode with an identity: whether its callers are held to the scope identifiers their identity allows (checked, the default) or not (unchecked, identity.callerScopes \"unchecked\", which the start also says on standard error). Absent without an identity."
           }
         }
       },

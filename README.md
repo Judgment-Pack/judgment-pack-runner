@@ -187,8 +187,28 @@ The token replaces the owner bearer: a configuration with `identity` takes no
 `token`. A refusal is `401` with `WWW-Authenticate: Bearer` and its reason, which
 repeats nothing of the token. A trigger key is unchanged: a direct event delivery
 holds an identity token and `X-Trigger-Token`. What is checked is the token, not
-who holds it: a subject is the issuer's name for a caller, every listed subject may
-do everything the owner bearer may, and Runner keeps no token.
+who holds it: a subject is the issuer's name for a caller, and Runner keeps no
+token. Which scope identifiers a caller reaches is the next paragraph's.
+
+**Caller scopes.** With `identity`, a caller is held to the scope identifiers its
+token and its configuration both allow. The token names them in the claim
+`scope_ids`, an array of 1 to 256 scope identifiers, each once (the gateway reads
+the same claim); `identity.callerScopes` names, per listed subject, an array of 1 to
+256 scope identifiers it may be granted, `"unscoped"` or `"installation"`. A token
+whose claim names one its subject's entry does not grant is refused, `401`, not
+narrowed. A token with no claim reaches the records created under no scope
+identifier, or, for an `"installation"` subject, every scope and the installation's
+routes, as the owner bearer does. A request about another scope's record is answered
+as one about a record the store does not hold; a listing keeps only the scope the
+caller reaches (an empty page for one it does not); `POST /v1/jobs` under a scope
+the caller does not reach is `403 scope_not_allowed`; `POST /v1/ticks` is
+`403 installation_caller_required` to every caller but the installation's, and
+`GET /v1/status` leaves out `triggersOutsideSettings` for them. **Without
+`callerScopes` the check holds**, every subject unscoped: write the entries before
+upgrading an installation with `identity`, or `"callerScopes": "unchecked"`, which
+keeps the behavior before caller scopes and which the start (on standard error)
+and `GET /v1/status` (`"callerScopes":"unchecked"`) say
+([design record](docs/adr/0002-caller-scopes.md)).
 
 **Who is recorded.** A caller's run has `<issuer>#<subject>` as `requestedBy`,
 as in `https://issuer.example#ops-service` (an issuer holds no `#`), and its
@@ -210,8 +230,10 @@ scope, under none for a record under one, or under one for a record under none, 
 answered as the same request for a record the store does not hold. Any other route
 refuses a `scope` (`invalid_scope`). `GET /v1/jobs`, `GET /v1/runs` and
 `GET /v1/events` with `scope` serve exactly the records that carry it, compared
-byte for byte; without it they serve everything. It is a label and a filter, not an
-authorization boundary: every request admitted may name any scope, or none. A store
+byte for byte; without it they serve everything to the owner bearer. The owner
+bearer, and with `"callerScopes": "unchecked"` every caller, may name any scope, or
+none; with `identity` and caller scopes checked, a caller is held to the scope
+identifiers its identity allows (above), and that is the boundary. A store
 whose first job is created under a scope is raised to schema `"5"`, which every
 earlier Runner refuses; going back needs a copy of the store from before that job.
 A store without one stays at schema `"3"`, byte for byte

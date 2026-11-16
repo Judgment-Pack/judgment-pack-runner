@@ -183,16 +183,18 @@ Refused: an interval the operator does not name, `422`
 body member more, `400`; a Runner held to the manual admission gate, as every
 automation is; an unhealthy Runner, `503` `runner_unavailable`.
 
-**It is the installation's.** The control API's credential alone admits it:
-the owner bearer, or in service mode the identity token, as every route; a
-trigger key is not one. It takes no scope identifier: a request that names
+**It is the installation's.** Only the installation's caller is served it:
+the owner bearer, or in service mode a token with no `scope_ids` of a subject
+whose `callerScopes` entry is `"installation"`; every other caller is refused,
+`403` `installation_caller_required`, before its scope or body is read
+([caller scopes](../adr/0002-caller-scopes.md), C6). A trigger key is not a
+credential for it. It takes no scope identifier: a request that names
 one is refused, `400` `invalid_scope`, before anything is read, as every
 route that takes none refuses one
 ([scope identifiers](scope-identifiers.md), section 3). A scope identifier
-is a label and a filter, not an authorization boundary, and the tick ticks
-the triggers of every scope, as the Runner's own clock does: a request that
-names a scope cannot narrow a tick to it, nor tick another scope's jobs under
-it. On the postgresql kind the tick reads the store for every scope, as the
+does not narrow a tick: it ticks the triggers of every scope, as the
+Runner's own clock does, and a request that names a scope cannot narrow it,
+nor tick another scope's jobs under it. On the postgresql kind the tick reads the store for every scope, as the
 clock does ([store-postgresql.md](store-postgresql.md), section 6).
 
 **What it does.** It reads the list of every enabled trigger, then takes each

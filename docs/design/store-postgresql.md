@@ -463,9 +463,11 @@ login is held to the scope each transaction sets. (b) One login, and a reserved 
 every scope. (c) A dispatcher that sets each scope in turn. (b) is ruled out: a scope identifier
 may hold any character but a few (scope-identifiers.md, section 1), so no value is safe to
 reserve, and a login that can widen its own setting holds nothing. (c) still needs the list of
-scopes, read across scopes. A scope identifier is a label and a filter, not an authorization
-boundary (scope-identifiers.md): the policy holds a request's transaction to the scope the Runner
-set for it; which scopes a caller may name is not this issue's.
+scopes, read across scopes. The policy holds a request's transaction to the scope the Runner
+set for it; which scopes a caller may name is decided by its identity
+([caller scopes](../adr/0002-caller-scopes.md)): the scope set is the one the identity allows,
+or a value no row carries for a request naming one it does not, never the scope the request
+names alone.
 
 **Which login each route uses**, and the scope each of its transactions is held to:
 
