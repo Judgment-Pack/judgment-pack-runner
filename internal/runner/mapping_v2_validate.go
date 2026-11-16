@@ -330,7 +330,7 @@ func validateDialect(m InputMapping, open bool) error { return validateDialectMo
 // VerifyPreparation refuses the kind after. A local file's source parameters
 // are held to the rules of every source's (§3, §4) on every path.
 func validateDialectMode(m InputMapping, open, offline bool) error {
-	four := m.FormatVersion == format4
+	four := fourFamily(m.FormatVersion)
 	if four {
 		if e := format4Form(m, offline); e != nil {
 			return e
@@ -425,6 +425,11 @@ func validateDialectMode(m InputMapping, open, offline bool) error {
 			return fail("invalid or duplicate source name")
 		}
 		unread := offline && m.Version == 3 && refusedKind(s) != nil
+		// A paged source's paging member, in format 4.1.0 alone
+		// (dialect_format41.go).
+		if _, e := pagingOf(m.FormatVersion, s); e != nil {
+			return failOn(e)
+		}
 		if !unread {
 			if e := sourceForm(m.Version, s, open); e != nil {
 				return failOn(e)

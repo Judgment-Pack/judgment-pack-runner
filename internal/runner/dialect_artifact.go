@@ -20,7 +20,7 @@ func (m InputMapping) validateArtifactIdentity() error {
 		}
 		return nil
 	}
-	if (m.FormatVersion != "2.0.0" || m.Version != 2) && (m.FormatVersion != "3.0.0" || m.Version != 3) && (m.FormatVersion != format4 || m.Version != 3) {
+	if (m.FormatVersion != "2.0.0" || m.Version != 2) && (m.FormatVersion != "3.0.0" || m.Version != 3) && (!fourFamily(m.FormatVersion) || m.Version != 3) {
 		return inputProblem("Unsupported Dialect formatVersion.")
 	}
 	if m.ArtifactID == "" || len(m.ArtifactID) > 1024 || strings.IndexFunc(m.ArtifactID, func(c rune) bool { return c <= 32 || c == 127 }) >= 0 || !artifactVersionGrammar.MatchString(m.ArtifactVersion) {
@@ -38,7 +38,7 @@ func (m InputMapping) marshalArtifact() ([]byte, error) {
 	// Format 4.0.0's case has a rule (spec/dialect.md §2.2.1), kept as
 	// written; no other format's case has one.
 	var caseDocument any = m.Case
-	if m.FormatVersion == format4 && m.caseRule != nil {
+	if fourFamily(m.FormatVersion) && m.caseRule != nil {
 		caseDocument = struct {
 			*CaseMapping
 			Rule json.RawMessage `json:"rule"`
@@ -95,7 +95,7 @@ func (m *InputMapping) UnmarshalJSON(raw []byte) error {
 		family = 2
 	case "3.0.0":
 		family = 3
-	case format4:
+	case format4, format41:
 		// Read as format 3.0.0 is, its case's rule apart: no other format's
 		// case has one, so the strict reading of the rest refuses it there.
 		family = 3
@@ -103,7 +103,7 @@ func (m *InputMapping) UnmarshalJSON(raw []byte) error {
 		return errors.New("unsupported Dialect formatVersion")
 	}
 	var caseRule json.RawMessage
-	if format == format4 {
+	if fourFamily(format) {
 		if held, ok := members["case"]; ok {
 			if caseMembers, err := exactMembers(held); err == nil {
 				if rule, ok := caseMembers["rule"]; ok {
@@ -165,10 +165,11 @@ func releaseDialectIdentity(r Release) (*DialectIdentity, error) {
 	if mapping.FormatVersion == "" {
 		return nil, nil
 	}
-	// No release, job or workflow is on a dialect of format 4.0.0 until the
-	// Spec's workflow and recording schemas admit it (dialect_format4.go).
-	if mapping.FormatVersion == format4 {
-		return nil, formatNotAdmitted()
+	// No release, job or workflow is on a dialect of format 4.0.0 or 4.1.0
+	// until the Spec's workflow and recording schemas admit it
+	// (dialect_format4.go).
+	if fourFamily(mapping.FormatVersion) {
+		return nil, formatNotAdmitted(mapping.FormatVersion)
 	}
 	if err := mapping.validateArtifactIdentity(); err != nil {
 		return nil, err

@@ -218,7 +218,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	m := c.Mapping
 	// A dialect of format 4.0.0 is read offline alone (dialect_format4.go):
 	// every other path refuses it, dialect_format_not_admitted.
-	four := m.FormatVersion == format4
+	four := fourFamily(m.FormatVersion)
 	validate := m.validate
 	if four && offline {
 		validate = func() error { return validateDialectMode(m, false, true) }
@@ -330,7 +330,7 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	caseTypes := map[string]string{"runAt": "timestamp"}
 	prep := &Preparation{ConversionContract: c.ConversionContract, Version: m.Version, VerifiedAt: at.UTC().Format("2006-01-02T15:04:05Z"), MappingDigest: hash, Verification: "verified acquisitions; session sealing and input truth are not established", Cites: []Citation{}, Lineage: []TargetLineage{}, Outcomes: []SourceOutcome{}}
 	if four {
-		prep.formatVersion = format4
+		prep.formatVersion = m.FormatVersion
 	}
 	claims := map[string]derivedClaim{}
 	generated := map[string]bool{}
@@ -344,15 +344,24 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	// shares a session with itself, at any call index. Neither form says a
 	// session is sealed or complete.
 	shared, apart, first := true, true, ""
+	// In format 4.1.0 the two forms hold over the receipts of the sources
+	// that are not paged, and a paged source's session is its own: no other
+	// source's receipt names it (dialect_format41.go).
+	pagedSessions := map[string]bool{}
+	unpaged := 0
 	admit := func(cite Citation) error {
 		key := fmt.Sprintf("%s/%d", cite.SessionID, cite.CallIndex)
 		if cites[key] {
 			return withCode(codeSessions, errors.New("one receipt cannot stand in for multiple source acquisitions"))
 		}
+		if pagedSessions[cite.SessionID] {
+			return withCode(codeSessions, errors.New("a paged source's session is its own: another source's receipt names it"))
+		}
 		cites[key] = true
-		if len(prep.Cites) == 0 {
+		if unpaged == 0 {
 			first = cite.SessionID
 		}
+		unpaged++
 		// Two first calls of one session would be one receipt twice,
 		// which is refused above: so first calls are of sessions apart.
 		shared = shared && cite.SessionID == first
@@ -536,6 +545,19 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 		gen = gen || class == "generated"
 		generated[source.Name] = gen
 		value, present := c.Sources[source.Name]
+		// A paged source's acquisition is its pages (dialect_format41.go).
+		paging, e := pagingOf(m.FormatVersion, source)
+		if e != nil {
+			return fail(e)
+		}
+		var pages []json.RawMessage
+		if held, ok := c.pages[source.Name]; ok {
+			if paging == nil || json.Unmarshal(held, &pages) != nil || len(pages) == 0 {
+				return fail(withCode(codeMalformed, errors.New("only a paged source's acquisition has pages")))
+			}
+			present = true
+		}
+		var walked *pagedRead
 		used[source.Name] = true
 		claim := derivedClaim{json.RawMessage(`{}`), map[string]string{}, "unknown", "dependency-unavailable", []string{}}
 		var args json.RawMessage
@@ -613,8 +635,13 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 					}
 				}
 			}
+			if paging != nil && !unavailable {
+				if e = pagingFits(paging, profile); e != nil {
+					return fail(e)
+				}
+			}
 			if !present {
-				if planning {
+				if planning && paging == nil {
 					return i, &acquisitionNeeded{PlannedSource{retainResponse: source.Read.Copy != nil && hasColumnCopy(*source.Read.Copy), Name: source.Name, Kind: source.Kind, Provider: source.Provider, Profile: source.Profile, Source: profile.Source, Arguments: args}}
 				}
 				return fail(withCode(codeMissing, errors.New("required source response is missing")))
@@ -677,6 +704,14 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 					if err := columnInputBounds(c); err != nil {
 						return fail(err)
 					}
+				} else if paging != nil {
+					// Each page's request, receipt, session and read, from
+					// page 0; the read applies once, to the joined value.
+					q0, _ := readInputJSON(args)
+					walked, e = walkPages(source.Read, paging, q0, pages, profile, profileKeys[profile.ID], at, source.MaxAge, prep.Cites)
+					if e != nil {
+						return fail(e)
+					}
 				} else {
 					var err error
 					result, cite, err = verifyAcquisition(value.Response, args, profile, profileKeys[profile.ID], at, source.MaxAge)
@@ -684,9 +719,11 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 						return fail(err)
 					}
 				}
-				artifact, e = readInputJSON(result)
-				if e != nil {
-					return fail(e)
+				if walked == nil {
+					artifact, e = readInputJSON(result)
+					if e != nil {
+						return fail(e)
+					}
 				}
 			}
 			if cite != nil {
@@ -694,8 +731,14 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 					return fail(e)
 				}
 			}
-			artifact, e = unwrapRead(source.Read, artifact)
-			if e != nil {
+			if walked != nil {
+				for _, page := range walked.cites {
+					pagedSessions[page.SessionID] = true
+					prep.Cites = append(prep.Cites, page)
+				}
+				receipts = &walked.cites
+				artifact = walked.joined
+			} else if artifact, e = unwrapRead(source.Read, artifact); e != nil {
 				return fail(e)
 			}
 			if source.Calculation != nil {
@@ -740,7 +783,11 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 			*judged = append(*judged, judgedFreshness{source.Name, calc != nil && calc.Status == calculationComputed})
 		}
 		claims[source.Name] = claim
-		prep.Outcomes = append(prep.Outcomes, SourceOutcome{Name: source.Name, Status: claim.Status, Reason: claim.Reason, Parameters: encode(params), Arguments: args, Claim: encode(claim)})
+		outcome := SourceOutcome{Name: source.Name, Status: claim.Status, Reason: claim.Reason, Parameters: encode(params), Arguments: args, Claim: encode(claim)}
+		if walked != nil {
+			outcome.paging = walked.outcome()
+		}
+		prep.Outcomes = append(prep.Outcomes, outcome)
 	}
 	for n := range c.Sources {
 		if !used[n] {
@@ -758,7 +805,14 @@ func prepareV2Mode(i Input, profiles []InputProfile, at time.Time, planning bool
 	// with a research source keeps the order of sources instead, each
 	// research source's citations in the order its record retains them, the
 	// record's own last (spec/dialect.md §9.1).
-	if len(recipes) == 0 {
+	// So does a preparation of a dialect that declares a paged source,
+	// acquired or skipped, each paged source's pages in call order
+	// (dialect_format41.go).
+	declaresPaged := false
+	for _, s := range m.Sources {
+		declaresPaged = declaresPaged || len(s.Paging) > 0
+	}
+	if len(recipes) == 0 && !declaresPaged {
 		sort.SliceStable(prep.Cites, func(a, b int) bool { return prep.Cites[a].CallIndex < prep.Cites[b].CallIndex })
 	}
 	if hasColumnMapping(m) && len(encode(prep)) > preparationLimit(Input{Source: c}) {

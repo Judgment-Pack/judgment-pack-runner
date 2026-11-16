@@ -21,8 +21,8 @@ const format4 = "4.0.0"
 // it.
 const codeFormatNotAdmitted = "dialect_format_not_admitted"
 
-func formatNotAdmitted() error {
-	return bad(codeFormatNotAdmitted, "This dialect is of the proposed format 4.0.0. Runner reads it only in jpack-runner verify-preparation, and the sdk/dialect package prepares one with no source in process: a release, a job, a preview or a delivery on it waits for the Spec's workflow and recording schemas to admit the format (spec issue #324).")
+func formatNotAdmitted(format string) error {
+	return bad(codeFormatNotAdmitted, "This dialect is of the proposed format "+format+". Runner reads it only in jpack-runner verify-preparation, and the sdk/dialect package prepares one with no source in process: a release, a job, a preview or a delivery on it waits for the Spec's workflow and recording schemas to admit the format (spec issue #324).")
 }
 
 // profileReason is why verify-preparation refuses a dialect's profile, code
@@ -189,13 +189,14 @@ func (l TargetLineage) MarshalJSON() ([]byte, error) {
 // the case's in format 4.0.0 (spec/dialect.md §2.2.6).
 func (o SourceOutcome) MarshalJSON() ([]byte, error) {
 	type plain SourceOutcome
-	if o.rule == nil {
+	if o.rule == nil && o.paging == nil {
 		return json.Marshal(plain(o))
 	}
 	return json.Marshal(struct {
 		plain
-		Rule json.RawMessage `json:"rule"`
-	}{plain(o), o.rule})
+		Rule   json.RawMessage `json:"rule,omitempty"`
+		Paging json.RawMessage `json:"paging,omitempty"`
+	}{plain(o), o.rule, o.paging})
 }
 
 // caseRuleOutcome is the case outcome's rule member: the rule's claim, its
@@ -209,7 +210,7 @@ func caseRuleOutcome(c derivedClaim) json.RawMessage {
 // it is read offline alone, and a retained-column leaf is format 3.0.0's.
 func format4Form(m InputMapping, offline bool) error {
 	if !offline {
-		return formatNotAdmitted()
+		return formatNotAdmitted(m.FormatVersion)
 	}
 	if hasColumnMapping(m) {
 		return codedProblem(codeMalformed, "Mapping v3: a copy of format 4.0.0 names a target and a source, or a requirement and a source: a retained-column leaf is read in format 3.0.0 alone")

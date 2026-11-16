@@ -72,6 +72,10 @@ type SourceInput struct {
 	// dialect, and only one the request does not name is made from it
 	// (importedSource).
 	mappingGiven bool
+	// pages are the paged sources' acquisitions, {"pages": [...]} by source
+	// name (dialect_format41.go). verify-preparation alone sets them, from
+	// the acquisitions it is given: no request decodes them.
+	pages map[string]json.RawMessage
 }
 type sourceSnapshot struct {
 	Version    int    `json:"version"`

@@ -89,6 +89,9 @@ type MappingSource struct {
 	Arguments     json.RawMessage      `json:"arguments,omitempty"`
 	Read          SourceRead           `json:"read"`
 	Calculation   *CalculationBinding  `json:"calculation,omitempty"`
+	// Paging is a paged operation's paging member, kept as written: format
+	// 4.1.0's alone (dialect_format41.go), refused in every other format.
+	Paging json.RawMessage `json:"paging,omitempty"`
 	// The members below are those dialect version 3 gives a source
 	// (spec/dialect.md §4.3, §4.4), kept as written so that one written
 	// with any value, null included, is told from one not written at all.
@@ -218,6 +221,9 @@ type SourceOutcome struct {
 	// rule is the case's rule's outcome, on the case's outcome in format
 	// 4.0.0 (dialect_format4.go): written by MarshalJSON, and never read.
 	rule json.RawMessage
+	// paging is a paged source's loop, its end, pages and references, in
+	// format 4.1.0 (dialect_format41.go): written by MarshalJSON, never read.
+	paging json.RawMessage
 }
 type Preparation struct {
 	ConversionContract *ConversionContract `json:"conversionContract,omitempty"`

@@ -1976,12 +1976,16 @@ does, for a run's export.
 
 `jpack-runner verify-preparation --capabilities` prints, alone, one closed
 object for a caller to check before it calls: the command's version
-(`"version":3`), the release it was built from (`runner`), the dialect versions
-(`[2,3]`) and named formats (`"2.0.0"`, `"3.0.0"`, `"4.0.0"`), the source kinds and shapes
+(`"version":4`), the release it was built from (`runner`), the dialect versions
+(`[2,3]`) and named formats (`"2.0.0"`, `"3.0.0"`, `"4.0.0"`, `"4.1.0"`), the source kinds and shapes
 it reads, the instant it recomputes at, its report's form, results, binding,
 refusal and finding codes and exit statuses, its preconditions
 (`"preconditions":["preparation-digest"]`, each `couldNotRun` when it fails),
 and the bounds it holds the documents to.
+
+Interface version 4 adds the proposed dialect format `"4.1.0"`, a paged
+operation source, to `formatVersions` ([its design note](design/dialect-format-4.md#7-format-410-a-paged-source));
+nothing else changes.
 
 Interface version 3 adds the proposed dialect format `"4.0.0"` to `formatVersions`
 ([below](#proposed-dialect-format-400)); nothing else changes.
@@ -2316,7 +2320,8 @@ Runner reads it in two places only:
 - `jpack-runner verify-preparation`, over fixtures, with sources or without.
   Runner's own preparer reads each construct the format adds through
   `internal/dialect4` and the rest as format `3.0.0`'s. Its capabilities
-  (interface version 3) name `"4.0.0"` among `formatVersions`.
+  (interface version 3) name `"4.0.0"` among `formatVersions`, and since
+  interface version 4 `"4.1.0"`, the format with a paged source.
 - the `sdk/dialect` Go package, which prepares a dialect of the format that
   names no source, in process ([its page](sdk-dialect.md)).
 

@@ -77,7 +77,7 @@ func unsignedParameters(m InputMapping, p *Preparation) []UnsignedParameters {
 	// Format 4.0.0's case rule reads the case's parameters and runAt, and
 	// no request commits to any (spec/dialect.md §2.2.6, §11): its entry is
 	// first, with the targets the rule writes.
-	if m.FormatVersion == format4 && m.Case != nil && m.caseRule != nil {
+	if fourFamily(m.FormatVersion) && m.Case != nil && m.caseRule != nil {
 		if rule, err := rule2(m.caseRule, nil, "the case"); err == nil {
 			var ps []UnsignedParameter
 			for _, n := range rule.ParametersNamed() {
@@ -104,7 +104,7 @@ func unsignedParameters(m InputMapping, p *Preparation) []UnsignedParameters {
 		}
 		// A rule of version 2.0.0 names parameters in its added conditions
 		// and its derived values' operands too (dialect4).
-		if m.FormatVersion == format4 && !isResearch(s) && dialect4.IsRule2(s.Read.Rule) {
+		if fourFamily(m.FormatVersion) && !isResearch(s) && dialect4.IsRule2(s.Read.Rule) {
 			if r, err := rule2(s.Read.Rule, nil, "source "+s.Name); err == nil {
 				for _, n := range r.ParametersNamed() {
 					reads[n] = true

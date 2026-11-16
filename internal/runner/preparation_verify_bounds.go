@@ -51,7 +51,7 @@ func preparationCountBounds(dialect, acquisitions, profiles, binding any) bool {
 	copyTargets(caseDoc)
 	// Format 4.0.0's case rule, and what it adds to a source's rule: derived
 	// values and literals (spec/dialect.md §2.2.7).
-	four := d["formatVersion"] == format4
+	four := d["formatVersion"] == format4 || d["formatVersion"] == format41
 	if four && dialect4.RuleCounts(caseDoc["rule"], facts, evidence) {
 		return true
 	}

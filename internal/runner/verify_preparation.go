@@ -316,6 +316,11 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 		}
 	}
 
+	// A paged source's maxPages, pages and each page's result, in a
+	// document of format 4.1.0 alone (dialect_format41.go).
+	if reason := pagedPhase3(read["the dialect"], read["the acquisitions"]); reason != "" {
+		return stop(codeOverBound, reason)
+	}
 	if preparationCountBounds(read["the dialect"], read["the acquisitions"], read["the profiles"], read["the binding document"]) {
 		return stop(codeOverBound, "the inputs exceed a counted preparation limit")
 	}
@@ -337,6 +342,12 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 		return stop(codeMalformed, "the profiles: "+err.Error())
 	}
 	source := &SourceInput{Case: f.Case, ConversionContract: f.ConversionContract}
+	// A member that has pages is a paged source's (dialect_format41.go),
+	// held to its form once the dialect is read.
+	sources, source.pages, err = splitPages(sources)
+	if err != nil {
+		return failed(err)
+	}
 	if err = strictJSON(sources, &source.Sources); err != nil || source.Sources == nil || !exactAcquisitionMembers(sources) {
 		return stop(codeMalformed, fmt.Sprintf("the acquisitions are not one object of acquisitions by source: %v", err))
 	}
@@ -373,9 +384,12 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 	// A dialect of format 4.0.0 is read as it is given: this release binds
 	// none with a binding document (§4.4).
 	if dialect.FormatVersion == format4 && f.Binding != nil {
-		return stop("capability-unsupported", "a dialect of format 4.0.0 is read with no binding document: this verifier does not bind one")
+		return stop("capability-unsupported", "a dialect of format "+dialect.FormatVersion+" is read with no binding document: this verifier does not bind one")
 	}
 	if err = preparationAcquisitionForms(dialect, source.Sources); err != nil {
+		return failed(err)
+	}
+	if err = pagedAcquisitionForms(dialect, source.pages, source.Sources); err != nil {
 		return failed(err)
 	}
 	if dialect.Version == 2 && dialect.FormatVersion == "" && f.Binding == nil {
@@ -401,7 +415,7 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 		}
 	}
 	if f.Binding != nil {
-		source.Import = &DialectImport{Dialect: f.Dialect, Binding: f.Binding}
+		source.Import = &DialectImport{Dialect: f.Dialect, Binding: f.Binding, offline: true}
 	} else {
 		source.Mapping = dialect
 	}
@@ -441,7 +455,7 @@ func verifyPreparationUsing(f PreparationFixture, readAcquisition acquisitionRea
 // PreparationVerifierVersion is the version of verify-preparation's
 // interface: its flags, its report and its capabilities. It changes when any
 // of them does.
-const PreparationVerifierVersion = 3
+const PreparationVerifierVersion = 4
 
 // PreparationVerifierCapabilities is what verify-preparation --capabilities
 // prints, so that a caller can check what the command reads before it calls
@@ -460,7 +474,7 @@ func PreparationVerifierCapabilities(release string) []byte {
 		"version":             PreparationVerifierVersion,
 		"runner":              release,
 		"dialectVersions":     []int{2, 3},
-		"formatVersions":      []string{"2.0.0", "3.0.0", format4},
+		"formatVersions":      []string{"2.0.0", "3.0.0", format4, format41},
 		"sourceKinds":         sortedKeys(verifiedKinds),
 		"shapes":              shapes,
 		"instant":             freshnessAgainst,
