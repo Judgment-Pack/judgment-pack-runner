@@ -16,7 +16,8 @@ import (
 // identity.callerScopes both allow.
 
 // heldToScopeA is a configuration that grants ops-service scope-a, and
-// build-bot the installation.
+// build-bot the installation; report-bot, listed by a caller world's
+// identity with no entry, is unscoped.
 func heldToScopeA() callerScopes {
 	return callerScopes{entries: map[string]callerEntry{
 		"ops-service": {scopes: map[string]bool{"scope-a": true}},
@@ -28,7 +29,8 @@ func heldToScopeA() callerScopes {
 // under none, each with an enabled event trigger, an occurrence and a run
 // (scopeWorld's), served in service mode with an identity under scopes, and
 // the tokens of three callers: ofA, ops-service claiming scope-a; ofNone,
-// ops-service with no claim; installation, build-bot with no claim.
+// report-bot (listed, with no entry: unscoped) with no claim; installation,
+// build-bot with no claim.
 type callerWorld struct {
 	s                         *Service
 	cfg                       Config
@@ -60,10 +62,11 @@ func newCallerWorld(t *testing.T, scopes callerScopes) *callerWorld {
 	}
 	w.a, w.b, w.none = create("scope-a"), create("scope-b"), create("")
 	w.id = testIdentity(t, w.signer)
+	w.id.subjects["report-bot"] = true
 	w.id.scopes = scopes
 	w.h = s.ServiceHandler("", w.id)
 	w.ofA = w.token("ops-service", []string{"scope-a"})
-	w.ofNone = w.token("ops-service", nil)
+	w.ofNone = w.token("report-bot", nil)
 	w.installation = w.token("build-bot", nil)
 	return w
 }
@@ -84,8 +87,9 @@ func (w *callerWorld) serve(t *testing.T, token, method, path, body string, head
 }
 
 // identity.callerScopes is "unchecked", or an entry per listed subject: 1 to
-// 256 scope identifiers, each once, "unscoped" or "installation". A refusal
-// names the member, never a value.
+// 256 scope identifiers, each once, the marker "unscoped" among them granting
+// the none scope, "unscoped" or "installation". A refusal names the member,
+// never a value.
 func TestCallerScopesAreConfiguredPerListedSubject(t *testing.T) {
 	member := func(v any) string {
 		c := map[string]any{"issuer": testIssuer, "audience": testAudience, "subjects": []string{"ops-service", "build-bot"}, "keys": "/etc/runner/keys.json"}
@@ -106,7 +110,9 @@ func TestCallerScopesAreConfiguredPerListedSubject(t *testing.T) {
 		{"absent: checked, every subject unscoped", member(nil), callerScopes{}},
 		{"unchecked", member("unchecked"), callerScopes{unchecked: true}},
 		{"an entry of each form", member(map[string]any{"ops-service": []string{"scope-a", "scope-b"}, "build-bot": "installation"}), callerScopes{entries: map[string]callerEntry{"ops-service": {scopes: map[string]bool{"scope-a": true, "scope-b": true}}, "build-bot": {installation: true}}}},
-		{"unscoped", member(map[string]any{"ops-service": "unscoped"}), callerScopes{entries: map[string]callerEntry{"ops-service": {}}}},
+		{"unscoped", member(map[string]any{"ops-service": "unscoped"}), callerScopes{entries: map[string]callerEntry{"ops-service": {none: true}}}},
+		{"scope identifiers and the none scope", member(map[string]any{"ops-service": []string{"scope-a", "unscoped"}}), callerScopes{entries: map[string]callerEntry{"ops-service": {none: true, scopes: map[string]bool{"scope-a": true}}}}},
+		{"the none scope in a list", member(map[string]any{"ops-service": []string{"unscoped"}}), callerScopes{entries: map[string]callerEntry{"ops-service": {none: true, scopes: map[string]bool{}}}}},
 		{"no entry", member(map[string]any{}), callerScopes{entries: map[string]callerEntry{}}},
 		{"256 scope identifiers", member(map[string]any{"ops-service": many[:maxCallerScopes]}), callerScopes{entries: map[string]callerEntry{"ops-service": {scopes: func() map[string]bool {
 			m := map[string]bool{}
@@ -134,6 +140,7 @@ func TestCallerScopesAreConfiguredPerListedSubject(t *testing.T) {
 		{"no scope identifier", member(map[string]any{"ops-service": []string{}}), errCallerScopesForm},
 		{"257 scope identifiers", member(map[string]any{"ops-service": many}), errCallerScopesForm},
 		{"a scope identifier twice", member(map[string]any{"ops-service": []string{"scope-a", "scope-a"}}), errCallerScopesForm},
+		{"the none scope twice", member(map[string]any{"ops-service": []string{"unscoped", "scope-a", "unscoped"}}), errCallerScopesForm},
 		{"an empty scope identifier", member(map[string]any{"ops-service": []string{""}}), errCallerScopesForm},
 		{"a scope identifier out of form", member(map[string]any{"ops-service": []string{"scope\ta"}}), errCallerScopesForm},
 		{"a member that is not a string", member(map[string]any{"ops-service": []any{1}}), errCallerScopesForm},
@@ -160,12 +167,15 @@ func TestCallerScopesAreConfiguredPerListedSubject(t *testing.T) {
 }
 
 // A token reaches the scope identifiers its claim and its subject's entry
-// both allow; a claim wider than the entry is refused, not narrowed; with no
-// claim, the none scope, or the installation for an "installation" entry.
-// Unchecked, the claim is not read.
+// both allow, and the none scope when both name "unscoped"; a claim wider
+// than the entry is refused, not narrowed; with no claim, the installation
+// for an "installation" entry, the none scope for an entry that grants it,
+// and a refusal for a list that does not. Unchecked, the claim is not read.
 func TestATokensScopeClaimIsHeldToItsSubjectsEntry(t *testing.T) {
 	checked := heldToScopeA()
 	checked.entries["ops-service"] = callerEntry{scopes: map[string]bool{"scope-a": true, "scope-b": true}}
+	checked.entries["report-bot"] = callerEntry{none: true, scopes: map[string]bool{"scope-a": true}}
+	checked.entries["audit-bot"] = unscopedEntry
 	reach := func(scopes ...string) callerReach {
 		m := map[string]bool{}
 		for _, s := range scopes {
@@ -187,16 +197,27 @@ func TestATokensScopeClaimIsHeldToItsSubjectsEntry(t *testing.T) {
 		want    callerReach
 		err     error
 	}{
-		{"no claim, an entry of scopes", checked, "ops-service", none, callerReach{none: true}, nil},
-		{"no claim, no entry", checked, "report-bot", none, callerReach{none: true}, nil},
+		{"no claim, an entry of scopes", checked, "ops-service", none, callerReach{}, errScopeClaimWider},
+		{"no claim, an entry of scopes and the none scope", checked, "report-bot", none, callerReach{none: true}, nil},
+		{"no claim, an unscoped entry", checked, "audit-bot", none, callerReach{none: true}, nil},
+		{"no claim, no entry", checked, "lint-bot", none, callerReach{none: true}, nil},
 		{"no claim, no member", callerScopes{}, "build-bot", none, callerReach{none: true}, nil},
 		{"no claim, the installation's entry", checked, "build-bot", none, installationReach, nil},
 		{"a claim within the entry", checked, "ops-service", claim([]any{"scope-a"}), reach("scope-a"), nil},
 		{"a claim of every scope the entry grants", checked, "ops-service", claim([]any{"scope-b", "scope-a"}), reach("scope-a", "scope-b"), nil},
 		{"a claim of an installation subject", checked, "build-bot", claim([]any{"scope-z"}), reach("scope-z"), nil},
+		{"a claim of a scope and the none scope, both granted", checked, "report-bot", claim([]any{"unscoped", "scope-a"}), callerReach{none: true, scopes: map[string]bool{"scope-a": true}}, nil},
+		{"a claim of the none scope, granted", checked, "report-bot", claim([]any{"unscoped"}), callerReach{none: true, scopes: map[string]bool{}}, nil},
+		{"a claim of the none scope, unscoped", checked, "audit-bot", claim([]any{"unscoped"}), callerReach{none: true, scopes: map[string]bool{}}, nil},
+		{"a claim of the none scope, the installation's entry", checked, "build-bot", claim([]any{"unscoped", "scope-z"}), callerReach{none: true, scopes: map[string]bool{"scope-z": true}}, nil},
+		{"a claim of a scope, the none scope also granted", checked, "report-bot", claim([]any{"scope-a"}), reach("scope-a"), nil},
+		{"a claim of the none scope the entry does not grant", checked, "ops-service", claim([]any{"scope-a", "unscoped"}), callerReach{}, errScopeClaimWider},
+		{"a claim of the none scope alone the entry does not grant", checked, "ops-service", claim([]any{"unscoped"}), callerReach{}, errScopeClaimWider},
+		{"a claim of a scope an unscoped entry does not grant", checked, "audit-bot", claim([]any{"scope-a"}), callerReach{}, errScopeClaimWider},
+		{"a claim naming the none scope twice", checked, "report-bot", claim([]any{"unscoped", "unscoped"}), callerReach{}, errScopeClaimForm},
 		{"a claim wider than the entry", checked, "ops-service", claim([]any{"scope-a", "scope-c"}), callerReach{}, errScopeClaimWider},
 		{"a claim the entry grants nothing of", checked, "ops-service", claim([]any{"scope-c"}), callerReach{}, errScopeClaimWider},
-		{"a claim with no entry", checked, "report-bot", claim([]any{"scope-a"}), callerReach{}, errScopeClaimWider},
+		{"a claim with no entry", checked, "lint-bot", claim([]any{"scope-a"}), callerReach{}, errScopeClaimWider},
 		{"a claim with no member", callerScopes{}, "ops-service", claim([]any{"scope-a"}), callerReach{}, errScopeClaimWider},
 		{"a claim of null", checked, "ops-service", claim(nil), callerReach{}, errScopeClaimForm},
 		{"a claim that is a string", checked, "ops-service", claim("scope-a"), callerReach{}, errScopeClaimForm},
@@ -248,6 +269,10 @@ func TestATokenWhoseScopeClaimIsRefusedIsNotAdmitted(t *testing.T) {
 		want  string
 	}{
 		{"wider than the entry", []string{"scope-a", "scope-secret"}, "the token's scope_ids names a scope identifier the configuration does not grant its subject"},
+		{"the none scope beside the entry's", []string{"scope-a", "unscoped"}, "the token's scope_ids names a scope identifier the configuration does not grant its subject"},
+		// An entry of scope identifiers alone: a claimless token would reach
+		// the none scope, which the entry does not grant.
+		{"absent, for an entry of scope identifiers", nil, "the token's scope_ids names a scope identifier the configuration does not grant its subject"},
 		{"out of form", []string{"scope-secret", "scope-secret"}, "the token's scope_ids is not 1 to 256 scope identifiers, each once"},
 	} {
 		for _, path := range []string{"/v1/status", "/v1/jobs/" + w.a.job + "?scope=scope-a"} {
@@ -389,6 +414,44 @@ func TestACallersListingsHoldOnlyTheScopesItReaches(t *testing.T) {
 		lists(token, "/v1/runs", []string{w.a.run, w.b.run, w.none.run}, nil)
 		lists(token, "/v1/events", []string{w.a.job, w.b.job, w.none.job}, nil)
 	}
+}
+
+// An entry decides whether its subject reaches the none scope, not the
+// token's issuer: with ops-service's entry of scope-a alone, a claimless
+// token is refused, 401; with report-bot's entry of scope-a and "unscoped", a
+// claimless token lists the none scope's records alone, and a claim of
+// scope-a and "unscoped" reaches both and scope-b's in neither.
+func TestAnEntryDecidesWhetherItsSubjectReachesTheNoneScope(t *testing.T) {
+	scopes := heldToScopeA()
+	scopes.entries["report-bot"] = callerEntry{none: true, scopes: map[string]bool{"scope-a": true}}
+	w := newCallerWorld(t, scopes)
+	if got := w.serve(t, w.token("ops-service", nil), "GET", "/v1/jobs", "", nil); got.Code != 401 {
+		t.Errorf("a claimless token of an entry of scope identifiers alone: %d %s", got.Code, got.Body)
+	}
+	lists := func(token, path string, want, not []string) {
+		t.Helper()
+		got := w.serve(t, token, "GET", path, "", nil)
+		if got.Code != 200 {
+			t.Fatalf("%s: %d %s", path, got.Code, got.Body)
+		}
+		for _, s := range want {
+			if !strings.Contains(got.Body.String(), s) {
+				t.Errorf("%s does not list %s: %s", path, s, got.Body)
+			}
+		}
+		for _, s := range not {
+			if strings.Contains(got.Body.String(), s) {
+				t.Errorf("%s lists %s: %s", path, s, got.Body)
+			}
+		}
+	}
+	claimless, both := w.token("report-bot", nil), w.token("report-bot", []string{"scope-a", "unscoped"})
+	lists(claimless, "/v1/jobs", []string{w.none.job}, []string{w.a.job, w.b.job})
+	lists(claimless, "/v1/jobs?scope=scope-a", nil, []string{w.a.job, w.b.job, w.none.job})
+	lists(both, "/v1/jobs", []string{w.none.job}, []string{w.a.job, w.b.job})
+	lists(both, "/v1/jobs?scope=scope-a", []string{w.a.job}, []string{w.b.job, w.none.job})
+	lists(both, "/v1/jobs?scope=scope-b", nil, []string{w.a.job, w.b.job, w.none.job})
+	lists(w.token("report-bot", []string{"scope-a"}), "/v1/jobs", nil, []string{w.a.job, w.b.job, w.none.job})
 }
 
 // A job is created only under a scope identifier, or under none, that its
@@ -606,6 +669,7 @@ func TestPostgreSQLHoldsACallerToTheScopesItsIdentityAllows(t *testing.T) {
 	must(t, json.Unmarshal(unscoped.Body.Bytes(), &none))
 	signer := edSigner(t, "k1")
 	id := testIdentity(t, signer)
+	id.subjects["report-bot"] = true
 	id.scopes = callerScopes{entries: map[string]callerEntry{"ops-service": {scopes: map[string]bool{"team-a": true}}, "build-bot": {installation: true}}}
 	h := sv.ServiceHandler("", id)
 	token := func(subject string, scopes any) string {
@@ -615,7 +679,7 @@ func TestPostgreSQLHoldsACallerToTheScopesItsIdentityAllows(t *testing.T) {
 		}
 		return tokenOf(signer, claims)
 	}
-	ofA, ofNone := token("ops-service", []string{"team-a"}), token("ops-service", nil)
+	ofA, ofNone := token("ops-service", []string{"team-a"}), token("report-bot", nil)
 	call := func(tok, method, path, body string, want int) string {
 		t.Helper()
 		got := serveAs(t, h, method, path, body, tok, nil)
@@ -637,6 +701,8 @@ func TestPostgreSQLHoldsACallerToTheScopesItsIdentityAllows(t *testing.T) {
 			}
 		}
 	}
+	// A claimless token of an entry of scope identifiers alone is refused.
+	call(token("ops-service", nil), "GET", "/v1/jobs", "", 401)
 	empty := call(ofA, "GET", "/v1/jobs?scope=team-c", "", 200)
 	holds(empty, []string{`"items":[]`})
 	for _, path := range []string{"/v1/jobs", "/v1/jobs?scope=team-b"} {

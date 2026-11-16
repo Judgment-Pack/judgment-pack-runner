@@ -194,11 +194,15 @@ token. Which scope identifiers a caller reaches is the next paragraph's.
 token and its configuration both allow. The token names them in the claim
 `scope_ids`, an array of 1 to 256 scope identifiers, each once (the gateway reads
 the same claim); `identity.callerScopes` names, per listed subject, an array of 1 to
-256 scope identifiers it may be granted, `"unscoped"` or `"installation"`. A token
-whose claim names one its subject's entry does not grant is refused, `401`, not
-narrowed. A token with no claim reaches the records created under no scope
-identifier, or, for an `"installation"` subject, every scope and the installation's
-routes, as the owner bearer does. A request about another scope's record is answered
+256 scope identifiers it may be granted, `"unscoped"` or `"installation"`. The
+marker `"unscoped"`, in a claim or an entry's array, names the records created
+under no scope identifier. A token whose claim names one its subject's entry does
+not grant is refused, `401`, not narrowed. A token reaches the records under no
+scope identifier only when its subject's entry is `"unscoped"` (or absent) or its
+array names `"unscoped"`, and its claim names `"unscoped"` or is absent: a token
+with no claim reaches those records alone, is refused `401` for an entry whose
+array does not name `"unscoped"`, and, for an `"installation"` subject, reaches
+every scope and the installation's routes, as the owner bearer does. A request about another scope's record is answered
 as one about a record the store does not hold; a listing keeps only the scope the
 caller reaches (an empty page for one it does not); `POST /v1/jobs` under a scope
 the caller does not reach is `403 scope_not_allowed`; `POST /v1/ticks` is

@@ -206,8 +206,10 @@ an encoded member that is not the canonical unpadded base64url of its bytes.
 7. a `sub` the configuration lists;
 8. unless `callerScopes` is `"unchecked"`, a `scope_ids`, when present, of 1
    to 256 scope identifiers, each once, every one of them granted by the
-   subject's entry: a claim wider than the entry is refused, not narrowed
-   (`reachOf`).
+   subject's entry (`"unscoped"` among them only when the entry grants the
+   records under none): a claim wider than the entry is refused, not narrowed;
+   and, when absent, an entry that grants the records under none or is
+   `"installation"` (`reachOf`).
 
 A request that fails any of them is answered `401` with
 `WWW-Authenticate: Bearer` and
@@ -229,10 +231,12 @@ far ahead is taken, so how long a token lasts is the issuer's choice. Nor does
 it read `typ`: a JWT of another kind that the issuer signs for this audience,
 with these claims, is taken as an identity token, so the audience is one the
 issuer uses for this Runner's control API alone. A caller reaches the scope
-identifiers its claim names, all of them granted by its subject's entry; with
-no claim, the records created under no scope identifier, or, for an
-`"installation"` entry, every scope and the installation's routes, as the owner
-bearer does ([caller scopes](../adr/0002-caller-scopes.md), C3). Within what it
+identifiers its claim names, all of them granted by its subject's entry, and
+the records created under no scope identifier when the claim and the entry
+both name `"unscoped"`; with no claim, those records alone, for an entry that
+grants them (and `401` for one that does not), or, for an `"installation"`
+entry, every scope and the installation's routes, as the owner bearer does
+([caller scopes](../adr/0002-caller-scopes.md), C3). Within what it
 reaches, a caller may do everything the control API offers: there are no
 permissions that differ by route, or between reading and writing. With
 `"unchecked"` the claim is not read and every listed subject reaches every
@@ -343,9 +347,8 @@ notes say so.
   or white space at either end, and a key that carries a private member.
 - Off loopback, what answers without a token is `GET /v1/health`, and nothing
   else; it says only whether Runner is healthy.
-- Both read `scope_ids`; Runner also holds it to a per-subject entry, has an
-  `"installation"` entry and installation routes, and holds a token with a
-  claim away from the none scope, whose records callers make
+- Both read `scope_ids` and its marker `"unscoped"`; Runner also holds it to a
+  per-subject entry and has an `"installation"` entry and installation routes
   ([caller scopes](../adr/0002-caller-scopes.md), "Where the Runner differs").
 - Runner's listener keeps the companion's timeouts (section 3).
 

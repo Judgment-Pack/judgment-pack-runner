@@ -13,8 +13,11 @@ Issue #304; the gateway's matching issue is its #479, which reads the same claim
 **A caller's signed token names the scope identifiers it is for in one claim, `scope_ids`; the
 service configuration names, per subject, the scope identifiers that subject may be granted; a
 request is held to what both allow, and a token that names more than its subject's entry is
-refused, not narrowed.** A token with no claim reaches the unscoped records only, unless its
-subject's entry is `"installation"`. The installation's routes (`POST /v1/ticks`) and members
+refused, not narrowed.** The marker `"unscoped"`, in a claim or an entry's list, names the
+records under no scope identifier: a token reaches them only when its subject's entry grants them
+and its claim names the marker, or it has no claim. A token with no claim reaches the unscoped
+records only, is refused for an entry that does not grant them, and reaches the installation for
+an `"installation"` entry. The installation's routes (`POST /v1/ticks`) and members
 (`triggersOutsideSettings`) span every scope and are refused to every caller but the
 installation's. The check is the default; `callerScopes: "unchecked"` keeps the behavior before
 this change, and the start and `GET /v1/status` say so. The scope a store transaction is held to
@@ -67,13 +70,15 @@ caller's data in claim names. Read in (a), a claim that is present and not of th
 an array, empty, more than 256, a member that is not a string or not in form, a scope identifier
 twice) refuses the token, `401`, with a reason that repeats nothing of the token. The claim is read
 only after the signature, issuer, audience, expiry and subject checks pass, as every claim is.
-There is no reserved value: every string of the form is a scope identifier.
+One value is reserved: `"unscoped"` in the claim names the none scope (C4), not a scope
+identifier; every other string of the form is a scope identifier.
 
 ## C2. The configuration
 
 (a) **`identity.callerScopes` in the service configuration: an object whose names are subjects
 the identity lists and whose values are, for each, an array of 1 to 256 scope identifiers (each
-once) it may be granted, `"unscoped"` or `"installation"`; or the string `"unchecked"`; or
+once) it may be granted, which may name the marker `"unscoped"` for the records under none;
+`"unscoped"`, the none scope alone; or `"installation"`; or the string `"unchecked"`; or
 absent.** (b) A member per issuer with a subject pattern. (c) A file of its own.
 
 The identity has one issuer and lists its subjects exactly (service-mode.md, section 4); it has no
@@ -85,42 +90,49 @@ bearer is the installation's.
 
 ## C3. What a token reaches
 
-With `S` the claim's scope identifiers and `E` the subject's entry (`"unscoped"` granting none,
-`"installation"` granting every one):
+With `S` the claim's members and `E` the subject's entry (`"unscoped"` granting the none scope
+alone, a list granting its scope identifiers and, when it names `"unscoped"`, the none scope,
+`"installation"` granting every one), `"unscoped"` in either standing for the none scope:
 
 | Claim | Entry | The request is held to |
 |---|---|---|
 | absent | `"installation"` | The installation: every scope, the store-wide listings unfiltered, and the installation's routes, as the owner bearer. |
-| absent | a list, or `"unscoped"`, or none | The none scope: the records created under no scope identifier. |
-| `S`, every one granted by `E` | any | Exactly the scope identifiers of `S ∩ E`, which is `S`. Not the none scope, not the installation's routes. |
+| absent | `"unscoped"`, none, or a list naming `"unscoped"` | The none scope: the records created under no scope identifier. |
+| absent | a list not naming `"unscoped"` | Refused, `401`, as a claim wider than the entry: the token would reach the none scope, which the entry does not grant. |
+| `S`, every one granted by `E` | any | Exactly `S ∩ E`, which is `S`: its scope identifiers, and the none scope only when `S` names `"unscoped"`. Not the installation's routes. |
 | `S`, one not granted by `E` | any | Refused, `401`, before any route: "the token's scope_ids names a scope identifier the configuration does not grant its subject". |
 
 The intersection is computed, and a claim wider than it refused, rather than the claim taken:
 the issuer cannot grant what the entry does not, and the entry grants nothing the token was not
-made for. "Refused, not narrowed" keeps a mis-issued token from working in part, which an operator
+made for. The entry, not the issuer, decides whether a subject reaches the none scope: a claimless
+token, the default of most issuers, reaches it only for a subject the operator granted it. "Refused, not narrowed" keeps a mis-issued token from working in part, which an operator
 would read as a Runner that lost records. The refusal is not journaled, as no identity refusal is
 (service-mode.md, section 4): it comes before any route.
 
-**C4. Whether a token with a claim also reaches the none scope.** (a) **No: a token is held to its
-claim's scope identifiers, or, with no claim, to the none scope.** (b) Yes, every token reaches
-the none scope beside its claim's.
+**C4. Whether a token reaches the none scope.** (a) **Only when its subject's entry grants it
+(`"unscoped"`, or a list naming `"unscoped"`) and its claim names `"unscoped"` or is absent; a
+claimless token of an entry that does not grant it is refused.** (b) Every token reaches the none
+scope beside its claim's. (c) A token with a claim does not, and a claimless one does, whatever
+the entry (as first built).
 
 On the PostgreSQL kind the none scope is a scope like any other (`s:`, section 6 of the store
 note), and on every kind it holds records callers make: a job created without a scope, its runs,
 triggers and entries. Under (b) the none scope is a commons every caller of every party reads and
 changes, so a caller of party A that forgets the scope on a creation puts A's job, its inputs and
 its runs where party B's caller reads them, and every party reaches the installation's own
-unscoped jobs. Under (a) a caller of A never reaches a record outside A; a subject that needs both
-is issued two tokens. The gateway's unscoped sources differ: they are its operator's, configured,
+unscoped jobs. Under (c) the issuer alone decides it: a claimless token of a subject granted only
+A reaches every unscoped record, jobs made before scopes existed among them. Under (a) a caller
+of A never reaches a record outside A unless the operator's entry and the issuer's token both say
+so; a subject that needs both is issued one token naming both. The gateway's unscoped sources differ: they are its operator's, configured,
 not made by callers (see "The gateway", below).
 
 **C5. The installation's entry.** (a) **`"installation"`, reached by a token with no claim; a
 token of that subject that carries a claim is held to its claim.** (b) A reserved claim value.
 (c) None: no identity caller reaches the installation's routes.
 
-(b) is ruled out by C1: every string of the form is a scope identifier. (c) leaves service mode
-with identity no way to call `POST /v1/ticks`, since the identity replaces the owner bearer
-(service-mode.md, section 5). Under (a) a token with a claim is narrowed by its issuer as every
+(b) would reserve a second value (C1 reserves `"unscoped"` alone) and let the issuer grant the
+installation. (c) leaves service mode with identity no way to call `POST /v1/ticks`, since the
+identity replaces the owner bearer (service-mode.md, section 5). Under (a) a token with a claim is narrowed by its issuer as every
 other token is; a claimless token of an `"installation"` subject is the one credential with the
 owner bearer's reach, and its entry is the operator's word for it.
 
@@ -226,18 +238,18 @@ scopes (#479), the Runner is one caller acting for several scopes, and should be
   wider than the entry is refused there as here. A Runner that serves more than 256 scope
   identifiers needs a form the gateway does not have yet, as `"installation"` is here, or
   separate subjects per Runner.
-- The gateway's unscoped sources are its operator's, not records callers make: the gateway may let
-  every admitted caller reach them (C4's option b), and then the Runner's one token serves its
-  unscoped jobs too. If the gateway takes C4's option a, the Runner needs a second, claimless
-  token for its unscoped jobs.
+- The gateway adopts C4's rule (a) (#479): its unscoped sources are reached only by a subject
+  whose entry names `"unscoped"`, with a claim that names it or none. The Runner's token then
+  names `"unscoped"` beside its scope identifiers to serve its unscoped jobs, and the gateway's
+  entry for the Runner's subject names it too.
 
 The Runner's side of this (a token file on a gateway connection, the scope on each call) is a
 change of its own, after #479 fixes the gateway's rule; nothing here builds it.
 
 ## Where the Runner differs from the gateway
 
-- The Runner's none scope holds records callers make, so a token with a claim does not reach it
-  (C4); the gateway's unscoped sources are configured by its operator.
+- The Runner's none scope holds records callers make; the gateway's unscoped sources are
+  configured by its operator. Both reach them by C4's rule (a).
 - The Runner has installation routes and an `"installation"` entry (C5); the gateway has neither.
 - A request about another scope's record is answered as one about a record the store does not
   hold; the gateway answers a request naming a scope its caller may not use with its fixed wrong-scope
@@ -250,7 +262,9 @@ change of its own, after #479 fixes the gateway's rule; nothing here builds it.
   byte, the one for a record the store does not hold, and nothing is journaled; and about A's
   records, served.
 - A claim wider than the entry, and a claim out of form, refused `401`; a token with no claim
-  reaches the unscoped records only; `"installation"` with no claim reaches every scope and the
+  reaches the unscoped records only, and is refused `401` for an entry of scope identifiers that
+  does not name `"unscoped"`; a claim naming `"unscoped"` beside an entry's scope identifiers is
+  refused unless the entry names it, and reaches both when it does; `"installation"` with no claim reaches every scope and the
   ticks; with a claim, it does not.
 - The listings, the creation, the ticks and the status member, as C6 says.
 - `"unchecked"` serves every caller as before, and is reported at start and in the status.
@@ -261,7 +275,8 @@ change of its own, after #479 fixes the gateway's rule; nothing here builds it.
   request names instead of the one the identity allows; a held caller let through to
   `POST /v1/ticks`. As built, four more: the creation's reach check dropped;
   `triggersOutsideSettings` shown to a held caller; the sqlite kind's none-scope filter dropped;
-  an absent `callerScopes` read as unchecked. Each of the seven fails the tests. No store
+  an absent `callerScopes` read as unchecked. Each of the seven fails the tests. After review, one
+  more: a claimless token admitted to the none scope for an entry that does not grant it. No store
   transaction was added, so the run-twice suite is not part of it.
 
 ## Consequences
@@ -275,7 +290,12 @@ change of its own, after #479 fixes the gateway's rule; nothing here builds it.
   after the upgrade, until the operator writes the entries or `"unchecked"`. The release notes
   say so. An earlier Runner refuses the member as one it does not read: going back means removing
   it.
-- Bad: a subject that works in a scope and in the none scope needs two tokens (C4).
+- Bad: a subject that works in a scope and in the none scope needs `"unscoped"` in both its entry
+  and its token's claim (C4), and a claimless token of an entry of scope identifiers alone is
+  refused, so an issuer that mints claimless tokens by default needs the entry or the claim
+  changed.
+- Neutral: `"unscoped"` is reserved in a claim and an entry's list (C1), so a scope identifier
+  spelled `unscoped` cannot be granted to a caller held to scopes; the installation reaches it.
 - Neutral: a held caller still learns what the store note's D8 to D10 accept (the chain of runs,
   journal sequence gaps, the installation-wide counts and keys), and shares the installation's
   releases, profiles and input root; parties that must not, use separate installations.
