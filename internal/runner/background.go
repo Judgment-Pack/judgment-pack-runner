@@ -311,9 +311,17 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	// The occurrence is claimed, and prepared as the store holds it (D18):
 	// one another Runner of the store holds, or that is no longer accepted,
 	// is passed by. claimed, by the monotonic clock, is before the claim's
-	// transaction began, as a run's (holdClaim).
+	// transaction began, as a run's (holdClaim). An occurrence of a job that
+	// keeps cursors is claimed only while its job has no run, and no
+	// occurrence admitted before it, that has not settled, and its cursors
+	// are read with the claim (claimPreparation): one its job holds back is
+	// left accepted, and nothing of it written.
 	claimed := time.Now()
-	o, e := s.claimOccurrence(occurrenceID, "accepted")
+	o, cursors, e := s.claimPreparation(occurrenceID)
+	if errors.Is(e, errHeldForJob) {
+		s.automationMu.Unlock()
+		return nil
+	}
 	if e != nil {
 		s.automationMu.Unlock()
 		return occurrenceLost(e)
@@ -373,9 +381,10 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		s.automationMu.Unlock()
 		return e
 	}
-	// The job's cursors are read when the input is seeded (paging_loop.go),
-	// and the pages an earlier attempt received before a throttle resumed.
-	paging, e := s.occurrencePagingOf(o, policy != nil)
+	// The job's cursors, read with the claim, are filled when the input is
+	// seeded (paging_loop.go), and the pages an earlier attempt received
+	// before a throttle resumed.
+	paging, e := s.occurrencePagingOf(o, policy != nil, cursors)
 	if e != nil {
 		e = s.heldRecordOrReleased(o, e)
 		s.automationMu.Unlock()

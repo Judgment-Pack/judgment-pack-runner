@@ -285,6 +285,14 @@ func (t *sqliteTx) jobActivity(job string) (int, error) {
 	return count, nil
 }
 
+func (r sqliteReads) jobActivityBefore(job, id string) (int, error) {
+	var count int
+	if err := r.q.QueryRow("SELECT (SELECT count(*) FROM runs WHERE job_id=? AND state IN ('queued','running'))+(SELECT count(*) FROM occurrences WHERE job_id=? AND state IN ('accepted','preparing','waiting','needs-attention') AND seq<coalesce((SELECT seq FROM occurrences WHERE id=?),9223372036854775807))", job, job, id).Scan(&count); err != nil {
+		return 0, sqliteFault("occurrence", err, false)
+	}
+	return count, nil
+}
+
 func (t *sqliteTx) preparingOccurrences() ([]Occurrence, error) {
 	var occurrences []Occurrence
 	err := eachRecord(t.tx, "occurrence", "SELECT record FROM occurrences WHERE state='preparing' ORDER BY seq", func(b []byte) error {

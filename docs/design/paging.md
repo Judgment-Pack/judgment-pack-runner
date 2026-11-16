@@ -313,6 +313,51 @@ names a next reference fails its occurrence and leaves the cursor.
   under one, is answered the job's not-found byte for byte; on the
   PostgreSQL kind it is a held route, read on the request login under the
   row policy of `0007_paging_cursors.sql`.
+- **Overlap** (#307). An occurrence reads its job's cursors when it is
+  prepared and its run moves them when it completes, so two occurrences of one
+  job prepared before either run completed would both read the same cursor
+  and decide the same records; the second run's advance would then not apply.
+  Under `overlap: "skip"` the second is skipped at admission; under `"queue"`,
+  the rule a reviewed job's event trigger starts with
+  ([record-delivery](record-delivery.md)), nothing held it. Now an accepted occurrence of a job that
+  keeps cursors is not prepared, and reads no cursor, while its job has a run
+  queued or running, or an occurrence admitted before it that is `accepted`,
+  `preparing`, `waiting` or `needs-attention` (`jobActivityBefore`). It stays
+  `accepted`, with nothing of it written, and the preparer takes the
+  occurrences behind it meanwhile, of other jobs; it is taken once the job's
+  earlier work has settled, in the order the job's occurrences were admitted,
+  and reads the cursor that work moved. It still expires when its queue time
+  runs out (`queue-expired`), as before. `"queue"` with paging is not refused,
+  and `"skip"` is unchanged. The check and the cursor read are in the
+  transaction that claims the occurrence for its preparation
+  (`claimPreparation`), which is serialized with every other writer of the
+  store: the sqlite kind's one writer, and the PostgreSQL kind's lock of
+  `journal_head` ([store-postgresql](store-postgresql.md), D13), under which
+  the order of admission is the order of commit. So no other Runner of the
+  store, nor another worker of this one, makes or settles the job's work
+  between the check and the read, and an occurrence admitted later counts the
+  one claimed, still `accepted`, as work before it. The preparer's listing
+  applies the same check first, so that a held occurrence does not keep the
+  others waiting; the claim's check is the one that holds. A job's paging
+  cannot change meanwhile, as an upgrade is refused while the job has an open
+  occurrence (`job_work_pending`).
+- **An advance that does not apply** is not silent. A completed run whose
+  advance the row no longer admits (the row moved on from what its occurrence
+  read: a run that completes after another of the job, as a retried run can)
+  is recorded with that read's advance held: `held: "moved"`, its `to` and
+  `unfinished` left out, so that the run's record never says the cursor moved,
+  and its `run.completed` entry names the source in `cursorHeld`, at entry
+  version `"6"`, the member and version an `occurrence.ready` entry uses for
+  a cursor held at the bound.
+- **Retry.** `POST /v1/runs/{run}/retry` queues an interrupted run again with
+  the read its occurrence made, so it would decide the records that read
+  opened. For a run whose occurrence read its job's cursors, the retry's
+  transaction refuses it (`409 run_not_retryable`) while the job has a run
+  queued or running or an occurrence that has not settled (an interrupted run
+  is not such work, so a later occurrence may be reading the same cursor), and
+  when a cursor no longer holds what the run read, by the test an advance
+  makes (`pagedRetryAdmitted`). The job's next occurrence then reads the
+  cursor as it is.
 - **Storage**: PostgreSQL `0007_paging_cursors.sql`; the sqlite kind makes its
   table in the transaction that raises its schema to `8` with the first job
   that keeps a cursor, so a store with none keeps the earlier schema.

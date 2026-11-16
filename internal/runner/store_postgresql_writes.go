@@ -426,6 +426,10 @@ func (t *pgTx) jobActivity(job string) (int, error) {
 	return n, pgFault("occurrence", err, false)
 }
 
+func (r pgReads) jobActivityBefore(job, id string) (int, error) {
+	return r.count("occurrence", "SELECT (SELECT count(*) FROM runs WHERE job_id=$1 AND state IN ('queued','running'))+(SELECT count(*) FROM occurrences WHERE job_id=$1 AND state IN ('accepted','preparing','waiting','needs-attention') AND seq<coalesce((SELECT seq FROM occurrences WHERE id=$2),9223372036854775807))", job, id)
+}
+
 func (t *pgTx) openOccurrences(job string) (int, error) {
 	var n int
 	err := t.tx.QueryRowContext(t.ctx(), "SELECT count(*) FROM occurrences WHERE job_id=$1 AND state IN ('accepted','preparing','waiting','needs-attention')", job).Scan(&n)

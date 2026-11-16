@@ -179,32 +179,53 @@ func newPagedWorld(t *testing.T, policy *RetryPolicy, paging *JobPaging, feed *p
 // scope names, if any.
 func newPagedWorldOf(t *testing.T, dialect, caseJSON string, policy *RetryPolicy, paging *JobPaging, feed *pagedFeed, scope ...string) *pagedWorld {
 	t.Helper()
-	cfg := journalConfig(t)
+	w := pagedRunner(t, journalConfig(t), feed)
+	w.release(t, dialect, "Paging", strings.Join(scope, ""), policy, paging)
+	c := constantTrigger(time.Now())
+	c.Input = &AutomaticInput{Kind: "mapped-sources", Case: json.RawMessage(caseJSON)}
+	tr, e := w.s.configureTrigger(w.job.ID, "", 0, c)
+	must(t, e)
+	w.tr, w.input = tr, c.Input
+	return w
+}
+
+// pagedRunner is a Runner opened over cfg's store, holding the feed's
+// profile and connection and a Runtime that completes a preparation's runs,
+// its clock stopped: a pagedWorld with no job yet. Its input root is cfg's,
+// or one of its own: another Runner of the store holds the same one, and
+// shares a world's job and trigger.
+func pagedRunner(t *testing.T, cfg Config, feed *pagedFeed) *pagedWorld {
+	t.Helper()
 	cfg.disableAutomation = true
-	cfg.InputRoot = t.TempDir()
+	if cfg.InputRoot == "" {
+		cfg.InputRoot = t.TempDir()
+	}
 	s, e := Open(cfg)
 	must(t, e)
 	t.Cleanup(func() { s.Close() })
 	clock := time.Now().UTC().Truncate(time.Second)
 	s.clock = func() time.Time { return clock }
-	r := journalRelease(t, s, unversionedRuntime(t, s.cfg.Dir))
-	var m InputMapping
-	must(t, strictJSON([]byte(dialect), &m))
+	unversionedRuntime(t, s.cfg.Dir)
 	cfg.InputProfiles = []InputProfile{feed.p}
 	cfg.GatewayConnections = []GatewayConnection{{Profile: feed.p.ID, URL: feed.url}}
 	s.cfg = cfg
-	r.InputMapping, r.InputProfiles = &m, []InputProfile{feed.p}
+	return &pagedWorld{s: s, feed: feed, clock: &clock}
+}
+
+// release makes the world's job, named name under scope, keeping paging's
+// cursors, on a release of dialect made for it.
+func (w *pagedWorld) release(t *testing.T, dialect, name, scope string, policy *RetryPolicy, paging *JobPaging) {
+	t.Helper()
+	r := Release{SchemaVersion: "1", ID: id("release_"), Pack: journalPack, PackDigest: digest([]byte(journalPack)), PackID: "journal", PackVersion: "1.0.0", Title: "Journal", RuntimeDigest: unversionedRuntime(t, w.s.cfg.Dir), CreatedAt: now(), Sample: journalInput(), Tests: "not-run"}
+	var m InputMapping
+	must(t, strictJSON([]byte(dialect), &m))
+	r.InputMapping, r.InputProfiles = &m, []InputProfile{w.feed.p}
+	var e error
 	r.Dialect, e = releaseDialectIdentity(r)
 	must(t, e)
-	_, e = sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID)
+	must(t, w.s.saveRelease(r))
+	w.job, e = w.s.createJobPaged(requester{}, name, r.ID, scope, nil, policy, paging)
 	must(t, e)
-	j, e := s.createJobPaged(requester{}, "Paging", r.ID, strings.Join(scope, ""), nil, policy, paging)
-	must(t, e)
-	c := constantTrigger(time.Now())
-	c.Input = &AutomaticInput{Kind: "mapped-sources", Case: json.RawMessage(caseJSON)}
-	tr, e := s.configureTrigger(j.ID, "", 0, c)
-	must(t, e)
-	return &pagedWorld{s: s, feed: feed, job: j, tr: tr, clock: &clock, input: c.Input}
 }
 
 // prepare admits an occurrence under key and lets the preparation workers

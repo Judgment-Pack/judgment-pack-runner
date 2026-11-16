@@ -387,6 +387,9 @@ func (s *Service) retryRunBy(st runStore, by requester, runID string, attempt in
 				return &apiError{409, "run_not_retryable", "This automatic run's queue time has ended. It is not retried."}
 			}
 		}
+		if e := pagedRetryAdmitted(tx, r); e != nil {
+			return e
+		}
 		kept := Attempt{Number: r.Attempt, StartedAt: r.StartedAt, Outcome: "interrupted", Reason: runAttemptRestarted}
 		if r.InterruptedAt != "" {
 			kept.EndedAt, kept.Reason = r.InterruptedAt, runAttemptStopped
@@ -436,6 +439,59 @@ func sameInterruption(checked, r Run) bool {
 }
 
 var errAuditKept = &apiError{409, "run_not_retryable", "This interrupted run's attempt left an audit record. It is not evaluated again."}
+
+// errPagedRetryMoved and errPagedRetryBusy refuse a retry of an interrupted
+// run whose occurrence read its job's cursors (docs/design/paging.md,
+// section 7, "Retry"): queued again, it would decide the records its read
+// opened, which another run of the job has decided since, or is deciding.
+var (
+	errPagedRetryMoved = &apiError{409, "run_not_retryable", "Another run of this job has moved its paging cursor since this run read it. It is not retried."}
+	errPagedRetryBusy  = &apiError{409, "run_not_retryable", "This job has another run or occurrence in progress, which reads the same paging cursor. It is not retried now."}
+)
+
+// pagedRetryAdmitted refuses, in the retry's transaction, a retry of r when
+// its occurrence read its job's cursors and either the job has other work
+// that has not settled (an interrupted run is not such work, so a later
+// occurrence may be reading the same cursor), or a cursor no longer holds
+// what r read: the same test an advance makes (advancePagingCursor), a read
+// of no cursor admitting no row, a read of a value admitting that value and
+// the unfinished window r continued. A run that read no cursor is not
+// concerned.
+func pagedRetryAdmitted(tx runTx, r Run) error {
+	if r.Trigger == nil || len(r.Trigger.Paging) == 0 {
+		return nil
+	}
+	busy, err := tx.jobActivityBefore(r.JobID, "")
+	if err != nil {
+		return err
+	}
+	if busy > 0 {
+		return errPagedRetryBusy
+	}
+	rows, err := tx.pagingCursors(r.JobID)
+	if err != nil {
+		return err
+	}
+	for _, read := range r.Trigger.Paging {
+		a := read.Cursor
+		if a == nil {
+			continue
+		}
+		row, held := rows[read.Source]
+		if a.Read == "" {
+			if held {
+				return errPagedRetryMoved
+			}
+			continue
+		}
+		end, position := unfinishedHeld(a.Continued)
+		rowEnd, rowPosition := unfinishedHeld(row.Unfinished)
+		if !held || row.Value != a.Read || rowEnd != end || rowPosition != position {
+			return errPagedRetryMoved
+		}
+	}
+	return nil
+}
 
 // attemptsHoldNoAudit refuses a retry of a run any of whose attempts may have
 // completed its evaluation: an attempt directory holding an audit trail with

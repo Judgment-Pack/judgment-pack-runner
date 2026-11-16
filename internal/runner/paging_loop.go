@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -103,7 +104,10 @@ type PagedRead struct {
 // then filling the case), the value it filled into the case (From), the
 // value the pages say comes next (To, absent when they say none), and, when
 // the read ended at the bound and left pages unread, why the cursor is held
-// where it was (Held, "bound"). A window cursor's read also names the
+// where it was (Held, "bound"). In a run's record, a read whose advance the
+// run that completed did not write, the cursor having moved on from Read,
+// names neither To nor Unfinished, and Held "moved" (advanceCursors). A
+// window cursor's read also names the
 // unfinished window the store held, which it continued (Continued), and the
 // unfinished window it leaves for the next run when the bound ended it with
 // a position kept (Unfinished, docs/design/paging.md, section 7). The run
@@ -803,17 +807,30 @@ func (p *occurrencePaging) result() []PagedRead {
 	return out
 }
 
+// cursorMoved is a paged read's held when the run that completes finds its
+// job's cursor moved on from what its occurrence read: another run moved it
+// since, and this run's advance is not written.
+const cursorMoved = "moved"
+
 // advanceCursors writes, in the transaction that records r completed, the
 // advance of each cursor its occurrence read (docs/design/paging.md, section
 // 4.2), only while the row still holds what the occurrence read: a run that
 // started from an older cursor and completes late never moves it back. A run
 // that ended otherwise writes nothing, and one whose claim was lost writes
 // nothing at all (finishRunIn).
-func advanceCursors(tx runTx, r Run) error {
+//
+// An advance the row no longer admits is never dropped in silence: it
+// answers r as it is recorded, each such read's cursor naming neither to
+// nor unfinished and held "moved", and the sources, for the run.completed
+// entry's cursorHeld. r itself is left as it is: the record answered is a
+// copy, made again by every run of the transaction.
+func advanceCursors(tx runTx, r Run) (Run, []string, error) {
 	if r.State != "completed" || r.Trigger == nil {
-		return nil
+		return r, nil, nil
 	}
-	for _, read := range r.Trigger.Paging {
+	var moved []string
+	var paging []PagedRead
+	for i, read := range r.Trigger.Paging {
 		a := read.Cursor
 		if a == nil || a.To == "" && a.Unfinished == nil {
 			continue
@@ -824,11 +841,27 @@ func advanceCursors(tx runTx, r Run) error {
 		if a.Unfinished != nil {
 			c.Value = a.From
 		}
-		if _, err := tx.advancePagingCursor(c, a.Read, a.Continued); err != nil {
-			return err
+		wrote, err := tx.advancePagingCursor(c, a.Read, a.Continued)
+		if err != nil {
+			return r, nil, err
 		}
+		if wrote {
+			continue
+		}
+		if paging == nil {
+			paging = slices.Clone(r.Trigger.Paging)
+		}
+		held := *a
+		held.To, held.Unfinished, held.Held = "", nil, cursorMoved
+		paging[i].Cursor = &held
+		moved = append(moved, read.Source)
 	}
-	return nil
+	if paging != nil {
+		origin := *r.Trigger
+		origin.Paging = paging
+		r.Trigger = &origin
+	}
+	return r, moved, nil
 }
 
 // errPagingRule is the refusal of a paging member that is not a list of
@@ -887,12 +920,103 @@ func exactNames(object map[string]json.RawMessage, names ...string) bool {
 	return true
 }
 
+// errHeldForJob is the claim of an occurrence's preparation not made, and
+// nothing written, because its job keeps cursors and has a run, or an
+// occurrence admitted before it, that has not settled (claimPreparation).
+// The occurrence stays accepted, and is taken once that work has settled.
+var errHeldForJob = errors.New("the occurrence's job has a run, or an occurrence admitted before it, that has not settled")
+
+// errCursorsUnclaimed is the refusal to page an occurrence of a job that
+// keeps cursors from cursors not read in the transaction that claimed it.
+var errCursorsUnclaimed = errors.New("the job's cursors were not read with the occurrence's claim")
+
+// heldForJob says, from r, whether o, accepted with input to prepare, waits
+// for its job (docs/design/paging.md, section 7, "Overlap"): a job that keeps
+// cursors (paged) with a run queued or running, or an occurrence admitted
+// before o that is accepted, preparing, waiting or needing attention
+// (jobActivityBefore). That work reads or moves the cursors o would read, so
+// o reads them only once it has settled, whatever the trigger's overlap
+// rule. An occurrence whose queue time has run out at at, or whose expiry
+// cannot be read, is never held, and its preparation ends it as before; nor
+// is one whose job record cannot be read, which its preparation fails for
+// that record before any cursor is read (jobRetryPolicy,
+// heldRecordOrReleased).
+func heldForJob(r storeReads, o Occurrence, at time.Time) (paged, held bool, err error) {
+	if !withinQueueTime(o, at) {
+		return false, false, nil
+	}
+	j, err := r.job(o.JobID)
+	if faultOf(err) == faultUnreadable || absent(err) {
+		return false, false, nil
+	}
+	if err != nil || j.Paging == nil {
+		return false, false, err
+	}
+	n, err := r.jobActivityBefore(o.JobID, o.ID)
+	return true, n > 0, err
+}
+
+// withinQueueTime says whether an accepted occurrence's queue time has not
+// run out at at, its expiry read.
+func withinQueueTime(o Occurrence, at time.Time) bool {
+	expires, err := time.Parse(time.RFC3339Nano, o.ExpiresAt)
+	return err == nil && at.Before(expires)
+}
+
+// claimedCursors are the cursors of a paged occurrence's job, read in the
+// transaction that claimed it (claimPreparation).
+type claimedCursors struct{ rows map[string]PagingCursor }
+
+// claimPreparation is claimOccurrence for an accepted occurrence's
+// preparation. For a job that keeps cursors the same transaction checks the
+// job's activity (heldForJob) and reads its cursors: an occurrence its job
+// holds back is not claimed and nothing is written (errHeldForJob), and one
+// claimed is paged from the cursors read with its claim. The check and the
+// read are in the claim's transaction, which commits after every writer
+// before it and before every one after it (the sqlite kind's one writer, the
+// second kind's lock of journal_head, docs/design/store-postgresql.md, D13),
+// so no other Runner of the store, nor another worker of this one, makes or
+// ends the work they read in between: an occurrence of the job admitted
+// later counts this one, accepted, as activity before it, and waits.
+func (s *Service) claimPreparation(id string) (Occurrence, *claimedCursors, error) {
+	claim, err := newOccurrenceClaim()
+	if err != nil {
+		return Occurrence{}, nil, err
+	}
+	var o Occurrence
+	var read *claimedCursors
+	err = s.store.update(func(tx runTx) error {
+		var e error
+		read = nil
+		if o, e = tx.claimOccurrence(id, "accepted", claim); e != nil {
+			return e
+		}
+		paged, held, e := heldForJob(tx, o, s.instant())
+		if e != nil {
+			return e
+		}
+		if held {
+			return errHeldForJob
+		}
+		if !paged {
+			return nil
+		}
+		rows, e := tx.pagingCursors(o.JobID)
+		if e != nil {
+			return e
+		}
+		read = &claimedCursors{rows: rows}
+		return nil
+	})
+	return o, read, err
+}
+
 // occurrencePagingOf is the paged sources' state of an occurrence's attempt:
-// its job's cursor rules and cursors, the instant a window ends at, and the
-// pages held from its last attempt. hold says whether the job's retry policy
-// can give it another attempt, which pages received before a throttle are
-// held for.
-func (s *Service) occurrencePagingOf(o Occurrence, hold bool) (*occurrencePaging, error) {
+// its job's cursor rules, the cursors read with its claim (claimPreparation),
+// the instant a window ends at, and the pages held from its last attempt.
+// hold says whether the job's retry policy can give it another attempt,
+// which pages received before a throttle are held for.
+func (s *Service) occurrencePagingOf(o Occurrence, hold bool, claimed *claimedCursors) (*occurrencePaging, error) {
 	p := &occurrencePaging{at: s.instant(), hold: hold, held: o.HeldPages}
 	// An attempt that resumes held pages asks its windows to the instant
 	// the held pages were asked to (HeldPages).
@@ -908,9 +1032,13 @@ func (s *Service) occurrencePagingOf(o Occurrence, hold bool) (*occurrencePaging
 	if j.Paging == nil {
 		return p, nil
 	}
-	p.rules = j.Paging.Sources
-	if p.cursors, err = s.store.pagingCursors(o.JobID); err != nil {
-		return nil, err
+	// A job's paging is not changed while it has an occurrence open
+	// (job_work_pending), so the job claimPreparation read keeps cursors as
+	// this one does; cursors read since its claim are never paged from.
+	if claimed == nil {
+		return nil, errCursorsUnclaimed
 	}
+	p.rules = j.Paging.Sources
+	p.cursors = claimed.rows
 	return p, nil
 }

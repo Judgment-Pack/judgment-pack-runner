@@ -193,10 +193,16 @@ func finishRunIn(st runStore, r Run) error {
 		if r.State == "interrupted" && r.InterruptedAt != "" {
 			detail.Interruption = &EventInterruption{Seen: true, At: r.InterruptedAt}
 		}
-		if err := recordRun(tx, r, runExpected{state: "running", claim: r.claim}, runnerActor, detail); err != nil {
+		// The cursors are written before the record, so that the record and
+		// its entry say which advance the job's cursor no longer admitted
+		// (advanceCursors); a record refused for its claim takes the
+		// cursors' writes with it.
+		recorded, moved, err := advanceCursors(tx, r)
+		if err != nil {
 			return err
 		}
-		return advanceCursors(tx, r)
+		detail.CursorHeld = moved
+		return recordRun(tx, recorded, runExpected{state: "running", claim: r.claim}, runnerActor, detail)
 	})
 }
 
