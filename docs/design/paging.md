@@ -246,9 +246,26 @@ names a next reference fails its occurrence and leaves the cursor.
   request is the one held and the throttled page is asked in the held session.
   A throttled first page holds nothing: its session is sealed and the next
   attempt asks it afresh. Held pages never outlive the wait: an occurrence that
-  expires or fails before its next attempt drops them and seals their session;
-  one a restart finds interrupted drops them without sealing, in the store's
-  transaction.
+  expires or fails before its next attempt drops them and seals their session.
+- **Pages written as received** (4.5): each page, once verified (its receipt is
+  call i of the session, the pages are within the combined input limit, and
+  the page reads), is written to the occurrence's `heldPages` before the next
+  page is asked, in a write fenced by the occurrence's claim, which it keeps.
+  A write refused because the occurrence is no longer this attempt's (a
+  restart or a lapsed lease failed it) stops the read and seals its session.
+  The rule: **a page written to an occurrence's record is never asked again
+  for that occurrence.** The next attempt the job's retry policy schedules
+  resumes after the last page written, asking the throttled page first. A
+  restart, or a lapsed lease, that finds the occurrence preparing ends it
+  failed and repeats no call, as [retries](retries.md), section 8, has it for
+  every acquisition (the call in flight may have reached its source); its
+  record keeps the pages written, their session left unsealed, so a stop
+  keeps what was read. A later occurrence of the job reads from the job's
+  cursor, which that occurrence never moved, in a session of its own. Memory
+  while acquiring is the pages of the read in progress, which the record
+  holds as one document: bounded by the combined input limit, as the run's
+  input is at evaluation, and not by one page, which would need rows of
+  their own (4.5).
 - **An expired reference** (4.6) is the gateway's `410`
   `source_reference_expired`. A `410` to a later page's request expired the
   source's own next reference, not the cursor: the read starts again from the

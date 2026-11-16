@@ -341,13 +341,19 @@ func expiredReference(err error) bool {
 // sources: the job's cursors and what was read of them, the pages held from
 // an earlier attempt in and those to hold for the next out, whether the
 // caller keeps them (an occurrence does; a request has no next attempt), and
-// what each paged source read.
+// what each paged source read. write, for an occurrence, writes the pages of
+// the read in progress to its record (docs/design/paging.md, section 4.5):
+// each page is written as it arrives, before the next is asked, so that the
+// record holds every page received and an attempt that ends, however it
+// ends, never leaves a page the source answered only in memory. A request
+// has none.
 type occurrencePaging struct {
 	rules    []CursorRule
 	cursors  map[string]PagingCursor
 	at       time.Time
 	hold     bool
 	held     *HeldPages
+	write    func(*HeldPages) error
 	advances map[string]*CursorAdvance
 	reread   map[string]bool
 	inner    map[string]bool
@@ -355,12 +361,15 @@ type occurrencePaging struct {
 	reads    map[string]*pagedAcquired
 }
 
-// pagedAcquired is one paged source's pages as acquired, and the last page's
-// value, which a change cursor's next reference is read from.
+// pagedAcquired is one paged source's pages as acquired, the last page's
+// value, which a change cursor's next reference is read from, and, for a
+// read the bound ended, the next reference that page named, where a window
+// left unfinished is continued from.
 type pagedAcquired struct {
 	cites []Citation
 	end   string
 	last  any
+	next  string
 }
 
 // acquirePages asks a paged source's pages (docs/design/paging.md, sections
@@ -392,6 +401,9 @@ func (s *Service) acquirePages(ctx context.Context, next PlannedSource, p *occur
 		s.sealHeld(ctx, h)
 	}
 	p.held = nil
+	// The pages held from the last attempt are in the record already; each
+	// page received after them is written to it as it arrives.
+	written := len(pages)
 	seal := func() { sealSession(ctx, gateway, session) }
 	fills, _ := pointerTokens(rule.Fills, false)
 	seen := map[string]bool{}
@@ -456,12 +468,22 @@ func (s *Service) acquirePages(ctx context.Context, next PlannedSource, p *occur
 			return SourceValue{}, sourceFailure(next.Name, err)
 		}
 		out.last = v
+		// The page is verified: it is written to the occurrence's record
+		// before the next is asked (section 4.5). A write refused because
+		// the occurrence is no longer this attempt's (a restart or a lapsed
+		// lease failed it) stops the read: no page is asked after it.
+		if p.write != nil && i >= written {
+			if err := p.write(&HeldPages{Source: next.Name, Profile: next.Profile, Session: session, First: next.Arguments, At: p.at.UTC().Format(windowForm), Pages: pages[:i+1]}); err != nil {
+				seal()
+				return SourceValue{}, err
+			}
+		}
 		if reference == "" {
 			out.end = "no-next"
 			break
 		}
 		if i+1 == rule.bound {
-			out.end = "bound"
+			out.end, out.next = "bound", reference
 			break
 		}
 		if seen[reference] {

@@ -360,6 +360,78 @@ func TestAThrottledPageIsAskedAgainInItsSessionAndNoPageBeforeIt(t *testing.T) {
 	}
 }
 
+// Section 4.5: each page is written to the occurrence's record as it
+// arrives, before the next is asked. An attempt a throttle ends after page k
+// leaves pages 1 to k in the record, and the next attempt asks page k+1
+// first; a restart that finds the read in progress fails the occurrence,
+// keeps the pages written in its record and asks nothing again.
+func TestEachPageIsWrittenToTheOccurrenceAsItArrives(t *testing.T) {
+	var w *pagedWorld
+	var id string
+	inRecord := func() int {
+		o, e := w.s.store.occurrence(id)
+		if e != nil || o.HeldPages == nil {
+			return 0
+		}
+		return len(o.HeldPages.Pages)
+	}
+	var asked []string
+	throttled := false
+	w = newPagedWorld(t, &RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}, changeCursor, newPagedFeed(t, 4, func(c pagedCall) int {
+		status := 200
+		if c.cursor == "ref-2" && !throttled {
+			throttled, status = true, 503
+		}
+		asked = append(asked, fmt.Sprintf("%s:%d:%d", c.cursor, status, inRecord()))
+		return status
+	}))
+	o := newOccurrence(w.tr, w.job, time.Now())
+	o.PendingInput, id = w.input, o.ID
+	must(t, w.s.store.update(func(tx runTx) error { _, err := w.s.admitOccurrence(tx, w.tr, o, "first", ""); return err }))
+	o = w.step(t, id)
+	if o.State != "accepted" || o.HeldPages == nil || len(o.HeldPages.Pages) != 2 || o.Attempts[0].Outcome != "transient" {
+		t.Fatalf("the attempt the throttle ended: %s %s %+v", o.State, o.Reason, o.HeldPages)
+	}
+	*w.clock = w.clock.Add(2 * time.Second)
+	read := onePagedRead(t, w.step(t, id), 4, "no-next")
+	// Each call is cursor:status:pages in the record when it was asked.
+	if want := []string{":200:0", "ref-1:200:1", "ref-2:503:2", "ref-2:200:2", "ref-3:200:3"}; !slices.Equal(asked, want) {
+		t.Fatalf("the pages asked: %v, want %v", asked, want)
+	}
+	if read.Receipts[3].CallIndex != 3 || read.Receipts[3].SessionID != read.Receipts[0].SessionID {
+		t.Fatalf("the read's receipts: %+v", read.Receipts)
+	}
+
+	// A stop while page 3 is asked leaves the store as it was then: the
+	// record holds the two pages written, and the restart fails the
+	// occurrence, keeps them and asks nothing again.
+	var r *pagedWorld
+	var state, record string
+	r = newPagedWorld(t, &RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}, changeCursor, newPagedFeed(t, 4, func(c pagedCall) int {
+		if c.cursor == "ref-2" {
+			must(t, sqliteDB(r.s).QueryRow("SELECT state,record FROM occurrences").Scan(&state, &record))
+		}
+		return 200
+	}))
+	o = r.prepare(t, "first")
+	r.feed.taken()
+	_, e := sqliteDB(r.s).Exec("UPDATE occurrences SET state=?,record=? WHERE id=?", state, record, o.ID)
+	must(t, e)
+	must(t, r.s.restart())
+	o, e = r.s.occurrence(o.ID)
+	must(t, e)
+	if state != "preparing" || o.State != "failed" || o.ErrorClass != classInterrupted || o.HeldPages == nil || len(o.HeldPages.Pages) != 2 || o.Input != nil {
+		t.Fatalf("the occurrence a restart found reading (%s): %s %s %+v", state, o.State, o.Reason, o.HeldPages)
+	}
+	r.step(t, o.ID)
+	if calls := r.feed.taken(); len(calls) != 0 {
+		t.Fatalf("a page asked again after the restart: %+v", calls)
+	}
+	if value, _ := r.cursor(t); value != "" {
+		t.Fatal("an interrupted read moved the cursor:", value)
+	}
+}
+
 // Section 4.6: a source that answers 410 source_reference_expired to a read
 // from a cursor's value is read again in full from the cursor's first value,
 // and the occurrence's acceptance says so, in an entry of version 6; the
