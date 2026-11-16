@@ -1,14 +1,16 @@
 name: CI
 
 # The check list is dev.json, run by scripts/dev/check.sh (the development kit's vendored runner);
-# the longer steps are scripts under scripts/checks/ with the comments they had here. Two jobs, both
-# required by branch protection under their names: `Runner (<os>)` runs every step but the release
-# ones on Linux and macOS, `Release contents` runs the release steps, and `PostgreSQL store` runs the
-# postgresql store kind's tests against a service container. Both set up the exact
-# toolchain release.yml names. On a pull request the `Runner` jobs run only the steps jpdev.json
-# maps the changed paths to (`check.sh --changed`); on a push to main they run the whole list.
-# `Release contents` runs its four steps every time. A push to main also records each job's
-# evidence (scripts/dev/release_evidence.py capture), which the release takes at that commit
+# the longer steps are scripts under scripts/checks/ with the comments they had here. Branch
+# protection requires `Runner (<os>)`, `Release contents` and `PostgreSQL store` by their names:
+# `Unit tests (<os>, i/4)` runs one of the four shards of the unit-tests step on Linux and macOS,
+# `Runner (<os>)` runs every other step but the release ones once every shard has ended and fails
+# unless every shard succeeded, `Release contents` runs the release steps, and `PostgreSQL store`
+# runs the postgresql store kind's tests against a service container. Each sets up the exact
+# toolchain release.yml names. On a pull request the `Unit tests` and `Runner` jobs run only the
+# steps jpdev.json maps the changed paths to (`check.sh --changed`); on a push to main they run the
+# whole list. `Release contents` runs its four steps every time. A push to main also records each
+# job's evidence (scripts/dev/release_evidence.py capture), which the release takes at that commit
 # instead of running this workflow again (docs/releasing.md, "CI at the tag").
 
 on:
@@ -33,16 +35,79 @@ permissions:
   contents: read
 
 jobs:
+  # The unit-tests step in four shards (scripts/checks/unit-tests.sh, JPACK_UNIT_SHARD), each on a
+  # runner of its own, so that no runner holds more than about a quarter of the groups. A shard
+  # builds the pinned binaries its tests run (build-pinned) and runs its groups, two at once. On a
+  # pull request or a merge group it runs them only when the changed paths map to unit-tests, the
+  # same selection as the Runner job's, and otherwise ends with nothing run.
+  unit:
+    name: Unit tests (${{ matrix.os }}, ${{ matrix.shard }}/4)
+    runs-on: ${{ matrix.os }}
+    # Each shard keeps the step's 50-minute bound; allow job setup and evidence headroom.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        shard: [1, 2, 3, 4]
+    steps:
+      # The whole history, so that --changed finds the merge base with the base branch.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: true
+      # The other steps of dev.json are skipped: the Runner job runs them.
+      - name: Unit tests, shard ${{ matrix.shard }} of 4
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          JPACK_UNIT_SHARD: ${{ matrix.shard }}/4
+        run: |
+          set -o pipefail
+          if [ "$EVENT" = pull_request ]; then
+            scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip local-paths,agent-docs,diff-check,go-fmt,go-vet,manual-gate,chain-tests,openapi,build,ci-evidence,release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
+          elif [ "$EVENT" = merge_group ]; then
+            scripts/dev/check.sh --all --changed "$GROUP_BASE" --skip local-paths,agent-docs,diff-check,go-fmt,go-vet,manual-gate,chain-tests,openapi,build,ci-evidence,release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
+          else
+            scripts/dev/check.sh --all --only build-pinned,unit-tests | tee "${{ runner.temp }}/checks.log"
+          fi
+      - name: Record exact CI inputs and coverage
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: python3 scripts/dev/release_evidence.py capture --workflow ci --job unit-${{ matrix.os }}-${{ matrix.shard }} --check-log "${{ runner.temp }}/checks.log" --output "${{ runner.temp }}/evidence.json"
+      - name: Upload immutable CI evidence
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-evidence-ci-unit-${{ matrix.os }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
   check:
     name: Runner (${{ matrix.os }})
+    # After every shard, whatever its result, so that a failed or cancelled shard fails this job
+    # (the name branch protection requires) instead of skipping it, which would count as passing.
+    needs: unit
+    if: ${{ always() }}
     runs-on: ${{ matrix.os }}
-    # The sequential unit check keeps its 50-minute bound; allow job setup and evidence headroom.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
+      - name: Every unit-test shard succeeded
+        env:
+          UNIT: ${{ needs.unit.result }}
+        run: |
+          if [ "$UNIT" != success ]; then
+            echo "the Unit tests jobs ended $UNIT, not success: this job fails with them"
+            exit 1
+          fi
       # The whole history, so that --changed finds the merge base with the base branch.
       - uses: actions/checkout@v4
         with:
@@ -62,7 +127,8 @@ jobs:
       # a path is unmapped or the mapping, dev.json or the runner changed; a merge group runs the
       # steps its changes since the group's base map to, the same way. A push to main runs the
       # whole list, and only that run is what a release is held to. The release steps are skipped
-      # here either way: `Release contents` runs them. The summary is kept for the evidence.
+      # here either way: `Release contents` runs them; so is unit-tests: the `Unit tests` jobs run
+      # it. The summary is kept for the evidence.
       - name: Checks
         env:
           EVENT: ${{ github.event_name }}
@@ -71,11 +137,11 @@ jobs:
         run: |
           set -o pipefail
           if [ "$EVENT" = pull_request ]; then
-            scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
+            scripts/dev/check.sh --all --changed "origin/$BASE_REF" --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store,unit-tests | tee "${{ runner.temp }}/checks.log"
           elif [ "$EVENT" = merge_group ]; then
-            scripts/dev/check.sh --all --changed "$GROUP_BASE" --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
+            scripts/dev/check.sh --all --changed "$GROUP_BASE" --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store,unit-tests | tee "${{ runner.temp }}/checks.log"
           else
-            scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store | tee "${{ runner.temp }}/checks.log"
+            scripts/dev/check.sh --all --skip release-toolchain,third-party-notices,release-archives,release-programs,postgresql-store,unit-tests | tee "${{ runner.temp }}/checks.log"
           fi
       # The commit, its input identities, this runner's image and tools, and every check's result:
       # the evidence the release takes (.github/ci-evidence.json). Only a push to main records it.
