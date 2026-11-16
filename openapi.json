@@ -269,6 +269,63 @@
         ]
       }
     },
+    "/jobs/{job}/cursors": {
+      "get": {
+        "summary": "Read a job's cursors between runs",
+        "operationId": "getJobCursors",
+        "description": "For each paged source the job's paging names, in its order (docs/design/paging.md, sections 4.2 and 7): the cursor's value, the run that last moved it and when, none of the three while no run has (the next occurrence fills the rule's first value), and whether a window the bound ended is unfinished, with its end and the position the next run continues from. A job without paging answers an empty list. Read under the job's scope exactly as GET /jobs/{job} is: a request that names another scope, or none for a job under one, is answered as that read is for a job the store does not hold.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job's cursors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCursors"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job, or one of another scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/jobs/{job}/runs": {
       "get": {
         "operationId": "listRuns",
@@ -8740,6 +8797,65 @@
         "required": [
           "end",
           "position"
+        ],
+        "additionalProperties": false
+      },
+      "JobCursors": {
+        "type": "object",
+        "description": "A job's cursors between runs, one for each paged source its paging names (GET /jobs/{job}/cursors).",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "cursors": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/JobCursor"
+            }
+          }
+        },
+        "required": [
+          "jobId",
+          "cursors"
+        ],
+        "additionalProperties": false
+      },
+      "JobCursor": {
+        "type": "object",
+        "description": "One paged source's cursor: its kind; its value, the run that last moved it and when, absent while no run has; and whether a window is unfinished, with its end and position.",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "change",
+              "window"
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "windowUnfinished": {
+            "type": "boolean",
+            "description": "A window read the bound ended left the window unfinished: its cursor's value is still the window's start, and the next run continues it from unfinished.position."
+          },
+          "unfinished": {
+            "$ref": "#/components/schemas/UnfinishedWindow"
+          }
+        },
+        "required": [
+          "source",
+          "kind",
+          "windowUnfinished"
         ],
         "additionalProperties": false
       },

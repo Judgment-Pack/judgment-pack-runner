@@ -317,6 +317,7 @@ var heldRoutes = map[string]bool{
 	"GET /v1/runs":                       true,
 	"GET /v1/jobs/{job}":                 true,
 	"GET /v1/jobs/{job}/runs":            true,
+	"GET /v1/jobs/{job}/cursors":         true,
 	"POST /v1/jobs/{job}/runs":           true,
 	"GET /v1/runs/{run}":                 true,
 	"POST /v1/jobs/{job}/upgrade":        true,

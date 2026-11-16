@@ -169,6 +169,45 @@ type PagingCursor struct {
 	Unfinished *UnfinishedWindow `json:"unfinished,omitempty"`
 }
 
+// JobCursors is what GET /v1/jobs/{job}/cursors serves: for each paged
+// source the job's paging names, in its order, the cursor kept between runs.
+type JobCursors struct {
+	JobID   string      `json:"jobId"`
+	Cursors []JobCursor `json:"cursors"`
+}
+
+// JobCursor is one paged source's cursor: its kind, its value, the run that
+// last moved it and when (none of the three while no run has: the next
+// occurrence fills the rule's first value), and whether a window the bound
+// ended is unfinished, with its end and the position the next run continues
+// from.
+type JobCursor struct {
+	Source           string            `json:"source"`
+	Kind             string            `json:"kind"`
+	Value            string            `json:"value,omitempty"`
+	RunID            string            `json:"runId,omitempty"`
+	UpdatedAt        string            `json:"updatedAt,omitempty"`
+	WindowUnfinished bool              `json:"windowUnfinished"`
+	Unfinished       *UnfinishedWindow `json:"unfinished,omitempty"`
+}
+
+// jobCursorsOf is j's cursors, from its rows.
+func jobCursorsOf(j Job, rows map[string]PagingCursor) JobCursors {
+	out := JobCursors{JobID: j.ID, Cursors: []JobCursor{}}
+	if j.Paging == nil {
+		return out
+	}
+	for _, rule := range j.Paging.Sources {
+		c := JobCursor{Source: rule.Source, Kind: rule.Kind}
+		if row, ok := rows[rule.Source]; ok {
+			c.Value, c.RunID, c.UpdatedAt, c.Unfinished = row.Value, row.RunID, row.UpdatedAt, row.Unfinished
+		}
+		c.WindowUnfinished = c.Unfinished != nil
+		out.Cursors = append(out.Cursors, c)
+	}
+	return out
+}
+
 var timestampForm = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$`)
 
 // validateJobPaging is validateCursorRules, and refuses a job's paging on a

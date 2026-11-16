@@ -301,6 +301,15 @@ names a next reference fails its occurrence and leaves the cursor.
   in `fullReRead` (entry version `"6"`). A source's read is started again once:
   a second `410`, a `410` to a first page read from `first`, or one to a
   window's first page, fails the occurrence and leaves the cursor.
+- **Reading a job's cursors** (#300): `GET /v1/jobs/{job}/cursors` answers,
+  for each paged source the job's paging names, in its order, the cursor's
+  kind, its value, the run that last moved it and when (none of the three
+  while no run has), and `windowUnfinished`, with the unfinished window's
+  end and position. It reads through the request's view of the store, after
+  the job's own read, so a request of another scope, or of none for a job
+  under one, is answered the job's not-found byte for byte; on the
+  PostgreSQL kind it is a held route, read on the request login under the
+  row policy of `0007_paging_cursors.sql`.
 - **Storage**: PostgreSQL `0007_paging_cursors.sql`; the sqlite kind makes its
   table in the transaction that raises its schema to `8` with the first job
   that keeps a cursor, so a store with none keeps the earlier schema.

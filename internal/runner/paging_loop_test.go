@@ -175,8 +175,9 @@ func newPagedWorld(t *testing.T, policy *RetryPolicy, paging *JobPaging, feed *p
 }
 
 // newPagedWorldOf is newPagedWorld on the dialect given, whose occurrences
-// are prepared from the case given.
-func newPagedWorldOf(t *testing.T, dialect, caseJSON string, policy *RetryPolicy, paging *JobPaging, feed *pagedFeed) *pagedWorld {
+// are prepared from the case given, its job under the scope identifier
+// scope names, if any.
+func newPagedWorldOf(t *testing.T, dialect, caseJSON string, policy *RetryPolicy, paging *JobPaging, feed *pagedFeed, scope ...string) *pagedWorld {
 	t.Helper()
 	cfg := journalConfig(t)
 	cfg.disableAutomation = true
@@ -197,7 +198,7 @@ func newPagedWorldOf(t *testing.T, dialect, caseJSON string, policy *RetryPolicy
 	must(t, e)
 	_, e = sqliteDB(s).Exec("UPDATE releases SET record=? WHERE id=?", string(encode(r)), r.ID)
 	must(t, e)
-	j, e := s.createJobPaged(requester{}, "Paging", r.ID, "", nil, policy, paging)
+	j, e := s.createJobPaged(requester{}, "Paging", r.ID, strings.Join(scope, ""), nil, policy, paging)
 	must(t, e)
 	c := constantTrigger(time.Now())
 	c.Input = &AutomaticInput{Kind: "mapped-sources", Case: json.RawMessage(caseJSON)}
@@ -487,6 +488,10 @@ func TestAWindowWiderThanTheBoundFinishesOverSeveralRuns(t *testing.T) {
 			t.Fatalf("the cursor after run %d: %+v", n, row)
 		}
 		if n == 1 {
+			// The job's cursor says its window is unfinished, and where.
+			if got := serve(t, w.s, "GET", "/v1/jobs/"+w.job.ID+"/cursors", "", nil); got.Code != 200 || !strings.Contains(got.Body.String(), `"runId":"`+r.ID+`","updatedAt":"`+row.UpdatedAt+`","windowUnfinished":true,"unfinished":{"end":"`+end+`","position":"ref-4"}`) {
+				t.Fatalf("the job's cursors: %d %s", got.Code, got.Body)
+			}
 			// The records are as openapi.json says, the continued and the
 			// unfinished window in them.
 			doc := readOpenAPI(t)
@@ -546,6 +551,41 @@ func TestAnExpiredPositionReadsItsWindowAgain(t *testing.T) {
 	}
 	if want := []string{"ref-3:2026-01-02T00:00:00Z:410", ":2026-01-02T00:00:00Z:200", "ref-1:2026-01-02T00:00:00Z:200"}; !slices.Equal(asked, want) {
 		t.Fatalf("the pages asked: %v, want %v", asked, want)
+	}
+}
+
+// GET /v1/jobs/{job}/cursors serves each paged source's cursor, the run
+// that last moved it and when, and whether a window is unfinished, under
+// the job's scope exactly as the job's read is: a request of another scope,
+// or of none, is answered the job's not-found, byte for byte.
+func TestAJobsCursorsAreReadUnderItsScope(t *testing.T) {
+	feed := newPagedFeed(t, 1, nil)
+	w := newPagedWorldOf(t, pagedFeedDialect(feed.p), `{}`, nil, changeCursor, feed, "scope-a")
+	scoped := w.job
+	// A job no run has moved names its sources and no value.
+	if got := serve(t, w.s, "GET", withScope("/v1/jobs/"+scoped.ID+"/cursors", "scope-a"), "", nil); got.Code != 200 || !strings.Contains(got.Body.String(), `"cursors":[{"source":"changes","kind":"change","windowUnfinished":false}]`) {
+		t.Fatalf("an unmoved job's cursors: %d %s", got.Code, got.Body)
+	}
+	must(t, w.s.store.update(func(tx runTx) error {
+		_, err := tx.advancePagingCursor(PagingCursor{JobID: scoped.ID, Source: "changes", Value: "after-start", RunID: "run_moved", UpdatedAt: "2026-11-16T00:00:00Z", Scope: "scope-a"}, "", nil)
+		return err
+	}))
+	got := serve(t, w.s, "GET", withScope("/v1/jobs/"+scoped.ID+"/cursors", "scope-a"), "", nil)
+	var read JobCursors
+	must(t, json.Unmarshal(got.Body.Bytes(), &read))
+	if got.Code != 200 || read.JobID != scoped.ID || len(read.Cursors) != 1 || read.Cursors[0] != (JobCursor{Source: "changes", Kind: "change", Value: "after-start", RunID: "run_moved", UpdatedAt: "2026-11-16T00:00:00Z"}) {
+		t.Fatalf("the job's cursors: %d %s", got.Code, got.Body)
+	}
+	doc := readOpenAPI(t)
+	if problems := doc.check("cursors", doc.schema("JobCursors"), decodeNumbers(t, got.Body.Bytes())); len(problems) > 0 {
+		t.Fatal("the cursors are not as openapi.json says:", problems)
+	}
+	for _, scope := range []string{"", "scope-b"} {
+		job := serve(t, w.s, "GET", withScope("/v1/jobs/"+scoped.ID, scope), "", nil)
+		cursors := serve(t, w.s, "GET", withScope("/v1/jobs/"+scoped.ID+"/cursors", scope), "", nil)
+		if job.Code != 404 || cursors.Code != job.Code || cursors.Body.String() != job.Body.String() {
+			t.Fatalf("under %q: the cursors %d %s, the job %d %s", scope, cursors.Code, cursors.Body, job.Code, job.Body)
+		}
 	}
 }
 

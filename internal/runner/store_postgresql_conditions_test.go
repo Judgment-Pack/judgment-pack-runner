@@ -787,6 +787,13 @@ func TestPostgreSQLServesARunThroughItsHeldRoutes(t *testing.T) {
 	if other := serve(t, sv, "GET", "/v1/jobs/"+j.ID+"?scope=team-b", "", nil); other.Code != 404 {
 		t.Fatal("another scope reached the job:", other.Code, other.Body.String())
 	}
+	// The job's cursors are read on the request login, held to its scope.
+	if got := serve(t, sv, "GET", "/v1/jobs/"+j.ID+"/cursors?scope=team-a", "", nil); got.Code != 200 || !strings.Contains(got.Body.String(), `"cursors":[]`) {
+		t.Fatal("the job's cursors:", got.Code, got.Body.String())
+	}
+	if other := serve(t, sv, "GET", "/v1/jobs/"+j.ID+"/cursors?scope=team-b", "", nil); other.Code != 404 {
+		t.Fatal("another scope reached the job's cursors:", other.Code, other.Body.String())
+	}
 	go func() {
 		time.Sleep(time.Second)
 		os.WriteFile(gate, nil, 0o600)
