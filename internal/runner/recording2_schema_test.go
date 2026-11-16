@@ -13,7 +13,7 @@ import (
 
 // The Spec's dialect-recording schema version 2 (RFC 0018's amendment of
 // 2026-11-15, staged for 0.6.0) and its staged vectors, copied byte for byte
-// at its commit 91a2e198cc271f81790689667e03122222d698ae
+// at its commit 0d5bdea79cea2f2c00fd2c802bac476e6386c002
 // (vectors/dialect-recording-2).
 const recording2Dir = "../../vectors/dialect-recording-2/spec"
 
@@ -22,7 +22,7 @@ const recording2Dir = "../../vectors/dialect-recording-2/spec"
 var recording2Pins = map[string]string{
 	"schema/preparation.schema.json": "e2994ee2507eb833a67a98c782ea1d4b8df3556b07fcdfb0867840a3f08bbbad",
 	"schema/export.schema.json":      "0f8bc6f1b8b6410915f07b58e8e8072b7030d5acc09afed864b9aaecb7ddc039",
-	"vectors/README.md":              "ee8b3b77e2cb2dff65c015b30bae0ca717bb4e97deb1e3adefe8a9bf995cf827",
+	"vectors/README.md":              "68ac389647cf68321f2f6bda9f552a7047624a09152ceb5842f4e0c90f15d601",
 	"vectors/manifest.json":          "aaf019edac9e97d2d940a12a57af597d711305996fc82b21d9bb71283354c8ea",
 }
 

@@ -10,7 +10,7 @@ import (
 )
 
 // The Spec's format 4.1.0 vectors (RFC 0033, in Review), copied byte for
-// byte at its commit 91a2e198cc271f81790689667e03122222d698ae
+// byte at its commit 0d5bdea79cea2f2c00fd2c802bac476e6386c002
 // (vectors/dialect-format-4.1).
 const format41Vectors = "../../vectors/dialect-format-4.1/spec"
 

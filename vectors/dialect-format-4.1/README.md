@@ -2,7 +2,7 @@
 
 `spec/` holds the Spec's hand-written vectors for the proposed dialect format `4.1.0`, a paged
 `operation` source (the Spec's RFC 0033, in Review), copied byte for byte from the Spec
-repository's `conformance/dialect/format-4.1/` at commit `91a2e198cc271f81790689667e03122222d698ae` (spec PR #332, staged for `0.6.0`):
+repository's `conformance/dialect/format-4.1/` at commit `0d5bdea79cea2f2c00fd2c802bac476e6386c002` (spec PR #332, staged for `0.6.0`):
 its `README.md`, `manifest.json` and the 90 vector directories, one for each row of the RFC's
 Conformance table. Nothing here was recorded from the Runner's code: every expected answer is the
 Spec's, written by hand. Their relative links point into the Spec repository, not this one.
