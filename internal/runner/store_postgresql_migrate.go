@@ -75,10 +75,30 @@ func postgresqlMigrations() ([]pgMigration, error) {
 
 // PostgreSQLMigration is what `jpack-runner store migrate` is given: the
 // migration login's connection string, and the names of the owner role and
-// the two run-time logins (section 5).
+// the two run-time logins (section 5). EvenWithLiveClaims applies the files
+// while a Runner of the store holds an unexpired claim, which the command is
+// otherwise refused (`--even-with-live-claims`).
 type PostgreSQLMigration struct {
 	Connection             string
 	Owner, Request, Worker string
+	EvenWithLiveClaims     bool
+}
+
+// pgLiveClaims counts the unexpired claims on the store, by the database's
+// clock: the runs, and, once 0004_several_runners.sql is applied, the
+// occurrences, a Runner holds under a lease. The store records no Runner's
+// presence beyond its claims, so a Runner holding none is not counted.
+func pgLiveClaims(db *sql.DB, owner string, occurrences bool) (runs, occs int, err error) {
+	err = pgAsOwner(db, owner, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(pgContext, "SELECT count(*) FROM jpack_runner.runs WHERE claim_id IS NOT NULL AND lease_until>now()").Scan(&runs); err != nil {
+			return err
+		}
+		if !occurrences {
+			return nil
+		}
+		return tx.QueryRowContext(pgContext, "SELECT count(*) FROM jpack_runner.occurrences WHERE claim_id IS NOT NULL AND lease_until>now()").Scan(&occs)
+	})
+	return runs, occs, err
 }
 
 // pgRoleName is the form a role named to the kind takes: letters, digits and
@@ -95,8 +115,9 @@ var errForeignTable = errors.New("the database holds a table outside the postgre
 // and returns the versions it applied: none on a second run. It refuses a
 // database holding a table in any schema but the kind's and the system's, a
 // file recorded under another digest (applying nothing after it), a recorded
-// file this Runner does not ship, and grants recorded for other logins than
-// the ones named.
+// file this Runner does not ship, grants recorded for other logins than the
+// ones named, and, before applying a file, a store on which a Runner holds an
+// unexpired claim on a run or an occurrence, unless EvenWithLiveClaims.
 func MigratePostgreSQL(m PostgreSQLMigration) ([]string, error) {
 	for _, name := range []string{m.Owner, m.Request, m.Worker} {
 		if !pgRoleName.MatchString(name) {
@@ -170,6 +191,7 @@ func migratePostgreSQL(m PostgreSQLMigration, set []pgMigration) ([]string, erro
 		}
 	}
 	var applied []string
+	claimsChecked := !exists || m.EvenWithLiveClaims
 	for _, f := range set {
 		if r, ok := held[f.version]; ok {
 			if r.digest != f.digest {
@@ -179,6 +201,21 @@ func migratePostgreSQL(m PostgreSQLMigration, set []pgMigration) ([]string, erro
 				return applied, fmt.Errorf("the grants were made to the request login %q and the worker login %q: replacing a login is not a migration", r.request, r.worker)
 			}
 			continue
+		}
+		if !claimsChecked {
+			// A Runner checks the migrations only at its start: one still
+			// running after a file is applied keeps claiming work under
+			// the earlier schema. Before the first file to apply, refuse
+			// while a Runner holds an unexpired claim.
+			_, several := held["0004"]
+			runs, occs, err := pgLiveClaims(db, owner, several)
+			if err != nil {
+				return applied, err
+			}
+			if runs+occs > 0 {
+				return applied, fmt.Errorf("the store holds %d unexpired claims (%d runs, %d occurrences): a Runner of the store is running; stop every Runner of the store before migrating, or pass --even-with-live-claims (the store records no Runner beyond its claims)", runs+occs, runs, occs)
+			}
+			claimsChecked = true
 		}
 		text := f.text
 		request, worker := "", ""

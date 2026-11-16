@@ -212,10 +212,12 @@ func storeMember(v json.RawMessage, stateDir string) (runner.PostgreSQLConnectio
 // Runner's start (docs/design/store-postgresql.md, section 5). The file is
 // {"migration": ..., "owner": ..., "request": ..., "worker": ...}, held to the
 // rules a service configuration is held to. It prints the versions it applied,
-// none on a second run.
+// none on a second run. It refuses to apply a file while a Runner of the store
+// holds an unexpired claim, unless `--even-with-live-claims` follows the path.
 func storeCommand(args []string, stdout io.Writer) error {
-	if len(args) != 3 || args[0] != "migrate" || args[1] != "--connection" || !filepath.IsAbs(args[2]) {
-		return errors.New("store takes migrate, --connection and the absolute path of the migration's connection file, and nothing else")
+	even := len(args) == 4 && args[3] == "--even-with-live-claims"
+	if (len(args) != 3 && !even) || args[0] != "migrate" || args[1] != "--connection" || !filepath.IsAbs(args[2]) {
+		return errors.New("store takes migrate, --connection and the absolute path of the migration's connection file, optionally --even-with-live-claims, and nothing else")
 	}
 	raw, err := runner.ReadServiceConfig(args[2])
 	if err != nil {
@@ -225,6 +227,7 @@ func storeCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	m.EvenWithLiveClaims = even
 	applied, err := runner.MigratePostgreSQL(m)
 	if err != nil {
 		return err

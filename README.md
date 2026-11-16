@@ -79,7 +79,7 @@ The program's commands:
 | --- | --- |
 | none | Desk's companion: reads one boot line on stdin and serves `jobs/1`, as the next paragraphs say |
 | `serve --config <path>` | service mode: serves `jobs/1` from a private configuration file until it is stopped ([below](#service-mode)) |
-| `store migrate --connection <path>` | applies the postgresql store kind's migrations, as its migration login ([docs/postgresql-store.md](docs/postgresql-store.md)) |
+| `store migrate --connection <path> [--even-with-live-claims]` | applies the postgresql store kind's migrations, as its migration login, refusing while a Runner holds an unexpired claim on the store unless the flag is given ([docs/postgresql-store.md](docs/postgresql-store.md)) |
 | `version` | names the release the program was built from |
 | `verify-run` | verifies a run's export offline ([below](#verified-mapping-v2-runner-and-desk)) |
 | `verify-preparation` | verifies one preparation offline, an Exchange fixture's among them, with no run ([below](#verified-mapping-v2-runner-and-desk)) |

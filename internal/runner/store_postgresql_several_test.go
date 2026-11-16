@@ -10,6 +10,7 @@ package runner
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -407,6 +408,50 @@ func pgRefusesAStoreWithout(t *testing.T, prefix string) (*pgTestServer, string)
 	}
 	must(t, k.checkMigrations())
 	return s, db
+}
+
+// #308. A Runner checks the migrations only at its start, so `store migrate`
+// refuses to apply a file while a Runner of the store holds an unexpired
+// claim, on a run or an occurrence, naming the count; an expired claim is not
+// counted; EvenWithLiveClaims applies the files regardless.
+func TestPostgreSQLMigrationRefusesWhileARunnerHoldsALiveClaim(t *testing.T) {
+	s := pgServer(t)
+	set, err := postgresqlMigrations()
+	must(t, err)
+	at := len(set) - 1
+	db := pgFreshDatabase(t, s)
+	migration := PostgreSQLMigration{Connection: s.url(pgRoleMigration, db), Owner: s.role(pgRoleOwner), Request: s.role(pgRoleRequest), Worker: s.role(pgRoleWorker)}
+	if applied, err := migratePostgreSQL(migration, set[:at]); err != nil || len(applied) != at {
+		t.Fatal("the earlier store was not made:", applied, err)
+	}
+	exec := func(query string) {
+		t.Helper()
+		must(t, s.asOwner(db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(pgContext, query)
+			return err
+		}))
+	}
+	exec(`INSERT INTO jpack_runner.runs(id,job_id,caller,idem,request_digest,state,record,claim_id,claim_attempt,lease_until) VALUES ('run-1','job-1','caller','idem-1','digest','running','{}','claim-1',1,now()+interval '1 minute')`)
+	applied, err := MigratePostgreSQL(migration)
+	if err == nil || len(applied) != 0 || !strings.Contains(err.Error(), "1 unexpired claims (1 runs, 0 occurrences)") || !strings.Contains(err.Error(), "--even-with-live-claims") {
+		t.Fatal("the migration was not refused while a run's claim is live:", applied, err)
+	}
+	exec(`UPDATE jpack_runner.runs SET lease_until=now()-interval '1 second'`)
+	exec(`INSERT INTO jpack_runner.occurrences(id,job_id,trigger_id,identity,payload_digest,state,record,claim_id,lease_until) VALUES ('occ-1','job-1','trigger-1','identity-1','digest','accepted','{}','claim-2',now()+interval '1 minute')`)
+	applied, err = MigratePostgreSQL(migration)
+	if err == nil || len(applied) != 0 || !strings.Contains(err.Error(), "1 unexpired claims (0 runs, 1 occurrences)") {
+		t.Fatal("the migration was not refused while an occurrence's claim is live, or counted an expired one:", applied, err)
+	}
+	k := newPostgreSQLStore(s.pool(t, pgRoleRequest, db), s.pool(t, pgRoleWorker, db))
+	if err := k.checkMigrations(); err == nil {
+		t.Fatal("a refused migration applied a file")
+	}
+	migration.EvenWithLiveClaims = true
+	applied, err = MigratePostgreSQL(migration)
+	if err != nil || !slices.Equal(applied, []string{set[at].version}) {
+		t.Fatal("the migration with EvenWithLiveClaims did not apply the last file:", applied, err)
+	}
+	must(t, k.checkMigrations())
 }
 
 // D18. A Runner preparing an occurrence commits a new task, its step's
