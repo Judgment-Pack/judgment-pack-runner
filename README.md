@@ -208,8 +208,11 @@ caller reaches (an empty page for one it does not); `POST /v1/jobs` under a scop
 the caller does not reach is `403 scope_not_allowed`; `POST /v1/ticks` is
 `403 installation_caller_required` to every caller but the installation's, and
 `GET /v1/status` leaves out `triggersOutsideSettings` for them. **Without
-`callerScopes` the check holds**, every subject unscoped: write the entries before
-upgrading an installation with `identity`, or `"callerScopes": "unchecked"`, which
+`callerScopes` the check holds**, every subject unscoped, and `POST /v1/ticks`
+answers `403 installation_caller_required` for every subject until one has an
+`"installation"` entry, so an external scheduler's shared ticks stop: write the
+entries before upgrading an installation with `identity` (an `"installation"`
+entry for the scheduler's subject), or `"callerScopes": "unchecked"`, which
 keeps the behavior before caller scopes and which the start (on standard error)
 and `GET /v1/status` (`"callerScopes":"unchecked"`) say
 ([design record](docs/adr/0002-caller-scopes.md)).

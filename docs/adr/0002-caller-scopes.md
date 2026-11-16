@@ -195,8 +195,10 @@ inherit the job's scope as before; a caller's reach decides only what its own re
 `"unchecked"` is written to keep the behavior before this change.** (b) Unchecked unless
 configured. (b) would let a configuration written before this change, and every one that forgets
 the member, keep every caller at every scope. Under (a) an upgrade with `identity` and no
-`callerScopes` holds each caller to unscoped records: the release notes say to write the entries,
-or `"unchecked"`, before upgrading. With `"unchecked"` the claim is not read at all, every caller
+`callerScopes` holds each caller to unscoped records, and `POST /v1/ticks` answers `403
+installation_caller_required` for every subject until a subject has an `"installation"` entry, so
+an external scheduler's shared ticks stop: the release notes say to write the entries (an
+`"installation"` entry for the scheduler's subject), or `"unchecked"`, before upgrading. With `"unchecked"` the claim is not read at all, every caller
 reaches what the installation reaches, the start writes on standard error that caller scopes are
 unchecked, and `GET /v1/status` says `"callerScopes":"unchecked"` (`"checked"` otherwise; the member
 is absent without `identity`).
@@ -287,8 +289,9 @@ change of its own, after #479 fixes the gateway's rule; nothing here builds it.
 - Good: the PostgreSQL kind's row security now holds a boundary the Runner chose from the
   identity, not one the request chose.
 - Bad: an installation with `identity` and no `callerScopes` holds every caller to unscoped records
-  after the upgrade, until the operator writes the entries or `"unchecked"`. The release notes
-  say so. An earlier Runner refuses the member as one it does not read: going back means removing
+  after the upgrade, and `POST /v1/ticks` is `403 installation_caller_required` for every subject
+  until one has an `"installation"` entry, until the operator writes the entries or
+  `"unchecked"`. The release notes say so. An earlier Runner refuses the member as one it does not read: going back means removing
   it.
 - Bad: a subject that works in a scope and in the none scope needs `"unscoped"` in both its entry
   and its token's claim (C4), and a claimless token of an entry of scope identifiers alone is
