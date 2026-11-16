@@ -147,6 +147,10 @@ type gatewayAnswer struct {
 	// (gatewayRefusal): one that something in front of the gateway made
 	// may follow a call the gateway forwarded.
 	own bool
+	// code is the code member of an answer in the gateway's own form, when
+	// it names one: source_reference_expired on a 410 says the reference a
+	// paged request sent is no longer held (paging_loop.go).
+	code string
 }
 
 // gatewayRefusal says whether an answer is in the form the gateway refuses

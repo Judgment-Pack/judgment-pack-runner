@@ -619,6 +619,7 @@ deployment that needs scopes not to see each other's activity gives them separat
 | `run_chain` | `SELECT` | `SELECT`, `INSERT` | Yes |
 | `attempt_volumes` | `SELECT` | `SELECT`, `INSERT` | Yes |
 | `pack_identities`, `dialect_identities` | `SELECT`, `INSERT` | `SELECT` | Yes |
+| `paging_cursors` | `SELECT` | `SELECT`, `INSERT`, `UPDATE` (a run's completion) | No: a cursor moves |
 | `journal_head`, `counts` | `SELECT`, `UPDATE` | `SELECT`, `UPDATE` | No: their rows move |
 | `chain_head` | None | `SELECT`, `UPDATE` | No: its row moves |
 | `schema_migrations` | `SELECT` | `SELECT` | Yes; written by the migration only |

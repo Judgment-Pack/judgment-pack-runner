@@ -60,6 +60,11 @@ type TriggerOrigin struct {
 	EventID         string `json:"eventId,omitempty"`
 	InputDigest     string `json:"inputDigest,omitempty"`
 	ExpiresAt       string `json:"expiresAt,omitempty"`
+	// Paging is what the occurrence read of each paged source
+	// (paging_loop.go): its pages, each page's receipt, the loop's end, a
+	// full re-read, and the cursor's advance, which the run writes when it
+	// completes. A run of no paged source has none.
+	Paging []PagedRead `json:"paging,omitempty"`
 }
 type Occurrence struct {
 	Preparation        *SourcePreparation `json:"preparation,omitempty"`
@@ -94,6 +99,12 @@ type Occurrence struct {
 	// has neither.
 	Attempts      []Attempt `json:"attempts,omitempty"`
 	NextAttemptAt string    `json:"nextAttemptAt,omitempty"`
+	// HeldPages are a paged source's pages received before a throttle,
+	// while the occurrence waits for the attempt that resumes at the
+	// throttled page (paging_loop.go); Paging is what it read of each paged
+	// source once its input is acquired, carried into its run.
+	HeldPages *HeldPages  `json:"heldPages,omitempty"`
+	Paging    []PagedRead `json:"paging,omitempty"`
 	// ErrorClass is the class, from a closed list, of an occurrence that
 	// ended failed or expired (run_results.go), beside its reason. Any other
 	// occurrence, and one that ended before Runner kept it, has none.

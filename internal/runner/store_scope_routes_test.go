@@ -88,7 +88,7 @@ func TestARequestsTransactionIsHeldToTheScopeItNames(t *testing.T) {
 		if got.Code != 201 {
 			t.Fatalf("%d %s", got.Code, got.Body)
 		}
-		want("(*Service).createJobWith", scopeHeld(scope))
+		want("(*Service).createJobPaged", scopeHeld(scope))
 		id := got.Body.String()
 		id = id[strings.Index(id, `"id":"`)+6:]
 		j, err := s.job(id[:strings.Index(id, `"`)])

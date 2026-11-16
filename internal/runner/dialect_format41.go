@@ -13,9 +13,9 @@ import (
 
 // format41 is the proposed dialect format 4.1.0 (the Spec's RFC 0033, in
 // Review): format 4.0.0 with a paged operation source. Runner reads it where
-// it reads format 4.0.0, in verify-preparation alone (dialect_format4.go);
-// every other path refuses it, dialect_format_not_admitted, as it refuses
-// format 4.0.0.
+// it reads format 4.0.0 (dialect_format4.go): in verify-preparation, and on
+// the run path, where a paged source is acquired page by page in one
+// gateway session (paging_loop.go).
 const format41 = "4.1.0"
 
 // fourFamily says whether a named format is of format 4.0.0's family: 4.0.0
@@ -250,9 +250,6 @@ func (r *pagedRead) outcome() json.RawMessage {
 // nesting measured. Nothing here asks a source: the pages are the ones given.
 func walkPages(read SourceRead, rule *pagingRule, q0 any, pages []json.RawMessage, p InputProfile, public ed25519.PublicKey, at time.Time, maxAge int, earlier []Citation) (*pagedRead, error) {
 	fills, _ := pointerTokens(rule.Fills, false)
-	nextTokens, _ := pointerTokens(rule.Next, false)
-	itemTokens, _ := pointerTokens(rule.Items, true)
-	parent, member := nextTokens[:len(nextTokens)-1], nextTokens[len(nextTokens)-1]
 	seen := map[string]bool{}
 	if s, ok := pointerRead(q0, fills); ok {
 		if text, ok := s.(string); ok {
@@ -295,36 +292,9 @@ func walkPages(read SourceRead, rule *pagingRule, q0 any, pages []json.RawMessag
 		}
 		previous = cite.Signature
 		out.cites = append(out.cites, *cite)
-		artifact, err := readInputJSON(result)
-		if err != nil {
-			return nil, withCode(codeReadFailed, err)
-		}
-		v, err := unwrapRead(SourceRead{Unwrap: read.Unwrap}, artifact)
+		v, list, next, err := readPage(read, rule, result, i)
 		if err != nil {
 			return nil, err
-		}
-		pageItems, ok := pointerRead(v, itemTokens)
-		list, isList := pageItems.([]any)
-		if !ok || !isList {
-			return nil, withCode(codeReadFailed, fmt.Errorf("page %d holds no items array at %s", i, rule.Items))
-		}
-		holder, ok := pointerRead(v, parent)
-		object, isObject := holder.(map[string]any)
-		if !ok || !isObject {
-			return nil, withCode(codeReadFailed, fmt.Errorf("page %d holds no object where %s names its next reference", i, rule.Next))
-		}
-		reference, named := object[member]
-		var next string
-		switch text, isText := reference.(string); {
-		case !named && rule.NoNext == "absent", named && reference == nil && rule.NoNext == "null", isText && text == "" && rule.NoNext == "empty-string":
-			// The page names no next reference.
-		case isText && text != "":
-			next = text
-			if len(next) > maxReferenceBytes {
-				return nil, withCode(codeOverBound, fmt.Errorf("page %d names a next reference over %d bytes", i, maxReferenceBytes))
-			}
-		default:
-			return nil, withCode(codeReadFailed, fmt.Errorf("page %d's next reference is neither a string nor the end noNext declares", i))
 		}
 		items = append(items, list...)
 		values = append(values, v)

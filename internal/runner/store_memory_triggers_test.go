@@ -54,6 +54,8 @@ type memoryAutomation struct {
 	// occurrence to the digest of the delivery key that created it.
 	occurrences []memoryOccurrence
 	keys        map[string]string
+	// cursors are the jobs' cursor rows, by job and source.
+	cursors map[[2]string][]byte
 	// lastTrigger and lastOccurrence are the last orders given, which a
 	// transaction that fails gives back.
 	lastTrigger, lastOccurrence int64
@@ -63,13 +65,14 @@ func (a memoryAutomation) clone() memoryAutomation {
 	a.triggers = slices.Clone(a.triggers)
 	a.snapshots = maps.Clone(a.snapshots)
 	a.occurrences = slices.Clone(a.occurrences)
+	a.cursors = maps.Clone(a.cursors)
 	a.keys = maps.Clone(a.keys)
 	return a
 }
 
 // newMemoryAutomation is the state of a new store: none of either.
 func newMemoryAutomation() memoryAutomation {
-	return memoryAutomation{snapshots: map[memorySnapshot][]byte{}, keys: map[string]string{}}
+	return memoryAutomation{snapshots: map[memorySnapshot][]byte{}, keys: map[string]string{}, cursors: map[[2]string][]byte{}}
 }
 
 // errTaken is the cause of the in-memory kind's faultTaken here.
@@ -599,4 +602,44 @@ func (t *memoryTx) lastPreparing(occurrence string) (string, error) {
 		}
 	}
 	return "", storeFailure(faultAbsent, "journal", errNotHeld)
+}
+
+func (r memoryReads) pagingCursors(job string) (map[string]PagingCursor, error) {
+	out := map[string]PagingCursor{}
+	for key, record := range r.s.automation.cursors {
+		if key[0] != job || !r.sees(record) {
+			continue
+		}
+		var c PagingCursor
+		if err := json.Unmarshal(record, &c); err != nil {
+			return nil, storeFailure(faultUnreadable, "cursor", err)
+		}
+		out[c.Source] = c
+	}
+	return out, nil
+}
+
+func (m *memoryStore) pagingCursors(job string) (map[string]PagingCursor, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.reads().pagingCursors(job)
+}
+
+func (t *memoryTx) advancePagingCursor(c PagingCursor, read string) (bool, error) {
+	if !t.scope.every && c.Scope != t.scope.id {
+		return false, storeFailure(faultRefused, "cursor", errOtherScope)
+	}
+	key := [2]string{c.JobID, c.Source}
+	held, ok := t.s.automation.cursors[key]
+	if read == "" && ok {
+		return false, nil
+	}
+	if read != "" {
+		value, _, err := memberText(held, "value")
+		if !ok || err != nil || value != read {
+			return false, nil
+		}
+	}
+	t.s.automation.cursors[key] = encode(c)
+	return true, nil
 }

@@ -2104,7 +2104,9 @@ GET /v1/events?after=<sequence>&job=<job>
 Every entry has `sequence`, `entryVersion` (`"1"`; `"2"` for an entry whose
 `by` is a caller; `"3"` for an entry about a job created under a scope
 identifier, whoever its `by` names; `"4"` for an entry that holds `attempt`;
-`"5"` for an entry that holds `disposition`, `errorClass` or `counts`), `kind`,
+`"5"` for an entry that holds `disposition`, `errorClass` or `counts`; `"6"` for an
+`occurrence.ready` entry that holds `fullReRead`, the paged sources read again
+from their cursor's first value), `kind`,
 `at`, `by` and `concerns`. An
 entry about a job created under a scope identifier carries it as `scope`, and
 `GET /v1/events?scope=` serves only the entries that carry exactly that one
@@ -2242,8 +2244,9 @@ pass these routes through yet.
 Preparation sessions that Runner issues to a caller, seal verification, HTTP catalog support,
 SQL async statement lifecycles, model HTTP calls, multi-record/page acquisition,
 and pack-level class declarations remain separate work. Paging over a source, with a
-cursor kept between runs, is proposed in [design/paging.md](design/paging.md) and
-waits for the dialect's form for several acquisitions of one source. Of dialect version 3,
+cursor kept between runs, is built as [design/paging.md](design/paging.md) says: a dialect
+of format `4.1.0` names the pages' rule, and a job's `paging` member names the cursor
+it keeps for each paged source. Of dialect version 3,
 the kinds `http`, `sql` and `web` are refused by name
 ([above](#dialect-version-3)). A `research` source is prepared from responses its
 caller retains ([above](#research-sources)): Runner runs no research itself, in
@@ -2281,7 +2284,10 @@ are read from the stored run and never cause another source acquisition.
 
 Spec RFC 0021 adds exact selectors `formatVersion: "2.0.0"` and `"3.0.0"`,
 an opaque `id`, and an independent three-component artifact `version` string.
-Runner advertises `dialect-format-2.0.0` and `dialect-format-3.0.0`. The supported
+Runner advertises `dialect-format-2.0.0` and `dialect-format-3.0.0`, and, for the
+run path of formats 4.0.0 and 4.1.0 ([dialect-format-4.md](design/dialect-format-4.md)),
+`dialect-format-4.0.0`, `dialect-format-4.1.0` and `job-paging` (a job's cursor
+for each paged source, [paging.md](design/paging.md)). The supported
 source kinds remain operation and selected-file. These forms omit legacy root
 provider/facts/evidence and all optional empty members listed by the companion.
 Integer legacy documents retain their original format and identity.
@@ -2315,7 +2321,7 @@ case's own rule, after its copy; rule version `2.0.0`, with the parameter types
 `compareParam`, `inParam` and `aheadWithin`, and the derived values `duration`,
 `distance` and `speed`; and a preparation with `formatVersion` in place of
 `version`, the case outcome's `rule` and each rule target's `derivation`.
-Runner reads it in two places only:
+Runner reads it in three places:
 
 - `jpack-runner verify-preparation`, over fixtures, with sources or without.
   Runner's own preparer reads each construct the format adds through
@@ -2325,12 +2331,12 @@ Runner reads it in two places only:
 - the `sdk/dialect` Go package, which prepares a dialect of the format that
   names no source, in process ([its page](sdk-dialect.md)).
 
-Every other path refuses a dialect of format `4.0.0` with
-`dialect_format_not_admitted` (HTTP 422): a release, a job, a preview, a
-delivery or a workflow on one. Its message names what it waits for: the Spec's
-workflow and recording schemas do not admit the format yet (spec issue #324),
-so no record could name a preparation of it. The service's capabilities do not
-name `dialect-format-4.0.0`.
+- the run path (#247): a release, a job and a run are on a dialect of format
+  `4.0.0` or `4.1.0` as on one of format `3.0.0`. The run's preparation is
+  recorded in the form of the Spec's dialect-recording schema of version 2, and
+  the release digest of a release on either format is RFC 0020's, the SHA-256
+  of the canon bytes of the whole retained release
+  ([design note, section 2](design/dialect-format-4.md#2-the-run-path-and-what-is-not-admitted)).
 
 What this release does not read of the format is refused by name:
 

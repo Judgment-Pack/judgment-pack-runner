@@ -73,8 +73,9 @@ func (m InputMapping) MarshalJSON() ([]byte, error) {
 type DialectImport struct {
 	Dialect json.RawMessage `json:"dialect"`
 	Binding json.RawMessage `json:"binding"`
-	// offline is verify-preparation's import, which alone binds a dialect of
-	// format 4.1.0 (dialect_format41.go): no request sets it.
+	// offline is verify-preparation's import, which holds every source of a
+	// dialect of format 4.1.0 to its form before any kind is refused, as
+	// §11 orders it (validateDialectMode): no request sets it.
 	offline bool
 }
 
@@ -363,8 +364,12 @@ func bindDialect(imp DialectImport, profiles []InputProfile, selection ...*Conve
 	if e := asWritten(imp.Dialect, m); e != nil {
 		return InputMapping{}, e
 	}
-	// Format 4.1.0 is bound offline alone, where it is read
-	// (dialect_format41.go); every other path refuses it.
+	// A dialect of format 4.0.0 is read as it is given, on every path, as
+	// verify-preparation reads it: no binding document binds one
+	// (dialect_format4.go). Format 4.1.0 is bound (dialect_format41.go).
+	if m.FormatVersion == format4 {
+		return InputMapping{}, codedProblem("capability-unsupported", "Mapping v3: a dialect of format "+format4+" is read with no binding document: Runner binds none")
+	}
 	offline := imp.offline && m.FormatVersion == format41
 	if e := validateDialectMode(m, true, offline); e != nil {
 		return InputMapping{}, e

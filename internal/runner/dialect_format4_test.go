@@ -481,31 +481,41 @@ func format4Mapping(t *testing.T) InputMapping {
 	return m
 }
 
-func notAdmitted(t *testing.T, err error, code string) {
+// refusedCoded holds err to a refusal of code.
+func refusedCoded(t *testing.T, err error, code string) {
 	t.Helper()
-	var api *apiError
-	if !errors.As(err, &api) || api.Code != code || api.Status != 422 {
-		t.Fatalf("want a 422 %s refusal, got %v", code, err)
+	if err == nil {
+		t.Fatalf("want a %s refusal, got none", code)
 	}
-	if !strings.Contains(api.Message, "spec issue #324") || !strings.Contains(api.Message, "verify-preparation") {
-		t.Fatal("the refusal does not say what it waits for", api.Message)
+	if _, got := verificationOutcome(err); got != code {
+		t.Fatalf("want a %s refusal, got %s: %v", code, got, err)
 	}
 }
 
-// No release, job, preview, delivery or workflow is on a dialect of format
-// 4.0.0 (dialect_format4.go): each path refuses it by name, and only
-// verify-preparation reads it.
-func TestFormat4IsNotAdmittedOutsideTheVerifier(t *testing.T) {
+// A dialect of format 4.0.0 is admitted on the run path as verify-preparation
+// reads it (docs/design/dialect-format-4.md, section 2): its form, its
+// release identity, its preparation, and a job on a release on it. What the
+// verifier refuses of it stays refused there: its extended profile, until
+// the Spec decides its literal bound, and a binding document.
+func TestFormat4IsAdmittedOnTheRunPath(t *testing.T) {
 	m := format4Mapping(t)
-	notAdmitted(t, validateMappingV2(m), codeFormatNotAdmitted)
-	notAdmitted(t, validateDialect(m, true), codeFormatNotAdmitted)
-	_, err := releaseDialectIdentity(Release{InputMapping: &m})
-	notAdmitted(t, err, codeFormatNotAdmitted)
+	must(t, validateMappingV2(m))
+	must(t, validateDialect(m, true))
+	if _, err := releaseDialectIdentity(Release{InputMapping: &m}); err != nil {
+		t.Fatal(err)
+	}
 	at, _ := time.Parse("2006-01-02T15:04:05Z", "2026-11-12T18:00:00Z")
-	_, err = normalizeV2(Input{Source: &SourceInput{Mapping: m, Case: format4File(t, "case-rule-no-sources/case.json")}}, nil, at)
-	notAdmitted(t, err, codeFormatNotAdmitted)
+	prepared, err := normalizeV2(Input{Source: &SourceInput{Mapping: m, Case: format4File(t, "case-rule-no-sources/case.json")}}, nil, at)
+	must(t, err)
+	if prepared.Preparation == nil || prepared.Preparation.formatVersion != format4 {
+		t.Fatal("the preparation is not of format 4.0.0")
+	}
+	extended := m
+	extended.Profile = "extended"
+	refusedCoded(t, validateMappingV2(extended), "profile-unsupported")
+	_, err = bindDialect(DialectImport{Dialect: format4File(t, "case-rule-no-sources/dialect.json"), Binding: []byte(`{"bindings":{}}`)}, nil)
+	refusedCoded(t, err, "capability-unsupported")
 
-	// A release saved before this check, on such a dialect, is refused a job.
 	cfg := testConfig(t)
 	cfg.disableDispatcher = true
 	cfg.disableAutomation = true
@@ -516,8 +526,9 @@ func TestFormat4IsNotAdmittedOutsideTheVerifier(t *testing.T) {
 	r.InputMapping = &m
 	r.Dialect = &DialectIdentity{m.ArtifactID, m.ArtifactVersion, mappingV2Hash(m)}
 	must(t, s.saveRelease(r))
-	_, err = s.createJob("Format four", r.ID)
-	notAdmitted(t, err, codeFormatNotAdmitted)
+	if _, err = s.createJob("Format four", r.ID); err != nil {
+		t.Fatal("a job on a release of format 4.0.0 was refused:", err)
+	}
 }
 
 // What this release does not read of format 4.0.0 is refused by name: its

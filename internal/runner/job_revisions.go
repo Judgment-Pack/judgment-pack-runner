@@ -81,6 +81,10 @@ func (s *Service) upgradeJob(ctx context.Context, jobID string, req UpgradeJobRe
 	if err = s.refuseSetAsideMapping(next.InputMapping); err != nil {
 		return Job{}, err
 	}
+	// The job's cursors are kept, and held to the new release's dialect.
+	if err = s.validateJobPaging(j.Paging, next); err != nil {
+		return Job{}, err
+	}
 	if old.PackID != next.PackID {
 		return Job{}, bad("pack_identity_changed", "A job upgrade must keep the same pack identity. Create another job for a different pack.")
 	}

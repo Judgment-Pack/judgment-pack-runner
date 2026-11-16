@@ -193,7 +193,10 @@ func finishRunIn(st runStore, r Run) error {
 		if r.State == "interrupted" && r.InterruptedAt != "" {
 			detail.Interruption = &EventInterruption{Seen: true, At: r.InterruptedAt}
 		}
-		return recordRun(tx, r, runExpected{state: "running", claim: r.claim}, runnerActor, detail)
+		if err := recordRun(tx, r, runExpected{state: "running", claim: r.claim}, runnerActor, detail); err != nil {
+			return err
+		}
+		return advanceCursors(tx, r)
 	})
 }
 

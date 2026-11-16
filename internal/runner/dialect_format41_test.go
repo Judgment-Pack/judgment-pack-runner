@@ -7,11 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The Spec's format 4.1.0 vectors (RFC 0033, in Review), copied byte for
-// byte at its commit 7510ea12d7079b60073aac498ca9c21ec1362cd4
+// byte at its commit 0d5bdea79cea2f2c00fd2c802bac476e6386c002
 // (vectors/dialect-format-4.1).
 const format41Vectors = "../../vectors/dialect-format-4.1/spec"
 
@@ -19,7 +18,7 @@ const format41Vectors = "../../vectors/dialect-format-4.1/spec"
 // bytes (git show), not from anything this repository computes.
 var format41Pins = map[string]string{
 	"README.md":     "b3926effd1618a6edbf63b034825b5fa3eb44bb34e52e0fdf2890a776e03664e",
-	"manifest.json": "645f4d4130be568a53d491c6198307dae297b1a4d95fd293c48140a0d9410ca3",
+	"manifest.json": "bab3c8d5d684fa8d2bbfdae6d4e6918ca23d30260c48809714df8882edeadebc",
 }
 
 func format41File(t *testing.T, name string) []byte {
@@ -81,8 +80,8 @@ func TestFormat41SpecFilesArePinned(t *testing.T) {
 	}
 	entries, err := os.ReadDir(format41Vectors)
 	must(t, err)
-	if len(manifest.Cases) != 88 || files != 441 || len(entries) != 90 {
-		t.Fatalf("expected the 88 vectors, their 441 files and nothing else, read %d, %d and %d entries", len(manifest.Cases), files, len(entries))
+	if len(manifest.Cases) != 90 || files != 451 || len(entries) != 92 {
+		t.Fatalf("expected the 90 vectors, their 451 files and nothing else, read %d, %d and %d entries", len(manifest.Cases), files, len(entries))
 	}
 }
 
@@ -170,33 +169,29 @@ func TestFormat41Vectors(t *testing.T) {
 			agree++
 		})
 	}
-	if agree != 88-len(format41Unread) {
-		t.Fatalf("%d of the 88 vectors agree", agree)
+	if agree != 90-len(format41Unread) {
+		t.Fatalf("%d of the 90 vectors agree", agree)
 	}
 }
 
-// A dialect of format 4.1.0 is refused on every path but verify-preparation,
-// as one of format 4.0.0 is (dialect_format4.go), and a paged source's
-// acquisition reaches a run by no request: pages is no member an input
-// decodes.
-func TestFormat41IsNotAdmittedOutsideTheVerifier(t *testing.T) {
+// A dialect of format 4.1.0 is admitted on the run path as one of format
+// 4.0.0 is, and a paged source's acquisition reaches a run as its pages:
+// pages is a member an input decodes, and a source value that holds it is
+// read only for a paged source.
+func TestFormat41IsAdmittedOnTheRunPath(t *testing.T) {
 	var m InputMapping
 	must(t, strictJSON(format41File(t, "paged-three-pages-no-next/dialect.json"), &m))
 	if m.FormatVersion != format41 || len(m.Sources) != 1 || len(m.Sources[0].Paging) == 0 {
 		t.Fatal("the paged source was not read", m.FormatVersion)
 	}
-	notAdmitted(t, validateMappingV2(m), codeFormatNotAdmitted)
-	_, err := releaseDialectIdentity(Release{InputMapping: &m})
-	notAdmitted(t, err, codeFormatNotAdmitted)
-	at, _ := time.Parse("2006-01-02T15:04:05Z", "2026-11-15T12:00:00Z")
-	_, err = normalizeV2(Input{Source: &SourceInput{Mapping: m, Case: format41File(t, "paged-three-pages-no-next/case.json")}}, nil, at)
-	notAdmitted(t, err, codeFormatNotAdmitted)
-	if !strings.Contains(err.Error(), "4.1.0") {
-		t.Fatal("the refusal does not name the format", err)
+	must(t, validateMappingV2(m))
+	if _, err := releaseDialectIdentity(Release{InputMapping: &m}); err != nil {
+		t.Fatal(err)
 	}
 	var input SourceInput
-	if strictJSON([]byte(`{"mapping":{},"sources":{"changes":{"pages":[]}}}`), &input) == nil {
-		t.Fatal("a request decoded a paged acquisition")
+	must(t, strictJSON([]byte(`{"mapping":{},"sources":{"changes":{"pages":[]}}}`), &input))
+	if _, ok := input.Sources["changes"]; !ok {
+		t.Fatal("a request did not decode a paged acquisition")
 	}
 }
 

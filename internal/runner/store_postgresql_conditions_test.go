@@ -315,6 +315,7 @@ func TestPostgreSQLLoginsHoldOnlyTheirTablesPrivileges(t *testing.T) {
 			"occurrence_keys": "SELECT INSERT", "events": "SELECT INSERT", "run_chain": "SELECT",
 			"journal_head": "SELECT UPDATE", "counts": "SELECT UPDATE",
 			"pack_identities": "SELECT INSERT", "dialect_identities": "SELECT INSERT", "schema_migrations": "SELECT",
+			"paging_cursors": "SELECT",
 		},
 		pgRoleWorker: {
 			"releases": "SELECT", "metadata": "SELECT INSERT",
@@ -323,6 +324,7 @@ func TestPostgreSQLLoginsHoldOnlyTheirTablesPrivileges(t *testing.T) {
 			"events": "SELECT INSERT", "run_chain": "SELECT INSERT", "journal_head": "SELECT UPDATE",
 			"chain_head": "SELECT UPDATE", "counts": "SELECT UPDATE",
 			"pack_identities": "SELECT", "dialect_identities": "SELECT", "schema_migrations": "SELECT",
+			"paging_cursors": "SELECT INSERT UPDATE",
 		},
 	}
 	suite := s.pool(t, pgRoleSuite, db)
@@ -1298,6 +1300,25 @@ func TestPostgreSQLHoldsTheProfileRowsToTheNoneScope(t *testing.T) {
 // migrated, and the migration then applies that file and the ones after it.
 func TestPostgreSQLRefusesAStoreWithoutTheProfileRowsFile(t *testing.T) {
 	pgRefusesAStoreWithout(t, "0006_")
+}
+
+// Section 5, the jobs' cursors (docs/design/paging.md, section 4.2): a store
+// migrated to 0006_profile_rows_unscoped.sql is refused at the start until
+// it is migrated, and the migration then applies 0007_paging_cursors.sql,
+// which makes the cursors' table and raises the store to the paging schema.
+func TestPostgreSQLMigratesAStoreFrom0006ToThePagingCursors(t *testing.T) {
+	s, db := pgRefusesAStoreWithout(t, "0007_")
+	worker := s.pool(t, pgRoleWorker, db)
+	var schema string
+	must(t, worker.QueryRowContext(pgContext, "SELECT value FROM metadata WHERE key='schema'").Scan(&schema))
+	if schema != pagingStoreSchema {
+		t.Fatal("the migrated store is at", schema)
+	}
+	var tables int
+	must(t, worker.QueryRowContext(pgContext, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='paging_cursors' AND c.relrowsecurity AND c.relforcerowsecurity", postgresqlSchema).Scan(&tables))
+	if tables != 1 {
+		t.Fatal("the migration made no cursors' table held to its rows' policies")
+	}
 }
 
 // Section 6 and 7, the installation's profiles: on a Runner on the kind, an

@@ -38,6 +38,8 @@ func entryVersionsBesideResults(t *testing.T, db *sql.DB) string {
 // highest whose member it holds.
 func wantEntryVersion(e Event) string {
 	switch {
+	case len(e.FullReRead) > 0 || len(e.CursorHeld) > 0:
+		return pagingEntryVersion
 	case e.Disposition != nil || e.ErrorClass != "" || e.Counts != nil:
 		return resultEntryVersion
 	case e.Attempt != nil:

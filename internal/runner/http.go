@@ -202,7 +202,11 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 		}
 		var bundle VerificationBundle
 		if version < 4 {
-			bundle = verificationExport(release, run, version)
+			var err error
+			if bundle, err = verificationExportOf(release, run, version); err != nil {
+				failure(w, err)
+				return
+			}
 		} else {
 			entry, err := s.runEntry(run.ID)
 			if err == nil {
@@ -242,7 +246,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 	mux.HandleFunc("GET /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("POST /v1/runs/{run}/briefs", s.briefHandler("run"))
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		status := map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "immutable-input-profile-registration", "selected-profile-preparation", "scope-identifiers", "retries", "run-results", "cron-schedules", "shared-interval-ticks"}, "schedules": s.cfg.Schedules.status(), "limits": s.cfg.Limits.status()}
+		status := map[string]any{"conversionContracts": ConversionCapabilities("preview", "preparation"), "healthy": !s.unhealthy.Load(), "schemaVersion": "1", "workspace": s.cfg.Workspace, "owner": s.cfg.Owner, "runtimeDigest": s.runtimeDigest, "stateDirectory": s.cfg.Dir, "capabilities": []string{"single-pack", "manual", "api", "durable-history", "release-tests", "connected-inputs", "mapping-v2-mcp", "verified-input-lineage", "local-schedules", "event-delivery", "record-delivery", "local-file-triggers", "google-cloud-triggers", "gateway-automatic-inputs", "activity-journal", "run-diagnostics", "journal-backward", "job-upgrades", "job-upgrade-receipts", "dialect-format-2.0.0", "dialect-format-3.0.0", "dialect-format-4.0.0", "dialect-format-4.1.0", "job-paging", "immutable-input-profile-registration", "selected-profile-preparation", "scope-identifiers", "retries", "run-results", "cron-schedules", "shared-interval-ticks"}, "schedules": s.cfg.Schedules.status(), "limits": s.cfg.Limits.status()}
 		// The triggers the start found outside the schedule settings
 		// (held_schedules.go), as counts and trigger ids.
 		if s.heldSchedules != nil {
@@ -310,6 +314,7 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			Trigger   *TriggerConfig `json:"trigger,omitempty"`
 			Scope     *string        `json:"scope,omitempty"`
 			Retry     *RetryPolicy   `json:"retry,omitempty"`
+			Paging    *JobPaging     `json:"paging,omitempty"`
 		}
 		by := requesterFrom(r.Context())
 		raw, err := decodeRaw(w, r, &req)
@@ -337,7 +342,13 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			failure(w, err)
 			return
 		}
-		j, err := s.createJobWith(by, req.Name, req.ReleaseID, scope, req.Trigger, retry)
+		paging, err := jobPaging(raw, req.Paging)
+		if err != nil {
+			s.refusedJobBy(by, req.ReleaseID, err)
+			failure(w, err)
+			return
+		}
+		j, err := s.createJobPaged(by, req.Name, req.ReleaseID, scope, req.Trigger, retry, paging)
 		if err != nil {
 			s.refusedJobBy(by, req.ReleaseID, err)
 			failure(w, err)

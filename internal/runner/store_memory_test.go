@@ -511,9 +511,10 @@ func (t *memoryTx) renewClaim(run string, claim runClaim) error {
 func (t *memoryTx) raiseSchema(schema string) error {
 	switch {
 	case schema == scopedStoreSchema && t.s.schema == "", schema == retryStoreSchema && (t.s.schema == "" || t.s.schema == scopedStoreSchema),
-		schema == scheduleStoreSchema && t.s.schema != scheduleStoreSchema:
+		schema == scheduleStoreSchema && t.s.schema != scheduleStoreSchema && t.s.schema != pagingStoreSchema,
+		schema == pagingStoreSchema:
 		t.s.schema = schema
-	case schema != scopedStoreSchema && schema != retryStoreSchema && schema != scheduleStoreSchema:
+	case schema != scopedStoreSchema && schema != retryStoreSchema && schema != scheduleStoreSchema && schema != pagingStoreSchema:
 		return storeFailure(faultRefused, "schema", errors.New("the schema is not raised through the contract"))
 	}
 	return nil

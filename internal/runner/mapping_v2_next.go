@@ -20,6 +20,14 @@ type PlannedSource struct {
 	Profile            string              `json:"profile,omitempty"`
 	Source             string              `json:"source,omitempty"`
 	Arguments          json.RawMessage     `json:"arguments,omitempty"`
+	// Paging is a paged source's paging member as its dialect writes it
+	// (format 4.1.0): Arguments is then the first page's request, and the
+	// pages are asked in one session, each request after the first formed
+	// from the page before (paging_loop.go). Absent for every other source.
+	Paging json.RawMessage `json:"paging,omitempty"`
+	// paged is the paged source's rule and read, which the loop forms each
+	// request and reads each next reference with.
+	paged *plannedPaging
 }
 type InputPlan struct {
 	Next         *PlannedSource `json:"next,omitempty"`

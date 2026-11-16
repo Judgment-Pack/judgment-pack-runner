@@ -161,6 +161,16 @@ type EventDetail struct {
 	Disposition *EventDisposition `json:"disposition,omitempty"`
 	ErrorClass  string            `json:"errorClass,omitempty"`
 	Counts      *RunCounts        `json:"counts,omitempty"`
+	// FullReRead names the paged sources an occurrence read again in full
+	// from its cursor's first value after an expired reference
+	// (paging_loop.go), on the entry of its acceptance. An entry that holds
+	// it has pagingEntryVersion.
+	FullReRead []string `json:"fullReRead,omitempty"`
+	// CursorHeld names the paged sources whose read ended at the bound,
+	// leaving pages unread, so that the job's cursor is held where it was
+	// (paging_loop.go), on the entry of the occurrence's acceptance. An
+	// entry that holds it has pagingEntryVersion.
+	CursorHeld []string `json:"cursorHeld,omitempty"`
 }
 
 // EventInterruption is an interruption's own time: the moment Runner saw the
@@ -278,6 +288,9 @@ func journalRowOf(c change) journalRow {
 	if c.detail.Disposition != nil || c.detail.ErrorClass != "" || c.detail.Counts != nil {
 		version = resultEntryVersion
 	}
+	if len(c.detail.FullReRead) > 0 || len(c.detail.CursorHeld) > 0 {
+		version = pagingEntryVersion
+	}
 	return journalRow{version: version, kind: c.kind, at: c.at, by: string(encode(c.by)), concerns: string(encode(c.concerns)), revision: revision, from: from, to: to,
 		reason: boundedReason(c.reason), detail: string(encode(c.detail)), job: c.concerns.Job, release: c.concerns.Release, refusal: c.refusal}
 }
@@ -355,6 +368,16 @@ func occurrenceChange(o Occurrence, from string, by EventActor) change {
 		c.detail.ReadyUntil = o.ReadyUntil
 	}
 	c.detail.Scope = o.Scope
+	if from == "preparing" && o.State == "accepted" {
+		for _, read := range o.Paging {
+			if read.FullReRead {
+				c.detail.FullReRead = append(c.detail.FullReRead, read.Source)
+			}
+			if read.Cursor != nil && read.Cursor.Held != "" {
+				c.detail.CursorHeld = append(c.detail.CursorHeld, read.Source)
+			}
+		}
+	}
 	if endedOccurrence(o.State) {
 		c.detail.ErrorClass = o.ErrorClass
 	}
@@ -518,6 +541,11 @@ func restartOccurrences(tx runTx, started int64) (err error) {
 		o.Reason = "Source acquisition was interrupted. It was not repeated automatically."
 		o.ErrorClass = classInterrupted
 		o.PendingInput = nil
+		// Held pages are dropped from the record. Their session is not
+		// sealed here, inside the store's transaction, by a Runner that
+		// may not be the one that opened it: it is left unsealed, as an
+		// acquisition a stopped Runner left is.
+		o.HeldPages = nil
 		// An attempt of a job with a retry policy is closed, interrupted:
 		// it is not retried (retries.go). Runner did not see it stop.
 		if n := len(o.Attempts); n > 0 && o.Attempts[n-1].Outcome == "" {

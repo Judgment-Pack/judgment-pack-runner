@@ -91,7 +91,11 @@ by the read.
   whatever its `by` and scope, which an entry of `"1"`, `"2"` or `"3"` never
   holds. Later again, with [run results](run-results.md): `"5"` for an entry
   that holds `disposition`, `errorClass` or `counts`, whatever its `by`, scope
-  and attempt, which an entry of `"1"` to `"4"` never holds.)
+  and attempt, which an entry of `"1"` to `"4"` never holds. Later again, with
+  [paging](paging.md): `"6"` for an occurrence's `occurrence.ready` entry that
+  holds `fullReRead`, the paged sources read again from their cursor's first
+  value after an expired reference, which an entry of `"1"` to `"5"` never
+  holds.)
 - `kind`: one of the kinds below.
 - `at`: when Runner wrote the entry, by its own clock, in the form of every
   time Runner records (`model.go:109`). Order is `sequence`, never `at`.

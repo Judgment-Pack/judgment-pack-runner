@@ -372,7 +372,13 @@ func (s *Service) createJobBy(by requester, name, releaseID, scope string, c *Tr
 // createJobWith is createJobBy, for a job with the retry policy retry, or
 // none when it is nil (retries.go).
 func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *TriggerConfig, retry *RetryPolicy) (Job, error) {
-	if s.cfg.ExecutorAdmission != nil && (c != nil || scope != "" || retry != nil) {
+	return s.createJobPaged(by, name, releaseID, scope, c, retry, nil)
+}
+
+// createJobPaged is createJobWith, for a job that keeps a cursor for each
+// paged source paging names, or none when it is nil (paging_loop.go).
+func (s *Service) createJobPaged(by requester, name, releaseID, scope string, c *TriggerConfig, retry *RetryPolicy, paging *JobPaging) (Job, error) {
+	if s.cfg.ExecutorAdmission != nil && (c != nil || scope != "" || retry != nil || paging != nil) {
 		return Job{}, manualUnsupported()
 	}
 	s.automationMu.Lock()
@@ -392,6 +398,9 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 	if !releaseReady(r) {
 		return Job{}, &apiError{409, "release_not_ready", "Saved tests failed or could not complete. Correct the pack or cases and check a new release before creating a job."}
 	}
+	if err = s.validateJobPaging(paging, r); err != nil {
+		return Job{}, err
+	}
 	initialDigest := ""
 	if c != nil {
 		initialDigest = digest(encode(c))
@@ -408,7 +417,7 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 	err = held.update(func(tx runTx) error {
 		stored, err := tx.jobCreation(releaseID)
 		if err == nil {
-			if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope || !sameRetryPolicy(stored.Retry, retry) {
+			if stored.Name != name || stored.InitialTriggerDigest != initialDigest || stored.Scope != scope || !sameRetryPolicy(stored.Retry, retry) || !sameJSON(encode(stored.Paging), encode(paging)) {
 				return errReleaseCreated
 			}
 			made = stored
@@ -443,7 +452,7 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 		if err = admitJobPack(tx, r); err != nil {
 			return err
 		}
-		j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest, Scope: scope, Retry: retry}
+		j := Job{SchemaVersion: "1", ID: id("job_"), Name: name, ReleaseID: r.ID, Revision: 1, CreatedAt: now(), Workspace: s.cfg.Workspace, Owner: s.cfg.Owner, InitialTriggerDigest: initialDigest, Scope: scope, Retry: retry, Paging: paging}
 		if c != nil {
 			count, err := tx.triggerCount()
 			if err != nil {
@@ -484,6 +493,12 @@ func (s *Service) createJobWith(by requester, name, releaseID, scope string, c *
 		}
 		if c.needsScheduleSchema() {
 			if err = tx.raiseSchema(scheduleStoreSchema); err != nil {
+				return err
+			}
+		}
+		// And its first job that keeps a cursor (paging_loop.go).
+		if paging != nil {
+			if err = tx.raiseSchema(pagingStoreSchema); err != nil {
 				return err
 			}
 		}

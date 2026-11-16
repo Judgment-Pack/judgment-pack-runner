@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -649,13 +650,23 @@ func onlyLockWaited(err error) bool {
 // to dispatch. An error here would stop this Runner's automation, and the
 // claim it kept would hand the occurrence to the next Runner one lease
 // later, to stop that one's too (#282).
+//
+// Pages it held for a next attempt (paging_loop.go) are dropped from the
+// record and their session sealed, bounded, as an acquisition's
+// housekeeping is.
 func (s *Service) failHeld(o Occurrence, reason string) error {
+	held := o.HeldPages
 	o.State = "failed"
 	o.Reason = reason
 	o.ErrorClass = classInternal
 	o.Input = nil
 	o.PendingInput = nil
-	return s.settleOccurrence(o)
+	o.HeldPages = nil
+	if e := s.settleOccurrence(o); e != nil {
+		return e
+	}
+	s.sealHeld(context.Background(), held)
+	return nil
 }
 
 // heldRecordOrReleased is err, met while holding o's claim: an error that

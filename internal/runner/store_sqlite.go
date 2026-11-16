@@ -231,7 +231,7 @@ func (k *sqliteStore) migrate() error {
 		return err
 	}
 	switch schema {
-	case storeSchema, scopedStoreSchema, retryStoreSchema, scheduleStoreSchema:
+	case storeSchema, scopedStoreSchema, retryStoreSchema, scheduleStoreSchema, pagingStoreSchema:
 		// A store that holds a job under a scope identifier was raised from
 		// storeSchema by the job's creation (scope.go), one that holds a
 		// retry policy or a retried run by its first (retries.go), and one
@@ -492,6 +492,15 @@ func (t *sqliteTx) raiseSchema(schema string) error {
 		// From storeSchema, scopedStoreSchema or retryStoreSchema
 		// (shared_ticks.go).
 		_, err := t.tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value IN (?,?,?)", scheduleStoreSchema, storeSchema, scopedStoreSchema, retryStoreSchema)
+		return sqliteFault("schema", err, true)
+	case pagingStoreSchema:
+		// From any of the four before it, with the cursors' table, made in
+		// the same transaction (store_paging.go): a store that keeps no
+		// cursor holds neither, as an earlier Runner made it.
+		if _, err := t.tx.Exec(pagingCursorSchema); err != nil {
+			return sqliteFault("schema", err, true)
+		}
+		_, err := t.tx.Exec("UPDATE metadata SET value=? WHERE key='schema' AND value IN (?,?,?,?)", pagingStoreSchema, storeSchema, scopedStoreSchema, retryStoreSchema, scheduleStoreSchema)
 		return sqliteFault("schema", err, true)
 	}
 	return storeFailure(faultRefused, "schema", fmt.Errorf("the schema %q is not raised through the contract", schema))
