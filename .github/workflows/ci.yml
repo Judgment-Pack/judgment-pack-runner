@@ -1,17 +1,19 @@
 name: CI
 
 # The check list is dev.json, run by scripts/dev/check.sh (the development kit's vendored runner);
-# the longer steps are scripts under scripts/checks/ with the comments they had here. Branch
-# protection requires `Runner (<os>)`, `Release contents` and `PostgreSQL store` by their names:
-# `Unit tests (<os>, i/n)` runs one of the shards of the unit-tests step, four on Linux and three
-# on macOS, `Runner (<os>)` runs every other step but the release ones once every shard has ended
-# and fails unless every shard succeeded, `Release contents` runs the release steps, and
-# `PostgreSQL store` runs the postgresql store kind's tests against a service container. Each sets
-# up the exact toolchain release.yml names. On a pull request the `Unit tests` and `Runner` jobs run only the
-# steps jpdev.json maps the changed paths to (`check.sh --changed`); on a push to main they run the
-# whole list. `Release contents` runs its four steps every time. A push to main also records each
-# job's evidence (scripts/dev/release_evidence.py capture), which the release takes at that commit
-# instead of running this workflow again (docs/releasing.md, "CI at the tag").
+# the longer steps are scripts under scripts/checks/ with the comments they had here. The jobs run
+# side by side, none waiting for another, and branch protection requires each by its name:
+# `Unit tests (<os>, i/n)` runs one of the shards of the unit-tests step, four on Linux
+# (`Unit tests (ubuntu-latest, 1/4)` to `4/4`) and three on macOS (`Unit tests (macos-latest,
+# 1/3)` to `3/3`), so that a failed or cancelled shard blocks a merge under its own name;
+# `Runner (<os>)` runs every other step but the release ones, `Release contents` runs the release
+# steps, and `PostgreSQL store` runs the postgresql store kind's tests against a service
+# container. Each sets up the exact toolchain release.yml names. On a pull request the
+# `Unit tests` and `Runner` jobs run only the steps jpdev.json maps the changed paths to
+# (`check.sh --changed`); on a push to main they run the whole list. `Release contents` runs its
+# four steps every time. A push to main also records each job's evidence
+# (scripts/dev/release_evidence.py capture), which the release takes at that commit instead of
+# running this workflow again (docs/releasing.md, "CI at the tag").
 
 on:
   pull_request:
@@ -40,9 +42,10 @@ jobs:
   # binaries its tests run (build-pinned) and runs its groups, two at once. Linux runs four shards
   # and macOS three. The hosted macOS runners are shared by the organization's repositories, five
   # at once: on pull request #297's run two of its four macOS shards waited 4.7 and 6.6 minutes for
-  # one while other repositories' macOS jobs held the rest. Three keep this run's macOS jobs at
-  # three at once, and macOS, whose groups took 1850 s in all against Linux's 2501 s, still ends
-  # its longest shard within the longest group's time. A table of its own for macOS is the change
+  # one while other repositories' macOS jobs held the rest. Three, with `Runner (macos-latest)`
+  # beside them, keep this run's macOS jobs at four at once, and macOS, whose groups took 1850 s in
+  # all against Linux's 2501 s, still ends its longest shard within the longest group's time. A
+  # table of its own for macOS is the change
   # the script's refusal rules allow: JPACK_UNIT_SHARD=i/n selects the table of n rows, and every
   # run checks every table. On a pull request or a merge group a shard runs its groups only when
   # the changed paths map to unit-tests, the same selection as the Runner job's, and otherwise ends
@@ -102,10 +105,8 @@ jobs:
 
   check:
     name: Runner (${{ matrix.os }})
-    # After every shard, whatever its result, so that a failed or cancelled shard fails this job
-    # (the name branch protection requires) instead of skipping it, which would count as passing.
-    needs: unit
-    if: ${{ always() }}
+    # Beside the shards, not after them: each shard is a required check by its own name, so this
+    # job does not wait for them or repeat their results.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -113,14 +114,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - name: Every unit-test shard succeeded
-        env:
-          UNIT: ${{ needs.unit.result }}
-        run: |
-          if [ "$UNIT" != success ]; then
-            echo "the Unit tests jobs ended $UNIT, not success: this job fails with them"
-            exit 1
-          fi
       # The whole history, so that --changed finds the merge base with the base branch.
       - uses: actions/checkout@v4
         with:

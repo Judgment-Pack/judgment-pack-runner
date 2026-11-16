@@ -346,23 +346,18 @@ class Checks(unittest.TestCase):
                 found += 1
         self.assertEqual(found, 2, 'the Runner and Unit tests jobs')
 
-    def test_a_runner_leg_fails_unless_every_unit_shard_succeeded(self):
-        """The Runner legs are the required names: one that a failed shard skipped would count as
-        passing, so they run after the shards whatever happened, and fail first unless all
-        succeeded."""
-        block = jobs(read(config()['workflows']['ci']['path']))['check']
-        self.assertIn('\n    needs: unit\n    if: ${{ always() }}\n', block)
-        gate = steps(block)[0]
-        self.assertIn('\n        env:\n          UNIT: ${{ needs.unit.result }}\n        run: |\n', gate)
-        lines = gate.split('run: |\n', 1)[1].split('\n')
-        ends = [index for index, line in enumerate(lines) if line and not line.startswith(' ' * 10)]
-        body = '\n'.join(line[10:] for line in lines[:ends[0] if ends else len(lines)])
-        self.assertIn('exit 1', body)
-        for result, status in (('success', 0), ('failure', 1), ('cancelled', 1), ('skipped', 1), ('', 1)):
-            with self.subTest(result=result):
-                process = subprocess.run(['bash', '-e', '-c', body], env=dict(os.environ, UNIT=result),
-                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                self.assertEqual(process.returncode, status, process.stdout)
+    def test_every_job_runs_beside_the_others_and_is_never_skipped(self):
+        """Branch protection requires every job by its name, each shard leg among them, so that a
+        failed or cancelled shard blocks under its own name. A job that waited for another would
+        only lengthen the run, and a job skipped by a condition would count as passing."""
+        blocks = jobs(read(config()['workflows']['ci']['path']))
+        self.assertIn('unit', blocks)
+        self.assertIn('check', blocks)
+        for key, block in blocks.items():
+            with self.subTest(job=key):
+                self.assertNotRegex(block, r'(?m)^    needs:')
+                self.assertNotRegex(block, r'(?m)^    if:')
+                self.assertNotIn('needs.', block)
 
     def test_the_unit_shards_of_ci_run_every_group_once(self):
         """On each system the shards ci.yml names, with the JPACK_UNIT_SHARD each sets, run every group

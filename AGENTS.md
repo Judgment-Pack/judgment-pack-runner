@@ -64,10 +64,10 @@ summary block, and anything you stopped on or chose not to do.
 
 - The checks are `dev.json`, run by `scripts/dev/check.sh`; CI runs the same list in the
   `Runner (ubuntu-latest)` and `Runner (macos-latest)` jobs, but for `unit-tests`, which runs in
-  shards, four on Linux and three on macOS (`Unit tests (<os>, i/n)`, `JPACK_UNIT_SHARD=i/n`; a
-  Runner job fails unless every shard succeeded), and the four release steps again in `Release contents`
-  with the exact Go toolchain `release.yml` names. Branch protection requires the Runner,
-  `Release contents` and `PostgreSQL store` job names. The longer steps are scripts under
+  shards, four on Linux and three on macOS (`Unit tests (<os>, i/n)`, `JPACK_UNIT_SHARD=i/n`),
+  beside the Runner jobs, and the four release steps again in `Release contents` with the exact
+  Go toolchain `release.yml` names. Branch protection requires every job by its name: the
+  Runner and shard legs, `Release contents`, `PostgreSQL store` and `DCO`. The longer steps are scripts under
   `scripts/checks/`.
 - The real-Runtime tests need the binaries `scripts/checks/build-pinned.sh` builds into `.ci/bin`
   from pinned Runtime, Gateway and old-Runner commits (it needs network access to fetch them). A

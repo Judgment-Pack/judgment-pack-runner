@@ -60,6 +60,13 @@ request; the push to main that follows runs the whole list, and that run is the 
 release takes. A new push to a pull request cancels that pull request's CI run in progress; a
 run of main or of a merge group is never cancelled.
 
+Branch protection requires each CI job by its name, and the jobs run side by side, none
+waiting for another: `Runner (ubuntu-latest)`, `Runner (macos-latest)`, `Release contents`,
+`PostgreSQL store`, the seven unit-test shards `Unit tests (ubuntu-latest, 1/4)` to
+`Unit tests (ubuntu-latest, 4/4)` and `Unit tests (macos-latest, 1/3)` to
+`Unit tests (macos-latest, 3/3)`, and `DCO`. A failed or cancelled shard blocks the merge under
+its own name; the `Runner` jobs do not wait for the shards.
+
 `DCO` is a workflow of this repository (`.github/workflows/dco.yml`): every commit of the pull
 request carries `Signed-off-by:` naming its own author; a commit an app made is exempt.
 
@@ -244,8 +251,9 @@ The release reuses that evidence only when all of this holds, and refuses otherw
   rows in `scripts/checks/unit-tests.sh` (four on Linux, three on macOS); the script refuses
   tables that do not name every group and the store conformance run exactly once, in the rows
   their names say, and `tools/test_ci_evidence.py` holds the shards `ci.yml` names to running
-  every group once between them, so the shards' `PASS` on a system is the whole step's. `Release contents`: `release-toolchain`, `third-party-notices`,
-  `release-archives`, `release-programs`. `PostgreSQL store`: `postgresql-store`. Each `PASS`;
+  every group once between them, so the shards' `PASS` on a system is the whole step's.
+  `Release contents`: `release-toolchain`, `third-party-notices`, `release-archives`,
+  `release-programs`. `PostgreSQL store`: `postgresql-store`. Each `PASS`;
   no skip is permitted.
 - **The real companions ran.** `build-pinned` builds the Runtime, earlier Runtime, old Runner
   and Gateway at the commits `scripts/checks/build-pinned.sh` pins. `manual-gate`,
