@@ -715,13 +715,29 @@ func (s *Service) refusedEventIn(st runStore, by requester, triggerID string, er
 // refusedJob journals a refused job creation that names a release the store
 // holds.
 func (s *Service) refusedJob(releaseID string, err error) {
-	s.refusedJobBy(requester{}, releaseID, err)
+	s.refusedJobBy(requester{}, installationReach, releaseID, "", err)
 }
 
-// refusedJobBy is refusedJob, for a job creation by.
-func (s *Service) refusedJobBy(by requester, releaseID string, err error) {
-	if _, e := s.store.heldTo(scopeHeld("")).release(releaseID); e == nil {
+// refusedJobBy is refusedJob, for a job creation by, whose caller reaches
+// reach, under scope, the scope identifier its body names ("" for none, or
+// for a body whose scope was not read). The installation's refusal is
+// journaled under the none scope, naming the release and the caller, as
+// before caller scopes. A caller held to scopes (docs/adr/0002-caller-
+// scopes.md) has its refusal journaled under scope when it reaches it, so
+// that only that scope's callers read its subject and release; and otherwise
+// under the none scope, naming neither: a caller kind, the request, its
+// status and code, and the time.
+func (s *Service) refusedJobBy(by requester, reach callerReach, releaseID, scope string, err error) {
+	if _, e := s.store.heldTo(scopeHeld("")).release(releaseID); e != nil {
+		return
+	}
+	switch {
+	case reach.installation:
 		s.refused("create-job", err, s.actor(by), EventConcerns{Release: releaseID}, "")
+	case reach.reaches(scope):
+		s.refused("create-job", err, s.actor(by), EventConcerns{Release: releaseID}, scope)
+	default:
+		s.refused("create-job", err, EventActor{Kind: "caller"}, EventConcerns{}, "")
 	}
 }
 

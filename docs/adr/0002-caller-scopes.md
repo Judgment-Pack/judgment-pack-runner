@@ -301,7 +301,11 @@ change of its own, after #479 fixes the gateway's rule; nothing here builds it.
   spelled `unscoped` cannot be granted to a caller held to scopes; the installation reaches it.
 - Neutral: a held caller still learns what the store note's D8 to D10 accept (the chain of runs,
   journal sequence gaps, the installation-wide counts and keys), and shares the installation's
-  releases, profiles and input root; parties that must not, use separate installations.
+  releases, profiles and input root; parties that must not, use separate installations. One more
+  channel, accepted for now: a release's preview (`release.previewed`) takes no scope and is
+  journaled under the none scope, naming its caller and the pack, whichever scopes the caller
+  reaches, so a caller that reaches the none scope reads another scope's caller's previews. A
+  refused creation is not such a channel (see "As built").
 
 ## As built
 
@@ -327,12 +331,16 @@ Two details the sections above leave open, as built:
   They read no scoped row, and the installation's shared writes they make (a release's save, a
   profile's registration, a refusal's entry) are held to the none scope by their own
   transactions, as before; a test serves the chain of runs, the input profiles and the status so.
-- **A refused creation** answered before the reach is checked (a body or scope out of form) or
-  after it, for a scope the caller reaches (`review_required`, `release_already_used`, …), is
-  journaled under the none scope as before, for every caller, naming the release and the caller.
-  So a held caller can still add such an entry to the none scope's journal, as every caller
-  could; it reads none of them unless it reaches the none scope. Journaling fewer refusals would
-  weaken the record of admissions, so it stays.
+- **A refused creation** (`refusedJobBy`). The installation's, the owner bearer's included, is
+  journaled under the none scope naming the release and the caller, as before. A held caller's,
+  answered after the reach is checked, for a scope it reaches (`review_required`,
+  `release_already_used`, …), is journaled under that scope, naming the release and the caller,
+  so only that scope's callers read it. One answered before the body's scope is read (a body or
+  scope out of form) is journaled under the none scope, naming the release and the caller only
+  for a caller that reaches the none scope; for one that does not, the entry names neither: a
+  caller kind, the request, its status and code, and the time. A claimless caller of the none
+  scope thus reads no other scope's subject or release through `GET /v1/events`. Journaling
+  fewer refusals would weaken the record of admissions, so each is still journaled.
 
 ## Not in this change
 

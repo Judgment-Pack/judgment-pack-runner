@@ -322,16 +322,20 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 			Retry     *RetryPolicy   `json:"retry,omitempty"`
 			Paging    *JobPaging     `json:"paging,omitempty"`
 		}
-		by := requesterFrom(r.Context())
+		by, reach := requesterFrom(r.Context()), callerReachFrom(r.Context())
+		// A refusal before the body's scope is read is journaled as one
+		// under none (refusedJobBy): for a caller held to scopes that does
+		// not reach the none scope, naming neither the caller nor the
+		// release.
 		raw, err := decodeRaw(w, r, &req)
 		if err != nil {
-			s.refusedJobBy(by, releaseNamed(raw), err)
+			s.refusedJobBy(by, reach, releaseNamed(raw), "", err)
 			failure(w, err)
 			return
 		}
 		scope, err := jobScope(raw, req.Scope)
 		if err != nil {
-			s.refusedJobBy(by, req.ReleaseID, err)
+			s.refusedJobBy(by, reach, req.ReleaseID, "", err)
 			failure(w, err)
 			return
 		}
@@ -339,32 +343,32 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 		// (caller_scopes.go): checked before anything is read from the store,
 		// so that the creation's transaction is held only to such a scope.
 		// Not journaled, as no 403 is (refused).
-		if !callerReachFrom(r.Context()).reaches(scope) {
+		if !reach.reaches(scope) {
 			failure(w, errScopeNotAllowed)
 			return
 		}
 		retry, err := jobRetry(raw, req.Retry)
 		if err != nil {
-			s.refusedJobBy(by, req.ReleaseID, err)
+			s.refusedJobBy(by, reach, req.ReleaseID, scope, err)
 			failure(w, err)
 			return
 		}
 		req.Name = strings.TrimSpace(req.Name)
 		if req.Name == "" || len(req.Name) > 160 || !req.Reviewed {
 			err := bad("review_required", "Enter a job name and review its fixed release and sample result.")
-			s.refusedJobBy(by, req.ReleaseID, err)
+			s.refusedJobBy(by, reach, req.ReleaseID, scope, err)
 			failure(w, err)
 			return
 		}
 		paging, err := jobPaging(raw, req.Paging)
 		if err != nil {
-			s.refusedJobBy(by, req.ReleaseID, err)
+			s.refusedJobBy(by, reach, req.ReleaseID, scope, err)
 			failure(w, err)
 			return
 		}
 		j, err := s.createJobPaged(by, req.Name, req.ReleaseID, scope, req.Trigger, retry, paging)
 		if err != nil {
-			s.refusedJobBy(by, req.ReleaseID, err)
+			s.refusedJobBy(by, reach, req.ReleaseID, scope, err)
 			failure(w, err)
 			return
 		}

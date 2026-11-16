@@ -6972,7 +6972,7 @@
         "additionalProperties": false
       },
       "JournalActor": {
-        "description": "Who Runner can say initiated a change. Never a person: Runner cannot know one. installation is whoever holds the owner bearer, named by the boot line's owner; a caller is a request in service mode that carried an identity token, named by the token's iss and sub as Runner checked them, never by the token: the issuer's name for a caller, not a person Runner knows; a trigger acts at a revision; a trigger-credential is an event delivery whose X-Trigger-Token was the trigger's current key, named by the revision the key was issued at (null for a key issued before the journal began), never by the token or its digest; a delivery refused after its credential was authenticated is that credential's, as it was then, even if the key is rotated before the refusal is recorded; a cloud-connection is a cloud signal Runner discarded; runner is Runner itself.",
+        "description": "Who Runner can say initiated a change. Never a person: Runner cannot know one. installation is whoever holds the owner bearer, named by the boot line's owner; a caller is a request in service mode that carried an identity token, named by the token's iss and sub as Runner checked them, never by the token: the issuer's name for a caller, not a person Runner knows (a caller named by neither is one held to scope identifiers whose job creation was refused before its body's scope was read, when it does not reach the records under no scope identifier: docs/adr/0002-caller-scopes.md); a trigger acts at a revision; a trigger-credential is an event delivery whose X-Trigger-Token was the trigger's current key, named by the revision the key was issued at (null for a key issued before the journal began), never by the token or its digest; a delivery refused after its credential was authenticated is that credential's, as it was then, even if the key is rotated before the refusal is recorded; a cloud-connection is a cloud signal Runner discarded; runner is Runner itself.",
         "oneOf": [
           {
             "type": "object",
@@ -7007,6 +7007,18 @@
               },
               "subject": {
                 "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "caller"
               }
             }
           },

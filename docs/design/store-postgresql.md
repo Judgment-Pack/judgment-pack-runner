@@ -444,7 +444,11 @@ creation, the refusal's coalescing (`lastRefusal`) still reads it held to `s:`, 
 and pages do not change. Its cost: a scoped job's journal on this kind no longer shows its
 release's refused creations, which the sqlite kind's does. A refused cloud signal naming no
 trigger is the only other entry it holds out, and no scope's page selected one. Previews, which
-also name a caller, are not narrowed by this issue.
+also name a caller, are not narrowed by this issue. Since caller scopes
+([0002-caller-scopes.md](../adr/0002-caller-scopes.md), "As built"), a caller held to scopes has
+its refused creation journaled under the scope its body names, which it reaches, or, refused
+before that scope is read, under none naming neither it nor the release; the installation's stay
+under `s:` as above.
 
 A transaction that set no scope reads and writes no scoped row. **Unscoped rows** (a job created
 under none, and every record about it; the Runner's own journal entries, a preview's, a refused

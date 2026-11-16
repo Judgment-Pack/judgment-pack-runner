@@ -221,7 +221,10 @@ and `GET /v1/status` (`"callerScopes":"unchecked"`) say
 as in `https://issuer.example#ops-service` (an issuer holds no `#`), and its
 `Idempotency-Key` is held per issuer and subject. The journal names the caller as
 `{"kind":"caller","issuer":"…","subject":"…"}` in an entry of `entryVersion` `"2"`
-or later.
+or later. A caller held to scopes has a refused `POST /v1/jobs` journaled under the
+scope its body names; refused before that scope is read, under none, and for a
+caller that does not reach the records under no scope identifier as
+`{"kind":"caller"}`, naming no release.
 Without `identity`, every record is as a companion writes it.
 
 **Scope identifiers.** `POST /v1/jobs` takes an optional `scope`, an opaque label

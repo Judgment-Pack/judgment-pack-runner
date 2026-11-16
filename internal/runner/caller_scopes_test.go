@@ -503,6 +503,57 @@ func TestACallerCreatesAJobOnlyUnderAScopeItReaches(t *testing.T) {
 	}
 }
 
+// A refused creation by a caller held to scopes is journaled under the scope
+// its body names when the caller reaches it, naming the caller and the
+// release; one refused before its scope is read is journaled under none
+// naming neither. A claimless caller of the none scope reads neither the
+// scoped caller's subject nor its release in GET /v1/events; the scope's own
+// caller reads its entry.
+func TestAScopedCallersRefusedCreationIsReadOnlyInItsScope(t *testing.T) {
+	w := newCallerWorld(t, heldToScopeA())
+	release := journalRelease(t, w.s, w.runtime).ID
+	for _, c := range []struct {
+		name, body, code string
+		status           int
+	}{
+		{"review_required under scope-a", fmt.Sprintf(`{"name":"","releaseId":%q,"reviewed":true,"scope":"scope-a"}`, release), "review_required", 422},
+		{"a scope out of form", fmt.Sprintf(`{"name":"Held","releaseId":%q,"reviewed":true,"scope":""}`, release), "invalid_scope", 400},
+	} {
+		if got := w.serve(t, w.ofA, "POST", "/v1/jobs", c.body, nil); got.Code != c.status || !strings.Contains(got.Body.String(), c.code) {
+			t.Fatalf("%s: %d %s", c.name, got.Code, got.Body)
+		}
+	}
+	refusals := func(token, path string) []Event {
+		t.Helper()
+		got := w.serve(t, token, "GET", path, "", nil)
+		var page struct{ Items []Event }
+		if got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &page) != nil {
+			t.Fatalf("%s: %d %s", path, got.Code, got.Body)
+		}
+		var kept []Event
+		for _, e := range page.Items {
+			if e.Kind == "admission.refused" && e.Request == "create-job" {
+				kept = append(kept, e)
+			}
+		}
+		return kept
+	}
+	for _, e := range refusals(w.ofNone, "/v1/events") {
+		if e.By.Subject != "" || e.By.Issuer != "" || e.Concerns.Release != "" || e.Scope != "" {
+			t.Errorf("the none scope's caller reads a scoped caller's refused creation: %+v", e)
+		}
+	}
+	if got := refusals(w.ofNone, "/v1/events"); len(got) != 1 || got[0].By.Kind != "caller" || got[0].Code != "invalid_scope" {
+		t.Errorf("the refusal before the scope is read, under none: %+v", got)
+	}
+	if got := refusals(w.ofA, "/v1/events?scope=scope-a"); len(got) != 1 || got[0].By.Subject != "ops-service" || got[0].Concerns.Release != release || got[0].Code != "review_required" || got[0].Scope != "scope-a" {
+		t.Errorf("scope-a's caller's own refused creation, under scope-a: %+v", got)
+	}
+	if got := refusals(w.ofA, "/v1/events?scope=scope-b"); len(got) != 0 {
+		t.Errorf("scope-b's listing, by scope-a's caller: %+v", got)
+	}
+}
+
 // POST /v1/ticks and the status's triggersOutsideSettings span every scope:
 // a caller held to scopes is refused the ticks, 403
 // installation_caller_required, before its scope or body is read, and is not
@@ -724,6 +775,11 @@ func TestPostgreSQLHoldsACallerToTheScopesItsIdentityAllows(t *testing.T) {
 	call(ofA, "POST", "/v1/jobs", `{"name":"Elsewhere","releaseId":"`+journalRelease(t, sv, runtime).ID+`","reviewed":true,"scope":"team-b"}`, 403)
 	holds(call(ofA, "POST", "/v1/jobs", `{"name":"Mine","releaseId":"`+journalRelease(t, sv, runtime).ID+`","reviewed":true,"scope":"team-a"}`, 201), []string{`"scope":"team-a"`})
 	call(ofA, "POST", "/v1/ticks", `{"interval":"15m"}`, 403)
+	// A refused creation of team-a's caller is journaled held to team-a,
+	// where its caller reads it, and the none scope's caller does not.
+	call(ofA, "POST", "/v1/jobs", `{"name":"","releaseId":"`+journalRelease(t, sv, runtime).ID+`","reviewed":true,"scope":"team-a"}`, 422)
+	holds(call(ofA, "GET", "/v1/events?scope=team-a", "", 200), []string{`"code":"review_required"`, `"subject":"ops-service"`})
+	holds(call(ofNone, "GET", "/v1/events", "", 200), nil, `"subject":"ops-service"`, `"code":"review_required"`)
 	// The installation's shared rows, read on a view that reaches no scoped
 	// row.
 	call(ofA, "GET", "/v1/run-chain", "", 200)
