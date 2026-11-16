@@ -401,6 +401,14 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 	if e != nil {
 		return e
 	}
+	// Each page of a paged source is written to the record as it arrives
+	// (paging_loop.go), under the claim, which is kept: a write the claim no
+	// longer holds, or that finds the occurrence no longer preparing, is
+	// errPreparationStopped, and the read stops there.
+	paging.write = func(h *HeldPages) error {
+		o.HeldPages = h
+		return changeOccurrenceAs(s.store, o, occurrenceExpected{state: "preparing", keep: true}, runnerActor)
+	}
 	held, releaseClaim := s.holdLease(ctx, claimed, func(tx runTx) error { return tx.renewOccurrenceClaim(o.ID, o.claim) })
 	bounded, stop := context.WithDeadline(held, expiry)
 	input, acquisitionError := s.automaticInputPaged(bounded, o.PendingInput, release, nil, paging)

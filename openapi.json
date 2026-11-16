@@ -269,6 +269,63 @@
         ]
       }
     },
+    "/jobs/{job}/cursors": {
+      "get": {
+        "summary": "Read a job's cursors between runs",
+        "operationId": "getJobCursors",
+        "description": "For each paged source the job's paging names, in its order (docs/design/paging.md, sections 4.2 and 7): the cursor's value, the run that last moved it and when, none of the three while no run has (the next occurrence fills the rule's first value), and whether a window the bound ended is unfinished, with its end and the position the next run continues from. A job without paging answers an empty list. Read under the job's scope exactly as GET /jobs/{job} is: a request that names another scope, or none for a job under one, is answered as that read is for a job the store does not hold.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ScopeIdentifier"
+            },
+            "description": "The scope identifier of the record the request names: required for a record of a job created under one, refused for one created under none. A request that names a record under another scope than its own, under none for one under a scope, or under one for one under none, is answered as the same request for a record the store does not hold, and changes and journals nothing."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job's cursors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCursors"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job, or one of another scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/jobs/{job}/runs": {
       "get": {
         "operationId": "listRuns",
@@ -3962,6 +4019,9 @@
           },
           {
             "$ref": "#/components/schemas/NamedInputMappingV3"
+          },
+          {
+            "$ref": "#/components/schemas/InputMappingFormat4"
           }
         ]
       },
@@ -4240,8 +4300,12 @@
             "enum": [
               "string",
               "integer",
-              "timestamp"
-            ]
+              "timestamp",
+              "decimal",
+              "string-list",
+              "address-range-list"
+            ],
+            "description": "decimal, string-list and address-range-list are the types format 4.0.0 adds (spec/dialect.md section 2.2.2), declared in a dialect of format 4.0.0 or 4.1.0 alone."
           }
         },
         "required": [
@@ -4313,6 +4377,10 @@
                 }
               }
             }
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DerivationRuleV2",
+            "description": "Format 4.0.0 and 4.1.0 (spec/dialect.md section 2.2.1): the case's rule, over the case with its parameters and runAt, after its copy."
           }
         },
         "required": [
@@ -4615,7 +4683,15 @@
             "$ref": "#/components/schemas/CopyMapping"
           },
           "rule": {
-            "$ref": "#/components/schemas/DerivationRule"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DerivationRule"
+              },
+              {
+                "$ref": "#/components/schemas/DerivationRuleV2"
+              }
+            ],
+            "description": "A rule of version 1, or, in format 4.0.0 and 4.1.0, of version 2.0.0."
           },
           "sources": {
             "type": "array",
@@ -4874,6 +4950,9 @@
               }
             },
             "description": "Version 3, kind research, bound: a profile for each web capability the source asks for, exactly those, written even when empty. With profile and profileDigest, the AI profile for answer, all three or none: a research source published with none is bound at import (SourceInput.import)."
+          },
+          "paging": {
+            "$ref": "#/components/schemas/SourcePaging"
           }
         },
         "required": [
@@ -5614,6 +5693,9 @@
           },
           "columnTransformation": {
             "$ref": "#/components/schemas/RetainedColumnTransformation"
+          },
+          "derivation": {
+            "$ref": "#/components/schemas/Derivation"
           }
         },
         "required": [
@@ -5650,6 +5732,12 @@
           },
           "claim": {
             "type": "object"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/CaseRuleOutcome"
+          },
+          "paging": {
+            "$ref": "#/components/schemas/PagingOutcome"
           }
         },
         "required": [
@@ -5659,18 +5747,26 @@
           "parameters",
           "claim"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "A source's outcome, or the case's (name case). In format 4.0.0 and 4.1.0 the case's outcome names its rule's outcome (rule) when the case names a rule, and in format 4.1.0 a paged source acquired names its read's end, pages and references (paging)."
       },
       "Preparation": {
         "type": "object",
-        "description": "A mapping-v2 run's verified preparation. From Runtime 0.31.0 on, the run's audit record binds it: the record's binding is {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<hex>\"}, whose digest is the SHA-256 of this object with its members sorted by name, no insignificant whitespace, numbers as written, and strings escaped as Go's encoding/json escapes them, the form a frozen release is digested by. verify-run recomputes it from the export alone, compares the record's member as recorded, and reports binding: matches, mismatch, absent or foreign-kind, refusing a mismatch and a foreign kind (before any digest is compared), and, with --require-bound, a record without one. A binding that matches, in a record whose signature verifies, commits verifiedAt in the signed record: a program reading verify-run's report knows it when binding.status is matches and signature.status is signed, and unsignedFreshness keeps its name either way. Against the operator, who holds the key, only a witnessed chain shows a record signed again with a new binding.",
+        "description": "A mapping-v2 run's verified preparation. From Runtime 0.31.0 on, the run's audit record binds it: the record's binding is {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<hex>\"}, whose digest is the SHA-256 of this object with its members sorted by name, no insignificant whitespace, numbers as written, and strings escaped as Go's encoding/json escapes them, the form a frozen release is digested by. verify-run recomputes it from the export alone, compares the record's member as recorded, and reports binding: matches, mismatch, absent or foreign-kind, refusing a mismatch and a foreign kind (before any digest is compared), and, with --require-bound, a record without one. A binding that matches, in a record whose signature verifies, commits verifiedAt in the signed record: a program reading verify-run's report knows it when binding.status is matches and signature.status is signed, and unsignedFreshness keeps its name either way. Against the operator, who holds the key, only a witnessed chain shows a record signed again with a new binding. A preparation of a dialect of format 4.0.0 or 4.1.0 is the dialect-recording schema's of version 2 (spec/dialect.md section 2.2.6, RFC 0033 section 8): formatVersion in place of version, the case outcome's rule, each lineage entry's derivation when a rule of version 2.0.0 wrote its target, and, in format 4.1.0, a paged source's outcome paging and its lineage entries' receipts.",
         "properties": {
           "version": {
             "enum": [
               2,
               3
             ],
-            "description": "The dialect document's version: 3 for a version-3 document, whose preparation is otherwise a version-2 document's."
+            "description": "The dialect document's version: 3 for a version-3 document, whose preparation is otherwise a version-2 document's. Absent from a preparation of format 4.0.0 or 4.1.0, which names formatVersion instead."
+          },
+          "formatVersion": {
+            "enum": [
+              "4.0.0",
+              "4.1.0"
+            ],
+            "description": "The dialect's format, in place of version, for a dialect of format 4.0.0 or 4.1.0 (spec/dialect.md section 2.2.6)."
           },
           "verifiedAt": {
             "type": "string"
@@ -5706,7 +5802,6 @@
           }
         },
         "required": [
-          "version",
           "verifiedAt",
           "mappingDigest",
           "verification",
@@ -5714,7 +5809,19 @@
           "lineage",
           "outcomes"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "version"
+            ]
+          },
+          {
+            "required": [
+              "formatVersion"
+            ]
+          }
+        ]
       },
       "VerificationBundle": {
         "type": "object",
@@ -8654,6 +8761,15 @@
             "minLength": 1,
             "maxLength": 8192,
             "description": "The cursor's first value, 1 to 8192 bytes of UTF-8 (maxLength bounds characters; Runner measures bytes, invalid_paging_rule over 8192), filled when no run has moved the cursor, and after an expired reference; a window's is a timestamp."
+          },
+          "position": {
+            "type": "string",
+            "description": "A window's position (docs/design/paging.md, section 7): a case parameter of type string, other than parameter and end, that the paged source's request carries exactly at the member its next reference fills ({\"$param\": position} at fills), paging_parameter_unknown otherwise. A window read the dialect's maxPages ends is then left unfinished at the next reference its last page named, and the next run continues it from there, the position filling the case. Named with positionFirst, invalid_paging_rule otherwise; a change cursor names none."
+          },
+          "positionFirst": {
+            "type": "string",
+            "maxLength": 8192,
+            "description": "The value the position is filled with when a window starts, 0 to 8192 bytes of UTF-8, and when a kept position expired (a 410 source_reference_expired to the first page of a continued window)."
           }
         },
         "required": [
@@ -8684,7 +8800,7 @@
       },
       "CursorAdvance": {
         "type": "object",
-        "description": "A paged read's cursor: the value read from the store (absent when no run had moved it), the value filled into the case, the value the pages say comes next (absent when the read ended at the bound, or for an empty window), and, for a read the bound ended, held. The run that completes writes to while the store still holds read. A change read that ends at no-next without a reference at the rule's reference fails its occurrence (read-failed) and leaves the cursor.",
+        "description": "A paged read's cursor: the value read from the store (absent when no run had moved it), the value filled into the case, the value the pages say comes next (absent when the read ended at the bound, or for an empty window), and, for a read the bound ended, either held or, for a window whose rule names a position, unfinished. The run that completes writes to, or unfinished, while the store still holds read and continued. A change read that ends at no-next without a reference at the rule's reference fails its occurrence (read-failed) and leaves the cursor.",
         "properties": {
           "read": {
             "type": "string"
@@ -8700,11 +8816,96 @@
             "enum": [
               "bound"
             ],
-            "description": "Why the cursor is held where it was: bound, the read ended at the dialect's maxPages and left pages unread, so the next run reads from the same cursor. The occurrence.ready entry names the source in cursorHeld."
+            "description": "Why the cursor is held where it was: bound, the read ended at the dialect's maxPages and left pages unread, and no position could be kept (a change cursor, a window whose rule names no position, or an empty window), so the next run reads from the same cursor. The occurrence.ready entry names the source in cursorHeld."
+          },
+          "continued": {
+            "$ref": "#/components/schemas/UnfinishedWindow",
+            "description": "The unfinished window the store held, which this read continued: asked to its end, from its position."
+          },
+          "unfinished": {
+            "$ref": "#/components/schemas/UnfinishedWindow",
+            "description": "The window this read leaves unfinished for the next run, the bound having ended it: the cursor's value stays the window's start, and the next run asks the window to this end from this position."
           }
         },
         "required": [
           "from"
+        ],
+        "additionalProperties": false
+      },
+      "UnfinishedWindow": {
+        "type": "object",
+        "description": "A window a read the bound ended left unfinished (docs/design/paging.md, section 7): its end, which the next run asks again, and the position inside it, the next reference the last page read named, which fills the case parameter the job's rule names as position, so that the next run's first request is the page left unread.",
+        "properties": {
+          "end": {
+            "type": "string"
+          },
+          "position": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "end",
+          "position"
+        ],
+        "additionalProperties": false
+      },
+      "JobCursors": {
+        "type": "object",
+        "description": "A job's cursors between runs, one for each paged source its paging names (GET /jobs/{job}/cursors).",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "cursors": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/JobCursor"
+            }
+          }
+        },
+        "required": [
+          "jobId",
+          "cursors"
+        ],
+        "additionalProperties": false
+      },
+      "JobCursor": {
+        "type": "object",
+        "description": "One paged source's cursor: its kind; its value, the run that last moved it and when, absent while no run has; and whether a window is unfinished, with its end and position.",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "change",
+              "window"
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "windowUnfinished": {
+            "type": "boolean",
+            "description": "A window read the bound ended left the window unfinished: its cursor's value is still the window's start, and the next run continues it from unfinished.position."
+          },
+          "unfinished": {
+            "$ref": "#/components/schemas/UnfinishedWindow"
+          }
+        },
+        "required": [
+          "source",
+          "kind",
+          "windowUnfinished"
         ],
         "additionalProperties": false
       },
@@ -8784,6 +8985,277 @@
           "pages"
         ],
         "additionalProperties": false
+      },
+      "CaseRuleOutcome": {
+        "type": "object",
+        "description": "Format 4.0.0 and 4.1.0 (spec/dialect.md section 2.2.6): the case rule's claim, and its acquisitionStatus and reason.",
+        "properties": {
+          "claim": {
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "resolved",
+              "absent",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim",
+          "status",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "PagingOutcome": {
+        "type": "object",
+        "description": "Format 4.1.0 (RFC 0033 section 8): a paged source's read, its end (no-next when a page named no next reference, bound when maxPages ended it), the number of pages read, and the next references it followed, in call order. Each page's receipt is the source's lineage entries' receipts, at call index i for page i; the run's trigger names the cursor the read held or moved (PagedRead).",
+        "properties": {
+          "end": {
+            "enum": [
+              "no-next",
+              "bound"
+            ]
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "end",
+          "pages",
+          "references"
+        ],
+        "additionalProperties": false
+      },
+      "Derivation": {
+        "description": "Format 4.0.0 and 4.1.0 (spec/dialect.md section 2.2.6): how the match of a rule of version 2.0.0 wrote the target, by a pointer, a literal, a builtin, or none.",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "by": {
+                "const": "pointer"
+              },
+              "from": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "by",
+              "from"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "by": {
+                "const": "literal"
+              }
+            },
+            "required": [
+              "by"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "by": {
+                "const": "builtin"
+              },
+              "builtin": {
+                "enum": [
+                  "duration",
+                  "distance",
+                  "speed"
+                ]
+              },
+              "derived": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "parameters": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "by",
+              "builtin",
+              "derived",
+              "fields",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "by": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "by"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DerivationRuleV2": {
+        "type": "object",
+        "description": "A rule of version 2.0.0 (spec/dialect.md section 2.2): format 4.0.0's and 4.1.0's, a source's read or the case's rule, whose clauses' conditions and claims the Spec's prose holds, read strictly by the sdk/dialect engine. Every other format reads a rule of version 1 (DerivationRule).",
+        "properties": {
+          "ruleVersion": {
+            "const": "2.0.0"
+          },
+          "parameters": {
+            "type": "object"
+          },
+          "clauses": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "maxItems": 64
+          },
+          "derived": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "The rule's derived values (duration, distance, speed), each named once, read before its clauses."
+          }
+        },
+        "required": [
+          "ruleVersion",
+          "parameters",
+          "clauses"
+        ],
+        "additionalProperties": false
+      },
+      "SourcePaging": {
+        "type": "object",
+        "description": "Format 4.1.0 (RFC 0033 section 2): a paged operation's paging, of exactly these members. arguments is then the first page's request; each later request is formed from it, the next reference the page before named written at fills. A source of any other format names none.",
+        "properties": {
+          "next": {
+            "type": "string",
+            "description": "A pointer, other than the root, to a page's next reference."
+          },
+          "noNext": {
+            "enum": [
+              "absent",
+              "null",
+              "empty-string"
+            ],
+            "description": "How a page names no next reference."
+          },
+          "fills": {
+            "type": "string",
+            "description": "A pointer, other than the root, into the request, to a member of an object written in arguments."
+          },
+          "items": {
+            "type": "string",
+            "description": "A pointer to each page's items array."
+          },
+          "maxPages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "required": [
+          "next",
+          "noNext",
+          "fills",
+          "items",
+          "maxPages"
+        ],
+        "additionalProperties": false
+      },
+      "InputMappingFormat4": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "case": {
+            "$ref": "#/components/schemas/CaseMapping"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MappingSource"
+            },
+            "maxItems": 16
+          },
+          "admits": {
+            "$ref": "#/components/schemas/Admission"
+          },
+          "unmapped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "unmappedEvidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "base"
+            ],
+            "description": "Explicit Base is required for retained-column conversions. Absent, ordinary legacy behavior and limits apply."
+          },
+          "formatVersion": {
+            "enum": [
+              "4.0.0",
+              "4.1.0"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "formatVersion",
+          "id",
+          "version",
+          "case"
+        ],
+        "description": "A dialect of format 4.0.0 (spec/dialect.md section 2.2) or 4.1.0 (RFC 0033), staged for specVersion 0.6.0: format 3.0.0's form, with the case's rule, the three parameter types 4.0.0 adds and rules of version 2.0.0, and, in format 4.1.0, a paged operation's paging. Its preparation names formatVersion in place of version (Preparation). The extended profile is refused until the Spec decides its literal bound."
       }
     }
   }

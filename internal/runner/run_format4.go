@@ -30,24 +30,47 @@ func fourRelease(r Release) bool {
 // taken of, so a member that is missing there or of another form is refused
 // input-malformed: such a release has no release digest.
 func fourReleaseForm(r Release) error {
-	members, err := exactMembers(encode(r))
+	return fourReleaseFormOf(encode(r), r.InputMapping.FormatVersion)
+}
+
+// fourReleaseFormOf is fourReleaseForm of a release's bytes as retained, on
+// a dialect of the format given.
+func fourReleaseFormOf(release []byte, format string) error {
+	members, err := exactMembers(release)
 	if err != nil {
-		return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" must be an object.")
+		return codedProblem(codeMalformed, "A release on a dialect of format "+format+" must be an object.")
 	}
 	var id string
 	if raw, ok := members["id"]; !ok || json.Unmarshal(raw, &id) != nil {
-		return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" needs a string id.")
+		return codedProblem(codeMalformed, "A release on a dialect of format "+format+" needs a string id.")
 	}
 	for _, name := range []string{"packDigest", "runtimeDigest"} {
 		var d string
 		if raw, ok := members[name]; !ok || json.Unmarshal(raw, &d) != nil || !validDigest(d) {
-			return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" needs a digest "+name+".")
+			return codedProblem(codeMalformed, "A release on a dialect of format "+format+" needs a digest "+name+".")
 		}
 	}
 	if raw, ok := members["inputMapping"]; !ok || len(raw) == 0 || raw[0] != '{' {
-		return codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" needs an inputMapping object.")
+		return codedProblem(codeMalformed, "A release on a dialect of format "+format+" needs an inputMapping object.")
 	}
 	return nil
+}
+
+// fourReleasePreimage is the bytes RFC 0020 section 1 digests a release on a
+// dialect of format 4.0.0 or 4.1.0 over: the canon bytes of the release as
+// retained, every member as it is there, none removed or defaulted, with no
+// typed decoding. A release not of the open release form, or outside the
+// canon domain, has none, input-malformed. Runner retains a release as it
+// encodes it, so the preimage of that encoding is releaseDigestOf's.
+func fourReleasePreimage(release []byte, format string) ([]byte, error) {
+	if err := fourReleaseFormOf(release, format); err != nil {
+		return nil, err
+	}
+	b, err := derivation.Canon(release)
+	if err != nil {
+		return nil, codedProblem(codeMalformed, "A release on a dialect of format "+format+" is outside the canon domain and has no release digest: "+err.Error())
+	}
+	return b, nil
 }
 
 // releaseDigestOf is a release's digest (RFC 0020 section 1). A release on
@@ -59,12 +82,9 @@ func fourReleaseForm(r Release) error {
 // release keeps the pinned encoding, byte for byte.
 func releaseDigestOf(r Release) (string, error) {
 	if fourRelease(r) {
-		if err := fourReleaseForm(r); err != nil {
-			return "", err
-		}
-		b, err := derivation.Canon(encode(r))
+		b, err := fourReleasePreimage(encode(r), r.InputMapping.FormatVersion)
 		if err != nil {
-			return "", codedProblem(codeMalformed, "A release on a dialect of format "+r.InputMapping.FormatVersion+" is outside the canon domain and has no release digest: "+err.Error())
+			return "", err
 		}
 		return digest(b), nil
 	}

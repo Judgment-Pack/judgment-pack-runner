@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -66,9 +67,24 @@ func TestARunOnAFormat4DialectRecordsWhatVerifyPreparationReads(t *testing.T) {
 	if digest(pinned) == digest(canon) {
 		t.Fatal("the release's two encodings agree: the test shows nothing")
 	}
+	// The run as GET /v1/runs/{run} serves it is as openapi.json says.
+	runAsOpenAPISays(t, s.Handler("test"), run.ID)
 	exported := get(t, s.Handler("test"), "/v1/runs/"+run.ID+"/verification", 200)
 	if _, err = VerifyInputs(exported, nil, releaseDigest(release)); err != nil {
 		t.Fatal("the run's export does not verify against the release digest:", err)
+	}
+}
+
+// runAsOpenAPISays holds a run, as GET /v1/runs/{run} serves it, to
+// openapi.json's Run schema: a run of format 4.0.0 and of 4.1.0 among them,
+// their preparations' formatVersion, a paged source's outcome and pages,
+// and the run's paged reads (#300).
+func runAsOpenAPISays(t *testing.T, h http.Handler, id string) {
+	t.Helper()
+	doc := readOpenAPI(t)
+	served := get(t, h, "/v1/runs/"+id, 200)
+	if problems := doc.check("run", doc.schema("Run"), decodeNumbers(t, served)); len(problems) > 0 {
+		t.Fatal("the run is not as openapi.json says:", problems)
 	}
 }
 

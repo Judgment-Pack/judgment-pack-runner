@@ -49,13 +49,14 @@ func (r sqliteReads) pagingCursors(job string) (map[string]PagingCursor, error) 
 	return out, nil
 }
 
-func (t *sqliteTx) advancePagingCursor(c PagingCursor, read string) (bool, error) {
+func (t *sqliteTx) advancePagingCursor(c PagingCursor, read string, open *UnfinishedWindow) (bool, error) {
+	end, position := unfinishedHeld(open)
 	var res sql.Result
 	var err error
 	if read == "" {
 		res, err = t.tx.Exec("INSERT INTO paging_cursors(job_id,source,record) VALUES (?,?,?) ON CONFLICT DO NOTHING", c.JobID, c.Source, string(encode(c)))
 	} else {
-		res, err = t.tx.Exec("UPDATE paging_cursors SET record=? WHERE job_id=? AND source=? AND json_extract(record,'$.value')=?", string(encode(c)), c.JobID, c.Source, read)
+		res, err = t.tx.Exec("UPDATE paging_cursors SET record=? WHERE job_id=? AND source=? AND json_extract(record,'$.value')=? AND coalesce(json_extract(record,'$.unfinished.end'),'')=? AND coalesce(json_extract(record,'$.unfinished.position'),'')=?", string(encode(c)), c.JobID, c.Source, read, end, position)
 	}
 	if err != nil {
 		return false, sqliteFault("cursor", err, true)

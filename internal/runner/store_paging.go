@@ -15,6 +15,17 @@ import "encoding/json"
 // own. A store that holds none keeps its schema, byte for byte.
 const pagingStoreSchema = "8"
 
+// unfinishedHeld is the end and position of the unfinished window a read
+// found in a cursor's row, "" for none: an advance is written only while the
+// row still holds them, beside its value (advancePagingCursor), so a run
+// that continued an older position never moves the row back.
+func unfinishedHeld(open *UnfinishedWindow) (string, string) {
+	if open == nil {
+		return "", ""
+	}
+	return open.End, open.Position
+}
+
 // cursorRows reads every row of a job's cursors, by source.
 func cursorRows(each func(func([]byte) error) error) (map[string]PagingCursor, error) {
 	out := map[string]PagingCursor{}

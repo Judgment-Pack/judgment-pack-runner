@@ -169,11 +169,22 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 		request := workflowAcquisition{execution, instanceID, run.Attempt, workflowOwnedInput(run.Input), *plan.Next}
 		request.Next.Arguments = append(json.RawMessage(nil), plan.Next.Arguments...)
 		value, acquireErr := d.Acquire(ctx, request)
-		value = SourceValue{Response: bytes.Clone(value.Response), Snapshot: bytes.Clone(value.Snapshot)}
+		// A paged source's answer is its pages, each page's envelope in call
+		// order (format 4.1.0), never beside a response or a snapshot.
+		pages := make([]json.RawMessage, 0, len(value.Pages))
+		pagesValid := true
+		for _, page := range value.Pages {
+			pages = append(pages, bytes.Clone(page))
+			pagesValid = pagesValid && json.Valid(page)
+		}
+		if len(pages) == 0 {
+			pages = nil
+		}
+		value = SourceValue{Response: bytes.Clone(value.Response), Snapshot: bytes.Clone(value.Snapshot), Pages: pages}
 		// A callback may return a response alongside an error. Preserve any complete
 		// JSON response before deciding whether the operation was interrupted.
-		if len(value.Response) > 0 || len(value.Snapshot) > 0 {
-			if len(value.Response) > 0 && !json.Valid(value.Response) || len(value.Snapshot) > 0 && !json.Valid(value.Snapshot) {
+		if len(value.Response) > 0 || len(value.Snapshot) > 0 || len(value.Pages) > 0 {
+			if len(value.Response) > 0 && !json.Valid(value.Response) || len(value.Snapshot) > 0 && !json.Valid(value.Snapshot) || !pagesValid {
 				return w, fmt.Errorf("source returned an unretainable response: %w", errWorkflowTransition)
 			}
 			run.Input.Source.Sources[plan.Next.Name] = value
@@ -190,7 +201,7 @@ func (d workflowDriver) run(ctx context.Context, execution, instanceID string, r
 			}
 			return finish("interrupted", "", nil)
 		}
-		if len(value.Response) == 0 && len(value.Snapshot) == 0 {
+		if len(value.Response) == 0 && len(value.Snapshot) == 0 && len(value.Pages) == 0 {
 			return finish("interrupted", "", nil)
 		}
 	}

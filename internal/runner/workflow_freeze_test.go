@@ -10,7 +10,7 @@ import (
 )
 
 func TestWorkflowNamedDialectReference(t *testing.T) {
-	for _, format := range []string{"2.0.0", "3.0.0"} {
+	for _, format := range []string{"2.0.0", "3.0.0", "4.0.0", "4.1.0"} {
 		raw := bytes.Replace(workflowExample(), []byte(`"version":3`), []byte(`"formatVersion":"`+format+`","id":"urn:example:company","version":"1.2.3"`), 1)
 		doc, canonical, err := readWorkflow(raw)
 		if err != nil || doc.Stages[0].Dialect.FormatVersion != format {
@@ -24,7 +24,9 @@ func TestWorkflowNamedDialectReference(t *testing.T) {
 			old, replacement string
 			want             error
 		}{
-			{`"formatVersion":"` + format + `"`, `"formatVersion":"4.0.0"`, errWorkflowVersion},
+			{`"formatVersion":"` + format + `"`, `"formatVersion":"4.2.0"`, errWorkflowVersion},
+			{`"formatVersion":"` + format + `"`, `"formatVersion":"4.0"`, errWorkflowVersion},
+			{`"formatVersion":"` + format + `"`, `"formatVersion":4`, errWorkflowVersion},
 			{`"formatVersion":"` + format + `"`, `"formatVersion":null`, errWorkflowVersion},
 			{`"version":"1.2.3"`, `"version":3`, errWorkflowForm},
 			{`"version":"1.2.3"`, `"version":"01.2.3"`, errWorkflowForm},

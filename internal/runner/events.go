@@ -541,11 +541,13 @@ func restartOccurrences(tx runTx, started int64) (err error) {
 		o.Reason = "Source acquisition was interrupted. It was not repeated automatically."
 		o.ErrorClass = classInterrupted
 		o.PendingInput = nil
-		// Held pages are dropped from the record. Their session is not
-		// sealed here, inside the store's transaction, by a Runner that
-		// may not be the one that opened it: it is left unsealed, as an
-		// acquisition a stopped Runner left is.
-		o.HeldPages = nil
+		// The pages of a paged read written to the record as they arrived
+		// (paging_loop.go) are kept in it: the record says what was read
+		// before the stop. None is asked again, since the acquisition is
+		// not repeated. Their session is not sealed here, inside the
+		// store's transaction, by a Runner that may not be the one that
+		// opened it: it is left unsealed, as an acquisition a stopped
+		// Runner left is.
 		// An attempt of a job with a retry policy is closed, interrupted:
 		// it is not retried (retries.go). Runner did not see it stop.
 		if n := len(o.Attempts); n > 0 && o.Attempts[n-1].Outcome == "" {

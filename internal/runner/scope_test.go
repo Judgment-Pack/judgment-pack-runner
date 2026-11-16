@@ -140,6 +140,7 @@ func scopeRoutes() []scopeRoute {
 	trigger := eventTriggerConfig()
 	return []scopeRoute{
 		{"GET /v1/jobs/{job}", true, get(func(r scopedRecords) string { return "/v1/jobs/" + r.job })},
+		{"GET /v1/jobs/{job}/cursors", true, get(func(r scopedRecords) string { return "/v1/jobs/" + r.job + "/cursors" })},
 		{"GET /v1/jobs/{job}/briefs", false, get(func(r scopedRecords) string { return "/v1/jobs/" + r.job + "/briefs" })},
 		{"POST /v1/jobs/{job}/briefs", false, post(func(r scopedRecords) string { return "/v1/jobs/" + r.job + "/briefs" }, `{}`)},
 		{"GET /v1/jobs/{job}/events", true, get(func(r scopedRecords) string { return "/v1/jobs/" + r.job + "/events" })},

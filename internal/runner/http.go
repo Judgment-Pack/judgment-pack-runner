@@ -372,6 +372,23 @@ func (s *Service) handler(token string, identity *Identity, service bool) http.H
 		}
 		write(w, 200, map[string]any{"job": j, "release": release})
 	})
+	// A job's cursors between runs (paging_loop.go), read through the
+	// request's view of the store, as the job is: a job of another scope is
+	// answered as one the store does not hold.
+	mux.HandleFunc("GET /v1/jobs/{job}/cursors", func(w http.ResponseWriter, r *http.Request) {
+		st := s.storeFor(r.Context())
+		j, err := st.job(r.PathValue("job"))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		rows, err := st.pagingCursors(j.ID)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		write(w, 200, jobCursorsOf(j, rows))
+	})
 	mux.HandleFunc("GET /v1/jobs/{job}/runs", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.storeFor(r.Context()).job(r.PathValue("job")); err != nil {
 			failure(w, err)

@@ -183,10 +183,18 @@ func newWorkflowInventory(raw, root []byte, execution string, inputs []workflowF
 	}
 	return w, nil
 }
+
+// canonicalRelease is the preimage of a retained release's digest (RFC 0020
+// section 1): the pinned typed encoding, and, for a release on a dialect of
+// format 4.0.0 or 4.1.0, the canon bytes of the release as retained, with no
+// typed decoding (fourReleasePreimage), the bytes releaseDigestOf digests.
 func canonicalRelease(raw []byte) ([]byte, error) {
 	var release Release
 	if err := strictJSON(raw, &release); err != nil {
 		return nil, err
+	}
+	if fourRelease(release) {
+		return fourReleasePreimage(raw, release.InputMapping.FormatVersion)
 	}
 	return canonical(encode(release))
 }

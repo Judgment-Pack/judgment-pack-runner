@@ -212,11 +212,35 @@ names a next reference fails its occurrence and leaves the cursor.
   `from` (the value filled into the case: the row's, or `first`) and `to`. It
   is written only while the row holds `read`, so a run that read no row writes
   one only when none was written since. A read the bound ended, which left pages
-  unread, carries no `to` and moves nothing; a window wider than the bound's
-  pages never moves until its end is reached in one run. Such a cursor is held
+  unread, carries no `to`. A cursor that cannot keep a position there is held
   in the open: the advance names `held: "bound"`, in the occurrence's and the
   run's paged read, and the occurrence's `occurrence.ready` entry names the
-  source in `cursorHeld` (entry version `"6"`).
+  source in `cursorHeld` (entry version `"6"`). That is every change cursor,
+  a window whose rule names no `position`, and an empty window (its end not
+  after its start).
+- **A window wider than the bound** (#300). A window's rule may name
+  `position`, a case parameter of type `string` that the source's request
+  carries exactly at the member its next reference fills (`{"$param": …}` at
+  `fills`; `paging_parameter_unknown` otherwise), and `positionFirst`, the
+  value, 0 to 8192 bytes, it is filled with when a window starts (the two are
+  named together, `invalid_paging_rule` otherwise). A window read the bound
+  ends is then left **unfinished**: the advance names `unfinished: {end,
+  position}`, the window's end and the next reference the last page named,
+  and the run that completes writes the row with its value unchanged (the
+  window's start) and that marker beside it. The next occurrence reads the
+  row and asks the same window to its kept end, its case filled with the
+  position, so that its first request is the page left unread and the case
+  retained in the run says so (RFC 0033, section 9: where the first page
+  began is the case's say, as for the cursor); its advance names the window
+  it continued in `continued`. The read that reaches a page naming no next
+  reference finishes the window: the row's value moves to the window's end
+  and the marker is cleared. Every write is held to the row's value and to
+  its unfinished window, so a late run that continued an older position of
+  the same window, whose value is the same, never moves the row back. A
+  `410` to the first page of a continued window says the position expired:
+  the same window is read again from its first page (`positionFirst`), once,
+  as a `fullReRead`. A rule that names no position, on a row an earlier rule
+  left unfinished, reads the same window from its first page.
 - **A change read without a reference.** A change cursor's read that ends at
   `no-next` reads the next run's reference at `reference` in the last page: a
   string of 1 to 8192 bytes. A last page that names none there (absent, `null`,
@@ -246,9 +270,26 @@ names a next reference fails its occurrence and leaves the cursor.
   request is the one held and the throttled page is asked in the held session.
   A throttled first page holds nothing: its session is sealed and the next
   attempt asks it afresh. Held pages never outlive the wait: an occurrence that
-  expires or fails before its next attempt drops them and seals their session;
-  one a restart finds interrupted drops them without sealing, in the store's
-  transaction.
+  expires or fails before its next attempt drops them and seals their session.
+- **Pages written as received** (4.5): each page, once verified (its receipt is
+  call i of the session, the pages are within the combined input limit, and
+  the page reads), is written to the occurrence's `heldPages` before the next
+  page is asked, in a write fenced by the occurrence's claim, which it keeps.
+  A write refused because the occurrence is no longer this attempt's (a
+  restart or a lapsed lease failed it) stops the read and seals its session.
+  The rule: **a page written to an occurrence's record is never asked again
+  for that occurrence.** The next attempt the job's retry policy schedules
+  resumes after the last page written, asking the throttled page first. A
+  restart, or a lapsed lease, that finds the occurrence preparing ends it
+  failed and repeats no call, as [retries](retries.md), section 8, has it for
+  every acquisition (the call in flight may have reached its source); its
+  record keeps the pages written, their session left unsealed, so a stop
+  keeps what was read. A later occurrence of the job reads from the job's
+  cursor, which that occurrence never moved, in a session of its own. Memory
+  while acquiring is the pages of the read in progress, which the record
+  holds as one document: bounded by the combined input limit, as the run's
+  input is at evaluation, and not by one page, which would need rows of
+  their own (4.5).
 - **An expired reference** (4.6) is the gateway's `410`
   `source_reference_expired`. A `410` to a later page's request expired the
   source's own next reference, not the cursor: the read starts again from the
@@ -260,6 +301,15 @@ names a next reference fails its occurrence and leaves the cursor.
   in `fullReRead` (entry version `"6"`). A source's read is started again once:
   a second `410`, a `410` to a first page read from `first`, or one to a
   window's first page, fails the occurrence and leaves the cursor.
+- **Reading a job's cursors** (#300): `GET /v1/jobs/{job}/cursors` answers,
+  for each paged source the job's paging names, in its order, the cursor's
+  kind, its value, the run that last moved it and when (none of the three
+  while no run has), and `windowUnfinished`, with the unfinished window's
+  end and position. It reads through the request's view of the store, after
+  the job's own read, so a request of another scope, or of none for a job
+  under one, is answered the job's not-found byte for byte; on the
+  PostgreSQL kind it is a held route, read on the request login under the
+  row policy of `0007_paging_cursors.sql`.
 - **Storage**: PostgreSQL `0007_paging_cursors.sql`; the sqlite kind makes its
   table in the transaction that raises its schema to `8` with the first job
   that keeps a cursor, so a store with none keeps the earlier schema.
