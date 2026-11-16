@@ -68,14 +68,17 @@ func readPage(read SourceRead, rule *pagingRule, result json.RawMessage, i int) 
 
 // HeldPages are the pages an attempt received before the gateway answered
 // a throttle (docs/design/paging.md, section 4.4): the source, the session
-// they are calls 0 to n-1 of, which is left unsealed, and the first page's
-// request they were asked from. The occurrence keeps them, and its next
-// attempt asks the throttled page in the same session and no page before it.
+// they are calls 0 to n-1 of, which is left unsealed, the first page's
+// request they were asked from, and the instant the attempt's windows end
+// at. The occurrence keeps them, and its next attempt asks its windows to
+// the same instant, so that its first page's request is the one held, and
+// asks the throttled page in the same session and no page before it.
 type HeldPages struct {
 	Source  string            `json:"source"`
 	Profile string            `json:"profile"`
 	Session string            `json:"session"`
 	First   json.RawMessage   `json:"first"`
+	At      string            `json:"at,omitempty"`
 	Pages   []json.RawMessage `json:"pages"`
 }
 
@@ -261,13 +264,40 @@ func cursorSeed(input *Input, rules []CursorRule, cursors map[string]PagingCurso
 		}
 		writeTarget(object, m.Case.Parameters[rule.Parameter].Pointer, a.From)
 		if rule.Kind == "window" {
-			a.To = at.UTC().Format("2006-01-02T15:04:05Z")
+			a.To = at.UTC().Format(windowForm)
+			// A window is never asked inverted: a cursor after the
+			// instant (a first value in the future, or a clock behind
+			// the Runner that moved the cursor) fails the occurrence
+			// and leaves the cursor.
+			if !windowAfter(a.From, a.To, true) {
+				return nil, bad("paging_window_inverted", "The window cursor of "+rule.Source+" starts at "+a.From+", after the instant the occurrence is prepared ("+a.To+"). The window was not asked and the cursor is left.")
+			}
 			writeTarget(object, m.Case.Parameters[rule.End].Pointer, a.To)
 		}
 		advances[rule.Source] = a
 	}
 	input.Source.Case = encode(object)
 	return advances, nil
+}
+
+// windowForm is the form of a window cursor's value: a timestamp of the
+// case's form, in UTC to the second.
+const windowForm = "2006-01-02T15:04:05Z"
+
+// windowAfter says whether a window from from to to is not inverted: to is
+// strictly after from, or, when equal admits it, the same instant (an empty
+// window, which is asked but never advances the cursor). A value that does
+// not read as a timestamp is neither.
+func windowAfter(from, to string, equal bool) bool {
+	f, err := time.Parse(windowForm, from)
+	if err != nil {
+		return false
+	}
+	t, err := time.Parse(windowForm, to)
+	if err != nil {
+		return false
+	}
+	return t.After(f) || equal && t.Equal(f)
 }
 
 // referenceExpired is the code of the gateway's 410 that says the reference
@@ -357,8 +387,9 @@ func (s *Service) acquirePages(ctx context.Context, next PlannedSource, p *occur
 			if err != nil {
 				if _, throttled := transient(err); throttled && p.hold {
 					// Not served: the pages that were are held, in the
-					// session left open.
-					p.held = &HeldPages{Source: next.Name, Profile: next.Profile, Session: session, First: next.Arguments, Pages: pages}
+					// session left open, with the instant the windows
+					// were asked to.
+					p.held = &HeldPages{Source: next.Name, Profile: next.Profile, Session: session, First: next.Arguments, At: p.at.UTC().Format(windowForm), Pages: pages}
 					return SourceValue{}, err
 				}
 				seal()
@@ -509,6 +540,12 @@ func (p *occurrencePaging) result() []PagedRead {
 			if a.end != "no-next" {
 				c.To = ""
 			}
+			// A window advances only when its end is strictly after
+			// its start: an empty window moves nothing, and an inverted
+			// one, which cursorSeed refuses, never moves it back.
+			if rule.Kind == "window" && c.To != "" && !windowAfter(c.From, c.To, false) {
+				c.To = ""
+			}
 			read.Cursor = &c
 		}
 		out = append(out, read)
@@ -572,6 +609,13 @@ func jobPaging(raw []byte, rules *JobPaging) (*JobPaging, error) {
 // held for.
 func (s *Service) occurrencePagingOf(o Occurrence, hold bool) (*occurrencePaging, error) {
 	p := &occurrencePaging{at: s.instant(), hold: hold, held: o.HeldPages}
+	// An attempt that resumes held pages asks its windows to the instant
+	// the held pages were asked to (HeldPages).
+	if h := o.HeldPages; h != nil && h.At != "" {
+		if at, err := time.Parse(windowForm, h.At); err == nil {
+			p.at = at
+		}
+	}
 	j, err := s.job(o.JobID)
 	if err != nil {
 		return nil, err

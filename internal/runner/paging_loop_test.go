@@ -465,6 +465,97 @@ func TestAWindowCursorReadsToTheInstantItIsPrepared(t *testing.T) {
 	}
 }
 
+// Section 7, a window: a window is never asked inverted and never moves its
+// cursor back. A first value in the future, or a clock behind the cursor (a
+// Runner whose clock is behind the one that moved it), fails the occurrence
+// before any page is asked and leaves the cursor; a cursor at the instant
+// itself asks an empty window, whose run completes and moves nothing.
+func TestAWindowIsNeverAskedInvertedOrMovedBack(t *testing.T) {
+	window := func(first string) *JobPaging {
+		return &JobPaging{Sources: []CursorRule{{Source: "changes", Kind: "window", Parameter: "from", End: "until", First: first}}}
+	}
+	future := newPagedWorld(t, nil, window("2099-01-01T00:00:00Z"), newPagedFeed(t, 2, nil))
+	if o := future.prepare(t, "first"); o.State != "failed" || !strings.Contains(o.Reason, "2099-01-01T00:00:00Z") || len(o.Paging) != 0 {
+		t.Fatalf("a first value in the future: %s %q %+v", o.State, o.Reason, o.Paging)
+	}
+	if calls := future.feed.taken(); len(calls) != 0 {
+		t.Fatalf("an inverted window was asked: %+v", calls)
+	}
+	if value, _ := future.cursor(t); value != "" {
+		t.Fatal("an inverted window moved the cursor:", value)
+	}
+
+	behind := newPagedWorld(t, nil, window("2026-01-01T00:00:00Z"), newPagedFeed(t, 2, nil))
+	ahead := behind.clock.Add(time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	held := func(w *pagedWorld, value string) {
+		must(t, w.s.store.update(func(tx runTx) error {
+			_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: value, RunID: "run_elsewhere", UpdatedAt: now()}, "")
+			return err
+		}))
+	}
+	held(behind, ahead)
+	if o := behind.prepare(t, "first"); o.State != "failed" || len(o.Paging) != 0 {
+		t.Fatalf("a clock behind the cursor: %s %q %+v", o.State, o.Reason, o.Paging)
+	}
+	if calls := behind.feed.taken(); len(calls) != 0 {
+		t.Fatalf("an inverted window was asked: %+v", calls)
+	}
+	if value, by := behind.cursor(t); value != ahead || by != "run_elsewhere" {
+		t.Fatalf("the cursor is %q by %s, want %s left", value, by, ahead)
+	}
+
+	empty := newPagedWorld(t, nil, window("2026-01-01T00:00:00Z"), newPagedFeed(t, 1, nil))
+	at := empty.clock.UTC().Format("2006-01-02T15:04:05Z")
+	held(empty, at)
+	o := empty.prepare(t, "first")
+	if read := onePagedRead(t, o, 1, "no-next"); *read.Cursor != (CursorAdvance{Read: at, From: at}) {
+		t.Fatalf("an empty window names a next value: %+v", read.Cursor)
+	}
+	if r := empty.run(t, o); r.State != "completed" {
+		t.Fatal("the run:", r.State, r.Problem)
+	}
+	if value, by := empty.cursor(t); value != at || by != "run_elsewhere" {
+		t.Fatalf("an empty window's run wrote the cursor: %q by %s", value, by)
+	}
+}
+
+// Section 4.4, a window: an attempt that resumes held pages asks them with
+// the window the first attempt asked, whatever the clock says then, so the
+// throttled page is asked in the held session and no page before it.
+func TestAThrottledWindowResumesTheSameWindow(t *testing.T) {
+	once := false
+	window := &JobPaging{Sources: []CursorRule{{Source: "changes", Kind: "window", Parameter: "from", End: "until", First: "2026-11-01T00:00:00Z"}}}
+	w := newPagedWorld(t, &RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}, window, newPagedFeed(t, 3, func(c pagedCall) int {
+		if c.cursor == "ref-1" && !once {
+			once = true
+			return 429
+		}
+		return 200
+	}))
+	end := w.clock.UTC().Format("2006-01-02T15:04:05Z")
+	o := w.prepare(t, "first")
+	if o.State != "accepted" || o.HeldPages == nil || len(o.HeldPages.Pages) != 1 {
+		t.Fatalf("the throttled attempt: %s %s %+v", o.State, o.Reason, o.HeldPages)
+	}
+	session := o.HeldPages.Session
+	*w.clock = w.clock.Add(2 * time.Second)
+	o = w.step(t, o.ID)
+	read := onePagedRead(t, o, 3, "no-next")
+	if read.Receipts[0].SessionID != session || *read.Cursor != (CursorAdvance{From: "2026-11-01T00:00:00Z", To: end}) {
+		t.Fatalf("the resumed window: %+v %+v", read.Receipts, read.Cursor)
+	}
+	var asked []string
+	for _, c := range w.feed.taken() {
+		if c.session != session || c.until != end {
+			t.Fatalf("a call outside the held session or window: %+v, want until %s", c, end)
+		}
+		asked = append(asked, c.cursor+":"+strconv.Itoa(c.status))
+	}
+	if want := []string{":200", "ref-1:429", "ref-1:200", "ref-2:200"}; !slices.Equal(asked, want) {
+		t.Fatalf("the pages asked: %v, want %v", asked, want)
+	}
+}
+
 // Section 4.1: a job's paging names paged sources of its release's dialect,
 // each once, with a case parameter of the type its kind fills, in its form;
 // each refusal is coded, and POST /v1/jobs reads the member in its own case

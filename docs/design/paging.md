@@ -209,11 +209,20 @@ names a next reference fails its occurrence and leaves the cursor.
   unread, carries no `to` and moves nothing; a window wider than the bound's
   pages never moves until its end is reached in one run.
 - **A window** ends at the instant the occurrence is prepared, which fills the
-  end parameter and is the next `from`.
+  end parameter and is the next `from`. A window is never asked inverted: when
+  the cursor's value is after that instant (a `first` in the future, or a
+  Runner whose clock is behind the one that moved the cursor), the occurrence
+  fails (`paging_window_inverted`, class `preparation`) before any page is
+  asked, and the cursor is left. A window advances only when its end is
+  strictly after its start: a cursor at the instant itself asks an empty
+  window, whose run moves nothing.
 - **Held pages** (4.4) are the occurrence's `heldPages`: the source, the open
-  session, the first page's request and each received page. A throttle holds
-  them only when the job has a retry policy and no other source answered in the
-  attempt; otherwise the attempt fails as before and the session is sealed.
+  session, the first page's request, the instant the attempt's windows ended at
+  (`at`), and each received page. A throttle holds them only when the job has a
+  retry policy and no other source answered in the attempt; otherwise the
+  attempt fails as before and the session is sealed. The next attempt asks its
+  windows to `at` again, not to its own instant, so that its first page's
+  request is the one held and the throttled page is asked in the held session.
 - **An expired reference** (4.6) is the gateway's `410`
   `source_reference_expired`. A change cursor's read from a value other than its
   `first` is started again from `first`, once, in a new session; the

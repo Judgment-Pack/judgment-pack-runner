@@ -8623,7 +8623,7 @@
       },
       "CursorRule": {
         "type": "object",
-        "description": "A job's cursor for one paged source of its release's dialect (docs/design/paging.md, sections 4.1 and 7): a change cursor fills a string case parameter with a reference read from the last page at reference; a window cursor fills a timestamp case parameter with its start and end with the instant the occurrence is prepared, which is the next start.",
+        "description": "A job's cursor for one paged source of its release's dialect (docs/design/paging.md, sections 4.1 and 7): a change cursor fills a string case parameter with a reference read from the last page at reference; a window cursor fills a timestamp case parameter with its start and end with the instant the occurrence is prepared, which is the next start. A window is never asked inverted: an occurrence whose cursor is after that instant fails, paging_window_inverted, and leaves the cursor; a window moves its cursor only when its end is strictly after its start.",
         "properties": {
           "source": {
             "type": "string",
@@ -8741,7 +8741,7 @@
       },
       "HeldPages": {
         "type": "object",
-        "description": "The pages an attempt received before the gateway throttled the next, held for the job's next attempt, which asks the throttled page in the same session and no page before it.",
+        "description": "The pages an attempt received before the gateway throttled the next, held for the job's next attempt, which asks its windows to at again, and the throttled page in the same session and no page before it.",
         "properties": {
           "source": {
             "type": "string"
@@ -8754,6 +8754,10 @@
           },
           "first": {
             "description": "The first page's request."
+          },
+          "at": {
+            "type": "string",
+            "description": "The instant the attempt's windows ended at (a timestamp in UTC to the second), which the next attempt's windows end at again."
           },
           "pages": {
             "type": "array",
