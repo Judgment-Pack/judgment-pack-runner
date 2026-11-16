@@ -598,6 +598,17 @@ func TestACursorThatCannotMoveSaysSo(t *testing.T) {
 	if value, _ := bounded.cursor(t); value != "" {
 		t.Fatal("a bound read moved the cursor:", value)
 	}
+	// The records are as openapi.json says: the submitted occurrence with
+	// its paged read, and the run's origin with its own.
+	doc := readOpenAPI(t)
+	submitted, e := bounded.s.occurrence(o.ID)
+	must(t, e)
+	if problems := doc.check("occurrence", doc.schema("Occurrence"), decodeNumbers(t, encode(submitted))); len(problems) > 0 || len(submitted.Paging) != 1 {
+		t.Fatal("the occurrence is not as openapi.json says:", problems)
+	}
+	if problems := doc.check("trigger", doc.schema("TriggerOrigin"), decodeNumbers(t, encode(r.Trigger))); len(problems) > 0 {
+		t.Fatal("the run's origin is not as openapi.json says:", problems)
+	}
 }
 
 // Section 4.1: a job's paging names paged sources of its release's dialect,

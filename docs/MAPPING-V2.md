@@ -2284,7 +2284,10 @@ are read from the stored run and never cause another source acquisition.
 
 Spec RFC 0021 adds exact selectors `formatVersion: "2.0.0"` and `"3.0.0"`,
 an opaque `id`, and an independent three-component artifact `version` string.
-Runner advertises `dialect-format-2.0.0` and `dialect-format-3.0.0`. The supported
+Runner advertises `dialect-format-2.0.0` and `dialect-format-3.0.0`, and, for the
+run path of formats 4.0.0 and 4.1.0 ([dialect-format-4.md](design/dialect-format-4.md)),
+`dialect-format-4.0.0`, `dialect-format-4.1.0` and `job-paging` (a job's cursor
+for each paged source, [paging.md](design/paging.md)). The supported
 source kinds remain operation and selected-file. These forms omit legacy root
 provider/facts/evidence and all optional empty members listed by the companion.
 Integer legacy documents retain their original format and identity.
