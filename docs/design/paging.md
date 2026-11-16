@@ -346,6 +346,15 @@ names a next reference fails its occurrence and leaves the cursor.
   and its `run.completed` entry names the source in `cursorHeld`, at entry
   version `"6"`, the member and version an `occurrence.ready` entry uses for
   a cursor held at the bound.
+- **Retry.** `POST /v1/runs/{run}/retry` queues an interrupted run again with
+  the read its occurrence made, so it would decide the records that read
+  opened. For a run whose occurrence read its job's cursors, the retry's
+  transaction refuses it (`409 run_not_retryable`) while the job has a run
+  queued or running or an occurrence that has not settled (an interrupted run
+  is not such work, so a later occurrence may be reading the same cursor), and
+  when a cursor no longer holds what the run read, by the test an advance
+  makes (`pagedRetryAdmitted`). The job's next occurrence then reads the
+  cursor as it is.
 - **Storage**: PostgreSQL `0007_paging_cursors.sql`; the sqlite kind makes its
   table in the transaction that raises its schema to `8` with the first job
   that keeps a cursor, so a store with none keeps the earlier schema.

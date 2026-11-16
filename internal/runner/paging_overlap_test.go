@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"testing"
@@ -220,4 +221,67 @@ func TestPostgreSQLAPagedOccurrenceWaitsForAnotherRunnersRun(t *testing.T) {
 	if read := onePagedRead(t, o, 3, "no-next"); *read.Cursor != (CursorAdvance{Read: "after-start", From: "after-start", To: "after-after-start"}) {
 		t.Fatalf("the second read's cursor: %+v", read.Cursor)
 	}
+}
+
+// interruptedPagedRun is a paged world's run of an occurrence that read the
+// job's cursor, interrupted at an orderly stop before its attempt ran.
+func interruptedPagedRun(t *testing.T, w *pagedWorld, key string) Run {
+	t.Helper()
+	o := w.prepare(t, key)
+	onePagedRead(t, o, 3, "no-next")
+	must(t, w.s.dispatchOccurrence(o, time.Now()))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, e := w.s.dispatchNext(ctx)
+	must(t, e)
+	o, e = w.s.occurrence(o.ID)
+	must(t, e)
+	r, e := w.s.run(o.RunID)
+	must(t, e)
+	if r.State != "interrupted" || r.Trigger == nil || len(r.Trigger.Paging) != 1 {
+		t.Fatalf("the paged run is not interrupted with its read: %s %+v", r.State, r.Trigger)
+	}
+	return r
+}
+
+// docs/design/paging.md, section 7, "Retry": an interrupted run that read
+// its job's cursor is retried only while the cursor holds what it read and
+// the job has no other work in progress; otherwise it would decide records
+// another run of the job has decided, or is deciding.
+func TestAPagedRunIsRetriedOnlyWhileItsCursorHoldsWhatItRead(t *testing.T) {
+	retry := func(w *pagedWorld, r Run) error {
+		_, _, e := w.s.retryRunBy(w.s.store, requester{}, r.ID, r.Attempt)
+		return e
+	}
+	refusedAs := func(t *testing.T, e, want error, why string) {
+		t.Helper()
+		if e != want {
+			t.Fatalf("%s: %v, want %v", why, e, want)
+		}
+	}
+
+	// Nothing else happened: the retry is queued.
+	w := newPagedWorld(t, nil, changeCursor, newPagedFeed(t, 3, nil))
+	r := interruptedPagedRun(t, w, "first")
+	must(t, retry(w, r))
+
+	// Another run moved the cursor on since: refused, and the run stays
+	// interrupted.
+	w = newPagedWorld(t, nil, changeCursor, newPagedFeed(t, 3, nil))
+	r = interruptedPagedRun(t, w, "first")
+	must(t, w.s.store.update(func(tx runTx) error {
+		_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "elsewhere", RunID: "run_elsewhere", UpdatedAt: now(), Scope: w.job.Scope}, "", nil)
+		return err
+	}))
+	refusedAs(t, retry(w, r), errPagedRetryMoved, "a retry after the cursor moved on")
+	if again, e := w.s.run(r.ID); e != nil || again.State != "interrupted" {
+		t.Fatalf("the refused retry changed the run: %v %s", e, again.State)
+	}
+
+	// Another occurrence of the job is accepted, to read the same cursor:
+	// refused while it has not settled.
+	w = newPagedWorld(t, nil, changeCursor, newPagedFeed(t, 3, nil))
+	r = interruptedPagedRun(t, w, "first")
+	w.admit(t, w.tr, "second")
+	refusedAs(t, retry(w, r), errPagedRetryBusy, "a retry while another occurrence of the job is accepted")
 }
