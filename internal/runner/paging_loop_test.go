@@ -428,6 +428,102 @@ func TestAnExpiredReferenceIsReadAgainFromTheCursorsFirstValue(t *testing.T) {
 	}
 }
 
+// Section 7: a 410 to a later page's request expired the source's own next
+// reference, not the cursor: the read starts again from the same cursor
+// value, once, in a new session, and is no full re-read. A second fails the
+// occurrence and leaves the cursor.
+func TestAnExpiredNextReferenceIsReadAgainFromTheCursor(t *testing.T) {
+	stale := func(w *pagedWorld) {
+		must(t, w.s.store.update(func(tx runTx) error {
+			_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "stale", RunID: "run_earlier", UpdatedAt: now()}, "")
+			return err
+		}))
+	}
+	once := false
+	w := newPagedWorld(t, nil, changeCursor, newPagedFeed(t, 3, func(c pagedCall) int {
+		if c.cursor == "ref-1" && !once {
+			once = true
+			return 410
+		}
+		return 200
+	}))
+	stale(w)
+	o := w.prepare(t, "first")
+	read := onePagedRead(t, o, 3, "no-next")
+	if read.FullReRead || *read.Cursor != (CursorAdvance{Read: "stale", From: "stale", To: "after-stale"}) {
+		t.Fatalf("the read again: %+v %+v", read, read.Cursor)
+	}
+	calls := w.feed.taken()
+	var asked []string
+	for _, c := range calls {
+		if c.since != "stale" {
+			t.Fatalf("a call not from the cursor: %+v", c)
+		}
+		asked = append(asked, c.cursor+":"+strconv.Itoa(c.status))
+	}
+	if want := []string{":200", "ref-1:410", ":200", "ref-1:200", "ref-2:200"}; !slices.Equal(asked, want) || calls[2].session == calls[0].session || !w.feed.isSealed(calls[0].session) {
+		t.Fatalf("the pages asked: %v, want %v in a new session after the first, sealed", asked, want)
+	}
+
+	always := newPagedWorld(t, nil, changeCursor, newPagedFeed(t, 3, func(c pagedCall) int {
+		if c.cursor == "ref-1" {
+			return 410
+		}
+		return 200
+	}))
+	stale(always)
+	if o := always.prepare(t, "first"); o.State != "failed" {
+		t.Fatalf("a second expired next reference: %s %+v", o.State, o.Paging)
+	}
+	if calls := always.feed.taken(); len(calls) != 4 {
+		t.Fatalf("the read was started again more than once: %+v", calls)
+	}
+	if value, _ := always.cursor(t); value != "stale" {
+		t.Fatal("a failed read moved the cursor:", value)
+	}
+}
+
+// Section 4.4: held pages never outlive their occurrence's wait. A throttled
+// first page holds nothing, its session sealed; an occurrence that expires
+// while it holds pages drops them and seals their session.
+func TestHeldPagesAreSealedWhenTheirOccurrenceEnds(t *testing.T) {
+	policy := &RetryPolicy{MaxAttempts: 3, BackoffSeconds: 1, MaxBackoffSeconds: 1}
+	first := newPagedWorld(t, policy, changeCursor, newPagedFeed(t, 3, func(c pagedCall) int {
+		if c.cursor == "" {
+			return 429
+		}
+		return 200
+	}))
+	o := first.prepare(t, "first")
+	if o.State != "accepted" || o.HeldPages != nil || len(o.Attempts) != 1 || o.Attempts[0].Outcome != "transient" {
+		t.Fatalf("a throttled first page: %s %+v %+v", o.State, o.HeldPages, o.Attempts)
+	}
+	if calls := first.feed.taken(); len(calls) != 1 || !first.feed.isSealed(calls[0].session) {
+		t.Fatalf("a throttled first page's session: %+v", calls)
+	}
+
+	once := false
+	w := newPagedWorld(t, policy, changeCursor, newPagedFeed(t, 3, func(c pagedCall) int {
+		if c.cursor == "ref-1" && !once {
+			once = true
+			return 429
+		}
+		return 200
+	}))
+	o = w.prepare(t, "first")
+	if o.HeldPages == nil {
+		t.Fatalf("no pages held: %s %+v", o.State, o.Attempts)
+	}
+	session := o.HeldPages.Session
+	*w.clock = w.clock.Add(72 * time.Hour)
+	if o = w.step(t, o.ID); o.State != "expired" || o.HeldPages != nil {
+		t.Fatalf("an occurrence that expired holding pages: %s %+v", o.State, o.HeldPages)
+	}
+	if !w.feed.isSealed(session) {
+		t.Fatal("the held pages' session was left open")
+	}
+}
+
 // Section 4.2, a window: the occurrence asks from the cursor to the instant
 // it is prepared, and the run that completes moves the cursor to that
 // instant. A read the bound ended, which left pages unread, moves no cursor.

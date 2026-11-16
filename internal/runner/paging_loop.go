@@ -328,6 +328,8 @@ type occurrencePaging struct {
 	held     *HeldPages
 	advances map[string]*CursorAdvance
 	reread   map[string]bool
+	inner    map[string]bool
+	restarts map[string]bool
 	reads    map[string]*pagedAcquired
 }
 
@@ -388,12 +390,21 @@ func (s *Service) acquirePages(ctx context.Context, next PlannedSource, p *occur
 			}
 			raw, err := automaticCall(ctx, gateway+"/acquire", encode(map[string]any{"session": session, "source": next.Source, "arguments": json.RawMessage(args)}), 1<<20)
 			if err != nil {
-				if _, throttled := transient(err); throttled && p.hold {
+				if _, throttled := transient(err); throttled && p.hold && len(pages) > 0 {
 					// Not served: the pages that were are held, in the
 					// session left open, with the instant the windows
-					// were asked to.
+					// were asked to. A throttled first page holds
+					// nothing: the next attempt asks it afresh.
 					p.held = &HeldPages{Source: next.Name, Profile: next.Profile, Session: session, First: next.Arguments, At: p.at.UTC().Format(windowForm), Pages: pages}
 					return SourceValue{}, err
+				}
+				if i > 0 && expiredReference(err) {
+					// The reference that expired is the source's own
+					// next reference, not the cursor (restart).
+					if p.inner == nil {
+						p.inner = map[string]bool{}
+					}
+					p.inner[next.Name] = true
 				}
 				seal()
 				return SourceValue{}, err
@@ -506,15 +517,25 @@ func (s *Service) sealHeld(ctx context.Context, h *HeldPages) {
 	}
 }
 
-// restart starts a paged source's read again from its cursor's first value
-// after the gateway said the reference it was asked with had expired
-// (docs/design/paging.md, section 4.6): the case's cursor parameter is
-// filled with the first value, and the source is planned again from it.
-// Only a change cursor's read that did not start from the first value is
-// started again, once: any other expired reference fails the occurrence and
-// leaves the cursor.
+// restart starts a paged source's read again after the gateway said a
+// reference it was asked with had expired (docs/design/paging.md, sections
+// 4.6 and 7), once per source, in a new session. A later page's reference
+// is the source's own next reference: the read starts again from the same
+// cursor value, which is no full re-read. Page 0's is the cursor's: the
+// case's cursor parameter is filled with the first value, and the source is
+// planned again from it, only for a change cursor's read that did not start
+// from the first value. Any other expired reference fails the occurrence
+// and leaves the cursor.
 func (p *occurrencePaging) restart(input *Input, source string) bool {
-	if p == nil || input.Source == nil || input.Source.Mapping.Case == nil {
+	if p == nil || input.Source == nil || p.restarts[source] {
+		return false
+	}
+	if p.inner[source] {
+		delete(p.inner, source)
+		p.restarted(source)
+		return true
+	}
+	if input.Source.Mapping.Case == nil {
 		return false
 	}
 	advance := p.advances[source]
@@ -534,9 +555,19 @@ func (p *occurrencePaging) restart(input *Input, source string) bool {
 			p.reread = map[string]bool{}
 		}
 		p.reread[source] = true
+		p.restarted(source)
 		return true
 	}
 	return false
+}
+
+// restarted records that a source's read was started again, which it is
+// once.
+func (p *occurrencePaging) restarted(source string) {
+	if p.restarts == nil {
+		p.restarts = map[string]bool{}
+	}
+	p.restarts[source] = true
 }
 
 // result is what the occurrence carries into its run for each paged source

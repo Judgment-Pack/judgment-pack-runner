@@ -238,13 +238,22 @@ names a next reference fails its occurrence and leaves the cursor.
   attempt fails as before and the session is sealed. The next attempt asks its
   windows to `at` again, not to its own instant, so that its first page's
   request is the one held and the throttled page is asked in the held session.
+  A throttled first page holds nothing: its session is sealed and the next
+  attempt asks it afresh. Held pages never outlive the wait: an occurrence that
+  expires or fails before its next attempt drops them and seals their session;
+  one a restart finds interrupted drops them without sealing, in the store's
+  transaction.
 - **An expired reference** (4.6) is the gateway's `410`
-  `source_reference_expired`. A change cursor's read from a value other than its
-  `first` is started again from `first`, once, in a new session; the
-  occurrence's and run's paged read say `fullReRead`, and the occurrence's
-  `occurrence.ready` entry names the source in `fullReRead` (entry version
-  `"6"`). A `410` to a read from `first`, or to a window's read, fails the
-  occurrence and leaves the cursor.
+  `source_reference_expired`. A `410` to a later page's request expired the
+  source's own next reference, not the cursor: the read starts again from the
+  same cursor value, in a new session, which is no full re-read and is not
+  recorded as one. A `410` to the first page's request expired the cursor: a
+  change cursor's read from a value other than its `first` is started again
+  from `first`, in a new session; the occurrence's and run's paged read say
+  `fullReRead`, and the occurrence's `occurrence.ready` entry names the source
+  in `fullReRead` (entry version `"6"`). A source's read is started again once:
+  a second `410`, a `410` to a first page read from `first`, or one to a
+  window's first page, fails the occurrence and leaves the cursor.
 - **Storage**: PostgreSQL `0007_paging_cursors.sql`; the sqlite kind makes its
   table in the transaction that raises its schema to `8` with the first job
   that keeps a cursor, so a store with none keeps the earlier schema.

@@ -330,12 +330,20 @@ func (s *Service) prepareLegacyOccurrence(ctx context.Context, occurrenceID stri
 		return e
 	}
 	if !s.instant().Before(expiry) {
+		// Pages held for an attempt that will not come are dropped
+		// from the record, and their session sealed once the lock is
+		// given up.
+		held := o.HeldPages
 		o.State = "expired"
 		o.Reason = "queue-expired"
 		o.PendingInput = nil
 		o.NextAttemptAt = ""
+		o.HeldPages = nil
 		e = s.settleOccurrence(o)
 		s.automationMu.Unlock()
+		if e == nil {
+			s.sealHeld(ctx, held)
+		}
 		return e
 	}
 	// An occurrence waiting for its next attempt is not attempted before
