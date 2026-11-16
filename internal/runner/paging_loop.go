@@ -103,13 +103,29 @@ type PagedRead struct {
 // then filling the case), the value it filled into the case (From), the
 // value the pages say comes next (To, absent when they say none), and, when
 // the read ended at the bound and left pages unread, why the cursor is held
-// where it was (Held, "bound"). The run that completes writes To while the
-// store still holds Read.
+// where it was (Held, "bound"). A window cursor's read also names the
+// unfinished window the store held, which it continued (Continued), and the
+// unfinished window it leaves for the next run when the bound ended it with
+// a position kept (Unfinished, docs/design/paging.md, section 7). The run
+// that completes writes To, or Unfinished, while the store still holds Read
+// and Continued.
 type CursorAdvance struct {
-	Read string `json:"read,omitempty"`
-	From string `json:"from"`
-	To   string `json:"to,omitempty"`
-	Held string `json:"held,omitempty"`
+	Read       string            `json:"read,omitempty"`
+	From       string            `json:"from"`
+	To         string            `json:"to,omitempty"`
+	Held       string            `json:"held,omitempty"`
+	Continued  *UnfinishedWindow `json:"continued,omitempty"`
+	Unfinished *UnfinishedWindow `json:"unfinished,omitempty"`
+}
+
+// UnfinishedWindow is a window a read the bound ended left unfinished: the
+// window's end, which the next run asks again, and the position inside it,
+// the next reference the last page read named, which the next run's first
+// request is formed from (through the case, RFC 0033 section 9). The cursor's
+// value stays the window's start until the window is finished.
+type UnfinishedWindow struct {
+	End      string `json:"end"`
+	Position string `json:"position"`
 }
 
 // JobPaging is a job's paging member: a cursor rule for each paged source
@@ -123,26 +139,34 @@ type JobPaging struct {
 // fills, a string for a change reference and a timestamp for a window's
 // start; for a window the case parameter its end fills, with the instant
 // the occurrence is prepared; for a change query where in the last page the
-// next run's reference is read; and the cursor's first value.
+// next run's reference is read; and the cursor's first value. A window may
+// name a position: the case parameter, of type string, that its source's
+// request carries at the member its next reference fills, and the value it
+// is filled with when a window starts (PositionFirst). A window the bound
+// ends is then left unfinished, at a position the next run continues from.
 type CursorRule struct {
-	Source    string `json:"source"`
-	Kind      string `json:"kind"`
-	Parameter string `json:"parameter"`
-	End       string `json:"end,omitempty"`
-	Reference string `json:"reference,omitempty"`
-	First     string `json:"first"`
+	Source        string  `json:"source"`
+	Kind          string  `json:"kind"`
+	Parameter     string  `json:"parameter"`
+	End           string  `json:"end,omitempty"`
+	Reference     string  `json:"reference,omitempty"`
+	First         string  `json:"first"`
+	Position      string  `json:"position,omitempty"`
+	PositionFirst *string `json:"positionFirst,omitempty"`
 }
 
 // PagingCursor is a job's cursor row for one paged source: its value, the
-// run that advanced it and when, and the job's scope identifier, to which
-// the row is held as the job is.
+// run that advanced it and when, the job's scope identifier, to which the
+// row is held as the job is, and, for a window the bound left unfinished,
+// the window's end and the position the next run continues from.
 type PagingCursor struct {
-	JobID     string `json:"jobId"`
-	Source    string `json:"source"`
-	Value     string `json:"value"`
-	RunID     string `json:"runId"`
-	UpdatedAt string `json:"updatedAt"`
-	Scope     string `json:"scope,omitempty"`
+	JobID      string            `json:"jobId"`
+	Source     string            `json:"source"`
+	Value      string            `json:"value"`
+	RunID      string            `json:"runId"`
+	UpdatedAt  string            `json:"updatedAt"`
+	Scope      string            `json:"scope,omitempty"`
+	Unfinished *UnfinishedWindow `json:"unfinished,omitempty"`
 }
 
 var timestampForm = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$`)
@@ -217,10 +241,16 @@ func validateCursorRules(paging *JobPaging, r Release) error {
 		if rule.First == "" || len(rule.First) > maxReferenceBytes {
 			return invalid("the cursor's first value for %s is 1 to %d bytes", rule.Source, maxReferenceBytes)
 		}
+		if (rule.Position == "") != (rule.PositionFirst == nil) {
+			return invalid("a window's position and positionFirst are named together")
+		}
 		switch rule.Kind {
 		case "change":
 			if rule.End != "" {
 				return invalid("a change cursor names no end")
+			}
+			if rule.Position != "" {
+				return invalid("a change cursor names no position: a read the bound ends holds it")
 			}
 			if tokens, err := pointerTokens(rule.Reference, false); err != nil || len(tokens) == 0 {
 				return invalid("a change cursor's reference is a pointer into the last page, other than the root")
@@ -244,9 +274,44 @@ func validateCursorRules(paging *JobPaging, r Release) error {
 			if err := param(rule.End, "timestamp"); err != nil {
 				return err
 			}
+			if rule.Position != "" {
+				if err := windowPosition(rule, source, param); err != nil {
+					return err
+				}
+			}
 		default:
 			return invalid("a cursor's kind is change or window")
 		}
+	}
+	return nil
+}
+
+// windowPosition holds a window's position to its source (docs/design/paging.md,
+// section 7): a case parameter of type string, other than the window's start
+// and end, that the request carries exactly at the member the next reference
+// fills, so that a next run's first request, formed from the case, is the
+// request of the page the bound left unread; and a positionFirst of at most
+// maxReferenceBytes bytes.
+func windowPosition(rule CursorRule, source *MappingSource, param func(name, typ string) error) error {
+	if rule.Position == rule.Parameter || rule.Position == rule.End {
+		return bad("invalid_paging_rule", "A job's paging: a window's position is a case parameter other than its start and end.")
+	}
+	if len(*rule.PositionFirst) > maxReferenceBytes {
+		return bad("invalid_paging_rule", fmt.Sprintf("A job's paging: a window's positionFirst is at most %d bytes.", maxReferenceBytes))
+	}
+	if err := param(rule.Position, "string"); err != nil {
+		return err
+	}
+	paged, err := pagingOf(format41, *source)
+	request, e := readInputJSON(source.Arguments)
+	if err != nil || paged == nil || e != nil {
+		return bad("paging_source_unknown", "A job's paging names "+rule.Source+", whose paging cannot be read.")
+	}
+	fills, _ := pointerTokens(paged.Fills, false)
+	held, _ := pointerRead(request, fills)
+	form, ok := held.(map[string]any)
+	if name, isText := form["$param"].(string); !ok || len(form) != 1 || !isText || name != rule.Position {
+		return bad("paging_parameter_unknown", "A job's paging names the position "+rule.Position+", which the request of "+rule.Source+" does not carry ($param) at "+paged.Fills+", the member its next reference fills.")
 	}
 	return nil
 }
@@ -284,12 +349,29 @@ func cursorSeed(input *Input, rules []CursorRule, cursors map[string]PagingCurso
 	advances := map[string]*CursorAdvance{}
 	for _, rule := range rules {
 		a := &CursorAdvance{From: rule.First}
-		if c, ok := cursors[rule.Source]; ok {
+		c, ok := cursors[rule.Source]
+		if ok {
 			a.Read, a.From = c.Value, c.Value
 		}
 		writeTarget(object, m.Case.Parameters[rule.Parameter].Pointer, a.From)
 		if rule.Kind == "window" {
 			a.To = at.UTC().Format(windowForm)
+			// A window the bound left unfinished is asked again to its own
+			// end, from the position kept, which fills the case as the
+			// cursor does (RFC 0033 section 9): the case retained in the
+			// run says where its first page began. A rule that names no
+			// position reads the same window from its first page.
+			position := ""
+			if rule.PositionFirst != nil {
+				position = *rule.PositionFirst
+			}
+			if ok && c.Unfinished != nil {
+				held := *c.Unfinished
+				a.Continued, a.To, position = &held, held.End, held.Position
+			}
+			if rule.Position != "" {
+				writeTarget(object, m.Case.Parameters[rule.Position].Pointer, position)
+			}
 			// A window is never asked inverted: a cursor after the
 			// instant (a first value in the future, or a clock behind
 			// the Runner that moved the cursor) fails the occurrence
@@ -584,6 +666,23 @@ func (p *occurrencePaging) restart(input *Input, source string) bool {
 	}
 	advance := p.advances[source]
 	for _, rule := range p.rules {
+		if rule.Source == source && rule.Kind == "window" && rule.Position != "" && advance != nil && advance.Continued != nil {
+			// The position a window was continued from expired: the same
+			// window is read again from its first page, its end kept.
+			value, err := readInputJSON(input.Source.Case)
+			object, ok := value.(map[string]any)
+			if err != nil || !ok {
+				return false
+			}
+			writeTarget(object, input.Source.Mapping.Case.Parameters[rule.Position].Pointer, *rule.PositionFirst)
+			input.Source.Case = encode(object)
+			if p.reread == nil {
+				p.reread = map[string]bool{}
+			}
+			p.reread[source] = true
+			p.restarted(source)
+			return true
+		}
 		if rule.Source != source || rule.Kind != "change" || advance == nil || advance.From == rule.First {
 			continue
 		}
@@ -640,9 +739,17 @@ func (p *occurrencePaging) result() []PagedRead {
 				c.To, _ = changeReference(rule, a.last)
 			}
 			if a.end != "no-next" {
-				// The bound left pages unread: the cursor is held
-				// where it was, and the read says so.
-				c.To, c.Held = "", "bound"
+				// The bound left pages unread. A window whose rule names a
+				// position is left unfinished at the next reference the
+				// last page named, its end kept, for the next run to
+				// continue; any other cursor is held where it was, and the
+				// read says so.
+				if rule.Kind == "window" && rule.Position != "" && a.next != "" && windowAfter(c.From, c.To, false) {
+					c.Unfinished = &UnfinishedWindow{End: c.To, Position: a.next}
+					c.To = ""
+				} else {
+					c.To, c.Held = "", "bound"
+				}
 			}
 			// A window advances only when its end is strictly after
 			// its start: an empty window moves nothing, and an inverted
@@ -668,11 +775,17 @@ func advanceCursors(tx runTx, r Run) error {
 		return nil
 	}
 	for _, read := range r.Trigger.Paging {
-		if read.Cursor == nil || read.Cursor.To == "" {
+		a := read.Cursor
+		if a == nil || a.To == "" && a.Unfinished == nil {
 			continue
 		}
-		c := PagingCursor{JobID: r.JobID, Source: read.Source, Value: read.Cursor.To, RunID: r.ID, UpdatedAt: now(), Scope: r.Scope}
-		if _, err := tx.advancePagingCursor(c, read.Cursor.Read); err != nil {
+		// A window left unfinished keeps its start as the cursor's value,
+		// beside its end and the position kept.
+		c := PagingCursor{JobID: r.JobID, Source: read.Source, Value: a.To, RunID: r.ID, UpdatedAt: now(), Scope: r.Scope, Unfinished: a.Unfinished}
+		if a.Unfinished != nil {
+			c.Value = a.From
+		}
+		if _, err := tx.advancePagingCursor(c, a.Read, a.Continued); err != nil {
 			return err
 		}
 	}
@@ -713,7 +826,7 @@ func jobPaging(raw []byte, rules *JobPaging) (*JobPaging, error) {
 		return nil, errPagingRule
 	}
 	for _, rule := range sources {
-		if !exactNames(rule, "source", "kind", "parameter", "end", "reference", "first") {
+		if !exactNames(rule, "source", "kind", "parameter", "end", "reference", "first", "position", "positionFirst") {
 			return nil, errPagingRule
 		}
 	}

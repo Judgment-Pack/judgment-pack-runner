@@ -8654,6 +8654,15 @@
             "minLength": 1,
             "maxLength": 8192,
             "description": "The cursor's first value, 1 to 8192 bytes of UTF-8 (maxLength bounds characters; Runner measures bytes, invalid_paging_rule over 8192), filled when no run has moved the cursor, and after an expired reference; a window's is a timestamp."
+          },
+          "position": {
+            "type": "string",
+            "description": "A window's position (docs/design/paging.md, section 7): a case parameter of type string, other than parameter and end, that the paged source's request carries exactly at the member its next reference fills ({\"$param\": position} at fills), paging_parameter_unknown otherwise. A window read the dialect's maxPages ends is then left unfinished at the next reference its last page named, and the next run continues it from there, the position filling the case. Named with positionFirst, invalid_paging_rule otherwise; a change cursor names none."
+          },
+          "positionFirst": {
+            "type": "string",
+            "maxLength": 8192,
+            "description": "The value the position is filled with when a window starts, 0 to 8192 bytes of UTF-8, and when a kept position expired (a 410 source_reference_expired to the first page of a continued window)."
           }
         },
         "required": [
@@ -8684,7 +8693,7 @@
       },
       "CursorAdvance": {
         "type": "object",
-        "description": "A paged read's cursor: the value read from the store (absent when no run had moved it), the value filled into the case, the value the pages say comes next (absent when the read ended at the bound, or for an empty window), and, for a read the bound ended, held. The run that completes writes to while the store still holds read. A change read that ends at no-next without a reference at the rule's reference fails its occurrence (read-failed) and leaves the cursor.",
+        "description": "A paged read's cursor: the value read from the store (absent when no run had moved it), the value filled into the case, the value the pages say comes next (absent when the read ended at the bound, or for an empty window), and, for a read the bound ended, either held or, for a window whose rule names a position, unfinished. The run that completes writes to, or unfinished, while the store still holds read and continued. A change read that ends at no-next without a reference at the rule's reference fails its occurrence (read-failed) and leaves the cursor.",
         "properties": {
           "read": {
             "type": "string"
@@ -8700,11 +8709,37 @@
             "enum": [
               "bound"
             ],
-            "description": "Why the cursor is held where it was: bound, the read ended at the dialect's maxPages and left pages unread, so the next run reads from the same cursor. The occurrence.ready entry names the source in cursorHeld."
+            "description": "Why the cursor is held where it was: bound, the read ended at the dialect's maxPages and left pages unread, and no position could be kept (a change cursor, a window whose rule names no position, or an empty window), so the next run reads from the same cursor. The occurrence.ready entry names the source in cursorHeld."
+          },
+          "continued": {
+            "$ref": "#/components/schemas/UnfinishedWindow",
+            "description": "The unfinished window the store held, which this read continued: asked to its end, from its position."
+          },
+          "unfinished": {
+            "$ref": "#/components/schemas/UnfinishedWindow",
+            "description": "The window this read leaves unfinished for the next run, the bound having ended it: the cursor's value stays the window's start, and the next run asks the window to this end from this position."
           }
         },
         "required": [
           "from"
+        ],
+        "additionalProperties": false
+      },
+      "UnfinishedWindow": {
+        "type": "object",
+        "description": "A window a read the bound ended left unfinished (docs/design/paging.md, section 7): its end, which the next run asks again, and the position inside it, the next reference the last page read named, which fills the case parameter the job's rule names as position, so that the next run's first request is the page left unread.",
+        "properties": {
+          "end": {
+            "type": "string"
+          },
+          "position": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "end",
+          "position"
         ],
         "additionalProperties": false
       },

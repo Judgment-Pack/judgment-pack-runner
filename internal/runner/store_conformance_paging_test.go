@@ -83,5 +83,35 @@ var pagingStoreCases = []storeCase{
 		if err != nil || len(other) != 0 {
 			t.Fatal("another job holds the cursor:", other, err)
 		}
+		// A window the bound left unfinished keeps its value and names its
+		// end and position; a run that continued an older position of the
+		// same window, whose value is the same, completes late and moves
+		// nothing; the run that reads the window's last page finishes it.
+		windowed := func(id string, continued, unfinished *UnfinishedWindow, to string) Run {
+			r := claimed(id, "b2", to)
+			r.Trigger.Paging[0].Cursor.Continued, r.Trigger.Paging[0].Cursor.Unfinished = continued, unfinished
+			return r
+		}
+		at := func(position string) *UnfinishedWindow { return &UnfinishedWindow{End: "e1", Position: position} }
+		opened := windowed("run_opened", nil, at("p1"), "")
+		must(t, finishRunIn(w.st, completed(opened)))
+		held, err := w.st.pagingCursors(w.job.ID)
+		must(t, err)
+		if row := held["feed"]; row.Value != "b2" || row.RunID != opened.ID || row.Unfinished == nil || *row.Unfinished != *at("p1") {
+			t.Fatalf("the unfinished window's row: %+v", row)
+		}
+		continued := windowed("run_continued", at("p1"), at("p2"), "")
+		must(t, finishRunIn(w.st, completed(continued)))
+		for _, late := range []Run{windowed("run_window_late", at("p1"), at("p9"), ""), windowed("run_window_none", nil, nil, "e9")} {
+			must(t, finishRunIn(w.st, completed(late)))
+			if held, _ := w.st.pagingCursors(w.job.ID); held["feed"].RunID != continued.ID {
+				t.Fatalf("%s moved the unfinished window: %+v", late.ID, held["feed"])
+			}
+		}
+		finished := windowed("run_finished", at("p2"), nil, "e1")
+		must(t, finishRunIn(w.st, completed(finished)))
+		if held, _ := w.st.pagingCursors(w.job.ID); held["feed"].Value != "e1" || held["feed"].Unfinished != nil || held["feed"].RunID != finished.ID {
+			t.Fatalf("the finished window's row: %+v", held["feed"])
+		}
 	}},
 }

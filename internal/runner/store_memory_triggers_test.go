@@ -625,7 +625,7 @@ func (m *memoryStore) pagingCursors(job string) (map[string]PagingCursor, error)
 	return m.reads().pagingCursors(job)
 }
 
-func (t *memoryTx) advancePagingCursor(c PagingCursor, read string) (bool, error) {
+func (t *memoryTx) advancePagingCursor(c PagingCursor, read string, open *UnfinishedWindow) (bool, error) {
 	if !t.scope.every && c.Scope != t.scope.id {
 		return false, storeFailure(faultRefused, "cursor", errOtherScope)
 	}
@@ -635,8 +635,12 @@ func (t *memoryTx) advancePagingCursor(c PagingCursor, read string) (bool, error
 		return false, nil
 	}
 	if read != "" {
-		value, _, err := memberText(held, "value")
-		if !ok || err != nil || value != read {
+		var row PagingCursor
+		end, position := unfinishedHeld(open)
+		if !ok || json.Unmarshal(held, &row) != nil || row.Value != read {
+			return false, nil
+		}
+		if rowEnd, rowPosition := unfinishedHeld(row.Unfinished); rowEnd != end || rowPosition != position {
 			return false, nil
 		}
 	}

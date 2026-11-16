@@ -698,9 +698,10 @@ type runTx interface {
 	raiseSchema(schema string) error
 	// advancePagingCursor writes c, a job's cursor for one paged source, in
 	// the transaction that records the run completed (paging_loop.go): only
-	// while the row still holds read, or, read being "", while there is
-	// none. It says whether it wrote; a row that moved on is left as it is.
-	advancePagingCursor(c PagingCursor, read string) (bool, error)
+	// while the row still holds read and the unfinished window open, none
+	// when it is nil, or, read being "", while there is no row. It says
+	// whether it wrote; a row that moved on is left as it is.
+	advancePagingCursor(c PagingCursor, read string, open *UnfinishedWindow) (bool, error)
 }
 
 // storeOpening is what the Runner gives a kind's constructor.

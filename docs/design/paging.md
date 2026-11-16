@@ -212,11 +212,35 @@ names a next reference fails its occurrence and leaves the cursor.
   `from` (the value filled into the case: the row's, or `first`) and `to`. It
   is written only while the row holds `read`, so a run that read no row writes
   one only when none was written since. A read the bound ended, which left pages
-  unread, carries no `to` and moves nothing; a window wider than the bound's
-  pages never moves until its end is reached in one run. Such a cursor is held
+  unread, carries no `to`. A cursor that cannot keep a position there is held
   in the open: the advance names `held: "bound"`, in the occurrence's and the
   run's paged read, and the occurrence's `occurrence.ready` entry names the
-  source in `cursorHeld` (entry version `"6"`).
+  source in `cursorHeld` (entry version `"6"`). That is every change cursor,
+  a window whose rule names no `position`, and an empty window (its end not
+  after its start).
+- **A window wider than the bound** (#300). A window's rule may name
+  `position`, a case parameter of type `string` that the source's request
+  carries exactly at the member its next reference fills (`{"$param": …}` at
+  `fills`; `paging_parameter_unknown` otherwise), and `positionFirst`, the
+  value, 0 to 8192 bytes, it is filled with when a window starts (the two are
+  named together, `invalid_paging_rule` otherwise). A window read the bound
+  ends is then left **unfinished**: the advance names `unfinished: {end,
+  position}`, the window's end and the next reference the last page named,
+  and the run that completes writes the row with its value unchanged (the
+  window's start) and that marker beside it. The next occurrence reads the
+  row and asks the same window to its kept end, its case filled with the
+  position, so that its first request is the page left unread and the case
+  retained in the run says so (RFC 0033, section 9: where the first page
+  began is the case's say, as for the cursor); its advance names the window
+  it continued in `continued`. The read that reaches a page naming no next
+  reference finishes the window: the row's value moves to the window's end
+  and the marker is cleared. Every write is held to the row's value and to
+  its unfinished window, so a late run that continued an older position of
+  the same window, whose value is the same, never moves the row back. A
+  `410` to the first page of a continued window says the position expired:
+  the same window is read again from its first page (`positionFirst`), once,
+  as a `fullReRead`. A rule that names no position, on a row an earlier rule
+  left unfinished, reads the same window from its first page.
 - **A change read without a reference.** A change cursor's read that ends at
   `no-next` reads the next run's reference at `reference` in the last page: a
   string of 1 to 8192 bytes. A last page that names none there (absent, `null`,

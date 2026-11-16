@@ -171,6 +171,13 @@ type pagedWorld struct {
 
 func newPagedWorld(t *testing.T, policy *RetryPolicy, paging *JobPaging, feed *pagedFeed) *pagedWorld {
 	t.Helper()
+	return newPagedWorldOf(t, pagedFeedDialect(feed.p), `{"since":"seed","from":"2026-01-01T00:00:00Z","until":"2026-01-01T00:00:00Z","label":"feed"}`, policy, paging, feed)
+}
+
+// newPagedWorldOf is newPagedWorld on the dialect given, whose occurrences
+// are prepared from the case given.
+func newPagedWorldOf(t *testing.T, dialect, caseJSON string, policy *RetryPolicy, paging *JobPaging, feed *pagedFeed) *pagedWorld {
+	t.Helper()
 	cfg := journalConfig(t)
 	cfg.disableAutomation = true
 	cfg.InputRoot = t.TempDir()
@@ -181,7 +188,7 @@ func newPagedWorld(t *testing.T, policy *RetryPolicy, paging *JobPaging, feed *p
 	s.clock = func() time.Time { return clock }
 	r := journalRelease(t, s, unversionedRuntime(t, s.cfg.Dir))
 	var m InputMapping
-	must(t, strictJSON([]byte(pagedFeedDialect(feed.p)), &m))
+	must(t, strictJSON([]byte(dialect), &m))
 	cfg.InputProfiles = []InputProfile{feed.p}
 	cfg.GatewayConnections = []GatewayConnection{{Profile: feed.p.ID, URL: feed.url}}
 	s.cfg = cfg
@@ -193,7 +200,7 @@ func newPagedWorld(t *testing.T, policy *RetryPolicy, paging *JobPaging, feed *p
 	j, e := s.createJobPaged(requester{}, "Paging", r.ID, "", nil, policy, paging)
 	must(t, e)
 	c := constantTrigger(time.Now())
-	c.Input = &AutomaticInput{Kind: "mapped-sources", Case: json.RawMessage(`{"since":"seed","from":"2026-01-01T00:00:00Z","until":"2026-01-01T00:00:00Z","label":"feed"}`)}
+	c.Input = &AutomaticInput{Kind: "mapped-sources", Case: json.RawMessage(caseJSON)}
 	tr, e := s.configureTrigger(j.ID, "", 0, c)
 	must(t, e)
 	return &pagedWorld{s: s, feed: feed, job: j, tr: tr, clock: &clock, input: c.Input}
@@ -432,6 +439,116 @@ func TestEachPageIsWrittenToTheOccurrenceAsItArrives(t *testing.T) {
 	}
 }
 
+// positionedWindow is the feed's dialect read two pages at a time, its
+// request carrying a case parameter, position, at the member its next
+// reference fills, and a window cursor that keeps a position there.
+func positionedWindow(p InputProfile) (string, *JobPaging) {
+	dialect := strings.Replace(strings.Replace(pagedFeedDialect(p), `"maxPages":8`, `"maxPages":2`, 1),
+		`"until":{"$param":"until"}}`, `"until":{"$param":"until"},"cursor":{"$param":"position"}}`, 1)
+	dialect = strings.Replace(dialect, `"label":{"pointer":"/label","type":"string"}`, `"label":{"pointer":"/label","type":"string"},"position":{"pointer":"/position","type":"string"}`, 1)
+	empty := ""
+	return dialect, &JobPaging{Sources: []CursorRule{{Source: "changes", Kind: "window", Parameter: "from", End: "until", First: "2026-01-01T00:00:00Z", Position: "position", PositionFirst: &empty}}}
+}
+
+// Section 7: a window wider than maxPages is read over several runs. A read
+// the bound ends leaves the window unfinished at the next reference its
+// last page named, its end kept; the next run's case is filled with that
+// position, so its first request is the page left unread, and the window
+// finishes, and its cursor moves to its end, in the run that reads its last
+// page.
+func TestAWindowWiderThanTheBoundFinishesOverSeveralRuns(t *testing.T) {
+	feed := newPagedFeed(t, 6, nil)
+	dialect, rule := positionedWindow(feed.p)
+	w := newPagedWorldOf(t, dialect, `{"since":"seed","from":"2026-01-01T00:00:00Z","until":"2026-01-01T00:00:00Z","label":"feed","position":"seed"}`, nil, rule, feed)
+	end := w.clock.UTC().Format(windowForm)
+	for n, want := range []struct{ position, next, end string }{{"", "ref-2", "bound"}, {"ref-2", "ref-4", "bound"}, {"ref-4", "", "no-next"}} {
+		o := w.prepare(t, "run-"+strconv.Itoa(n))
+		read := onePagedRead(t, o, 2, want.end)
+		calls := w.feed.taken()
+		if len(calls) != 2 || calls[0].cursor != want.position || calls[0].from != "2026-01-01T00:00:00Z" || calls[0].until != end {
+			t.Fatalf("run %d's first request: %+v, want the position %q in the window to %s", n, calls, want.position, end)
+		}
+		var asked struct{ Position string }
+		must(t, json.Unmarshal(o.Input.Source.Case, &asked))
+		if asked.Position != want.position {
+			t.Fatalf("run %d's case holds the position %q, want %q", n, asked.Position, want.position)
+		}
+		if c := read.Cursor; c == nil || c.Held != "" || (want.next == "") != (c.Unfinished == nil) || want.next != "" && *c.Unfinished != (UnfinishedWindow{End: end, Position: want.next}) || (n > 0) != (c.Continued != nil) {
+			t.Fatalf("run %d's cursor: %+v", n, read.Cursor)
+		}
+		r := w.run(t, o)
+		if r.State != "completed" {
+			t.Fatalf("run %d: %s %s", n, r.State, r.Problem)
+		}
+		held, e := w.s.store.pagingCursors(w.job.ID)
+		must(t, e)
+		row := held["changes"]
+		if row.RunID != r.ID || want.next != "" && (row.Value != "2026-01-01T00:00:00Z" || row.Unfinished == nil || row.Unfinished.Position != want.next) || want.next == "" && (row.Value != end || row.Unfinished != nil) {
+			t.Fatalf("the cursor after run %d: %+v", n, row)
+		}
+		if n == 1 {
+			// The records are as openapi.json says, the continued and the
+			// unfinished window in them.
+			doc := readOpenAPI(t)
+			submitted, e := w.s.occurrence(o.ID)
+			must(t, e)
+			if problems := doc.check("occurrence", doc.schema("Occurrence"), decodeNumbers(t, encode(submitted))); len(problems) > 0 || len(submitted.Paging) != 1 {
+				t.Fatal("the occurrence is not as openapi.json says:", problems)
+			}
+			if problems := doc.check("trigger", doc.schema("TriggerOrigin"), decodeNumbers(t, encode(r.Trigger))); len(problems) > 0 {
+				t.Fatal("the run's origin is not as openapi.json says:", problems)
+			}
+			// A late run that continued an older position, whose value is
+			// the same start, never moves the row back.
+			must(t, w.s.store.update(func(tx runTx) error {
+				wrote, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "2026-01-01T00:00:00Z", RunID: "run_late", UpdatedAt: now(), Unfinished: &UnfinishedWindow{End: end, Position: "ref-4"}}, "2026-01-01T00:00:00Z", &UnfinishedWindow{End: end, Position: "ref-2"})
+				if wrote {
+					t.Error("a late run moved the cursor back")
+				}
+				return err
+			}))
+		}
+		*w.clock = w.clock.Add(time.Minute)
+	}
+	// The next window starts at the last one's end, from positionFirst.
+	o := w.prepare(t, "next-window")
+	onePagedRead(t, o, 2, "bound")
+	if calls := w.feed.taken(); calls[0].from != end || calls[0].cursor != "" || calls[0].until != w.clock.UTC().Format(windowForm) {
+		t.Fatalf("the next window: %+v", calls)
+	}
+
+}
+
+// Section 7: a 410 to the first page of a window continued from a kept
+// position says the position expired: the same window is read again from
+// its first page, to its kept end, once, and the read says fullReRead.
+func TestAnExpiredPositionReadsItsWindowAgain(t *testing.T) {
+	feed := newPagedFeed(t, 6, func(c pagedCall) int {
+		if c.cursor == "ref-3" {
+			return 410
+		}
+		return 200
+	})
+	dialect, rule := positionedWindow(feed.p)
+	w := newPagedWorldOf(t, dialect, `{"since":"seed","from":"2026-01-01T00:00:00Z","until":"2026-01-01T00:00:00Z","label":"feed","position":"seed"}`, nil, rule, feed)
+	kept := &UnfinishedWindow{End: "2026-01-02T00:00:00Z", Position: "ref-3"}
+	must(t, w.s.store.update(func(tx runTx) error {
+		_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "2026-01-01T00:00:00Z", RunID: "run_earlier", UpdatedAt: now(), Unfinished: kept}, "", nil)
+		return err
+	}))
+	read := onePagedRead(t, w.prepare(t, "first"), 2, "bound")
+	if c := read.Cursor; !read.FullReRead || c == nil || c.Continued == nil || *c.Continued != *kept || c.Unfinished == nil || *c.Unfinished != (UnfinishedWindow{End: kept.End, Position: "ref-2"}) {
+		t.Fatalf("the window read again: %+v %+v", read, read.Cursor)
+	}
+	var asked []string
+	for _, c := range w.feed.taken() {
+		asked = append(asked, c.cursor+":"+c.until+":"+strconv.Itoa(c.status))
+	}
+	if want := []string{"ref-3:2026-01-02T00:00:00Z:410", ":2026-01-02T00:00:00Z:200", "ref-1:2026-01-02T00:00:00Z:200"}; !slices.Equal(asked, want) {
+		t.Fatalf("the pages asked: %v, want %v", asked, want)
+	}
+}
+
 // Section 4.6: a source that answers 410 source_reference_expired to a read
 // from a cursor's value is read again in full from the cursor's first value,
 // and the occurrence's acceptance says so, in an entry of version 6; the
@@ -440,7 +557,7 @@ func TestEachPageIsWrittenToTheOccurrenceAsItArrives(t *testing.T) {
 func TestAnExpiredReferenceIsReadAgainFromTheCursorsFirstValue(t *testing.T) {
 	stale := func(w *pagedWorld) {
 		must(t, w.s.store.update(func(tx runTx) error {
-			_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "stale", RunID: "run_earlier", UpdatedAt: now()}, "")
+			_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "stale", RunID: "run_earlier", UpdatedAt: now()}, "", nil)
 			return err
 		}))
 	}
@@ -507,7 +624,7 @@ func TestAnExpiredReferenceIsReadAgainFromTheCursorsFirstValue(t *testing.T) {
 func TestAnExpiredNextReferenceIsReadAgainFromTheCursor(t *testing.T) {
 	stale := func(w *pagedWorld) {
 		must(t, w.s.store.update(func(tx runTx) error {
-			_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "stale", RunID: "run_earlier", UpdatedAt: now()}, "")
+			_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: "stale", RunID: "run_earlier", UpdatedAt: now()}, "", nil)
 			return err
 		}))
 	}
@@ -657,7 +774,7 @@ func TestAWindowIsNeverAskedInvertedOrMovedBack(t *testing.T) {
 	ahead := behind.clock.Add(time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	held := func(w *pagedWorld, value string) {
 		must(t, w.s.store.update(func(tx runTx) error {
-			_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: value, RunID: "run_elsewhere", UpdatedAt: now()}, "")
+			_, err := tx.advancePagingCursor(PagingCursor{JobID: w.job.ID, Source: "changes", Value: value, RunID: "run_elsewhere", UpdatedAt: now()}, "", nil)
 			return err
 		}))
 	}
@@ -791,6 +908,10 @@ func TestAJobsPagingIsHeldToItsReleasesDialect(t *testing.T) {
 		change(&r)
 		return &JobPaging{Sources: []CursorRule{r}}
 	}
+	window := func(r *CursorRule) {
+		r.Kind, r.Reference, r.Parameter, r.End, r.First = "window", "", "from", "until", "2026-11-01T00:00:00Z"
+	}
+	empty := ""
 	for code, cases := range map[string][]*JobPaging{
 		"paging_source_unknown": {rule(func(r *CursorRule) { r.Source = "other" })},
 		"paging_parameter_unknown": {
@@ -801,6 +922,10 @@ func TestAJobsPagingIsHeldToItsReleasesDialect(t *testing.T) {
 			}),
 			// A case parameter the paged source's request does not carry.
 			rule(func(r *CursorRule) { r.Parameter = "label" }),
+			// A window's position the request carries, but not at the
+			// member its next reference fills, and one it does not carry.
+			rule(func(r *CursorRule) { window(r); r.Position, r.PositionFirst = "since", &empty }),
+			rule(func(r *CursorRule) { window(r); r.Position, r.PositionFirst = "label", &empty }),
 		},
 		"invalid_paging_rule": {
 			{},
@@ -815,6 +940,13 @@ func TestAJobsPagingIsHeldToItsReleasesDialect(t *testing.T) {
 			rule(func(r *CursorRule) {
 				r.Kind, r.Reference, r.Parameter, r.End, r.First = "window", "", "from", "from", "2026-11-01T00:00:00Z"
 			}),
+			// A change cursor names no position; a window's position and
+			// positionFirst come together, and the position is neither of
+			// the window's own parameters.
+			rule(func(r *CursorRule) { r.Position, r.PositionFirst = "since", &empty }),
+			rule(func(r *CursorRule) { window(r); r.Position = "since" }),
+			rule(func(r *CursorRule) { window(r); r.PositionFirst = &empty }),
+			rule(func(r *CursorRule) { window(r); r.Position, r.PositionFirst = "until", &empty }),
 		},
 	} {
 		for _, paging := range cases {
