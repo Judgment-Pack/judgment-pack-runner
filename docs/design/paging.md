@@ -271,6 +271,8 @@ names a next reference fails its occurrence and leaves the cursor.
   A throttled first page holds nothing: its session is sealed and the next
   attempt asks it afresh. Held pages never outlive the wait: an occurrence that
   expires or fails before its next attempt drops them and seals their session.
+  They are private, as a task's request and profile are: neither the
+  occurrence routes nor an event's replay answer serves `heldPages`.
 - **Pages written as received** (4.5): each page, once verified (its receipt is
   call i of the session, the pages are within the combined input limit, and
   the page reads), is written to the occurrence's `heldPages` before the next
@@ -278,7 +280,8 @@ names a next reference fails its occurrence and leaves the cursor.
   A write refused because the occurrence is no longer this attempt's (a
   restart or a lapsed lease failed it) stops the read and seals its session.
   The rule: **a page written to an occurrence's record is never asked again
-  for that occurrence.** The next attempt the job's retry policy schedules
+  for that occurrence**, except after an expired reference (4.6), which
+  starts the read again in a new session and asks its pages afresh. The next attempt the job's retry policy schedules
   resumes after the last page written, asking the throttled page first. A
   restart, or a lapsed lease, that finds the occurrence preparing ends it
   failed and repeats no call, as [retries](retries.md), section 8, has it for

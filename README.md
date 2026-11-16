@@ -79,7 +79,7 @@ The program's commands:
 | --- | --- |
 | none | Desk's companion: reads one boot line on stdin and serves `jobs/1`, as the next paragraphs say |
 | `serve --config <path>` | service mode: serves `jobs/1` from a private configuration file until it is stopped ([below](#service-mode)) |
-| `store migrate --connection <path>` | applies the postgresql store kind's migrations, as its migration login ([docs/postgresql-store.md](docs/postgresql-store.md)) |
+| `store migrate --connection <path> [--even-with-live-claims]` | applies the postgresql store kind's migrations, as its migration login, refusing while a Runner holds an unexpired claim on the store unless the flag is given ([docs/postgresql-store.md](docs/postgresql-store.md)) |
 | `version` | names the release the program was built from |
 | `verify-run` | verifies a run's export offline ([below](#verified-mapping-v2-runner-and-desk)) |
 | `verify-preparation` | verifies one preparation offline, an Exchange fixture's among them, with no run ([below](#verified-mapping-v2-runner-and-desk)) |
@@ -208,13 +208,26 @@ caller reaches (an empty page for one it does not); `POST /v1/jobs` under a scop
 the caller does not reach is `403 scope_not_allowed`; `POST /v1/ticks` is
 `403 installation_caller_required` to every caller but the installation's, and
 `GET /v1/status` leaves out `triggersOutsideSettings` for them. **Without
-`callerScopes` the check holds**, every subject unscoped, and `POST /v1/ticks`
-answers `403 installation_caller_required` for every subject until one has an
-`"installation"` entry, so an external scheduler's shared ticks stop: write the
-entries before upgrading an installation with `identity` (an `"installation"`
-entry for the scheduler's subject), or `"callerScopes": "unchecked"`, which
-keeps the behavior before caller scopes and which the start (on standard error)
-and `GET /v1/status` (`"callerScopes":"unchecked"`) say
+`callerScopes` the check holds**, every subject unscoped, which the start says
+on standard error. An installation with `identity` that upgrades without the
+member sees three changes:
+
+- a token whose claims carry `scope_ids` is refused `401` on every route, since
+  no entry grants its subject a scope identifier;
+- every record under a scope identifier reads as absent, so an event delivery
+  to a trigger under one gets the unknown-trigger answer, and a sender may
+  drop it;
+- `POST /v1/ticks` answers `403 installation_caller_required` for every
+  subject until one has an `"installation"` entry, so an external scheduler's
+  shared ticks stop.
+
+Write the entries with the new release's binary as it is installed (an
+`"installation"` entry for the scheduler's subject, and entries for the scoped
+callers and senders; an earlier Runner refuses the member, so going back removes
+it), or set
+`"callerScopes": "unchecked"`, which keeps the behavior before caller scopes and
+which the start (on standard error) and `GET /v1/status`
+(`"callerScopes":"unchecked"`) say
 ([design record](docs/adr/0002-caller-scopes.md)).
 
 **Who is recorded.** A caller's run has `<issuer>#<subject>` as `requestedBy`,
@@ -233,7 +246,8 @@ noncharacter code point (the gateway's rule for its own scope identifier), fixed
 on the job for as long as it exists. The job's triggers, occurrences, runs and
 journal entries carry it as `scope`; an entry that carries it has `entryVersion`
 `"3"` or later. An entry's version is the highest its members call for, `"1"` to
-`"5"`, and the entry of a run's end is `"5"` in every store
+`"6"` (`"6"` for an `occurrence.ready` entry that holds `fullReRead` or
+`cursorHeld`, below), and the entry of a run's end is `"5"` in every store
 ([activity journal](docs/design/activity-journal.md)). Every request that names the job or one of its records names the scope in
 the query parameter `scope`, and a request that names a record under another
 scope, under none for a record under one, or under one for a record under none, is
@@ -294,6 +308,27 @@ as before. `GET /v1/runs`, `GET /v1/jobs/{job}/runs`, `GET /v1/events` and
 schema is not raised, and the verification export is unchanged. `GET /v1/status`
 lists `run-results`. A consumer of finished runs follows the journal by `kind`;
 Runner pushes nothing ([design record](docs/design/run-results.md)).
+
+**Paging.** `POST /v1/jobs` (and a job's upgrade) takes an optional `paging`,
+`{"sources": [rule, ...]}`, 1 to 16 rules, each naming a paged source of the
+release's dialect of format `4.1.0` and its cursor: `kind` `"change"` (the
+reference the last page returned, read at `reference`) or `"window"` (a time
+window, whose end `end` names), the case `parameter` the cursor fills, and its
+`first` value. A rule out of form is `invalid_paging_rule`; a source that is not
+paged, `paging_source_unknown`; a parameter the source's request does not carry,
+`paging_parameter_unknown`; a release whose sources are acquired over durable
+Gateway connections is never paged, `paging_durable_unsupported`. Each page is
+asked in one session and kept as its own receipt; the cursor advances only when
+the run made from the occurrence completes, and a failed or interrupted run
+leaves it. `GET /v1/jobs/{job}/cursors` answers each paged source's cursor: its
+kind, its value, the run that last moved it and when, and whether its window is
+unfinished. An occurrence's `paging` and a run's paged read say what was read;
+pages held for a throttled attempt are kept on the record, private, and no route
+serves them. An `occurrence.ready` entry that names a source in `fullReRead` or
+`cursorHeld` has `entryVersion` `"6"`. The first job that keeps a cursor raises a
+sqlite store to schema `"8"`, which every earlier Runner refuses; on PostgreSQL
+`0007_paging_cursors.sql` makes the cursors' table and raises the schema to
+`"8"`. `GET /v1/status` lists `job-paging` ([design record](docs/design/paging.md)).
 
 **Health.** `GET /v1/health` answers without a credential, `200 {"healthy":true}` or
 `503 {"healthy":false}`, and says nothing else. `GET /v1/status` keeps its

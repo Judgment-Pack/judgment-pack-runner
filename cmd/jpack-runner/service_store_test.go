@@ -88,11 +88,14 @@ func TestStoreMigrateTakesItsConnectionFileAndNothingElse(t *testing.T) {
 		{[]string{"store", "migrate", "--connection"}, "store takes migrate"},
 		{[]string{"store", "migrate", "--connection", "migrate.json"}, "store takes migrate"},
 		{[]string{"store", "migrate", "--connection", file, "again"}, "store takes migrate"},
+		{[]string{"store", "migrate", "--connection", file, "--even-with-live-claims", "again"}, "store takes migrate"},
+		{[]string{"store", "migrate", "--even-with-live-claims", "--connection", file}, "store takes migrate"},
 		{[]string{"store", "remove-scope", "--connection", file}, "store takes migrate"},
 		{[]string{"store", "migrate", "--connection", short}, "one JSON object with migration, owner, request and worker"},
 		// A database that cannot be reached is an error, after the file was
 		// read whole.
 		{[]string{"store", "migrate", "--connection", file}, "runner:"},
+		{[]string{"store", "migrate", "--connection", file, "--even-with-live-claims"}, "runner:"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := runnerCommand(c.args, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), c.says) || stdout.Len() != 0 {

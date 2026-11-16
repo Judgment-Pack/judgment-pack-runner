@@ -2106,7 +2106,8 @@ Every entry has `sequence`, `entryVersion` (`"1"`; `"2"` for an entry whose
 identifier, whoever its `by` names; `"4"` for an entry that holds `attempt`;
 `"5"` for an entry that holds `disposition`, `errorClass` or `counts`; `"6"` for an
 `occurrence.ready` entry that holds `fullReRead`, the paged sources read again
-from their cursor's first value), `kind`,
+from their cursor's first value, or `cursorHeld`, the paged sources whose read
+the bound ended with the cursor held where it was), `kind`,
 `at`, `by` and `concerns`. An
 entry about a job created under a scope identifier carries it as `scope`, and
 `GET /v1/events?scope=` serves only the entries that carry exactly that one

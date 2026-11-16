@@ -218,10 +218,19 @@ func (c callerScopes) mode() string {
 }
 
 // CallerScopesNote is the line the start writes on standard error when caller
-// scopes are unchecked, and "" when they are checked.
+// scopes are unchecked, and when they are checked because identity.callerScopes
+// is absent (every subject then unscoped, which changes what an installation
+// that upgrades with identity serves); "" when the member names entries.
 func (id *Identity) CallerScopesNote() string {
-	if id == nil || !id.scopes.unchecked {
+	if id == nil {
 		return ""
+	}
+	if !id.scopes.unchecked {
+		// An object, even {}, reads to a non-nil map of entries.
+		if id.scopes.entries != nil {
+			return ""
+		}
+		return "caller scopes are checked (identity.callerScopes is absent): every subject has no entry and is unscoped, so a token carrying " + scopeClaim + " is refused 401, records under a scope identifier read as absent (an event delivery to such a trigger gets the unknown-trigger answer), and POST /v1/ticks is refused 403 installation_caller_required; write identity.callerScopes, or \"unchecked\" for the behavior before caller scopes"
 	}
 	return "caller scopes are unchecked (identity.callerScopes): every subject the identity lists may name any scope identifier, list every scope's records and call the installation's routes, and a token's " + scopeClaim + " is not read"
 }

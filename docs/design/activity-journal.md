@@ -94,8 +94,9 @@ by the read.
   and attempt, which an entry of `"1"` to `"4"` never holds. Later again, with
   [paging](paging.md): `"6"` for an occurrence's `occurrence.ready` entry that
   holds `fullReRead`, the paged sources read again from their cursor's first
-  value after an expired reference, which an entry of `"1"` to `"5"` never
-  holds.)
+  value after an expired reference, or `cursorHeld`, the paged sources whose
+  read the bound ended with the cursor held where it was, which an entry of
+  `"1"` to `"5"` never holds.)
 - `kind`: one of the kinds below.
 - `at`: when Runner wrote the entry, by its own clock, in the form of every
   time Runner records (`model.go:109`). Order is `sequence`, never `at`.

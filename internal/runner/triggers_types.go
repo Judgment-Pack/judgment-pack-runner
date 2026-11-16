@@ -102,7 +102,8 @@ type Occurrence struct {
 	// HeldPages are a paged source's pages received before a throttle,
 	// while the occurrence waits for the attempt that resumes at the
 	// throttled page (paging_loop.go); Paging is what it read of each paged
-	// source once its input is acquired, carried into its run.
+	// source once its input is acquired, carried into its run. HeldPages are
+	// private: no route serves them (publicOccurrence).
 	HeldPages *HeldPages  `json:"heldPages,omitempty"`
 	Paging    []PagedRead `json:"paging,omitempty"`
 	// ErrorClass is the class, from a closed list, of an occurrence that

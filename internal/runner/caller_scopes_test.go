@@ -640,6 +640,11 @@ func TestUncheckedCallerScopesServeEveryCallerAsBefore(t *testing.T) {
 	if note := (*Identity)(nil).CallerScopesNote(); note != "" {
 		t.Errorf("no identity is noted at start: %q", note)
 	}
+	// #308: an identity without callerScopes is checked, every subject
+	// unscoped, and the start says so.
+	if note := (&Identity{}).CallerScopesNote(); !strings.Contains(note, "caller scopes are checked (identity.callerScopes is absent)") || !strings.Contains(note, "unscoped") {
+		t.Errorf("checked caller scopes without the member are not noted at start: %q", note)
+	}
 }
 
 // On a kind that holds scopes, a caller held to scopes reaches rows only

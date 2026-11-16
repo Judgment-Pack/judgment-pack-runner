@@ -79,7 +79,13 @@ It refuses, and applies nothing more:
 - a file recorded under another digest (nothing after it is applied);
 - a recorded migration this `jpack-runner` does not ship;
 - a request or worker login other than the ones the grants were first made to: replacing a login
-  is not a migration.
+  is not a migration;
+- before applying a file, a store on which a Runner holds an unexpired claim on a run or an
+  occurrence ("the store holds N unexpired claims", naming the runs and the occurrences): a Runner
+  checks the migrations only at its start, so one still running after the migration keeps claiming
+  work under the earlier schema. The store records no Runner beyond its claims, so a Runner that
+  holds none is not seen: stop every Runner first all the same. `--even-with-live-claims`, after the
+  path, applies the files regardless.
 
 The grants file (`0002_grants.sql`) gives the two run-time logins `USAGE` on the schema and the
 table privileges of the design's section 7, and no privilege on a sequence, and no `DELETE`,
@@ -319,7 +325,8 @@ The Runners must hold to these:
 - **One release.** Every Runner of one store runs the same `jpack-runner` release. To upgrade,
   stop every Runner of the store, run the new release's `store migrate`, then start the new
   release's Runners. A migration does not stop a Runner that is running, and a Runner of an
-  earlier release keeps no claim on an occurrence and no version on a trigger.
+  earlier release keeps no claim on an occurrence and no version on a trigger. `store migrate`
+  refuses while a Runner holds an unexpired claim on the store, unless `--even-with-live-claims`.
 - **Clocks within 1 second of each other.** Leases use the database's clock. These use the wall
   clock of the Runner that decides: a schedule's due time and whether it was missed, a watched
   file's stability, an occurrence's or a run's expiry in the queue, a preparation's deadline and

@@ -35,9 +35,13 @@ type SourceTask struct {
 	Request       json.RawMessage `json:"request,omitempty"`       // frozen, private
 }
 
+// publicOccurrence is o as a route serves it: without its input, its pending
+// input, its held pages (the pages, the open session, the first page's
+// request and the profile, #308) and each task's private members.
 func publicOccurrence(o Occurrence) Occurrence {
 	o.Input = nil
 	o.PendingInput = nil
+	o.HeldPages = nil
 	if o.Preparation != nil {
 		p := *o.Preparation
 		p.Input = nil
