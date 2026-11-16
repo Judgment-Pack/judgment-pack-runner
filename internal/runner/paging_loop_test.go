@@ -306,6 +306,9 @@ func TestAPagedSourceIsReadInOneSessionAndItsCursorMovesWithItsRun(t *testing.T)
 	if value, by := w.cursor(t); value != "after-start" || by != r.ID {
 		t.Fatalf("the cursor is %q by %s, want after-start by %s", value, by, r.ID)
 	}
+	// The run of format 4.1.0, its paged source's pages and outcome, is as
+	// openapi.json says.
+	runAsOpenAPISays(t, w.s.Handler("test"), r.ID)
 	next := onePagedRead(t, w.prepare(t, "second"), 3, "no-next")
 	if *next.Cursor != (CursorAdvance{Read: "after-start", From: "after-start", To: "after-after-start"}) {
 		t.Fatalf("the next read's cursor: %+v", next.Cursor)

@@ -4019,6 +4019,9 @@
           },
           {
             "$ref": "#/components/schemas/NamedInputMappingV3"
+          },
+          {
+            "$ref": "#/components/schemas/InputMappingFormat4"
           }
         ]
       },
@@ -4297,8 +4300,12 @@
             "enum": [
               "string",
               "integer",
-              "timestamp"
-            ]
+              "timestamp",
+              "decimal",
+              "string-list",
+              "address-range-list"
+            ],
+            "description": "decimal, string-list and address-range-list are the types format 4.0.0 adds (spec/dialect.md section 2.2.2), declared in a dialect of format 4.0.0 or 4.1.0 alone."
           }
         },
         "required": [
@@ -4370,6 +4377,10 @@
                 }
               }
             }
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DerivationRuleV2",
+            "description": "Format 4.0.0 and 4.1.0 (spec/dialect.md section 2.2.1): the case's rule, over the case with its parameters and runAt, after its copy."
           }
         },
         "required": [
@@ -4672,7 +4683,15 @@
             "$ref": "#/components/schemas/CopyMapping"
           },
           "rule": {
-            "$ref": "#/components/schemas/DerivationRule"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DerivationRule"
+              },
+              {
+                "$ref": "#/components/schemas/DerivationRuleV2"
+              }
+            ],
+            "description": "A rule of version 1, or, in format 4.0.0 and 4.1.0, of version 2.0.0."
           },
           "sources": {
             "type": "array",
@@ -4931,6 +4950,9 @@
               }
             },
             "description": "Version 3, kind research, bound: a profile for each web capability the source asks for, exactly those, written even when empty. With profile and profileDigest, the AI profile for answer, all three or none: a research source published with none is bound at import (SourceInput.import)."
+          },
+          "paging": {
+            "$ref": "#/components/schemas/SourcePaging"
           }
         },
         "required": [
@@ -5671,6 +5693,9 @@
           },
           "columnTransformation": {
             "$ref": "#/components/schemas/RetainedColumnTransformation"
+          },
+          "derivation": {
+            "$ref": "#/components/schemas/Derivation"
           }
         },
         "required": [
@@ -5707,6 +5732,12 @@
           },
           "claim": {
             "type": "object"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/CaseRuleOutcome"
+          },
+          "paging": {
+            "$ref": "#/components/schemas/PagingOutcome"
           }
         },
         "required": [
@@ -5716,18 +5747,26 @@
           "parameters",
           "claim"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "A source's outcome, or the case's (name case). In format 4.0.0 and 4.1.0 the case's outcome names its rule's outcome (rule) when the case names a rule, and in format 4.1.0 a paged source acquired names its read's end, pages and references (paging)."
       },
       "Preparation": {
         "type": "object",
-        "description": "A mapping-v2 run's verified preparation. From Runtime 0.31.0 on, the run's audit record binds it: the record's binding is {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<hex>\"}, whose digest is the SHA-256 of this object with its members sorted by name, no insignificant whitespace, numbers as written, and strings escaped as Go's encoding/json escapes them, the form a frozen release is digested by. verify-run recomputes it from the export alone, compares the record's member as recorded, and reports binding: matches, mismatch, absent or foreign-kind, refusing a mismatch and a foreign kind (before any digest is compared), and, with --require-bound, a record without one. A binding that matches, in a record whose signature verifies, commits verifiedAt in the signed record: a program reading verify-run's report knows it when binding.status is matches and signature.status is signed, and unsignedFreshness keeps its name either way. Against the operator, who holds the key, only a witnessed chain shows a record signed again with a new binding.",
+        "description": "A mapping-v2 run's verified preparation. From Runtime 0.31.0 on, the run's audit record binds it: the record's binding is {\"kind\":\"judgment-pack-runner/preparation/1\",\"digest\":\"sha256:<hex>\"}, whose digest is the SHA-256 of this object with its members sorted by name, no insignificant whitespace, numbers as written, and strings escaped as Go's encoding/json escapes them, the form a frozen release is digested by. verify-run recomputes it from the export alone, compares the record's member as recorded, and reports binding: matches, mismatch, absent or foreign-kind, refusing a mismatch and a foreign kind (before any digest is compared), and, with --require-bound, a record without one. A binding that matches, in a record whose signature verifies, commits verifiedAt in the signed record: a program reading verify-run's report knows it when binding.status is matches and signature.status is signed, and unsignedFreshness keeps its name either way. Against the operator, who holds the key, only a witnessed chain shows a record signed again with a new binding. A preparation of a dialect of format 4.0.0 or 4.1.0 is the dialect-recording schema's of version 2 (spec/dialect.md section 2.2.6, RFC 0033 section 8): formatVersion in place of version, the case outcome's rule, each lineage entry's derivation when a rule of version 2.0.0 wrote its target, and, in format 4.1.0, a paged source's outcome paging and its lineage entries' receipts.",
         "properties": {
           "version": {
             "enum": [
               2,
               3
             ],
-            "description": "The dialect document's version: 3 for a version-3 document, whose preparation is otherwise a version-2 document's."
+            "description": "The dialect document's version: 3 for a version-3 document, whose preparation is otherwise a version-2 document's. Absent from a preparation of format 4.0.0 or 4.1.0, which names formatVersion instead."
+          },
+          "formatVersion": {
+            "enum": [
+              "4.0.0",
+              "4.1.0"
+            ],
+            "description": "The dialect's format, in place of version, for a dialect of format 4.0.0 or 4.1.0 (spec/dialect.md section 2.2.6)."
           },
           "verifiedAt": {
             "type": "string"
@@ -5763,7 +5802,6 @@
           }
         },
         "required": [
-          "version",
           "verifiedAt",
           "mappingDigest",
           "verification",
@@ -5771,7 +5809,19 @@
           "lineage",
           "outcomes"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "version"
+            ]
+          },
+          {
+            "required": [
+              "formatVersion"
+            ]
+          }
+        ]
       },
       "VerificationBundle": {
         "type": "object",
@@ -8935,6 +8985,270 @@
           "pages"
         ],
         "additionalProperties": false
+      },
+      "CaseRuleOutcome": {
+        "type": "object",
+        "description": "Format 4.0.0 and 4.1.0 (spec/dialect.md section 2.2.6): the case rule's claim, and its acquisitionStatus and reason.",
+        "properties": {
+          "claim": {
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "resolved",
+              "absent",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim",
+          "status",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "PagingOutcome": {
+        "type": "object",
+        "description": "Format 4.1.0 (RFC 0033 section 8): a paged source's read, its end (no-next when a page named no next reference, bound when maxPages ended it), the number of pages read, and the next references it followed, in call order. Each page's receipt is the source's lineage entries' receipts, at call index i for page i; the run's trigger names the cursor the read held or moved (PagedRead).",
+        "properties": {
+          "end": {
+            "enum": [
+              "no-next",
+              "bound"
+            ]
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "end",
+          "pages",
+          "references"
+        ],
+        "additionalProperties": false
+      },
+      "Derivation": {
+        "description": "Format 4.0.0 and 4.1.0 (spec/dialect.md section 2.2.6): how the match of a rule of version 2.0.0 wrote the target, by a pointer, a literal, a builtin, or none.",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "by": {
+                "const": "pointer"
+              },
+              "from": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "by",
+              "from"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "by": {
+                "const": "literal"
+              }
+            },
+            "required": [
+              "by"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "by": {
+                "const": "builtin"
+              },
+              "builtin": {
+                "enum": [
+                  "duration",
+                  "distance",
+                  "speed"
+                ]
+              },
+              "derived": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "parameters": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "by",
+              "builtin",
+              "derived",
+              "fields",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "by": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "by"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DerivationRuleV2": {
+        "type": "object",
+        "description": "A rule of version 2.0.0 (spec/dialect.md section 2.2): format 4.0.0's and 4.1.0's, a source's read or the case's rule, whose clauses' conditions and claims the Spec's prose holds, read strictly by the sdk/dialect engine. Every other format reads a rule of version 1 (DerivationRule).",
+        "properties": {
+          "ruleVersion": {
+            "const": "2.0.0"
+          },
+          "parameters": {
+            "type": "object"
+          },
+          "clauses": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "maxItems": 64
+          }
+        },
+        "required": [
+          "ruleVersion",
+          "parameters",
+          "clauses"
+        ],
+        "additionalProperties": false
+      },
+      "SourcePaging": {
+        "type": "object",
+        "description": "Format 4.1.0 (RFC 0033 section 2): a paged operation's paging, of exactly these members. arguments is then the first page's request; each later request is formed from it, the next reference the page before named written at fills. A source of any other format names none.",
+        "properties": {
+          "next": {
+            "type": "string",
+            "description": "A pointer, other than the root, to a page's next reference."
+          },
+          "noNext": {
+            "enum": [
+              "absent",
+              "null",
+              "empty-string"
+            ],
+            "description": "How a page names no next reference."
+          },
+          "fills": {
+            "type": "string",
+            "description": "A pointer, other than the root, into the request, to a member of an object written in arguments."
+          },
+          "items": {
+            "type": "string",
+            "description": "A pointer to each page's items array."
+          },
+          "maxPages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "required": [
+          "next",
+          "noNext",
+          "fills",
+          "items",
+          "maxPages"
+        ],
+        "additionalProperties": false
+      },
+      "InputMappingFormat4": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "case": {
+            "$ref": "#/components/schemas/CaseMapping"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MappingSource"
+            },
+            "maxItems": 16
+          },
+          "admits": {
+            "$ref": "#/components/schemas/Admission"
+          },
+          "unmapped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "unmappedEvidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "base"
+            ],
+            "description": "Explicit Base is required for retained-column conversions. Absent, ordinary legacy behavior and limits apply."
+          },
+          "formatVersion": {
+            "enum": [
+              "4.0.0",
+              "4.1.0"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "formatVersion",
+          "id",
+          "version",
+          "case"
+        ],
+        "description": "A dialect of format 4.0.0 (spec/dialect.md section 2.2) or 4.1.0 (RFC 0033), staged for specVersion 0.6.0: format 3.0.0's form, with the case's rule, the three parameter types 4.0.0 adds and rules of version 2.0.0, and, in format 4.1.0, a paged operation's paging. Its preparation names formatVersion in place of version (Preparation). The extended profile is refused until the Spec decides its literal bound."
       }
     }
   }
